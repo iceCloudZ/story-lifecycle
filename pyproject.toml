@@ -43,8 +43,7 @@ dev = [
     "textual>=3.0",
 ]
 
-[project.optional-dependencies.tui]
-dependencies = [
+tui = [
     "textual>=3.0",
 ]
 

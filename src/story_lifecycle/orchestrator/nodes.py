@@ -61,7 +61,7 @@ def load_profile(profile_name: str) -> dict:
     ]:
         path = base / "profiles" / f"{profile_name}.yaml"
         if path.exists():
-            return yaml.safe_load(path.read_text())
+            return yaml.safe_load(path.read_text(encoding="utf-8"))
     raise FileNotFoundError(f"Profile not found: {profile_name}")
 
 
