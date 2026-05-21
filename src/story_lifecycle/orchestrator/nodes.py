@@ -50,7 +50,7 @@ def load_profile(profile_name: str) -> dict:
     for base in [
         Path.cwd() / ".story",
         STORY_HOME,
-        Path(__file__).parent.parent.parent.parent / "profiles",
+        Path(__file__).parent.parent.parent.parent,  # package root (story-lifecycle/)
     ]:
         path = base / "profiles" / f"{profile_name}.yaml"
         if path.exists():
