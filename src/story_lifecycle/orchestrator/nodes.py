@@ -123,8 +123,6 @@ def execute_stage_node(state: StoryState) -> StoryState:
     adapter_name = cfg.get("cli", load_profile(profile).get("cli", "claude"))
     provider = state.get("context", {}).get("_provider", cfg.get("provider", "deepseek"))
     model = cfg.get("model", "sonnet")
-    max_retries = cfg.get("max_retries", 2)
-
     adapter = get_adapter(adapter_name)
 
     # 1. Switch provider

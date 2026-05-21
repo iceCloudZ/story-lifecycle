@@ -2,8 +2,6 @@
 
 AI-powered development workflow orchestrator — from TAPD/Jira story to production.
 
-> **Work in progress — Phase 1 development.**
-
 ## Platform Support
 
 | Platform | CLI + DB | AI Execution (tmux/ttyd) |
@@ -32,6 +30,12 @@ story serve
 # Install
 pip install story-lifecycle       # not yet on PyPI — use `pip install -e .`
 
+# First-run setup: configure LLM provider & API key
+story setup
+
+# Check system environment
+story doctor
+
 # Start orchestrator in one terminal
 story serve
 
@@ -51,16 +55,28 @@ story enter STORY-123
 - `standard`: full 14-stage flow (coming in Phase 2)
 - Custom: drop a YAML in `~/.story-lifecycle/profiles/`
 
+## LLM Router
+
+The orchestrator uses an LLM API for routing decisions (provider selection, prompt generation). If no API key is configured, it falls back to rule-based routing automatically.
+
+- **With API key**: LLM-driven routing with intelligent provider/model selection
+- **Without API key**: Rule-based fallback — works out of the box for basic flows
+
+Configure via `story setup` or edit `~/.story-lifecycle/config.yaml` directly.
+
 ## CLI Commands
 
 ```
-story new <KEY> --title "..."     Create a new story
-story board                       Show all active stories
-story enter <KEY>                 Open terminal to interact with AI
-story status <KEY>                Show story details
+story setup                        Configure LLM provider & API key
+story doctor                       Check system environment
+story new <KEY> --title "..."      Create a new story
+story board                        Show all active stories
+story enter <KEY>                  Open terminal to interact with AI
+story status <KEY>                 Show story details
 story skip <KEY> --stage <NAME>   Skip a stage
-story fail <KEY>                  Mark as blocked
-story serve                       Start the orchestrator server
+story fail <KEY>                   Mark as blocked
+story resume <KEY>                 Resume a blocked story
+story serve                        Start the orchestrator server
 ```
 
 ## License

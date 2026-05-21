@@ -1,7 +1,6 @@
 """Base adapter — defines the interface all CLI adapters must implement."""
 
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 
 class BaseAdapter(ABC):

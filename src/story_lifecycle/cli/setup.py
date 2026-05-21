@@ -82,7 +82,7 @@ def run_setup():
         console.print(f"  [{key}] {provider['name']}{marker}")
     console.print()
 
-    choice = console.input(f"Choice [1-5] (default: 1): ").strip() or "1"
+    choice = console.input("Choice [1-5] (default: 1): ").strip() or "1"
     if choice not in PRESET_PROVIDERS:
         choice = "1"
 
@@ -117,7 +117,7 @@ def run_setup():
         console.print()
         console.print("[bold]Step 3: Enter your API base URL[/]")
         base_url = console.input(
-            f"Base URL: ",
+            "Base URL: ",
         ).strip()
 
     # Step 4: Model

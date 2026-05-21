@@ -13,7 +13,6 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
-from rich.live import Live
 
 from ..db import models as db
 from ..db.models import init_db
@@ -221,9 +220,9 @@ def status(story_key):
     # Show LLM router status
     from ..orchestrator.router import llm_is_available
     if llm_is_available():
-        console.print(f"  [dim]LLM Router: enabled[/]")
+        console.print("  [dim]LLM Router: enabled[/]")
     else:
-        console.print(f"  [dim]LLM Router: disabled (set STORY_LLM_API_KEY to enable)[/]")
+        console.print("  [dim]LLM Router: disabled (set STORY_LLM_API_KEY to enable)[/]")
 
 
 # -------- story skip --------
