@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import TypedDict, Optional
@@ -147,8 +148,6 @@ def execute_stage_node(state: StoryState) -> StoryState:
 
     # 4. Create tmux session if not alive (explicit -c for CWD)
     if not ttyd._tmux_session_alive(session):
-        import subprocess
-
         subprocess.run(
             ["tmux", "new-session", "-d", "-s", session, "-c", workspace],
             capture_output=True,
