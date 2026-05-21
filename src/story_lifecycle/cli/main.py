@@ -33,7 +33,7 @@ def _get_client():
 
 
 @click.group()
-@click.version_option(version="0.1.0")
+@click.version_option(version="0.2.0")
 def cli():
     """Story Lifecycle Manager — AI-powered development workflow orchestrator."""
     init_db()
