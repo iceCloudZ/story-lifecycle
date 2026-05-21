@@ -21,6 +21,7 @@ class CreateStoryRequest(BaseModel):
     title: str = ""
     content: str = ""
     profile: str = "minimal"
+    workspace: str = ""
 
 
 class AdvanceRequest(BaseModel):
@@ -88,7 +89,7 @@ def get_story(story_key: str):
 
 @app.post("/api/story")
 def create_story(req: CreateStoryRequest):
-    workspace = os.getcwd()  # Capture CWD as workspace
+    workspace = req.workspace or os.getcwd()  # Specified or CWD
 
     # Save PRD content if provided
     if req.content:
