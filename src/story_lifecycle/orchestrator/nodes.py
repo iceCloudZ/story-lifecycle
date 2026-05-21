@@ -191,12 +191,12 @@ def execute_stage_node(state: StoryState) -> StoryState:
 
 
 def poll_completion_node(state: StoryState) -> StoryState:
-    """Wait for CC to write .story-done/{stage}.json, or crash/timeout."""
+    """Wait for CC to write .story-done/{story_key}/{stage}.json, or crash/timeout."""
     key = state["story_key"]
     stage = state["current_stage"]
     workspace = state["workspace"]
     session = ttyd.session_name(key)
-    done_file = Path(workspace) / ".story-done" / f"{stage}.json"
+    done_file = Path(workspace) / ".story-done" / key / f"{stage}.json"
     deadline = state.get("stage_start_time", time.time()) + TIMEOUT_SECONDS
 
     while time.time() < deadline:
@@ -350,16 +350,20 @@ def fail_node(state: StoryState) -> StoryState:
 
 
 def wait_confirm_node(state: StoryState) -> StoryState:
-    """Pause for human confirmation. Advances when status is set back to active."""
-    db.update_story(state["story_key"], status="paused")
-    db.log_stage(
-        state["story_key"],
-        state["current_stage"],
-        "pause",
-        "Waiting for manual confirmation",
-    )
+    """Pause for human confirmation. Blocks until status is set back to active."""
+    key = state["story_key"]
+    db.update_story(key, status="paused")
+    db.log_stage(key, state["current_stage"], "pause", "Waiting for manual confirmation")
     state["status"] = "paused"
-    return state
+
+    # Poll DB until user resumes (story resume / API advance sets status back to active)
+    while True:
+        s = db.get_story(key)
+        if s and s["status"] == "active":
+            state["status"] = "active"
+            state["execution_count"] = 0
+            return state
+        time.sleep(POLL_INTERVAL)
 
 
 # -------- prompt rendering --------
@@ -383,7 +387,7 @@ def _render_prompt(stage: str, state: StoryState) -> str:
 Story: {state["story_key"]}
 标题: {state["title"]}
 
-完成后将结果写入项目根目录下的 `.story-done/{stage}.json`。
+完成后将结果写入项目根目录下的 `.story-done/{state["story_key"]}/{stage}.json`。
 文件必须只包含纯 JSON，不要用 markdown 代码块包裹。"""
 
     # Variable substitution

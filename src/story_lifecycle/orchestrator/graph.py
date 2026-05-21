@@ -63,7 +63,7 @@ def build_graph() -> StateGraph:
     graph.add_edge("retry", "execute_stage")  # redo current
     graph.add_edge("skip_stage", "advance")  # skip → advance
     graph.add_edge("fail_stage", END)  # blocked
-    graph.add_edge("wait_confirm", END)  # paused, resume manually
+    graph.add_edge("wait_confirm", "execute_stage")  # confirmed → re-execute stage
 
     return graph
 
