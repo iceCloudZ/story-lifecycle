@@ -1,9 +1,9 @@
 """LangGraph node implementations — execute, poll, advance, skip, retry, fail."""
 
 import json
+import os
 import re
 import time
-import fcntl
 from pathlib import Path
 from typing import TypedDict, Optional
 
@@ -12,6 +12,16 @@ import yaml
 from ..db import models as db
 from ..adapters import get_adapter
 from ..terminal import ttyd
+
+# Cross-platform file lock
+if os.name == 'nt':
+    import msvcrt
+    def file_lock(f):
+        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+else:
+    import fcntl
+    def file_lock(f):
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
 
 
 TIMEOUT_SECONDS = 30 * 60  # 30 minutes per stage
@@ -97,13 +107,6 @@ def robust_json_parse(filepath: Path) -> dict:
             pass
 
     raise ValueError(f"Cannot parse JSON from {filepath}: {raw[:200]}")
-
-
-# -------- file lock --------
-
-def file_lock(f):
-    """Acquire an exclusive lock on a file to prevent reading while writing."""
-    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
 
 
 # -------- node: execute_stage --------

@@ -2,6 +2,12 @@
 
 import os
 import sys
+
+# Force UTF-8 on Windows (GBK can't encode Chinese + Unicode arrows)
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import click
 from pathlib import Path
 
@@ -96,10 +102,10 @@ def board():
 
     for s in stories:
         status_str = {
-            "active": "[bold green]▶ active[/]",
-            "paused": "[bold yellow]⏸ paused[/]",
-            "blocked": "[bold red]✗ blocked[/]",
-            "completed": "[bold blue]✓ completed[/]",
+            "active": "[bold green]> active[/]",
+            "paused": "[bold yellow]|| paused[/]",
+            "blocked": "[bold red]X blocked[/]",
+            "completed": "[bold blue]OK completed[/]",
         }.get(s.get("status", ""), s.get("status", ""))
 
         table.add_row(

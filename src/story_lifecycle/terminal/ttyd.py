@@ -1,5 +1,6 @@
 """ttyd + tmux management — per-story terminal sessions."""
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -10,6 +11,29 @@ BASE_PORT = 7701
 MAX_PORT = 7799
 _next_port = BASE_PORT
 _story_ports: dict[str, int] = {}
+
+# Platform availability
+_WINDOWS = os.name == 'nt'
+_HAS_TMUX = False
+
+if not _WINDOWS:
+    try:
+        r = subprocess.run(["which", "tmux"], capture_output=True, text=True, timeout=5)
+        _HAS_TMUX = bool(r.stdout.strip())
+    except Exception:
+        _HAS_TMUX = False
+
+
+def _run(cmd: list, **kwargs):
+    """Run a command, silently no-op if tmux not available (e.g. on Windows)."""
+    if not _HAS_TMUX:
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+    kwargs.setdefault("capture_output", True)
+    kwargs.setdefault("timeout", 10)
+    try:
+        return subprocess.run(cmd, **kwargs)
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
 
 def session_name(story_key: str) -> str:
@@ -22,11 +46,10 @@ def allocate_port(story_key: str) -> int:
     global _next_port
     if story_key in _story_ports:
         return _story_ports[story_key]
-
     port = _next_port
     _next_port += 1
     if _next_port > MAX_PORT:
-        _next_port = BASE_PORT  # wrap around (assumes old ports are freed)
+        _next_port = BASE_PORT
     _story_ports[story_key] = port
     return port
 
@@ -36,40 +59,36 @@ def release_port(story_key: str):
 
 
 def ensure_ttyd(story_key: str, workspace: str) -> str:
-    """Ensure ttyd is running for this story. Returns the ttyd URL path.
-       Idempotent — if ttyd is already running, just returns the URL."""
+    """Ensure ttyd is running for this story. Returns the ttyd URL path."""
     port = allocate_port(story_key)
     session = session_name(story_key)
 
-    # Create tmux session if not exists (with correct CWD)
+    if not _HAS_TMUX:
+        return f"/ttyd-s/{port}/"
+
     if not _tmux_session_alive(session):
-        subprocess.run(
-            ["tmux", "new-session", "-d", "-s", session, "-c", workspace],
-            capture_output=True, timeout=10)
+        _run(["tmux", "new-session", "-d", "-s", session, "-c", workspace])
         time.sleep(0.5)
 
-    # Check if ttyd is already running on this port
     if not _ttyd_running(port):
         subprocess.Popen(
             ["ttyd", "--writable", "--port", str(port),
              "--base-path", f"/ttyd-s/{port}/",
              "tmux", "new-session", "-A", "-s", session],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(1)  # let ttyd bind
+        time.sleep(1)
 
     return f"/ttyd-s/{port}/"
 
 
 def stop_ttyd(story_key: str):
-    """Kill ttyd process for this story's port."""
     port = _story_ports.get(story_key)
     if port:
-        subprocess.run(["pkill", "-f", f"ttyd.*port {port}"], capture_output=True)
+        _run(["pkill", "-f", f"ttyd.*port {port}"])
         release_port(story_key)
 
 
 def get_ttyd_url(story_key: str) -> Optional[str]:
-    """Get the ttyd URL for a story, or None if not started."""
     port = _story_ports.get(story_key)
     if port and _ttyd_running(port):
         return f"/ttyd-s/{port}/"
@@ -77,27 +96,22 @@ def get_ttyd_url(story_key: str) -> Optional[str]:
 
 
 def cleanup_orphaned_sessions():
-    """Kill tmux sessions that start with 's-' but have no active story."""
-    result = subprocess.run(["tmux", "list-sessions", "-F", "#{session_name}"],
-                            capture_output=True, text=True, timeout=5)
-    active_sessions = set()
+    """Kill tmux sessions with no active story."""
+    if not _HAS_TMUX:
+        return
+    result = _run(["tmux", "list-sessions", "-F", "#{session_name}"],
+                  capture_output=True, text=True, timeout=5)
     for line in result.stdout.strip().split("\n"):
         name = line.strip()
         if name and name.startswith("s-"):
-            active_sessions.add(name)
-
-    # In Phase 1, we just log. Phase 2: cross-reference with DB.
-    for session in active_sessions:
-        story_key = session[2:]  # strip "s-" prefix
-        if story_key not in _story_ports:
-            # Orphan — kill it
-            subprocess.run(["tmux", "kill-session", "-t", session], capture_output=True)
+            story_key = name[2:]
+            if story_key not in _story_ports:
+                _run(["tmux", "kill-session", "-t", name])
 
 
 def _tmux_session_alive(session: str) -> bool:
     try:
-        r = subprocess.run(["tmux", "has-session", "-t", session],
-                           capture_output=True, timeout=5)
+        r = _run(["tmux", "has-session", "-t", session])
         return r.returncode == 0
     except Exception:
         return False
@@ -105,21 +119,17 @@ def _tmux_session_alive(session: str) -> bool:
 
 def _ttyd_running(port: int) -> bool:
     try:
-        r = subprocess.run(["pgrep", "-f", f"ttyd.*port {port}"],
-                           capture_output=True, timeout=5)
+        r = _run(["pgrep", "-f", f"ttyd.*port {port}"])
         return r.returncode == 0
     except Exception:
         return False
 
 
 def send_keys(session: str, keys: str):
-    """Send keystrokes to a tmux session."""
-    subprocess.run(["tmux", "send-keys", "-t", session, keys],
-                   capture_output=True, timeout=5)
+    _run(["tmux", "send-keys", "-t", session, keys])
 
 
 def capture_pane(session: str, lines: int = 20) -> str:
-    """Capture last N lines from tmux session."""
-    r = subprocess.run(["tmux", "capture-pane", "-t", session, "-p", f"-S", f"-{lines}"],
-                       capture_output=True, text=True, timeout=5)
-    return r.stdout
+    r = _run(["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{lines}"],
+             capture_output=True, text=True, timeout=5)
+    return r.stdout or ""
