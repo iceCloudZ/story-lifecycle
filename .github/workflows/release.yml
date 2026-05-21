@@ -6,8 +6,12 @@ on:
       - 'v*'
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: Build package
+    needs: ci
     runs-on: ubuntu-latest
 
     steps:
@@ -17,13 +21,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install build tools
-        run: pip install build
-
       - name: Build package
-        run: python -m build
+        run: pipx run build
 
-      - name: Check package
+      - name: Twine check
         run: pipx run twine check dist/*
 
       - uses: actions/upload-artifact@v4
@@ -31,9 +32,29 @@ jobs:
           name: dist
           path: dist/
 
+  testpypi-publish:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/story-lifecycle/
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
   pypi-publish:
     name: Publish to PyPI
-    needs: build
+    needs: testpypi-publish
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -48,3 +69,34 @@ jobs:
           path: dist/
 
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub Release
+    needs: pypi-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Generate release notes
+        run: |
+          PREV_TAG=$(git tag --sort=-creatordate | grep -A1 "${{ github.ref_name }}" | tail -1)
+          if [ -z "$PREV_TAG" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+          git log "${PREV_TAG}..${{ github.ref_name }}" --pretty=format:"- %s (%h)" > CHANGELOG.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: CHANGELOG.md
+          files: dist/*
+          generate_release_notes: false
