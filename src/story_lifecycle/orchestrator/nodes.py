@@ -352,7 +352,9 @@ def wait_confirm_node(state: StoryState) -> StoryState:
     """Pause for human confirmation. Blocks until status is set back to active."""
     key = state["story_key"]
     db.update_story(key, status="paused")
-    db.log_stage(key, state["current_stage"], "pause", "Waiting for manual confirmation")
+    db.log_stage(
+        key, state["current_stage"], "pause", "Waiting for manual confirmation"
+    )
     state["status"] = "paused"
 
     # Poll DB until user resumes (story resume / API advance sets status back to active)
