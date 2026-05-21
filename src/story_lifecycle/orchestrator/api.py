@@ -101,31 +101,28 @@ def get_story(story_key: str):
 
 @app.post("/api/story")
 def create_story(req: CreateStoryRequest):
-    workspace = req.workspace or os.getcwd()  # Specified or CWD
+    from .service import create_and_start_story
 
-    # Save PRD content if provided
+    workspace = req.workspace or os.getcwd()
+    prd_path = None
     if req.content:
         prd_dir = Path(workspace) / "prd"
         prd_dir.mkdir(exist_ok=True)
         prd_file = prd_dir / f"{req.key}.md"
         prd_file.write_text(req.content, encoding="utf-8")
+        prd_path = str(prd_file)
 
-    s = db.create_story(
+    story_key = create_and_start_story(
         story_key=req.key,
         title=req.title,
-        workspace=workspace,
         profile=req.profile,
-        current_stage="design",  # minimal profile starts at design
+        workspace=workspace,
+        prd_path=prd_path,
     )
 
-    if req.content:
-        db.update_context(
-            req.key, "prd_path", str(Path(workspace) / "prd" / f"{req.key}.md")
-        )
+    start_story_async(story_key)
 
-    # Fire and forget — start execution in background
-    start_story_async(req.key)
-
+    s = db.get_story(story_key)
     return JSONResponse(
         {
             "id": s["id"],
