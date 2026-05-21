@@ -10,6 +10,8 @@ from typing import TypedDict, Optional
 
 import yaml
 
+from langgraph.types import interrupt
+
 from ..db import models as db
 from ..adapters import get_adapter
 from ..terminal import ttyd
@@ -190,43 +192,41 @@ def execute_stage_node(state: StoryState) -> StoryState:
 
 
 def poll_completion_node(state: StoryState) -> StoryState:
-    """Wait for CC to write .story-done/{story_key}/{stage}.json, or crash/timeout."""
+    """Wait for CC to write .story-done/{story_key}/{stage}.json.
+
+    Uses interrupt() to yield the worker thread when file not ready.
+    Watchdog resumes via graph.invoke(None, config).
+    """
     key = state["story_key"]
     stage = state["current_stage"]
     workspace = state["workspace"]
     session = ttyd.session_name(key)
     done_file = Path(workspace) / ".story-done" / key / f"{stage}.json"
-    deadline = state.get("stage_start_time", time.time()) + TIMEOUT_SECONDS
 
-    while time.time() < deadline:
-        # Channel 1: .done file exists → success
-        if done_file.exists():
-            try:
-                with open(done_file, "r") as f:
-                    file_lock(f)
-                    data = robust_json_parse(done_file)
-                done_file.unlink()  # clean up after read
-                state["context"].update(data)
-                # Apply expected_outputs from config
-                cfg = get_stage_config(state.get("profile", "minimal"), stage)
-                for field in cfg.get("expected_outputs", []):
-                    if field in data:
-                        db.update_context(key, field, str(data[field]))
-                return state
-            except Exception as e:
-                state["last_error"] = f"Failed to parse .done file: {e}"
-                return state
+    # Check tmux liveness
+    if not ttyd._tmux_session_alive(session):
+        state["last_error"] = "CC process crashed (tmux session dead)"
+        return state
 
-        # Channel 2: tmux session dead → crash
-        if not ttyd._tmux_session_alive(session):
-            state["last_error"] = "CC process crashed (tmux session dead)"
-            return state
+    # Check for done file
+    if not done_file.exists():
+        # Yield worker thread — Watchdog will resume when file appears
+        interrupt({"reason": "waiting_for_done_file", "stage": stage})
 
-        # Channel 3: not ready yet, wait
-        time.sleep(POLL_INTERVAL)
+    # File exists — parse it
+    try:
+        with open(done_file, "r") as f:
+            file_lock(f)
+            data = robust_json_parse(done_file)
+        done_file.unlink()
+        state["context"].update(data)
+        cfg = get_stage_config(state.get("profile", "minimal"), stage)
+        for field in cfg.get("expected_outputs", []):
+            if field in data:
+                db.update_context(key, field, str(data[field]))
+    except Exception as e:
+        state["last_error"] = f"Failed to parse .done file: {e}"
 
-    # Timeout
-    state["last_error"] = f"Stage timeout after {TIMEOUT_SECONDS}s"
     return state
 
 
@@ -349,7 +349,7 @@ def fail_node(state: StoryState) -> StoryState:
 
 
 def wait_confirm_node(state: StoryState) -> StoryState:
-    """Pause for human confirmation. Blocks until status is set back to active."""
+    """Pause for human confirmation. Yields thread via interrupt."""
     key = state["story_key"]
     db.update_story(key, status="paused")
     db.log_stage(
@@ -357,14 +357,16 @@ def wait_confirm_node(state: StoryState) -> StoryState:
     )
     state["status"] = "paused"
 
-    # Poll DB until user resumes (story resume / API advance sets status back to active)
-    while True:
-        s = db.get_story(key)
-        if s and s["status"] == "active":
-            state["status"] = "active"
-            state["execution_count"] = 0
-            return state
-        time.sleep(POLL_INTERVAL)
+    # Yield thread — Watchdog or user action will resume
+    interrupt({"reason": "waiting_for_confirmation", "stage": state["current_stage"]})
+
+    # Resumed — check if user set status back to active
+    s = db.get_story(key)
+    if s and s["status"] == "active":
+        state["status"] = "active"
+        state["execution_count"] = 0
+
+    return state
 
 
 # -------- prompt rendering --------

@@ -23,7 +23,6 @@ from ..db import models as db
 STORY_HOME = Path.home() / ".story-lifecycle"
 checkpoint_db = STORY_HOME / "checkpoint.db"
 
-# Thread pool for parallel story execution
 _executor = ThreadPoolExecutor(max_workers=4)
 
 
@@ -31,7 +30,6 @@ def build_graph() -> StateGraph:
     """Build and return the Story Lifecycle StateGraph."""
     graph = StateGraph(StoryState)
 
-    # Nodes
     graph.add_node("execute_stage", execute_stage_node)
     graph.add_node("poll_completion", poll_completion_node)
     graph.add_node("router", router_node)
@@ -41,11 +39,9 @@ def build_graph() -> StateGraph:
     graph.add_node("fail_stage", fail_node)
     graph.add_node("wait_confirm", wait_confirm_node)
 
-    # Edges
     graph.add_edge(START, "execute_stage")
     graph.add_edge("execute_stage", "poll_completion")
 
-    # Conditional: router decides next step
     graph.add_conditional_edges(
         "poll_completion",
         router_node,
@@ -58,23 +54,27 @@ def build_graph() -> StateGraph:
         },
     )
 
-    # After action, loop back or end
-    graph.add_edge("advance", "execute_stage")  # next stage
-    graph.add_edge("retry", "execute_stage")  # redo current
-    graph.add_edge("skip_stage", "advance")  # skip → advance
-    graph.add_edge("fail_stage", END)  # blocked
-    graph.add_edge("wait_confirm", "execute_stage")  # confirmed → re-execute stage
+    graph.add_edge("advance", "execute_stage")
+    graph.add_edge("retry", "execute_stage")
+    graph.add_edge("skip_stage", "advance")
+    graph.add_edge("fail_stage", END)
+    graph.add_edge("wait_confirm", "execute_stage")
 
     return graph
 
 
+def get_compiled_graph():
+    """Return a compiled graph with SQLite checkpointer. Thread-safe."""
+    checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
+    saver = SqliteSaver.from_conn_string(str(checkpoint_db))
+    return build_graph().compile(checkpointer=saver)
+
+
 def run_story(story_key: str):
-    """Run a story's lifecycle in a dedicated thread. Blocks until completion."""
+    """Run a story's lifecycle. Blocks until interrupt or END."""
     story = db.get_story(story_key)
     if not story:
         return
-
-    graph = build_graph()
 
     initial_state: StoryState = {
         "story_key": story["story_key"],
@@ -91,10 +91,15 @@ def run_story(story_key: str):
     }
 
     config = {"configurable": {"thread_id": story_key}}
+    compiled = get_compiled_graph()
+    compiled.invoke(initial_state, config)
 
-    checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
-    with SqliteSaver.from_conn_string(str(checkpoint_db)) as saver:
-        graph.compile(checkpointer=saver).invoke(initial_state, config)
+
+def resume_story(story_key: str):
+    """Resume a story from interrupt. Non-blocking in TUI (called by Watchdog)."""
+    config = {"configurable": {"thread_id": story_key}}
+    compiled = get_compiled_graph()
+    compiled.invoke(None, config)
 
 
 def start_story_async(story_key: str):
