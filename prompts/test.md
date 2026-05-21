@@ -1,13 +1,19 @@
-运行编译验证和冒烟测试。
+运行编译验证和测试。
 
-## Story 信息
+## 任务信息
 
 - Story Key: {story_key}
 - 标题: {title}
 
+## 步骤
+
+1. 确认代码已正确修改
+2. 运行项目编译命令，确认无编译错误
+3. 如果有测试，运行冒烟测试
+
 ## 完成后
 
-将结果写入 `.story-done/test.json`：
+将结果写入项目根目录下的 `.story-done/test.json`：
 
 ```json
 {
@@ -17,4 +23,4 @@
 }
 ```
 
-> 文件必须只包含纯 JSON。
+> CRITICAL: The file must contain ONLY raw JSON. No markdown code blocks.

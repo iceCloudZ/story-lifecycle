@@ -1,28 +1,32 @@
-调用 /brainstorming skill 进行需求分析与方案设计。
+对需求进行分析与方案设计。
 
-## Story 信息
+## 任务信息
 
 - Story Key: {story_key}
 - 标题: {title}
 {prd_path_section}
 
+## 步骤
+
+1. 阅读项目中已有的相关文档（PRD、设计文档等）
+2. 分析需求范围，确定复杂度（S=小需求≤3文件, M=中等4-8文件, L=大需求>8文件或跨服务）和影响范围
+3. 将设计文档写入项目 `docs/` 目录
+
 ## 完成后
 
-将分析结果写入**项目根目录**下的 `.story-done/design.json`：
+将结果写入项目根目录下的 `.story-done/design.json`：
 
 ```json
 {
-  "spec_path": "docs/specs/STORY-XXX-design.md",
+  "spec_path": "设计文档路径",
   "complexity": "S|M|L",
-  "affected_services": ["hc-user"],
   "summary": "简要分析摘要"
 }
 ```
 
-> 文件必须只包含纯 JSON，不要用 markdown 代码块包裹。
-> 系统会自动检测该文件并推进到下一阶段。
+> CRITICAL: The file must contain ONLY raw JSON. No markdown code blocks, no explanations. Pure JSON only — otherwise the system fails.
 
 ## 边界
 
-- 完成后写 `.story-done/design.json` 然后停止
-- **不要执行后续任何阶段**
+- 只做分析和文档，写完 `.story-done/design.json` 就停止
+- 不要安装依赖、不要修改代码、不要执行后续阶段
