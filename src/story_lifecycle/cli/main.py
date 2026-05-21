@@ -137,15 +137,27 @@ def new(story_key, title, profile, workspace, content):
 
 
 @cli.command()
-def board():
+@click.option(
+    "--no-tui", is_flag=True, help="Static table mode (for non-interactive terminals)"
+)
+def board(no_tui):
     """Show all active stories in a dashboard."""
+    if no_tui or not sys.stdout.isatty():
+        _board_static()
+        return
+
     try:
-        client = _get_client()
-        resp = client.get("/api/story")
-        stories = resp.json() if resp.status_code == 200 else []
-    except Exception:
-        # Fallback to direct DB read
-        stories = db.list_active_stories()
+        from .tui import run_tui
+
+        run_tui()
+    except ImportError:
+        console.print("[yellow]textual not installed. Falling back to static mode.[/]")
+        _board_static()
+
+
+def _board_static():
+    """Static table fallback."""
+    stories = db.list_active_stories()
 
     if not stories:
         console.print("[dim]No active stories. Create one with: story new <KEY>[/]")
@@ -164,7 +176,7 @@ def board():
             "active": "[bold green]> active[/]",
             "paused": "[bold yellow]|| paused[/]",
             "blocked": "[bold red]X blocked[/]",
-            "completed": "[bold blue]OK completed[/]",
+            "completed": "[dim green]OK done[/]",
         }.get(s.get("status", ""), s.get("status", ""))
 
         table.add_row(
