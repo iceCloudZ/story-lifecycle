@@ -175,22 +175,18 @@ class TestWaitConfirmLoop:
         pf.unlink(missing_ok=True)
 
     def test_pause_then_resume_completes(self, tmp_path, confirm_profile):
-        # Use global DB for this test — wait_confirm_node polls via db.get_story
-        # which uses the real DB path. The tmp_path DB mock only works for
-        # direct db calls in the main thread.
-        db.init_db()
         key = "E2E-CONF-001"
         ws = tmp_path / "ws4"
         ws.mkdir()
 
-        db.create_story(key, f"e2e-{key}", str(ws), "e2e-confirm", "design")
+        _create_story(key, ws, profile="e2e-confirm")
 
+        # Run in background — will pause at wait_confirm
         _run_in_thread(key)
 
-        s = _poll_db(key, lambda s: s["status"] == "paused", timeout=15)
-        if s["status"] != "paused":
-            pytest.skip(f"Story did not reach paused (got {s['status']})")
-        assert s["status"] == "paused"
+        # Wait for paused state
+        s = _poll_db(key, lambda s: s["status"] == "paused", timeout=10)
+        assert s["status"] == "paused", f"expected paused, got {s['status']}"
 
         # Write .done file, then resume
         _write_done(ws, key, "design", {
