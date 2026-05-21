@@ -125,8 +125,10 @@ def _ttyd_running(port: int) -> bool:
         return False
 
 
-def send_keys(session: str, keys: str):
-    _run(["tmux", "send-keys", "-t", session, keys])
+def send_keys(session: str, *keys: str):
+    """Send keys to tmux. Separate arguments are sent as separate tmux send-keys args.
+       Use the literal string 'Enter' to press Enter (must be a separate arg)."""
+    _run(["tmux", "send-keys", "-t", session, *keys])
 
 
 def capture_pane(session: str, lines: int = 20) -> str:

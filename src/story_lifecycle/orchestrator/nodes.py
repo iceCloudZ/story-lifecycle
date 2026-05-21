@@ -154,7 +154,7 @@ def execute_stage_node(state: StoryState) -> StoryState:
 
     # 6. Launch CC
     launch = adapter.launch_cmd(model)
-    ttyd.send_keys(session, f"{launch} Enter")
+    ttyd.send_keys(session, launch, "Enter")
     time.sleep(4)  # wait for CC to initialize
 
     # 7. Inject prompt via tmux buffer
