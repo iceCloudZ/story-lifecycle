@@ -343,13 +343,24 @@ Story: {state['story_key']}
 
     # Variable substitution
     ctx = state.get("context", {})
+    has_prd = bool(ctx.get("prd_path"))
+
     vars_map = {
         "{story_key}": state["story_key"],
         "{title}": state.get("title", ""),
         "{prd_path}": ctx.get("prd_path", ""),
         "{prd_path_section}": (
-            f"- PRD 路径: {ctx['prd_path']}\n- 请先读取 PRD 文件：cat {ctx['prd_path']}"
-            if ctx.get("prd_path") else ""
+            f"- PRD 文件: {ctx['prd_path']}\n  请读取该文件了解需求详情。"
+            if has_prd else ""
+        ),
+        "{no_prd_section}": (
+            "" if has_prd else
+            "**没有提供 PRD 文件。请先向用户询问需求详情，了解清楚后再继续。**\n"
+            "- 用户可能提供 TAPD/Jira 链接、文字描述、或其他文档\n"
+            "- 如果用户有 TAPD story，请要求用户提供 story ID"
+        ),
+        "{requirement_source}": (
+            "阅读 PRD 文件" if has_prd else "与用户对话，获取需求详情"
         ),
         "{spec_path_section}": (
             f"- Spec 路径: {ctx['spec_path']}" if ctx.get("spec_path") else ""
