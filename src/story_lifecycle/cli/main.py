@@ -199,6 +199,13 @@ def status(story_key):
     if s.get("lastError"):
         console.print(f"  [red]Error:   {s['lastError']}[/]")
 
+    # Show LLM router status
+    from ..orchestrator.router import llm_is_available
+    if llm_is_available():
+        console.print(f"  [dim]LLM Router: enabled[/]")
+    else:
+        console.print(f"  [dim]LLM Router: disabled (set STORY_LLM_API_KEY to enable)[/]")
+
 
 # -------- story skip --------
 
@@ -231,6 +238,23 @@ def fail(story_key, reason):
         resp = client.put(f"/api/story/{story_key}/fail", json={"reason": reason})
         if resp.status_code == 200:
             console.print(f"[yellow]Marked {story_key} as blocked[/]")
+        else:
+            console.print(f"[red]Failed: {resp.json()}[/]")
+    except Exception as e:
+        console.print(f"[red]Failed: {e}[/]")
+
+
+# -------- story resume --------
+
+@cli.command()
+@click.argument("story_key")
+def resume(story_key):
+    """Resume a paused or blocked story."""
+    try:
+        client = _get_client()
+        resp = client.put(f"/api/story/{story_key}/advance", json={"description": "Resumed by user"})
+        if resp.status_code == 200:
+            console.print(f"[green]Resumed {story_key}[/]")
         else:
             console.print(f"[red]Failed: {resp.json()}[/]")
     except Exception as e:

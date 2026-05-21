@@ -12,6 +12,7 @@ import yaml
 from ..db import models as db
 from ..adapters import get_adapter
 from ..terminal import ttyd
+from . import router as llm_router
 
 # Cross-platform file lock
 if os.name == 'nt':
@@ -221,20 +222,29 @@ def poll_completion_node(state: StoryState) -> StoryState:
 # -------- node: router --------
 
 def router_node(state: StoryState) -> str:
-    """Decide next action. Phase 1: pure if-else, no LLM."""
-    if state.get("last_error"):
-        # Unhappy path — for now, just fail
-        max_retries = get_stage_config(state.get("profile", "minimal"),
-                                       state["current_stage"]).get("max_retries", 2)
-        if state.get("execution_count", 0) < max_retries:
-            return "retry"
-        return "fail"
+    """Decide next action. Happy path: direct advance. Unhappy path: LLM router."""
+    # Happy path — no error, no confirm needed
+    if not state.get("last_error"):
+        cfg = get_stage_config(state.get("profile", "minimal"), state["current_stage"])
+        if cfg.get("confirm"):
+            return "wait_confirm"
+        return "advance"
 
-    # Happy path
+    # Unhappy path — call LLM router (or rule-based fallback)
     cfg = get_stage_config(state.get("profile", "minimal"), state["current_stage"])
-    if cfg.get("confirm"):
-        return "wait_confirm"
-    return "advance"
+    decision = llm_router.route(state, cfg)
+
+    state["_router_decision"] = decision
+
+    action = decision.get("action", "fail")
+    if action == "retry":
+        if decision.get("provider_override"):
+            state["context"]["_provider"] = decision["provider_override"]
+        return "retry"
+    elif action == "skip":
+        return "skip"
+    else:
+        return "fail"
 
 
 # -------- node: advance --------
