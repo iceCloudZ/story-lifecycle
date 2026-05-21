@@ -44,15 +44,38 @@ def cli():
 @click.option("--title", "-t", default="", help="Story title")
 @click.option("--profile", "-p", default="minimal", help="Profile name (minimal, standard, custom)")
 @click.option("--workspace", "-w", default=None, help="Project workspace path (default: CWD)")
-@click.option("--content", "-c", default=None, help="Path to TAPD PRD markdown file")
+@click.option("--content", "-c", default=None, help="Path to PRD markdown file")
 def new(story_key, title, profile, workspace, content):
     """Create a new story and start the first stage."""
     ws = workspace or os.getcwd()
-
-    # Read PRD content if provided
     prd_content = ""
+
+    # Read PRD from --content flag
     if content:
         prd_content = Path(content).read_text(encoding="utf-8")
+
+    # If no PRD provided, ask user interactively
+    if not prd_content:
+        console.print("\n[bold yellow]No PRD provided.[/]")
+        console.print("The AI needs requirements to work with.\n")
+        console.print("  [1] Paste PRD content directly (type or paste, then Ctrl+D)")
+        console.print("  [2] Provide path to PRD markdown file")
+        console.print("  [3] Skip for now (AI will ask you in the terminal)\n")
+
+        choice = click.prompt("Choice", type=int, default=3)
+        if choice == 1:
+            console.print("[dim]Paste PRD content (Ctrl+D or Ctrl+Z when done):[/]")
+            lines = []
+            try:
+                while True:
+                    line = input()
+                    lines.append(line)
+            except EOFError:
+                pass
+            prd_content = "\n".join(lines)
+        elif choice == 2:
+            path = click.prompt("PRD file path", type=str)
+            prd_content = Path(path).read_text(encoding="utf-8")
 
     try:
         client = _get_client()
@@ -61,12 +84,13 @@ def new(story_key, title, profile, workspace, content):
             "title": title,
             "content": prd_content,
             "profile": profile,
+            "workspace": ws,
         })
         if resp.status_code != 200:
             console.print(f"[red]Error: {resp.json().get('detail', 'Unknown')}[/]")
             return
         data = resp.json()
-        console.print(f"[green]Story created: {data['storyKey']}[/]")
+        console.print(f"\n[green]Story created: {data['storyKey']}[/]")
         console.print(f"  Stage: {data['currentStage']}")
         console.print(f"  Workspace: {data['workspace']}")
         console.print(f"\n  Open terminal: [bold]story enter {data['storyKey']}[/]")
