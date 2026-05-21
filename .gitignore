@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Story Lifecycle local data (user-level, not in repo)
+.story/
+story.db
+checkpoint.db
+
+# OS
+.DS_Store
+Thumbs.db

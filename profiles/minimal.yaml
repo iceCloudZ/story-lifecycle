@@ -1,0 +1,34 @@
+# Story Lifecycle — Minimal Profile (3 stages)
+# Default profile for quick iterations
+version: 2
+cli: claude
+
+stages:
+  design:
+    order: 1
+    description: "需求分析与方案设计"
+    skill: "/brainstorming"
+    confirm: false
+    max_retries: 2
+    allowed_providers: [deepseek, zhipu]
+    expected_outputs:
+      - spec_path
+      - complexity
+    next_default: [implement]
+
+  implement:
+    order: 2
+    description: "编码实现"
+    confirm: false
+    max_retries: 3
+    allowed_providers: [deepseek, zhipu, anthropic]
+    expected_outputs: []
+    next_default: [test]
+
+  test:
+    order: 3
+    description: "编译验证与冒烟测试"
+    confirm: false
+    max_retries: 2
+    expected_outputs: []
+    next_default: []
