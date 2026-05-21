@@ -1,10 +1,11 @@
 """Tests for the shared service layer."""
+
 import tempfile
-from pathlib import Path
 
 
 def test_import_service():
     from story_lifecycle.orchestrator.service import create_and_start_story
+
     assert callable(create_and_start_story)
 
 

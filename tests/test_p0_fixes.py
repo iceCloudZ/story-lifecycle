@@ -1,9 +1,7 @@
 """Tests for P0 fixes: .story-done/ path structure and wait_confirm loop."""
 
-import json
 import time
-from pathlib import Path
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -19,6 +17,7 @@ from story_lifecycle.orchestrator.nodes import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_state(**overrides) -> StoryState:
     base: StoryState = {
@@ -89,8 +88,9 @@ class TestDoneFilePath:
         mock_ttyd.session_name.return_value = "s-STORY-200"
 
         # STORY-200 should NOT see STORY-100's file
-        state = _make_state(story_key="STORY-200", current_stage="design",
-                            workspace=str(tmp_path))
+        state = _make_state(
+            story_key="STORY-200", current_stage="design", workspace=str(tmp_path)
+        )
         # Will timeout since no done file exists for STORY-200
         # Set stage_start_time to trigger timeout immediately
         state["stage_start_time"] = 0
@@ -111,10 +111,13 @@ class TestDoneFilePath:
         old_dir.mkdir(parents=True)
         (old_dir / "design.json").write_text('{"summary": "stale"}\n')
 
-        mock_ttyd._tmux_session_alive.return_value = False  # session dead → triggers error
+        mock_ttyd._tmux_session_alive.return_value = (
+            False  # session dead → triggers error
+        )
 
-        state = _make_state(story_key="STORY-123", current_stage="design",
-                            workspace=str(tmp_path))
+        state = _make_state(
+            story_key="STORY-123", current_stage="design", workspace=str(tmp_path)
+        )
         # With session dead, poll exits immediately with crash error
         result = poll_completion_node(state)
 
@@ -202,7 +205,9 @@ class TestPromptPaths:
     def test_default_prompt_has_story_key_path(self):
         """Fallback prompt (no template file) also includes story_key subdirectory."""
         state = _make_state(current_stage="unknown_stage", story_key="STORY-ABC")
-        with patch("story_lifecycle.orchestrator.nodes.Path.exists", return_value=False):
+        with patch(
+            "story_lifecycle.orchestrator.nodes.Path.exists", return_value=False
+        ):
             prompt = _render_prompt("unknown_stage", state)
         assert ".story-done/STORY-ABC/unknown_stage.json" in prompt
 

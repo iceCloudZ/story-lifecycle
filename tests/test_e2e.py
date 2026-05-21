@@ -47,8 +47,10 @@ def fast_timing(monkeypatch):
     monkeypatch.setattr(nodes, "POLL_INTERVAL", _FAST_POLL)
     # Speed up all sleeps in nodes module
     real_sleep = time.sleep
+
     def fast(secs):
         real_sleep(min(secs, 0.05))
+
     monkeypatch.setattr("time.sleep", fast)
 
 
@@ -97,14 +99,23 @@ class TestDoneFilePath:
         ws.mkdir()
 
         _create_story(key, ws)
-        _write_done(ws, key, "design", {
-            "spec_path": "docs/spec.md", "complexity": "S", "summary": "ok",
-        })
+        _write_done(
+            ws,
+            key,
+            "design",
+            {
+                "spec_path": "docs/spec.md",
+                "complexity": "S",
+                "summary": "ok",
+            },
+        )
 
         _run_in_thread(key)
 
         s = _poll_db(key, lambda s: s["current_stage"] == "implement")
-        assert s["current_stage"] == "implement", f"stage={s['current_stage']}, status={s['status']}"
+        assert s["current_stage"] == "implement", (
+            f"stage={s['current_stage']}, status={s['status']}"
+        )
         # .done file should be consumed
         assert not (ws / ".story-done" / key / "design.json").exists()
 
@@ -139,9 +150,16 @@ class TestDoneFilePath:
         _create_story(key_b, ws)
 
         # Only complete story A
-        _write_done(ws, key_a, "design", {
-            "spec_path": "docs/a.md", "complexity": "S", "summary": "A done",
-        })
+        _write_done(
+            ws,
+            key_a,
+            "design",
+            {
+                "spec_path": "docs/a.md",
+                "complexity": "S",
+                "summary": "A done",
+            },
+        )
 
         _run_in_thread(key_a)
         _run_in_thread(key_b)
@@ -189,9 +207,15 @@ class TestWaitConfirmLoop:
         assert s["status"] == "paused", f"expected paused, got {s['status']}"
 
         # Write .done file, then resume
-        _write_done(ws, key, "design", {
-            "spec_path": "docs/spec.md", "summary": "confirmed",
-        })
+        _write_done(
+            ws,
+            key,
+            "design",
+            {
+                "spec_path": "docs/spec.md",
+                "summary": "confirmed",
+            },
+        )
         db.update_story(key, status="active")
 
         # Should complete (no next stage in this profile)
