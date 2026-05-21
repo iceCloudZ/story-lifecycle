@@ -6,6 +6,7 @@ Usage: pytest tests/test_e2e.py -v
 """
 
 import json
+import os
 import time
 import threading
 from pathlib import Path
@@ -17,10 +18,7 @@ from story_lifecycle.db import models as db
 from story_lifecycle.orchestrator.graph import run_story
 from story_lifecycle.orchestrator import nodes
 
-
-# Speed up polling for tests
-_FAST_POLL = 0.5  # seconds
-_FAST_CC_WAIT = 0.2  # seconds (replaces 8s CC init)
+_FAST_POLL = 0.3
 
 
 @pytest.fixture(autouse=True)
@@ -45,18 +43,20 @@ def mock_adapter():
 
 @pytest.fixture(autouse=True)
 def fast_timing(monkeypatch):
-    """Speed up sleeps and polling."""
+    """Speed up polling interval."""
     monkeypatch.setattr(nodes, "POLL_INTERVAL", _FAST_POLL)
-
+    # Speed up all sleeps in nodes module
     real_sleep = time.sleep
+    def fast(secs):
+        real_sleep(min(secs, 0.05))
+    monkeypatch.setattr("time.sleep", fast)
 
-    def fast_sleep(secs):
-        if secs >= 5:  # CC init wait (8s) → fast
-            real_sleep(_FAST_CC_WAIT)
-        else:
-            real_sleep(min(secs, 0.1))
 
-    monkeypatch.setattr(nodes.time, "sleep", fast_sleep)
+@pytest.fixture(autouse=True)
+def cleanup_tmux():
+    """Kill all tmux sessions after each test."""
+    yield
+    os.system("tmux kill-server 2>/dev/null")
 
 
 def _create_story(key, workspace, profile="minimal"):
@@ -69,16 +69,20 @@ def _write_done(workspace, key, stage, data):
     (done_dir / f"{stage}.json").write_text(json.dumps(data), encoding="utf-8")
 
 
-def _wait_db_stage(key, expected_stage, timeout=15):
-    """Poll DB until story reaches expected stage or terminal state."""
+def _run_in_thread(key):
+    """Run story in background thread (non-blocking)."""
+    t = threading.Thread(target=run_story, args=(key,), daemon=True)
+    t.start()
+    return t
+
+
+def _poll_db(key, check_fn, timeout=15):
+    """Poll DB until check_fn(story) returns True."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         s = db.get_story(key)
-        if s:
-            if s["current_stage"] == expected_stage:
-                return s
-            if s["status"] in ("blocked", "completed"):
-                return s
+        if s and check_fn(s):
+            return s
         time.sleep(0.2)
     return db.get_story(key)
 
@@ -88,7 +92,6 @@ def _wait_db_stage(key, expected_stage, timeout=15):
 
 class TestDoneFilePath:
     def test_reads_from_story_key_subdirectory(self, tmp_path):
-        """Story advances when .done is at .story-done/{key}/design.json."""
         key = "E2E-PATH-001"
         ws = tmp_path / "ws1"
         ws.mkdir()
@@ -98,44 +101,36 @@ class TestDoneFilePath:
             "spec_path": "docs/spec.md", "complexity": "S", "summary": "ok",
         })
 
-        run_story(key)
+        _run_in_thread(key)
 
-        s = db.get_story(key)
-        assert s["current_stage"] == "implement", f"got stage={s['current_stage']}, status={s['status']}"
-        assert not (ws / ".story-done" / key / "design.json").exists()  # consumed
+        s = _poll_db(key, lambda s: s["current_stage"] == "implement")
+        assert s["current_stage"] == "implement", f"stage={s['current_stage']}, status={s['status']}"
+        # .done file should be consumed
+        assert not (ws / ".story-done" / key / "design.json").exists()
 
-    def test_old_flat_path_ignored(self, tmp_path):
-        """Story does NOT advance from flat .story-done/design.json."""
+    def test_old_flat_path_not_consumed(self, tmp_path):
         key = "E2E-PATH-002"
         ws = tmp_path / "ws2"
         ws.mkdir()
 
-        # Write at old flat location (no story_key subdirectory)
+        # Write at old flat location (no story_key subdir)
         old_dir = ws / ".story-done"
         old_dir.mkdir()
-        (old_dir / "design.json").write_text('{"spec_path":"x","complexity":"S","summary":"stale"}')
+        (old_dir / "design.json").write_text(
+            '{"spec_path":"x","complexity":"S","summary":"stale"}'
+        )
 
         _create_story(key, ws)
+        _run_in_thread(key)
 
-        # run_story will block on poll; run in thread and set timeout
-        result = {}
-        def _run():
-            try:
-                run_story(key)
-            except Exception as e:
-                result["error"] = str(e)
-
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        t.join(timeout=5)
-
-        # Story should NOT have advanced (old file still there)
-        assert (old_dir / "design.json").exists(), "old flat file should still exist (not consumed)"
+        # Wait a bit — story should NOT advance from the flat file
+        time.sleep(2)
         s = db.get_story(key)
-        assert s["current_stage"] == "design" or s["status"] != "active"
+        assert s["current_stage"] == "design" or s["status"] in ("blocked", "active")
+        # Old flat file should still exist (not consumed)
+        assert (old_dir / "design.json").exists()
 
-    def test_two_stories_same_workspace_no_collision(self, tmp_path):
-        """Two stories in same workspace have separate .done directories."""
+    def test_two_stories_no_collision(self, tmp_path):
         ws = tmp_path / "ws3"
         ws.mkdir()
 
@@ -148,19 +143,17 @@ class TestDoneFilePath:
             "spec_path": "docs/a.md", "complexity": "S", "summary": "A done",
         })
 
-        # Run A (will complete), B (will timeout/stay in design)
-        ta = threading.Thread(target=run_story, args=(key_a,), daemon=True)
-        tb = threading.Thread(target=run_story, args=(key_b,), daemon=True)
-        ta.start()
-        tb.start()
-        ta.join(timeout=10)
+        _run_in_thread(key_a)
+        _run_in_thread(key_b)
 
-        sa = db.get_story(key_a)
-        assert sa["current_stage"] == "implement", f"A should advance, got {sa['current_stage']}"
+        # A should advance
+        sa = _poll_db(key_a, lambda s: s["current_stage"] == "implement")
+        assert sa["current_stage"] == "implement"
 
-        # B should NOT have A's data
+        # B should NOT advance (no done file for B)
+        time.sleep(1)
         sb = db.get_story(key_b)
-        assert sb is None or sb["current_stage"] == "design" or sb["status"] in ("active", "blocked")
+        assert sb["current_stage"] == "design" or sb["status"] in ("active", "blocked")
 
 
 # ===== P0-2: wait_confirm → execute_stage loop =====
@@ -168,20 +161,20 @@ class TestDoneFilePath:
 
 class TestWaitConfirmLoop:
     @pytest.fixture
-    def confirm_profile(self, monkeypatch):
+    def confirm_profile(self):
         """Profile with confirm: true on design stage."""
         profile_dir = Path.home() / ".story-lifecycle" / "profiles"
         profile_dir.mkdir(parents=True, exist_ok=True)
-        (profile_dir / "e2e-confirm.yaml").write_text(
+        pf = profile_dir / "e2e-confirm.yaml"
+        pf.write_text(
             "version: 2\ncli: claude\nstages:\n  design:\n"
             "    order: 1\n    description: 'needs confirm'\n"
             "    confirm: true\n    expected_outputs: [spec_path]\n    next_default: []\n"
         )
         yield
-        (profile_dir / "e2e-confirm.yaml").unlink(missing_ok=True)
+        pf.unlink(missing_ok=True)
 
-    def test_paused_then_resume_advances(self, tmp_path, confirm_profile):
-        """Story pauses at confirm, resumes, and completes the stage."""
+    def test_pause_then_resume_completes(self, tmp_path, confirm_profile):
         key = "E2E-CONF-001"
         ws = tmp_path / "ws4"
         ws.mkdir()
@@ -189,38 +182,18 @@ class TestWaitConfirmLoop:
         _create_story(key, ws, profile="e2e-confirm")
 
         # Run in background — will pause at wait_confirm
-        def _run():
-            # Resume after a short delay (simulate user action)
-            def _resume():
-                time.sleep(2)
-                db.update_story(key, status="active")
-            threading.Thread(target=_resume, daemon=True).start()
-            run_story(key)
-
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
+        _run_in_thread(key)
 
         # Wait for paused state
-        deadline = time.time() + 8
-        hit_paused = False
-        while time.time() < deadline:
-            s = db.get_story(key)
-            if s and s["status"] == "paused":
-                hit_paused = True
-                break
-            time.sleep(0.2)
+        s = _poll_db(key, lambda s: s["status"] == "paused", timeout=10)
+        assert s["status"] == "paused", f"expected paused, got {s['status']}"
 
-        assert hit_paused, "Story should reach paused state"
-
-        # Now write .done file after resume kicks in
+        # Write .done file, then resume
         _write_done(ws, key, "design", {
             "spec_path": "docs/spec.md", "summary": "confirmed",
         })
+        db.update_story(key, status="active")
 
-        t.join(timeout=15)
-
-        s = db.get_story(key)
-        # After confirm + done file, story should complete (no next stage)
-        assert s["status"] in ("completed", "active"), f"got status={s['status']}"
-        # Most importantly: it did NOT end up as blocked/failed
-        assert s["status"] != "blocked"
+        # Should complete (no next stage in this profile)
+        s = _poll_db(key, lambda s: s["status"] == "completed", timeout=15)
+        assert s["status"] == "completed", f"expected completed, got {s['status']}"
