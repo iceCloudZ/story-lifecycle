@@ -1,7 +1,5 @@
 """Smoke tests — verify package imports and basic CLI registration."""
 
-import importlib
-
 
 def test_package_imports():
     import story_lifecycle
@@ -27,3 +25,19 @@ def test_profiles_load():
 
     profile = load_profile("minimal")
     assert "stages" in profile
+
+
+def test_service_imports():
+    from story_lifecycle.orchestrator.service import create_and_start_story
+
+    assert callable(create_and_start_story)
+
+
+def test_upsert_story():
+    from story_lifecycle.db.models import init_db, upsert_story, get_story
+
+    init_db()
+    upsert_story("SMOKE-001", title="Smoke test", workspace="/tmp", status="active")
+    s = get_story("SMOKE-001")
+    assert s is not None
+    assert s["story_key"] == "SMOKE-001"
