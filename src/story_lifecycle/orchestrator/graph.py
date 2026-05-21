@@ -8,8 +8,14 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .nodes import (
     StoryState,
-    execute_stage_node, poll_completion_node, router_node,
-    advance_node, retry_node, skip_node, fail_node, wait_confirm_node,
+    execute_stage_node,
+    poll_completion_node,
+    router_node,
+    advance_node,
+    retry_node,
+    skip_node,
+    fail_node,
+    wait_confirm_node,
 )
 from ..db import models as db
 
@@ -49,15 +55,15 @@ def build_graph() -> StateGraph:
             "skip": "skip_stage",
             "fail": "fail_stage",
             "wait_confirm": "wait_confirm",
-        }
+        },
     )
 
     # After action, loop back or end
-    graph.add_edge("advance", "execute_stage")     # next stage
-    graph.add_edge("retry", "execute_stage")        # redo current
-    graph.add_edge("skip_stage", "advance")         # skip → advance
-    graph.add_edge("fail_stage", END)               # blocked
-    graph.add_edge("wait_confirm", END)             # paused, resume manually
+    graph.add_edge("advance", "execute_stage")  # next stage
+    graph.add_edge("retry", "execute_stage")  # redo current
+    graph.add_edge("skip_stage", "advance")  # skip → advance
+    graph.add_edge("fail_stage", END)  # blocked
+    graph.add_edge("wait_confirm", END)  # paused, resume manually
 
     return graph
 

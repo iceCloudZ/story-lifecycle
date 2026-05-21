@@ -13,7 +13,7 @@ _next_port = BASE_PORT
 _story_ports: dict[str, int] = {}
 
 # Platform availability
-_WINDOWS = os.name == 'nt'
+_WINDOWS = os.name == "nt"
 _HAS_TMUX = False
 
 if not _WINDOWS:
@@ -72,10 +72,22 @@ def ensure_ttyd(story_key: str, workspace: str) -> str:
 
     if not _ttyd_running(port):
         subprocess.Popen(
-            ["ttyd", "--writable", "--port", str(port),
-             "--base-path", f"/ttyd-s/{port}/",
-             "tmux", "new-session", "-A", "-s", session],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            [
+                "ttyd",
+                "--writable",
+                "--port",
+                str(port),
+                "--base-path",
+                f"/ttyd-s/{port}/",
+                "tmux",
+                "new-session",
+                "-A",
+                "-s",
+                session,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         time.sleep(1)
 
     return f"/ttyd-s/{port}/"
@@ -99,8 +111,12 @@ def cleanup_orphaned_sessions():
     """Kill tmux sessions with no active story."""
     if not _HAS_TMUX:
         return
-    result = _run(["tmux", "list-sessions", "-F", "#{session_name}"],
-                  capture_output=True, text=True, timeout=5)
+    result = _run(
+        ["tmux", "list-sessions", "-F", "#{session_name}"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
     for line in result.stdout.strip().split("\n"):
         name = line.strip()
         if name and name.startswith("s-"):
@@ -127,11 +143,15 @@ def _ttyd_running(port: int) -> bool:
 
 def send_keys(session: str, *keys: str):
     """Send keys to tmux. Separate arguments are sent as separate tmux send-keys args.
-       Use the literal string 'Enter' to press Enter (must be a separate arg)."""
+    Use the literal string 'Enter' to press Enter (must be a separate arg)."""
     _run(["tmux", "send-keys", "-t", session, *keys])
 
 
 def capture_pane(session: str, lines: int = 20) -> str:
-    r = _run(["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{lines}"],
-             capture_output=True, text=True, timeout=5)
+    r = _run(
+        ["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{lines}"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
     return r.stdout or ""

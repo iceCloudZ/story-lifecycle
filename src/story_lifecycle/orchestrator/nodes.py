@@ -15,12 +15,14 @@ from ..terminal import ttyd
 from . import router as llm_router
 
 # Cross-platform file lock
-if os.name == 'nt':
+if os.name == "nt":
     import msvcrt
+
     def file_lock(f):
         msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
 else:
     import fcntl
+
     def file_lock(f):
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
 
@@ -45,6 +47,7 @@ class StoryState(TypedDict, total=False):
 
 
 # -------- stage config --------
+
 
 def load_profile(profile_name: str) -> dict:
     """Load a profile YAML. Searches: project .story/ → STORY_HOME → built-in."""
@@ -81,6 +84,7 @@ def resolve_next_stage(state: StoryState) -> Optional[str]:
 
 # -------- robust JSON parsing --------
 
+
 def robust_json_parse(filepath: Path) -> dict:
     """Parse .done JSON with tolerance for markdown wrapping."""
     raw = filepath.read_text(encoding="utf-8")
@@ -92,7 +96,7 @@ def robust_json_parse(filepath: Path) -> dict:
         pass
 
     # Strategy 2: extract first {...} object
-    m = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', raw, re.DOTALL)
+    m = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", raw, re.DOTALL)
     if m:
         try:
             return json.loads(m.group())
@@ -100,7 +104,7 @@ def robust_json_parse(filepath: Path) -> dict:
             pass
 
     # Strategy 3: try extracting between ```json fences
-    m = re.search(r'```json\s*\n(.*?)\n\s*```', raw, re.DOTALL)
+    m = re.search(r"```json\s*\n(.*?)\n\s*```", raw, re.DOTALL)
     if m:
         try:
             return json.loads(m.group(1))
@@ -112,6 +116,7 @@ def robust_json_parse(filepath: Path) -> dict:
 
 # -------- node: execute_stage --------
 
+
 def execute_stage_node(state: StoryState) -> StoryState:
     """Launch CC in tmux for the current stage."""
     key = state["story_key"]
@@ -121,7 +126,9 @@ def execute_stage_node(state: StoryState) -> StoryState:
 
     cfg = get_stage_config(profile, stage)
     adapter_name = cfg.get("cli", load_profile(profile).get("cli", "claude"))
-    provider = state.get("context", {}).get("_provider", cfg.get("provider", "deepseek"))
+    provider = state.get("context", {}).get(
+        "_provider", cfg.get("provider", "deepseek")
+    )
     model = cfg.get("model", "sonnet")
     adapter = get_adapter(adapter_name)
 
@@ -141,9 +148,12 @@ def execute_stage_node(state: StoryState) -> StoryState:
     # 4. Create tmux session if not alive (explicit -c for CWD)
     if not ttyd._tmux_session_alive(session):
         import subprocess
+
         subprocess.run(
             ["tmux", "new-session", "-d", "-s", session, "-c", workspace],
-            capture_output=True, timeout=10)
+            capture_output=True,
+            timeout=10,
+        )
         time.sleep(0.5)
 
     # 5. Render and inject prompt
@@ -158,8 +168,12 @@ def execute_stage_node(state: StoryState) -> StoryState:
 
     # 7. Inject prompt via tmux buffer
     buf = f"sp-{key}"
-    subprocess.run(["tmux", "load-buffer", "-b", buf, str(prompt_file)], capture_output=True)
-    subprocess.run(["tmux", "paste-buffer", "-b", buf, "-t", session], capture_output=True)
+    subprocess.run(
+        ["tmux", "load-buffer", "-b", buf, str(prompt_file)], capture_output=True
+    )
+    subprocess.run(
+        ["tmux", "paste-buffer", "-b", buf, "-t", session], capture_output=True
+    )
     ttyd.send_keys(session, "Enter")
 
     # 8. Track state
@@ -168,13 +182,13 @@ def execute_stage_node(state: StoryState) -> StoryState:
     state["last_error"] = None
 
     db.log_stage(key, stage, "execute", f"Attempt {state['execution_count']}")
-    db.update_story(key, execution_count=state["execution_count"],
-                    last_error=None)
+    db.update_story(key, execution_count=state["execution_count"], last_error=None)
 
     return state
 
 
 # -------- node: poll_completion --------
+
 
 def poll_completion_node(state: StoryState) -> StoryState:
     """Wait for CC to write .story-done/{stage}.json, or crash/timeout."""
@@ -219,6 +233,7 @@ def poll_completion_node(state: StoryState) -> StoryState:
 
 # -------- node: router --------
 
+
 def router_node(state: StoryState) -> str:
     """Decide next action. Happy path: direct advance. Unhappy path: LLM router."""
     # Happy path — no error, no confirm needed
@@ -247,6 +262,7 @@ def router_node(state: StoryState) -> str:
 
 # -------- node: advance --------
 
+
 def advance_node(state: StoryState) -> StoryState:
     """Validate expected_outputs, then advance to next stage."""
     key = state["story_key"]
@@ -254,8 +270,9 @@ def advance_node(state: StoryState) -> StoryState:
     cfg = get_stage_config(state.get("profile", "minimal"), stage)
 
     # Schema guard: check expected_outputs
-    missing = [k for k in cfg.get("expected_outputs", [])
-               if k not in state.get("context", {})]
+    missing = [
+        k for k in cfg.get("expected_outputs", []) if k not in state.get("context", {})
+    ]
     if missing:
         state["last_error"] = f"Missing expected outputs: {missing}"
         return state  # goes back to router
@@ -278,15 +295,21 @@ def advance_node(state: StoryState) -> StoryState:
 
 # -------- node: retry --------
 
+
 def retry_node(state: StoryState) -> StoryState:
     """Prepare for retry. Clear error, keep count."""
     state["last_error"] = None
-    db.log_stage(state["story_key"], state["current_stage"], "retry",
-                 f"Retry {state.get('execution_count', 0) + 1}")
+    db.log_stage(
+        state["story_key"],
+        state["current_stage"],
+        "retry",
+        f"Retry {state.get('execution_count', 0) + 1}",
+    )
     return state
 
 
 # -------- node: skip --------
+
 
 def skip_node(state: StoryState) -> StoryState:
     """Skip current stage. Auto-fill expected_outputs with SKIPPED."""
@@ -305,28 +328,42 @@ def skip_node(state: StoryState) -> StoryState:
 
 # -------- node: fail --------
 
+
 def fail_node(state: StoryState) -> StoryState:
     """Mark story as blocked."""
-    db.update_story(state["story_key"], status="blocked",
-                    last_error=state.get("last_error", "Unknown error"))
-    db.log_stage(state["story_key"], state["current_stage"], "fail",
-                 state.get("last_error", "Unknown"))
+    db.update_story(
+        state["story_key"],
+        status="blocked",
+        last_error=state.get("last_error", "Unknown error"),
+    )
+    db.log_stage(
+        state["story_key"],
+        state["current_stage"],
+        "fail",
+        state.get("last_error", "Unknown"),
+    )
     state["status"] = "blocked"
     return state
 
 
 # -------- node: wait_confirm --------
 
+
 def wait_confirm_node(state: StoryState) -> StoryState:
     """Pause for human confirmation. Advances when status is set back to active."""
     db.update_story(state["story_key"], status="paused")
-    db.log_stage(state["story_key"], state["current_stage"], "pause",
-                 "Waiting for manual confirmation")
+    db.log_stage(
+        state["story_key"],
+        state["current_stage"],
+        "pause",
+        "Waiting for manual confirmation",
+    )
     state["status"] = "paused"
     return state
 
 
 # -------- prompt rendering --------
+
 
 def _render_prompt(stage: str, state: StoryState) -> str:
     """Render a prompt for the given stage. Reads built-in templates or falls back to defaults."""
@@ -343,8 +380,8 @@ def _render_prompt(stage: str, state: StoryState) -> str:
     if not template:
         # Default prompt
         template = f"""执行阶段: {stage}
-Story: {state['story_key']}
-标题: {state['title']}
+Story: {state["story_key"]}
+标题: {state["title"]}
 
 完成后将结果写入项目根目录下的 `.story-done/{stage}.json`。
 文件必须只包含纯 JSON，不要用 markdown 代码块包裹。"""
@@ -359,11 +396,13 @@ Story: {state['story_key']}
         "{prd_path}": ctx.get("prd_path", ""),
         "{prd_path_section}": (
             f"- PRD 文件: {ctx['prd_path']}\n  请读取该文件了解需求详情。"
-            if has_prd else ""
+            if has_prd
+            else ""
         ),
         "{no_prd_section}": (
-            "" if has_prd else
-            "**没有提供 PRD 文件。请先向用户询问需求详情，了解清楚后再继续。**\n"
+            ""
+            if has_prd
+            else "**没有提供 PRD 文件。请先向用户询问需求详情，了解清楚后再继续。**\n"
             "- 用户可能提供 TAPD/Jira 链接、文字描述、或其他文档\n"
             "- 如果用户有 TAPD story，请要求用户提供 story ID"
         ),

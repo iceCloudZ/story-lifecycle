@@ -13,5 +13,7 @@ def get_adapter(name: str) -> BaseAdapter:
     }
     cls = adapters.get(name.lower())
     if not cls:
-        raise ValueError(f"Unknown CLI adapter: {name}. Available: {list(adapters.keys())}")
+        raise ValueError(
+            f"Unknown CLI adapter: {name}. Available: {list(adapters.keys())}"
+        )
     return cls()

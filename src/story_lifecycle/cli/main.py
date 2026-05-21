@@ -27,6 +27,7 @@ console = Console()
 def _get_client():
     """Lazy import httpx to avoid dependency on CLI startup."""
     import httpx
+
     server = os.environ.get("STORY_SERVER", "http://127.0.0.1:8180")
     return httpx.Client(base_url=server)
 
@@ -41,6 +42,7 @@ def cli():
 
 # -------- story setup --------
 
+
 @cli.command()
 def setup():
     """Configure LLM API key and model (first-run wizard)."""
@@ -48,6 +50,7 @@ def setup():
 
 
 # -------- story doctor --------
+
 
 @cli.command()
 def doctor():
@@ -57,11 +60,19 @@ def doctor():
 
 # -------- story new --------
 
+
 @cli.command()
 @click.argument("story_key")
 @click.option("--title", "-t", default="", help="Story title")
-@click.option("--profile", "-p", default="minimal", help="Profile name (minimal, standard, custom)")
-@click.option("--workspace", "-w", default=None, help="Project workspace path (default: CWD)")
+@click.option(
+    "--profile",
+    "-p",
+    default="minimal",
+    help="Profile name (minimal, standard, custom)",
+)
+@click.option(
+    "--workspace", "-w", default=None, help="Project workspace path (default: CWD)"
+)
 @click.option("--content", "-c", default=None, help="Path to PRD markdown file")
 def new(story_key, title, profile, workspace, content):
     """Create a new story and start the first stage."""
@@ -97,13 +108,16 @@ def new(story_key, title, profile, workspace, content):
 
     try:
         client = _get_client()
-        resp = client.post("/api/story", json={
-            "key": story_key,
-            "title": title,
-            "content": prd_content,
-            "profile": profile,
-            "workspace": ws,
-        })
+        resp = client.post(
+            "/api/story",
+            json={
+                "key": story_key,
+                "title": title,
+                "content": prd_content,
+                "profile": profile,
+                "workspace": ws,
+            },
+        )
         if resp.status_code != 200:
             console.print(f"[red]Error: {resp.json().get('detail', 'Unknown')}[/]")
             return
@@ -114,10 +128,13 @@ def new(story_key, title, profile, workspace, content):
         console.print(f"\n  Open terminal: [bold]story enter {data['storyKey']}[/]")
     except Exception as e:
         console.print(f"[red]Failed to connect to orchestrator: {e}[/]")
-        console.print("[yellow]Is the orchestrator running? ('story serve' in another terminal)[/]")
+        console.print(
+            "[yellow]Is the orchestrator running? ('story serve' in another terminal)[/]"
+        )
 
 
 # -------- story board --------
+
 
 @cli.command()
 def board():
@@ -160,10 +177,13 @@ def board():
         )
 
     console.print(table)
-    console.print("\n[dim]Commands: story new | story enter <key> | story skip <key> --stage <name> | story fail <key>[/]")
+    console.print(
+        "\n[dim]Commands: story new | story enter <key> | story skip <key> --stage <name> | story fail <key>[/]"
+    )
 
 
 # -------- story enter --------
+
 
 @cli.command()
 @click.argument("story_key")
@@ -193,6 +213,7 @@ def enter(story_key):
 
 # -------- story status --------
 
+
 @cli.command()
 @click.argument("story_key")
 def status(story_key):
@@ -219,13 +240,17 @@ def status(story_key):
 
     # Show LLM router status
     from ..orchestrator.router import llm_is_available
+
     if llm_is_available():
         console.print("  [dim]LLM Router: enabled[/]")
     else:
-        console.print("  [dim]LLM Router: disabled (set STORY_LLM_API_KEY to enable)[/]")
+        console.print(
+            "  [dim]LLM Router: disabled (set STORY_LLM_API_KEY to enable)[/]"
+        )
 
 
 # -------- story skip --------
+
 
 @cli.command()
 @click.argument("story_key")
@@ -235,7 +260,9 @@ def skip(story_key, stage, reason):
     """Skip a stage and continue to the next one."""
     try:
         client = _get_client()
-        resp = client.put(f"/api/story/{story_key}/skip/{stage}", json={"reason": reason})
+        resp = client.put(
+            f"/api/story/{story_key}/skip/{stage}", json={"reason": reason}
+        )
         if resp.status_code == 200:
             console.print(f"[green]Skipped {stage} for {story_key}[/]")
         else:
@@ -245,6 +272,7 @@ def skip(story_key, stage, reason):
 
 
 # -------- story fail --------
+
 
 @cli.command()
 @click.argument("story_key")
@@ -264,13 +292,16 @@ def fail(story_key, reason):
 
 # -------- story resume --------
 
+
 @cli.command()
 @click.argument("story_key")
 def resume(story_key):
     """Resume a paused or blocked story."""
     try:
         client = _get_client()
-        resp = client.put(f"/api/story/{story_key}/advance", json={"description": "Resumed by user"})
+        resp = client.put(
+            f"/api/story/{story_key}/advance", json={"description": "Resumed by user"}
+        )
         if resp.status_code == 200:
             console.print(f"[green]Resumed {story_key}[/]")
         else:
@@ -280,6 +311,7 @@ def resume(story_key):
 
 
 # -------- story serve --------
+
 
 @cli.command()
 @click.option("--host", default="127.0.0.1", help="Bind address")
@@ -295,8 +327,7 @@ def serve(host, port):
     console.print(f"[green]Starting Story Lifecycle orchestrator on {host}:{port}[/]")
     console.print(f"[dim]Data directory: {db.get_db_path().parent}[/]")
     uvicorn.run(
-        "story_lifecycle.orchestrator.api:app",
-        host=host, port=port, reload=False
+        "story_lifecycle.orchestrator.api:app", host=host, port=port, reload=False
     )
 
 

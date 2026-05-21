@@ -21,7 +21,11 @@ PRESET_PROVIDERS = {
     "2": {
         "name": "anthropic",
         "base_url": "https://api.anthropic.com",
-        "models": ["claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-haiku-4-5-20251001"],
+        "models": [
+            "claude-sonnet-4-20250514",
+            "claude-opus-4-20250514",
+            "claude-haiku-4-5-20251001",
+        ],
     },
     "3": {
         "name": "openai",
@@ -59,16 +63,18 @@ def get_config() -> dict:
 def run_setup():
     """Interactive setup wizard. Idempotent — re-runs will update existing config."""
     console.print()
-    console.print(Panel.fit(
-        "[bold]Welcome to Story Lifecycle Manager![/]\n\n"
-        "This tool orchestrates AI coding assistants to take your story\n"
-        "from requirements all the way to production.\n\n"
-        "To get started, you'll need an LLM API key.\n"
-        "The orchestrator uses this for routing decisions (Phase 2),\n"
-        "and your AI coding tools (Claude Code, Codex, etc.) use their own keys.",
-        title="Setup",
-        border_style="green",
-    ))
+    console.print(
+        Panel.fit(
+            "[bold]Welcome to Story Lifecycle Manager![/]\n\n"
+            "This tool orchestrates AI coding assistants to take your story\n"
+            "from requirements all the way to production.\n\n"
+            "To get started, you'll need an LLM API key.\n"
+            "The orchestrator uses this for routing decisions (Phase 2),\n"
+            "and your AI coding tools (Claude Code, Codex, etc.) use their own keys.",
+            title="Setup",
+            border_style="green",
+        )
+    )
     console.print()
 
     # Step 1: Choose provider
@@ -96,10 +102,7 @@ def run_setup():
     masked = current_key[:8] + "****" if current_key else ""
     hint = f" (current: {masked})" if masked else ""
 
-    api_key = console.input(
-        f"API Key{hint}: ",
-        password=False
-    ).strip()
+    api_key = console.input(f"API Key{hint}: ", password=False).strip()
 
     if not api_key and current_key:
         api_key = current_key  # keep existing
@@ -154,15 +157,17 @@ def run_setup():
     os.environ["STORY_LLM_MODEL"] = model
 
     console.print()
-    console.print(Panel.fit(
-        f"[green]Setup complete![/]\n\n"
-        f"Provider: {provider_info['name']}\n"
-        f"Model: {model}\n"
-        f"Config: {CONFIG_FILE}\n\n"
-        f"Run [bold]story serve[/] to start the orchestrator.\n"
-        f"Re-run [bold]story setup[/] anytime to change settings.",
-        border_style="green",
-    ))
+    console.print(
+        Panel.fit(
+            f"[green]Setup complete![/]\n\n"
+            f"Provider: {provider_info['name']}\n"
+            f"Model: {model}\n"
+            f"Config: {CONFIG_FILE}\n\n"
+            f"Run [bold]story serve[/] to start the orchestrator.\n"
+            f"Re-run [bold]story setup[/] anytime to change settings.",
+            border_style="green",
+        )
+    )
 
 
 def save_config(config: dict):

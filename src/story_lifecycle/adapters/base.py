@@ -19,7 +19,7 @@ class BaseAdapter(ABC):
     @abstractmethod
     def inject_prompt(self, prompt: str, story_key: str, stage: str) -> str | None:
         """Return the shell command to inject a prompt into the running CLI,
-           or None if prompt injection is handled differently (e.g. message-file)."""
+        or None if prompt injection is handled differently (e.g. message-file)."""
         ...
 
     def cleanup(self, story_key: str, stage: str):

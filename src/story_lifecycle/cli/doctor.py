@@ -76,12 +76,15 @@ def _which(cmd: str) -> bool:
 
 def _check_python() -> bool:
     import sys
+
     return sys.version_info >= (3, 10)
 
 
 def _get_version(cmd: str) -> str:
     try:
-        r = subprocess.run([cmd, "--version"], capture_output=True, text=True, timeout=10)
+        r = subprocess.run(
+            [cmd, "--version"], capture_output=True, text=True, timeout=10
+        )
         return r.stdout.strip().split("\n")[0][:50]
     except Exception:
         return ""
@@ -102,7 +105,11 @@ def run_doctor():
 
     for key, tool in INFRA_TOOLS.items():
         ok = tool["check"]()
-        status = "[green]OK[/]" if ok else ("[red]MISS[/]" if tool.get("required") else "[dim]N/A[/]")
+        status = (
+            "[green]OK[/]"
+            if ok
+            else ("[red]MISS[/]" if tool.get("required") else "[dim]N/A[/]")
+        )
         version = _get_version(key) if ok else ""
         infra_table.add_row(status, tool["name"], version, tool.get("install", ""))
 
@@ -131,34 +138,40 @@ def run_doctor():
     # Summary
     console.print()
     if not available:
-        console.print(Panel(
-            "[yellow]No AI CLI tools detected.[/]\n\n"
-            "Install at least one:\n"
-            "  Claude Code: npm install -g @anthropic-ai/claude-code\n"
-            "  Codex CLI:   npm install -g @anthropic-ai/codex-cli\n"
-            "  Qoder CLI:   curl -fsSL https://qoder.com/install | bash\n"
-            "  Aider:       pip install aider-chat",
-            title="Warning",
-            border_style="yellow",
-        ))
+        console.print(
+            Panel(
+                "[yellow]No AI CLI tools detected.[/]\n\n"
+                "Install at least one:\n"
+                "  Claude Code: npm install -g @anthropic-ai/claude-code\n"
+                "  Codex CLI:   npm install -g @anthropic-ai/codex-cli\n"
+                "  Qoder CLI:   curl -fsSL https://qoder.com/install | bash\n"
+                "  Aider:       pip install aider-chat",
+                title="Warning",
+                border_style="yellow",
+            )
+        )
     else:
-        console.print(Panel(
-            f"[green]{len(available)} CLI tools available:[/] {', '.join(available)}\n\n"
-            f"Default CLI: [bold]{available[0]}[/]\n"
-            f"Change with: [bold]story setup[/] or edit [bold]~/.story-lifecycle/config.yaml[/]",
-            border_style="green",
-        ))
+        console.print(
+            Panel(
+                f"[green]{len(available)} CLI tools available:[/] {', '.join(available)}\n\n"
+                f"Default CLI: [bold]{available[0]}[/]\n"
+                f"Change with: [bold]story setup[/] or edit [bold]~/.story-lifecycle/config.yaml[/]",
+                border_style="green",
+            )
+        )
 
     # tmux/ttyd check
     if not INFRA_TOOLS["tmux"]["check"]() or not INFRA_TOOLS["ttyd"]["check"]():
         console.print()
-        console.print(Panel(
-            "[yellow]tmux and/or ttyd are missing.[/]\n\n"
-            "These are required for AI execution (terminal sharing).\n"
-            "Without them, CLI and DB operations will work, but the AI won't launch.\n\n"
-            "Linux:   sudo apt install tmux ttyd\n"
-            "macOS:   brew install tmux ttyd\n"
-            "Windows: Use WSL2 (see README for details)",
-            title="Warning",
-            border_style="yellow",
-        ))
+        console.print(
+            Panel(
+                "[yellow]tmux and/or ttyd are missing.[/]\n\n"
+                "These are required for AI execution (terminal sharing).\n"
+                "Without them, CLI and DB operations will work, but the AI won't launch.\n\n"
+                "Linux:   sudo apt install tmux ttyd\n"
+                "macOS:   brew install tmux ttyd\n"
+                "Windows: Use WSL2 (see README for details)",
+                title="Warning",
+                border_style="yellow",
+            )
+        )

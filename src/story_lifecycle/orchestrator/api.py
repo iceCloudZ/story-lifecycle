@@ -16,6 +16,7 @@ from .graph import start_story_async, recover_orphan_stories
 
 # -------- request/response models --------
 
+
 class CreateStoryRequest(BaseModel):
     key: str
     title: str = ""
@@ -34,14 +35,17 @@ class SkipRequest(BaseModel):
 
 # -------- app lifecycle --------
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     recovered = recover_orphan_stories()
     if recovered:
         import logging
+
         logging.getLogger("story-lifecycle").info(
-            f"Recovered {recovered} active stories after restart")
+            f"Recovered {recovered} active stories after restart"
+        )
     ttyd.cleanup_orphaned_sessions()
     yield
 
@@ -51,20 +55,26 @@ app = FastAPI(title="Story Lifecycle Manager", version="0.1.0", lifespan=lifespa
 
 # -------- story CRUD --------
 
+
 @app.get("/api/story")
 def list_stories():
     stories = db.list_active_stories()
-    return JSONResponse([{
-        "storyKey": s["story_key"],
-        "title": s["title"],
-        "currentStage": s["current_stage"],
-        "status": s["status"],
-        "complexity": s["complexity"],
-        "workspace": s["workspace"],
-        "profile": s["profile"],
-        "executionCount": s["execution_count"],
-        "updatedAt": s["updated_at"],
-    } for s in stories])
+    return JSONResponse(
+        [
+            {
+                "storyKey": s["story_key"],
+                "title": s["title"],
+                "currentStage": s["current_stage"],
+                "status": s["status"],
+                "complexity": s["complexity"],
+                "workspace": s["workspace"],
+                "profile": s["profile"],
+                "executionCount": s["execution_count"],
+                "updatedAt": s["updated_at"],
+            }
+            for s in stories
+        ]
+    )
 
 
 @app.get("/api/story/{story_key}")
@@ -72,19 +82,21 @@ def get_story(story_key: str):
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")
-    return JSONResponse({
-        "storyKey": s["story_key"],
-        "title": s["title"],
-        "currentStage": s["current_stage"],
-        "status": s["status"],
-        "complexity": s["complexity"],
-        "workspace": s["workspace"],
-        "profile": s["profile"],
-        "contextJson": s["context_json"],
-        "executionCount": s["execution_count"],
-        "lastError": s["last_error"],
-        "updatedAt": s["updated_at"],
-    })
+    return JSONResponse(
+        {
+            "storyKey": s["story_key"],
+            "title": s["title"],
+            "currentStage": s["current_stage"],
+            "status": s["status"],
+            "complexity": s["complexity"],
+            "workspace": s["workspace"],
+            "profile": s["profile"],
+            "contextJson": s["context_json"],
+            "executionCount": s["execution_count"],
+            "lastError": s["last_error"],
+            "updatedAt": s["updated_at"],
+        }
+    )
 
 
 @app.post("/api/story")
@@ -107,19 +119,23 @@ def create_story(req: CreateStoryRequest):
     )
 
     if req.content:
-        db.update_context(req.key, "prd_path", str(Path(workspace) / "prd" / f"{req.key}.md"))
+        db.update_context(
+            req.key, "prd_path", str(Path(workspace) / "prd" / f"{req.key}.md")
+        )
 
     # Fire and forget — start execution in background
     start_story_async(req.key)
 
-    return JSONResponse({
-        "id": s["id"],
-        "storyKey": s["story_key"],
-        "title": s["title"],
-        "currentStage": s["current_stage"],
-        "status": s["status"],
-        "workspace": s["workspace"],
-    })
+    return JSONResponse(
+        {
+            "id": s["id"],
+            "storyKey": s["story_key"],
+            "title": s["title"],
+            "currentStage": s["current_stage"],
+            "status": s["status"],
+            "workspace": s["workspace"],
+        }
+    )
 
 
 @app.put("/api/story/{story_key}/advance")
@@ -158,8 +174,9 @@ def fail_story(story_key: str, req: SkipRequest = None):
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")
-    db.update_story(story_key, status="blocked",
-                    last_error=req.reason if req else "Manual fail")
+    db.update_story(
+        story_key, status="blocked", last_error=req.reason if req else "Manual fail"
+    )
     return {"ok": True}
 
 
@@ -172,6 +189,7 @@ def delete_story(story_key: str):
 
 # -------- session / terminal --------
 
+
 @app.get("/api/session/terminal/{story_key}")
 def get_terminal(story_key: str):
     s = db.get_story(story_key)
@@ -179,11 +197,13 @@ def get_terminal(story_key: str):
         raise HTTPException(404, "Story not found")
 
     url = ttyd.ensure_ttyd(story_key, s["workspace"])
-    return JSONResponse({
-        "url": url,
-        "port": ttyd._story_ports.get(story_key, 0),
-        "session": ttyd.session_name(story_key),
-    })
+    return JSONResponse(
+        {
+            "url": url,
+            "port": ttyd._story_ports.get(story_key, 0),
+            "session": ttyd.session_name(story_key),
+        }
+    )
 
 
 @app.get("/api/session/health")

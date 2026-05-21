@@ -68,13 +68,13 @@ def _llm_route(state: dict, stage_config: dict) -> dict:
 
     prompt = f"""You are a workflow orchestrator. A development stage has encountered an error.
 
-Story: {state.get('story_key')}
-Stage: {state.get('current_stage')}
-Stage description: {stage_config.get('description', '')}
-Error: {state.get('last_error', 'Unknown')}
-Retried: {state.get('execution_count', 0)} times (max: {stage_config.get('max_retries', 2)})
-Context: {json.dumps(state.get('context', {}), ensure_ascii=False)}
-Available providers: {stage_config.get('allowed_providers', ['default'])}
+Story: {state.get("story_key")}
+Stage: {state.get("current_stage")}
+Stage description: {stage_config.get("description", "")}
+Error: {state.get("last_error", "Unknown")}
+Retried: {state.get("execution_count", 0)} times (max: {stage_config.get("max_retries", 2)})
+Context: {json.dumps(state.get("context", {}), ensure_ascii=False)}
+Available providers: {stage_config.get("allowed_providers", ["default"])}
 
 Decide the next action:
 - retry: retry this stage (you may suggest switching to a different provider)
