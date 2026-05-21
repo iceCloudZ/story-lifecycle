@@ -1,9 +1,7 @@
 """LangGraph node implementations — execute, poll, advance, skip, retry, fail."""
 
 import json
-import os
 import re
-import subprocess
 import time
 from pathlib import Path
 from typing import TypedDict, Optional
@@ -15,19 +13,8 @@ from langgraph.types import interrupt
 from ..db import models as db
 from ..adapters import get_adapter
 from ..terminal import ttyd
+from ..terminal.platform_ops import file_lock
 from . import router as llm_router
-
-# Cross-platform file lock
-if os.name == "nt":
-    import msvcrt
-
-    def file_lock(f):
-        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
-else:
-    import fcntl
-
-    def file_lock(f):
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
 
 
 TIMEOUT_SECONDS = 30 * 60  # 30 minutes per stage
@@ -121,7 +108,7 @@ def robust_json_parse(filepath: Path) -> dict:
 
 
 def execute_stage_node(state: StoryState) -> StoryState:
-    """Launch CC in tmux for the current stage."""
+    """Launch CC in a multiplexer session for the current stage."""
     key = state["story_key"]
     stage = state["current_stage"]
     workspace = state["workspace"]
@@ -139,42 +126,29 @@ def execute_stage_node(state: StoryState) -> StoryState:
     if provider:
         adapter.switch_provider(provider)
 
-    # 2. Ensure ttyd + tmux session (with correct CWD)
+    # 2. Ensure ttyd + session (with correct CWD)
     ttyd.ensure_ttyd(key, workspace)
 
     # 3. Stop existing CC in session
     session = ttyd.session_name(key)
-    if ttyd._tmux_session_alive(session):
+    if ttyd.session_alive(session):
         ttyd.send_keys(session, "C-c")
         time.sleep(0.5)
 
-    # 4. Create tmux session if not alive (explicit -c for CWD)
-    if not ttyd._tmux_session_alive(session):
-        subprocess.run(
-            ["tmux", "new-session", "-d", "-s", session, "-c", workspace],
-            capture_output=True,
-            timeout=10,
-        )
-        time.sleep(0.5)
+    # 4. Create session if not alive
+    if not ttyd.session_alive(session):
+        ttyd.create_session(session, workspace)
 
-    # 5. Render and inject prompt
+    # 5. Render prompt
     prompt = _render_prompt(stage, state)
-    prompt_file = Path(f"/tmp/storypilot-{key}-{stage}.md")
-    prompt_file.write_text(prompt, encoding="utf-8")
 
     # 6. Launch CC
     launch = adapter.launch_cmd(model)
     ttyd.send_keys(session, launch, "Enter")
     time.sleep(8)  # wait for CC to fully initialize
 
-    # 7. Inject prompt via tmux buffer
-    buf = f"sp-{key}"
-    subprocess.run(
-        ["tmux", "load-buffer", "-b", buf, str(prompt_file)], capture_output=True
-    )
-    subprocess.run(
-        ["tmux", "paste-buffer", "-b", buf, "-t", session], capture_output=True
-    )
+    # 7. Inject prompt via multiplexer paste
+    ttyd.paste_text(session, prompt)
     ttyd.send_keys(session, "Enter")
 
     # 8. Track state
@@ -203,9 +177,9 @@ def poll_completion_node(state: StoryState) -> StoryState:
     session = ttyd.session_name(key)
     done_file = Path(workspace) / ".story-done" / key / f"{stage}.json"
 
-    # Check tmux liveness
-    if not ttyd._tmux_session_alive(session):
-        state["last_error"] = "CC process crashed (tmux session dead)"
+    # Check session liveness
+    if not ttyd.session_alive(session):
+        state["last_error"] = "CC process crashed (session dead)"
         return state
 
     # Check for done file
@@ -409,12 +383,12 @@ Story: {state["story_key"]}
         "{no_prd_section}": (
             ""
             if has_prd
-            else "**没有提供 PRD 文件。请先向用户询问需求详情，了解清楚后再继续。**\n"
-            "- 用户可能提供 TAPD/Jira 链接、文字描述、或其他文档\n"
-            "- 如果用户有 TAPD story，请要求用户提供 story ID"
+            else "**没有提供 PRD 文件。**\n"
+            "1. 先扫描项目目录，查找已有的需求文档（`docs/`、`prd/`、`requirements/` 等），找到则直接使用\n"
+            "2. 如果没找到，向用户询问需求详情（TAPD/Jira 链接、文字描述、或其他文档）"
         ),
         "{requirement_source}": (
-            "阅读 PRD 文件" if has_prd else "与用户对话，获取需求详情"
+            "阅读 PRD 文件" if has_prd else "查找项目已有文档或与用户对话，获取需求详情"
         ),
         "{spec_path_section}": (
             f"- Spec 路径: {ctx['spec_path']}" if ctx.get("spec_path") else ""

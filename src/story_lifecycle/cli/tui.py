@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-import subprocess
+import os
+import tempfile
 from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll
-from textual.widgets import Static
+from textual.containers import VerticalScroll, Horizontal
+from textual.screen import ModalScreen
+from textual.widgets import Footer, Static, Input, Button
 from textual.reactive import reactive
 
 from ..db import models as db
@@ -17,20 +19,34 @@ from ..orchestrator.service import (
     pause_story,
     fail_story,
     skip_stage,
+    create_and_start_story,
+    delete_story,
 )
 from ..orchestrator.nodes import load_profile
+from ..terminal import ttyd
 
 
 class StoryCard(Static):
     """A single story card in the board."""
 
+    DEFAULT_CSS = """
+    StoryCard {
+        padding: 1 2;
+        height: auto;
+    }
+    StoryCard.selected {
+        background: $boost;
+    }
+    """
+
     def __init__(self, story: dict, selected: bool = False):
         self.story = story
         self._selected = selected
-        super().__init__()
+        super().__init__(classes="selected" if selected else "")
 
     def set_selected(self, selected: bool):
         self._selected = selected
+        self.set_class(selected, "selected")
         self.refresh()
 
     def render(self) -> str:
@@ -58,13 +74,13 @@ class StoryCard(Static):
             bar = stage
 
         cli_info = get_story_cli_model(key)
-        cli_line = f"  CLI: {cli_info['cli']} · Model: {cli_info['model']}"
+        cli_line = f"  [dim]CLI: {cli_info['cli']} · Model: {cli_info['model']}[/]"
 
         cursor = "[bold cyan]▸[/] " if self._selected else "  "
 
         lines = [
             f"{cursor}[bold cyan]{key}[/]  {title}",
-            f"  {bar}  {badge}  retries: {retries}",
+            f"  {bar}  {badge}  [dim]retries: {retries}[/]",
             cli_line,
         ]
 
@@ -136,38 +152,146 @@ def _render_detail(story: dict) -> str:
     return "\n".join(lines)
 
 
+class NewStoryDialog(ModalScreen):
+    """Modal dialog for creating a new story."""
+
+    CSS = """
+    NewStoryDialog {
+        align: center middle;
+    }
+    #dialog {
+        width: 60;
+        height: auto;
+        padding: 1 2;
+        background: $surface;
+        border: thick $accent;
+    }
+    #dialog Input {
+        margin: 1 0;
+    }
+    #dialog Static {
+        margin: 0 0 1 0;
+    }
+    #btn-row {
+        height: auto;
+        margin-top: 1;
+    }
+    #btn-row Button {
+        margin-right: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="dialog"):
+            yield Static("[bold]New Story[/]")
+            yield Static("Story Key:")
+            yield Input(placeholder="e.g. FEATURE-001", id="input-key")
+            yield Static("Title:")
+            yield Input(placeholder="e.g. Add user auth", id="input-title")
+            with Horizontal(id="btn-row"):
+                yield Button("Create", variant="success", id="btn-create")
+                yield Button("Cancel", variant="default", id="btn-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-create":
+            key = self.query_one("#input-key", Input).value.strip()
+            title = self.query_one("#input-title", Input).value.strip()
+            if key:
+                self.dismiss((key, title))
+            else:
+                self.query_one("#input-key", Input).focus()
+        else:
+            self.dismiss(None)
+
+    def on_mount(self):
+        self.query_one("#input-key", Input).focus()
+
+
+class ConfirmDialog(ModalScreen):
+    """Modal dialog for confirming a destructive action."""
+
+    CSS = """
+    ConfirmDialog {
+        align: center middle;
+    }
+    #confirm-dialog {
+        width: 50;
+        height: auto;
+        padding: 1 2;
+        background: $surface;
+        border: thick $error;
+    }
+    #confirm-dialog Static {
+        margin: 0 0 1 0;
+    }
+    #confirm-btn-row {
+        height: auto;
+        margin-top: 1;
+    }
+    #confirm-btn-row Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(self, message: str):
+        self._message = message
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="confirm-dialog"):
+            yield Static(f"[bold red]{self._message}[/]")
+            yield Static("This cannot be undone.")
+            with Horizontal(id="confirm-btn-row"):
+                yield Button("Delete", variant="error", id="btn-confirm-yes")
+                yield Button("Cancel", variant="default", id="btn-confirm-no")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "btn-confirm-yes")
+
+
 class StoryBoardApp(App):
     """Interactive story board TUI."""
 
     CSS = """
     Screen {
         layout: vertical;
+        background: $surface;
     }
+
     #header-bar {
-        height: 3;
-        padding: 0 1;
-        border-bottom: solid green;
+        height: 5;
+        padding: 1 2;
+        background: $boost;
+        border-bottom: solid $accent;
     }
+
     #story-list {
         height: 1fr;
-        padding: 0 1;
+        padding: 0;
         overflow-y: auto;
     }
+
     #detail-panel {
         height: 0;
-        padding: 0 1;
-        border-top: solid green;
+        padding: 1 2;
+        background: $panel;
+        border-top: tall $accent;
         display: none;
     }
     #detail-panel.visible {
         height: auto;
-        max-height: 12;
+        max-height: 14;
         display: block;
     }
+
     #footer-bar {
-        height: 2;
-        padding: 0 1;
-        border-top: solid green;
+        height: 1;
+        padding: 0 2;
+        color: $text-muted;
+    }
+
+    Footer {
+        dock: bottom;
     }
     """
 
@@ -183,6 +307,7 @@ class StoryBoardApp(App):
         Binding("r", "resume_story", "Resume"),
         Binding("shift+r", "refresh", "Refresh", key_display="R"),
         Binding("f5", "refresh", "Refresh"),
+        Binding("x", "delete_story", "Delete"),
         Binding("question_mark", "help", "Help", key_display="?"),
         Binding("q", "quit", "Quit"),
     ]
@@ -195,6 +320,7 @@ class StoryBoardApp(App):
         yield VerticalScroll(id="story-list")
         yield Static(id="detail-panel")
         yield Static(id="footer-bar")
+        yield Footer()
 
     def on_mount(self):
         self._watchdog_interval = 3
@@ -207,7 +333,7 @@ class StoryBoardApp(App):
         self.stories = db.list_active_stories()
         self._render()
 
-    def _render(self):
+    def _render(self, full: bool = True):
         from ..orchestrator.router import llm_is_available
         from .setup import get_config
 
@@ -215,54 +341,110 @@ class StoryBoardApp(App):
         provider = config.get("provider", "N/A")
         router_status = f"enabled ({provider})" if llm_is_available() else "disabled"
         active = len([s for s in self.stories if s["status"] == "active"])
+
         header = self.query_one("#header-bar")
         header.update(
-            f"[bold]Story Lifecycle[/]  ·  LLM Router: {router_status}  ·  Stories: {active} active"
+            "\n"
+            "  [bold cyan]◆[/] [bold white]Story[/][bold cyan]Lifecycle[/] "
+            f" [dim]│[/] Router: {router_status} [dim]│[/] Stories: {active} active"
         )
 
-        story_list = self.query_one("#story-list")
-        story_list.remove_children()
-        if not self.stories:
-            story_list.mount(
-                Static("[dim]No active stories. Press [n] to create one.[/]")
-            )
+        if full:
+            story_list = self.query_one("#story-list")
+            story_list.remove_children()
+            if not self.stories:
+                story_list.mount(
+                    Static("[dim]No active stories. Press [n] to create one.[/]")
+                )
+            else:
+                for i, s in enumerate(self.stories):
+                    card = StoryCard(s, selected=(i == self.selected_index))
+                    story_list.mount(card)
         else:
-            for i, s in enumerate(self.stories):
-                card = StoryCard(s, selected=(i == self.selected_index))
-                story_list.mount(card)
+            for i, card in enumerate(self.query(StoryCard)):
+                card.set_selected(i == self.selected_index)
 
         footer = self.query_one("#footer-bar")
-        if self.stories and 0 <= self.selected_index < len(self.stories):
-            key = self.stories[self.selected_index]["story_key"]
-            footer.update(
-                f"[n] new  [e] enter  [s] skip  [f] fail  [r] resume  [R] refresh  [?] help\n"
-                f"> {key} selected. Press Enter for actions."
-            )
-        else:
-            footer.update(
-                "[n] new  [e] enter  [s] skip  [f] fail  [r] resume  [R] refresh  [?] help"
-            )
+        footer.update(
+            " [dim][n] new  [e] enter  [s] skip  [f] fail  [x] delete  [r] resume  [R] refresh  [?] help[/]"
+        )
 
     def action_cursor_up(self):
         if self.selected_index > 0:
             self.selected_index -= 1
-            self._render()
+            self._render(full=False)
 
     def action_cursor_down(self):
         if self.stories and self.selected_index < len(self.stories) - 1:
             self.selected_index += 1
-            self._render()
+            self._render(full=False)
 
     def action_open_action_menu(self):
-        pass  # Direct key bindings serve as action shortcuts
+        self.action_toggle_detail()
 
     def action_enter_terminal(self):
         if not self.stories:
             return
         s = self.stories[self.selected_index]
-        session = f"s-{s['story_key']}"
-        self.suspend()
-        subprocess.run(["tmux", "attach", "-t", session])
+        session = ttyd.session_name(s["story_key"])
+        workspace = s.get("workspace", os.getcwd())
+
+        # Try to create the session on-the-fly if it doesn't exist
+        if not ttyd.session_alive(session):
+            ttyd.create_session(session, workspace)
+
+        if not ttyd.session_alive(session):
+            # No multiplexer available — launch AI CLI directly
+            self._launch_cli_direct(s, workspace)
+            return
+
+        attach = ttyd.attach_cmd(session)
+        try:
+            with self.suspend():
+                os.system(attach)
+        except Exception:
+            self.exit()
+            os.system(attach)
+            os.system("story board")
+
+    def _launch_cli_direct(self, s: dict, workspace: str):
+        """Fallback: launch AI CLI independently when no multiplexer is available."""
+        from ..adapters import get_adapter
+        from ..orchestrator.nodes import get_stage_config, _render_prompt
+
+        story_key = s["story_key"]
+        stage = s["current_stage"]
+        profile = s.get("profile", "minimal")
+
+        try:
+            cfg = get_stage_config(profile, stage)
+            profile_data = load_profile(profile)
+            adapter_name = cfg.get("cli", profile_data.get("cli", "claude"))
+            model = cfg.get("model", "sonnet")
+            adapter = get_adapter(adapter_name)
+
+            state = {
+                "story_key": story_key,
+                "title": s.get("title", ""),
+                "workspace": workspace,
+                "profile": profile,
+                "current_stage": stage,
+                "context": {},
+            }
+            prompt = _render_prompt(stage, state)
+
+            tmp = Path(tempfile.gettempdir()) / f"story-prompt-{story_key}-{stage}.md"
+            tmp.write_text(prompt, encoding="utf-8")
+
+            launch = adapter.launch_cmd(model)
+            db.log_stage(story_key, stage, "execute", "Direct launch (no multiplexer)")
+
+            ttyd.launch_cli(story_key, workspace, launch, str(tmp))
+        except Exception as e:
+            panel = self.query_one("#detail-panel")
+            panel.update(f"[red]Failed to launch CLI: {e}[/]")
+            panel.set_class(True, "visible")
+            self._show_detail = True
 
     def action_toggle_detail(self):
         self._show_detail = not self._show_detail
@@ -275,7 +457,83 @@ class StoryBoardApp(App):
             panel.set_class(False, "visible")
 
     def action_new_story(self):
-        pass  # Placeholder for new story dialog
+        def on_result(result):
+            if result is None:
+                return
+            key, title = result
+            try:
+                create_and_start_story(
+                    story_key=key,
+                    title=title,
+                    workspace=os.getcwd(),
+                )
+                self.refresh_stories()
+                # Auto-start first stage execution
+                self._start_stage(key)
+            except Exception as e:
+                panel = self.query_one("#detail-panel")
+                panel.update(f"[red]Failed to create story: {e}[/]")
+                panel.set_class(True, "visible")
+                self._show_detail = True
+
+        self.push_screen(NewStoryDialog(), on_result)
+
+    def _start_stage(self, story_key: str):
+        """Launch AI CLI for the current stage."""
+        from ..adapters import get_adapter
+        from ..orchestrator.nodes import get_stage_config, _render_prompt
+
+        s = db.get_story(story_key)
+        if not s:
+            return
+        stage = s["current_stage"]
+        workspace = s["workspace"]
+        profile = s.get("profile", "minimal")
+
+        try:
+            cfg = get_stage_config(profile, stage)
+            profile_data = load_profile(profile)
+            adapter_name = cfg.get("cli", profile_data.get("cli", "claude"))
+            model = cfg.get("model", "sonnet")
+            adapter = get_adapter(adapter_name)
+
+            state = {
+                "story_key": story_key,
+                "title": s.get("title", ""),
+                "workspace": workspace,
+                "profile": profile,
+                "current_stage": stage,
+                "context": {},
+            }
+            prompt = _render_prompt(stage, state)
+            launch = adapter.launch_cmd(model)
+
+            session = ttyd.session_name(story_key)
+            ttyd.create_session(session, workspace)
+
+            if ttyd.session_alive(session):
+                # Multiplexer path: send keys + paste prompt
+                ttyd.send_keys(session, launch, "Enter")
+                import time
+                time.sleep(8)
+                ttyd.paste_text(session, prompt)
+                ttyd.send_keys(session, "Enter")
+                db.log_stage(story_key, stage, "execute", "Started in session")
+                attach = ttyd.attach_cmd(session)
+                with self.suspend():
+                    os.system(attach)
+            else:
+                # No multiplexer: launch independently
+                tmp = Path(tempfile.gettempdir()) / f"story-prompt-{story_key}-{stage}.md"
+                tmp.write_text(prompt, encoding="utf-8")
+                db.log_stage(story_key, stage, "execute", "Direct launch")
+                ttyd.launch_cli(story_key, workspace, launch, str(tmp))
+        except Exception as e:
+            panel = self.query_one("#detail-panel")
+            panel.update(f"[yellow]Story created but execution failed: {e}[/]\n\n"
+                         "  Press [e] to enter the session manually.")
+            panel.set_class(True, "visible")
+            self._show_detail = True
 
     def action_skip_stage(self):
         if not self.stories:
@@ -290,6 +548,22 @@ class StoryBoardApp(App):
         s = self.stories[self.selected_index]
         fail_story(s["story_key"])
         self.refresh_stories()
+
+    def action_delete_story(self):
+        if not self.stories:
+            return
+        s = self.stories[self.selected_index]
+        key = s["story_key"]
+
+        def on_confirm(confirmed):
+            if confirmed:
+                delete_story(key)
+                self.refresh_stories()
+
+        self.push_screen(
+            ConfirmDialog(f"Delete story {key}?"),
+            on_confirm,
+        )
 
     def action_resume_story(self):
         if not self.stories:
@@ -324,7 +598,10 @@ class StoryBoardApp(App):
     def action_quit(self):
         active = [s for s in self.stories if s["status"] == "active"]
         for s in active:
-            pause_story(s["story_key"])
+            try:
+                pause_story(s["story_key"])
+            except Exception:
+                pass
         self.exit()
 
     def action_help(self):
@@ -334,12 +611,13 @@ class StoryBoardApp(App):
             "[bold]Key Bindings[/]\n"
             "  ↑/k     Move up\n"
             "  ↓/j     Move down\n"
-            "  Enter   Action menu\n"
+            "  Enter   Toggle detail\n"
             "  n       New story\n"
             "  e       Enter terminal\n"
             "  d       Toggle detail\n"
             "  s       Skip stage\n"
             "  f       Mark failed\n"
+            "  x       Delete story\n"
             "  r       Resume\n"
             "  R/F5    Refresh\n"
             "  ?       Help\n"

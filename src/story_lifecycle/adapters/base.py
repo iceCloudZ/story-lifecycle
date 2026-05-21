@@ -13,13 +13,13 @@ class BaseAdapter(ABC):
 
     @abstractmethod
     def launch_cmd(self, model: str) -> str:
-        """Return the command to launch the CLI interactively in a tmux session."""
+        """Return the command to launch the CLI interactively in a session."""
         ...
 
     @abstractmethod
     def inject_prompt(self, prompt: str, story_key: str, stage: str) -> str | None:
         """Return the shell command to inject a prompt into the running CLI,
-        or None if prompt injection is handled differently (e.g. message-file)."""
+        or None if prompt injection is handled by ttyd.paste_text()."""
         ...
 
     def cleanup(self, story_key: str, stage: str):
@@ -27,5 +27,7 @@ class BaseAdapter(ABC):
         pass
 
     def enter_session_cmd(self, session_name: str, workspace: str) -> str:
-        """Command to create and enter the tmux session."""
-        return f"tmux new-session -A -s {session_name} -c {workspace}"
+        """Command to create and enter a multiplexer session."""
+        from ..terminal import ttyd
+
+        return ttyd.enter_session_cmd(session_name, workspace)

@@ -43,17 +43,27 @@ CLI_TOOLS = {
 }
 
 INFRA_TOOLS = {
+    "zellij": {
+        "name": "Zellij",
+        "check": lambda: _which("zellij"),
+        "install": (
+            "cargo install zellij (Linux/macOS) / "
+            "winget install zellij (Windows) / "
+            "brew install zellij (macOS)"
+        ),
+        "required": False,
+    },
     "tmux": {
-        "name": "tmux",
+        "name": "tmux (fallback)",
         "check": lambda: _which("tmux"),
         "install": "apt install tmux (Linux) / brew install tmux (macOS)",
-        "required": True,
+        "required": False,
     },
     "ttyd": {
         "name": "ttyd",
         "check": lambda: _which("ttyd"),
         "install": "apt install ttyd (Linux) / brew install ttyd (macOS)",
-        "required": True,
+        "required": False,
     },
     "git": {
         "name": "Git",
@@ -160,17 +170,17 @@ def run_doctor():
             )
         )
 
-    # tmux/ttyd check
-    if not INFRA_TOOLS["tmux"]["check"]() or not INFRA_TOOLS["ttyd"]["check"]():
+    # Multiplexer check
+    has_mplex = INFRA_TOOLS["zellij"]["check"]() or INFRA_TOOLS["tmux"]["check"]()
+    if not has_mplex:
         console.print()
         console.print(
             Panel(
-                "[yellow]tmux and/or ttyd are missing.[/]\n\n"
-                "These are required for AI execution (terminal sharing).\n"
-                "Without them, CLI and DB operations will work, but the AI won't launch.\n\n"
-                "Linux:   sudo apt install tmux ttyd\n"
-                "macOS:   brew install tmux ttyd\n"
-                "Windows: Use WSL2 (see README for details)",
+                "[yellow]No terminal multiplexer found.[/]\n\n"
+                "Install Zellij (recommended) or tmux:\n"
+                "  Zellij:  cargo install zellij / brew install zellij\n"
+                "  tmux:    apt install tmux / brew install tmux\n\n"
+                "Without a multiplexer, AI terminal sessions won't launch.",
                 title="Warning",
                 border_style="yellow",
             )

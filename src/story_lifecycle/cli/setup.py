@@ -107,11 +107,12 @@ def run_setup():
     if not api_key and current_key:
         api_key = current_key  # keep existing
 
+    if not api_key and current_key:
+        api_key = current_key  # keep existing
+
     if not api_key:
-        console.print("\n[yellow]No API key provided.[/]")
-        console.print("You can set it later in [bold]~/.story-lifecycle/config.yaml[/]")
-        console.print("The orchestrator will use rule-based routing until then.\n")
-        save_config(existing)
+        console.print("\n[red]API key is required to continue.[/]")
+        console.print("Press Ctrl+C to exit, or re-run [bold]story setup[/] later.\n")
         return
 
     # Step 3: Base URL (for custom provider)

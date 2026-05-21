@@ -16,20 +16,17 @@ from rich.table import Table
 
 from ..db import models as db
 from ..db.models import init_db
+from ..orchestrator.service import (
+    create_and_start_story,
+    fail_story,
+    skip_stage,
+)
 from ..terminal import ttyd
 from .setup import is_configured, load_config_to_env, run_setup
 from .doctor import run_doctor
 
 
 console = Console()
-
-
-def _get_client():
-    """Lazy import httpx to avoid dependency on CLI startup."""
-    import httpx
-
-    server = os.environ.get("STORY_SERVER", "http://127.0.0.1:8180")
-    return httpx.Client(base_url=server)
 
 
 @click.group()
@@ -76,6 +73,13 @@ def doctor():
 @click.option("--content", "-c", default=None, help="Path to PRD markdown file")
 def new(story_key, title, profile, workspace, content):
     """Create a new story and start the first stage."""
+    if not is_configured():
+        console.print("[yellow]LLM API key not configured. Starting setup...[/]\n")
+        run_setup()
+        load_config_to_env()
+        if not is_configured():
+            return
+
     ws = workspace or os.getcwd()
     prd_content = ""
 
@@ -86,51 +90,45 @@ def new(story_key, title, profile, workspace, content):
     # If no PRD provided, ask user interactively
     if not prd_content:
         console.print("\n[bold yellow]No PRD provided.[/]")
-        console.print("The AI needs requirements to work with.\n")
-        console.print("  [1] Paste PRD content directly (type or paste, then Ctrl+D)")
-        console.print("  [2] Provide path to PRD markdown file")
-        console.print("  [3] Skip for now (AI will ask you in the terminal)\n")
+        console.print("Paste PRD content, a file path, or press Enter to skip (AI will ask you).\n")
 
-        choice = click.prompt("Choice", type=int, default=3)
-        if choice == 1:
-            console.print("[dim]Paste PRD content (Ctrl+D or Ctrl+Z when done):[/]")
-            lines = []
-            try:
-                while True:
-                    line = input()
-                    lines.append(line)
-            except EOFError:
-                pass
-            prd_content = "\n".join(lines)
-        elif choice == 2:
-            path = click.prompt("PRD file path", type=str)
-            prd_content = Path(path).read_text(encoding="utf-8")
+        raw = click.prompt("PRD / file path", default="", show_default=False)
+        if raw.strip():
+            p = Path(raw.strip())
+            if p.exists() and p.is_file():
+                prd_content = p.read_text(encoding="utf-8")
+            else:
+                # Treat as pasted content (may be single line)
+                prd_content = raw
+                console.print("[dim]Paste more lines (Ctrl+D or Ctrl+Z when done):[/]")
+                try:
+                    while True:
+                        line = input()
+                        prd_content += "\n" + line
+                except EOFError:
+                    pass
 
-    try:
-        client = _get_client()
-        resp = client.post(
-            "/api/story",
-            json={
-                "key": story_key,
-                "title": title,
-                "content": prd_content,
-                "profile": profile,
-                "workspace": ws,
-            },
-        )
-        if resp.status_code != 200:
-            console.print(f"[red]Error: {resp.json().get('detail', 'Unknown')}[/]")
-            return
-        data = resp.json()
-        console.print(f"\n[green]Story created: {data['storyKey']}[/]")
-        console.print(f"  Stage: {data['currentStage']}")
-        console.print(f"  Workspace: {data['workspace']}")
-        console.print(f"\n  Open terminal: [bold]story enter {data['storyKey']}[/]")
-    except Exception as e:
-        console.print(f"[red]Failed to connect to orchestrator: {e}[/]")
-        console.print(
-            "[yellow]Is the orchestrator running? ('story serve' in another terminal)[/]"
-        )
+    prd_path = None
+    if prd_content:
+        prd_dir = Path(ws) / "prd"
+        prd_dir.mkdir(exist_ok=True)
+        prd_file = prd_dir / f"{story_key}.md"
+        prd_file.write_text(prd_content, encoding="utf-8")
+        prd_path = str(prd_file)
+
+    create_and_start_story(
+        story_key=story_key,
+        title=title,
+        profile=profile,
+        workspace=ws,
+        prd_path=prd_path,
+    )
+    s = db.get_story(story_key)
+
+    console.print(f"\n[green]Story created: {s['story_key']}[/]")
+    console.print(f"  Stage: {s['current_stage']}")
+    console.print(f"  Workspace: {s['workspace']}")
+    console.print(f"\n  Open terminal: [bold]story enter {s['story_key']}[/]")
 
 
 # -------- story board --------
@@ -142,6 +140,13 @@ def new(story_key, title, profile, workspace, content):
 )
 def board(no_tui):
     """Show all active stories in a dashboard."""
+    if not is_configured():
+        console.print("[yellow]LLM API key not configured. Starting setup...[/]\n")
+        run_setup()
+        load_config_to_env()
+        if not is_configured():
+            return
+
     if no_tui or not sys.stdout.isatty():
         _board_static()
         return
@@ -201,26 +206,15 @@ def _board_static():
 @click.argument("story_key")
 def enter(story_key):
     """Open the ttyd terminal for a story to interact with the AI."""
-    try:
-        client = _get_client()
-        resp = client.get(f"/api/session/terminal/{story_key}")
-        if resp.status_code != 200:
-            console.print(f"[red]Story not found: {story_key}[/]")
-            return
-        data = resp.json()
-    except Exception:
-        # Fallback: read workspace from local DB
-        s = db.get_story(story_key)
-        if not s:
-            console.print(f"[red]Story not found: {story_key}[/]")
-            return
-        url = ttyd.ensure_ttyd(story_key, s["workspace"])
-        data = {"url": url}
+    s = db.get_story(story_key)
+    if not s:
+        console.print(f"[red]Story not found: {story_key}[/]")
+        return
 
+    url = ttyd.ensure_ttyd(story_key, s["workspace"])
     console.print(f"[green]Opening terminal for {story_key}...[/]")
-    console.print(f"  URL: {data['url']}")
-    console.print(f"\n[bold]Open in browser:[/] http://localhost:8180{data['url']}")
-    console.print(f"  Or direct: [bold]tmux attach -t s-{story_key}[/]")
+    console.print(f"  URL: {url}")
+    console.print(f"  Session: [bold]{ttyd.session_name(story_key)}[/]")
 
 
 # -------- story status --------
@@ -230,27 +224,20 @@ def enter(story_key):
 @click.argument("story_key")
 def status(story_key):
     """Show detailed status for a story."""
-    try:
-        client = _get_client()
-        resp = client.get(f"/api/story/{story_key}")
-        s = resp.json() if resp.status_code == 200 else None
-    except Exception:
-        s = db.get_story(story_key)
-
+    s = db.get_story(story_key)
     if not s:
         console.print(f"[red]Story not found: {story_key}[/]")
         return
 
-    console.print(f"[bold]{s['storyKey']}[/] — {s.get('title', '')}")
-    console.print(f"  Stage:    {s.get('currentStage', '')}")
+    console.print(f"[bold]{s['story_key']}[/] — {s.get('title', '')}")
+    console.print(f"  Stage:    {s.get('current_stage', '')}")
     console.print(f"  Status:   {s.get('status', '')}")
     console.print(f"  Workspace:{s.get('workspace', '')}")
     console.print(f"  Profile:  {s.get('profile', 'minimal')}")
-    console.print(f"  Retries:  {s.get('executionCount', 0)}")
-    if s.get("lastError"):
-        console.print(f"  [red]Error:   {s['lastError']}[/]")
+    console.print(f"  Retries:  {s.get('execution_count', 0)}")
+    if s.get("last_error"):
+        console.print(f"  [red]Error:   {s['last_error']}[/]")
 
-    # Show LLM router status
     from ..orchestrator.router import llm_is_available
 
     if llm_is_available():
@@ -270,17 +257,8 @@ def status(story_key):
 @click.option("--reason", "-r", default="Manual skip", help="Reason for skipping")
 def skip(story_key, stage, reason):
     """Skip a stage and continue to the next one."""
-    try:
-        client = _get_client()
-        resp = client.put(
-            f"/api/story/{story_key}/skip/{stage}", json={"reason": reason}
-        )
-        if resp.status_code == 200:
-            console.print(f"[green]Skipped {stage} for {story_key}[/]")
-        else:
-            console.print(f"[red]Failed: {resp.json()}[/]")
-    except Exception as e:
-        console.print(f"[red]Failed: {e}[/]")
+    skip_stage(story_key, stage, reason)
+    console.print(f"[green]Skipped {stage} for {story_key}[/]")
 
 
 # -------- story fail --------
@@ -291,15 +269,8 @@ def skip(story_key, stage, reason):
 @click.option("--reason", "-r", default="Manual fail", help="Reason for failing")
 def fail(story_key, reason):
     """Mark a story as failed/blocked."""
-    try:
-        client = _get_client()
-        resp = client.put(f"/api/story/{story_key}/fail", json={"reason": reason})
-        if resp.status_code == 200:
-            console.print(f"[yellow]Marked {story_key} as blocked[/]")
-        else:
-            console.print(f"[red]Failed: {resp.json()}[/]")
-    except Exception as e:
-        console.print(f"[red]Failed: {e}[/]")
+    fail_story(story_key, reason)
+    console.print(f"[yellow]Marked {story_key} as blocked[/]")
 
 
 # -------- story resume --------
@@ -309,17 +280,8 @@ def fail(story_key, reason):
 @click.argument("story_key")
 def resume(story_key):
     """Resume a paused or blocked story."""
-    try:
-        client = _get_client()
-        resp = client.put(
-            f"/api/story/{story_key}/advance", json={"description": "Resumed by user"}
-        )
-        if resp.status_code == 200:
-            console.print(f"[green]Resumed {story_key}[/]")
-        else:
-            console.print(f"[red]Failed: {resp.json()}[/]")
-    except Exception as e:
-        console.print(f"[red]Failed: {e}[/]")
+    db.update_story(story_key, status="active")
+    console.print(f"[green]Resumed {story_key}[/]")
 
 
 # -------- story serve --------
@@ -329,12 +291,15 @@ def resume(story_key):
 @click.option("--host", default="127.0.0.1", help="Bind address")
 @click.option("--port", default=8180, help="Bind port")
 def serve(host, port):
-    """Start the orchestrator server."""
+    """Start the orchestrator server (for remote access)."""
     import uvicorn
 
     if not is_configured():
-        console.print("\n[yellow]No LLM API key configured.[/]")
-        console.print("Run [bold]story setup[/] to configure your API key.\n")
+        console.print("[yellow]LLM API key not configured. Starting setup...[/]\n")
+        run_setup()
+        load_config_to_env()
+        if not is_configured():
+            return
 
     console.print(f"[green]Starting Story Lifecycle orchestrator on {host}:{port}[/]")
     console.print(f"[dim]Data directory: {db.get_db_path().parent}[/]")
