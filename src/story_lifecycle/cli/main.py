@@ -18,6 +18,8 @@ from rich.live import Live
 from ..db import models as db
 from ..db.models import init_db
 from ..terminal import ttyd
+from .setup import is_configured, load_config_to_env, run_setup
+from .doctor import run_doctor
 
 
 console = Console()
@@ -35,6 +37,23 @@ def _get_client():
 def cli():
     """Story Lifecycle Manager — AI-powered development workflow orchestrator."""
     init_db()
+    load_config_to_env()
+
+
+# -------- story setup --------
+
+@cli.command()
+def setup():
+    """Configure LLM API key and model (first-run wizard)."""
+    run_setup()
+
+
+# -------- story doctor --------
+
+@cli.command()
+def doctor():
+    """Check system environment and available CLI tools."""
+    run_doctor()
 
 
 # -------- story new --------
@@ -269,6 +288,11 @@ def resume(story_key):
 def serve(host, port):
     """Start the orchestrator server."""
     import uvicorn
+
+    if not is_configured():
+        console.print("\n[yellow]No LLM API key configured.[/]")
+        console.print("Run [bold]story setup[/] to configure your API key.\n")
+
     console.print(f"[green]Starting Story Lifecycle orchestrator on {host}:{port}[/]")
     console.print(f"[dim]Data directory: {db.get_db_path().parent}[/]")
     uvicorn.run(
