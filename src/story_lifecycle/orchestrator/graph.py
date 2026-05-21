@@ -62,11 +62,6 @@ def build_graph() -> StateGraph:
     return graph
 
 
-def get_checkpointer() -> SqliteSaver:
-    checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
-    return SqliteSaver.from_conn_string(str(checkpoint_db))
-
-
 def run_story(story_key: str):
     """Run a story's lifecycle in a dedicated thread. Blocks until completion."""
     story = db.get_story(story_key)
@@ -74,7 +69,6 @@ def run_story(story_key: str):
         return
 
     graph = build_graph()
-    saver = get_checkpointer()
 
     initial_state: StoryState = {
         "story_key": story["story_key"],
@@ -91,7 +85,10 @@ def run_story(story_key: str):
     }
 
     config = {"configurable": {"thread_id": story_key}}
-    graph.compile(checkpointer=saver).invoke(initial_state, config)
+
+    checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
+    with SqliteSaver.from_conn_string(str(checkpoint_db)) as saver:
+        graph.compile(checkpointer=saver).invoke(initial_state, config)
 
 
 def start_story_async(story_key: str):
