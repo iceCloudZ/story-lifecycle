@@ -170,3 +170,49 @@ def delete_story(story_key: str):
         conn.execute("DELETE FROM story WHERE id = ?", (row["id"],))
     conn.commit()
     conn.close()
+
+
+def upsert_story(
+    story_key: str,
+    title: str = "",
+    workspace: str = "",
+    profile: str = "minimal",
+    current_stage: str = "design",
+    status: str = "active",
+    **kwargs,
+):
+    """Insert or update a story. Used by service layer."""
+    conn = get_conn()
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    existing = conn.execute(
+        "SELECT id FROM story WHERE story_key = ?", (story_key,)
+    ).fetchone()
+    if existing:
+        kwargs["updated_at"] = now
+        if title:
+            kwargs["title"] = title
+        if status:
+            kwargs["status"] = status
+        if current_stage:
+            kwargs["current_stage"] = current_stage
+        if kwargs:
+            sets = ", ".join(f"{k} = ?" for k in kwargs)
+            values = list(kwargs.values()) + [story_key]
+            conn.execute(f"UPDATE story SET {sets} WHERE story_key = ?", values)
+    else:
+        conn.execute(
+            """INSERT INTO story (story_key, title, workspace, profile, current_stage, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                story_key,
+                title,
+                str(workspace),
+                profile,
+                current_stage,
+                status,
+                now,
+                now,
+            ),
+        )
+    conn.commit()
+    conn.close()
