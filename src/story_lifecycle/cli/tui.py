@@ -269,7 +269,8 @@ class StoryBoardApp(App):
     }
 
     #header-bar {
-        height: 5;
+        height: auto;
+        min-height: 3;
         padding: 1 2;
         background: $boost;
         border-bottom: solid $accent;
@@ -282,11 +283,12 @@ class StoryBoardApp(App):
     }
     #plan-panel.visible {
         height: auto;
-        max-height: 14;
+        max-height: 6;
         padding: 1 2;
         background: $panel;
         border-bottom: solid $accent;
         display: block;
+        overflow-y: auto;
     }
 
     #story-list {
