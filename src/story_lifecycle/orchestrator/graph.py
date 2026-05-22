@@ -119,6 +119,14 @@ def _run_story_impl(story_key: str):
     if not story:
         return
 
+    import json
+
+    # Load context from DB (includes prd_path, etc.)
+    try:
+        ctx = json.loads(story.get("context_json") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        ctx = {}
+
     initial_state: StoryState = {
         "story_key": story["story_key"],
         "title": story["title"] or "",
@@ -127,7 +135,7 @@ def _run_story_impl(story_key: str):
         "current_stage": story["current_stage"],
         "status": story["status"],
         "complexity": story.get("complexity", ""),
-        "context": {},
+        "context": ctx,
         "execution_count": story.get("execution_count", 0),
         "last_error": None,
         "stage_start_time": 0.0,

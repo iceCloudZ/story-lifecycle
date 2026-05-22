@@ -590,8 +590,8 @@ def poll_completion_node(state: StoryState) -> StoryState:
     session = ttyd.session_name(key)
     done_file = Path(workspace) / ".story-done" / key / f"{stage}.json"
 
-    # Check session liveness
-    if not ttyd.session_alive(session):
+    # Check session liveness (only when multiplexer is available)
+    if ttyd._MPLEX and not ttyd.session_alive(session):
         state["last_error"] = "CC process crashed (session dead)"
         return state
 
