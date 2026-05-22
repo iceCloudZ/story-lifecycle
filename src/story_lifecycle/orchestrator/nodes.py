@@ -599,6 +599,7 @@ def poll_completion_node(state: StoryState) -> StoryState:
     if not done_file.exists():
         # Yield worker thread — Watchdog will resume when file appears
         interrupt({"reason": "waiting_for_done_file", "stage": stage})
+        return state
 
     # File exists — parse it
     try:
