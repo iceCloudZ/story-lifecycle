@@ -591,6 +591,9 @@ class StoryBoardApp(App):
 
     def on_plan_done_msg(self, message: PlanDoneMsg) -> None:
         """Handle planning completion — update label, spinner keeps going."""
+        (Path.home() / "plan_done.log").write_text(
+            f"on_plan_done_msg called: {message.summary[:50]}", encoding="utf-8"
+        )
         if message.ok:
             self._plan_label = f"{message.summary[:60]}"
         else:
@@ -598,6 +601,9 @@ class StoryBoardApp(App):
 
     def on_terminal_opened_msg(self, message: TerminalOpenedMsg) -> None:
         """Terminal opened — just note it, spinner runs until next story."""
+        (Path.home() / "terminal_opened.log").write_text(
+            f"on_terminal_opened_msg called: {message.story_key}", encoding="utf-8"
+        )
         self._plan_label = f"✓ 终端已启动  [dim]{getattr(self, '_plan_label', '')}[/]"
 
     async def tick_spinner(self) -> None:

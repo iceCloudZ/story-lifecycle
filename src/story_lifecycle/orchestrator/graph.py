@@ -79,6 +79,11 @@ def emit_plan_stream(story_key: str, chunk: str) -> None:
 
 def emit_terminal_opened(story_key: str) -> None:
     """Notify TUI that terminal window has opened (thread-safe via post_message)."""
+    # Debug: log to file to confirm this function is called
+    (STORY_HOME / "terminal_opened.log").write_text(
+        f"emit_terminal_opened: {story_key}  tui={_tui_app is not None}",
+        encoding="utf-8",
+    )
     if _tui_app is not None:
         _tui_app.post_message(TerminalOpenedMsg(story_key))  # type: ignore[union-attr]
 
