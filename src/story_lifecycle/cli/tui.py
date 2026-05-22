@@ -191,6 +191,11 @@ class NewStoryDialog(ModalScreen):
             yield Input(placeholder="e.g. FEATURE-001", id="input-key")
             yield Static("Title:")
             yield Input(placeholder="e.g. Add user auth", id="input-title")
+            yield Static("PRD file path (optional):")
+            yield Input(
+                placeholder="e.g. prd/FEATURE-001.md",
+                id="input-prd",
+            )
             with Horizontal(id="btn-row"):
                 yield Button("Create", variant="success", id="btn-create")
                 yield Button("Cancel", variant="default", id="btn-cancel")
@@ -199,8 +204,9 @@ class NewStoryDialog(ModalScreen):
         if event.button.id == "btn-create":
             key = self.query_one("#input-key", Input).value.strip()
             title = self.query_one("#input-title", Input).value.strip()
+            prd = self.query_one("#input-prd", Input).value.strip()
             if key:
-                self.dismiss((key, title))
+                self.dismiss((key, title, prd))
             else:
                 self.query_one("#input-key", Input).focus()
         else:
@@ -311,6 +317,8 @@ class StoryBoardApp(App):
         Binding("shift+r", "refresh", "Refresh", key_display="R"),
         Binding("f5", "refresh", "Refresh"),
         Binding("x", "delete_story", "Delete"),
+        Binding("shift+d", "run_doctor", "Doctor", key_display="D"),
+        Binding("shift+s", "run_setup", "Setup", key_display="S"),
         Binding("question_mark", "help", "Help", key_display="?"),
         Binding("q", "quit", "Quit"),
     ]
@@ -357,7 +365,7 @@ class StoryBoardApp(App):
             story_list.remove_children()
             if not self.stories:
                 story_list.mount(
-                    Static("[dim]No active stories. Press [n] to create one.[/]")
+                    Static("[dim]No active stories. Press [[n]] to create one.[/]")
                 )
             else:
                 for i, s in enumerate(self.stories):
@@ -369,7 +377,7 @@ class StoryBoardApp(App):
 
         footer = self.query_one("#footer-bar")
         footer.update(
-            " [dim][n] new  [e] enter  [s] skip  [f] fail  [x] delete  [r] resume  [R] refresh  [?] help[/]"
+            " [dim][n] new  [e] enter  [s] skip  [f] fail  [x] delete  [r] resume  [D] doctor  [S] setup  [?] help[/]"
         )
 
     def action_cursor_up(self):
@@ -463,12 +471,13 @@ class StoryBoardApp(App):
         def on_result(result):
             if result is None:
                 return
-            key, title = result
+            key, title, prd_path = result
             try:
                 create_and_start_story(
                     story_key=key,
                     title=title,
                     workspace=os.getcwd(),
+                    prd_path=prd_path or None,
                 )
                 self.refresh_stories()
                 # Auto-start first stage execution
@@ -677,6 +686,38 @@ class StoryBoardApp(App):
                 pass
         self.exit()
 
+    def action_run_doctor(self):
+        """Show doctor results in detail panel."""
+        import io
+        from .doctor import run_doctor
+        from rich.console import Console
+
+        buf = io.StringIO()
+        doc_console = Console(file=buf, force_terminal=True)
+        # Temporarily redirect doctor output
+        import story_lifecycle.cli.doctor as doc_mod
+
+        orig = doc_mod.console
+        doc_mod.console = doc_console
+        try:
+            run_doctor()
+        finally:
+            doc_mod.console = orig
+
+        panel = self.query_one("#detail-panel")
+        panel.update(buf.getvalue())
+        panel.set_class(True, "visible")
+        self._show_detail = True
+
+    def action_run_setup(self):
+        """Re-run setup wizard in a suspended terminal."""
+        from .setup import run_setup, load_config_to_env
+
+        with self.suspend():
+            run_setup()
+            load_config_to_env()
+        self.refresh_stories()
+
     def action_help(self):
         self._show_detail = True
         panel = self.query_one("#detail-panel")
@@ -693,6 +734,8 @@ class StoryBoardApp(App):
             "  x       Delete story\n"
             "  r       Resume\n"
             "  R/F5    Refresh\n"
+            "  D       Doctor (env check)\n"
+            "  S       Setup (reconfigure)\n"
             "  ?       Help\n"
             "  q       Quit"
         )
@@ -701,8 +744,5 @@ class StoryBoardApp(App):
 
 def run_tui():
     """Entry point for the TUI board."""
-    from ..db.models import init_db
-
-    init_db()
     app = StoryBoardApp()
     app.run()
