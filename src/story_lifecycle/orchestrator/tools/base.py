@@ -32,7 +32,10 @@ class BaseTool:
 
         provider = args.get("provider")
         if provider:
-            adapter.switch_provider(provider)
+            try:
+                adapter.switch_provider(provider)
+            except Exception:
+                pass
 
         launch = adapter.launch_cmd(model)
         session = ttyd.session_name(key)

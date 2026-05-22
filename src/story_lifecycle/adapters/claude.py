@@ -9,9 +9,13 @@ class ClaudeAdapter(BaseAdapter):
     """Adapter for Claude Code CLI (claude)."""
 
     def switch_provider(self, provider: str) -> str | None:
-        subprocess.run(
-            ["bash", "-c", f"cc use {provider}"], capture_output=True, timeout=30
-        )
+        try:
+            subprocess.run(
+                ["bash", "-c", f"cc use {provider}"], capture_output=True, timeout=30
+            )
+        except FileNotFoundError:
+            # bash not available (e.g. Windows without Git Bash in PATH) — skip
+            pass
         time.sleep(2)  # provider switch takes effect next launch
         return None
 
