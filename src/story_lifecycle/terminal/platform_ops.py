@@ -43,7 +43,7 @@ def _port_in_use_windows(port: int) -> bool:
         r = subprocess.run(
             ["netstat", "-aon"], capture_output=True, text=True, timeout=5,
         )
-        return any(f":{port}" in l and "LISTENING" in l for l in r.stdout.splitlines())
+        return any(f":{port}" in line and "LISTENING" in line for line in r.stdout.splitlines())
     except Exception:
         return False
 
