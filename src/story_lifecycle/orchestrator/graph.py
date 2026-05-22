@@ -87,8 +87,11 @@ def build_graph() -> StateGraph:
 
 def get_compiled_graph():
     """Return a compiled graph with SQLite checkpointer. Thread-safe."""
+    import sqlite3
+
     checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
-    saver = SqliteSaver.from_conn_string(str(checkpoint_db))
+    conn = sqlite3.connect(str(checkpoint_db), check_same_thread=False)
+    saver = SqliteSaver(conn)
     return build_graph().compile(checkpointer=saver)
 
 
@@ -96,6 +99,7 @@ def run_story(story_key: str):
     """Run a story's lifecycle. Blocks until interrupt or END."""
     import traceback
     import logging
+
     log = logging.getLogger("story-lifecycle.graph")
 
     try:
@@ -153,6 +157,7 @@ def resume_story(story_key: str):
 def start_story_async(story_key: str):
     """Submit a story for execution. Non-blocking."""
     import logging
+
     log = logging.getLogger("story-lifecycle.graph")
     err_file = STORY_HOME / "graph_error.log"
     err_file.write_text(f"start_story_async called for {story_key}\n", encoding="utf-8")
