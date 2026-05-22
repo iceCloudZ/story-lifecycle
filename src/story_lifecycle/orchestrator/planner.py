@@ -9,6 +9,7 @@ import json
 import os
 import logging
 import re
+import time
 from pathlib import Path
 
 import httpx
@@ -136,7 +137,14 @@ depends_on 填写其他 subtask 的 key_suffix，控制执行顺序（有依赖�
 - 如果发现当前阶段不必要，可以 skip: true
 - 如果路径评分持续低于 0.5，考虑建议回滚或切换工具"""
 
-    return _call_llm(base_url, api_key, model, prompt)
+    return _call_llm(
+        base_url,
+        api_key,
+        model,
+        prompt,
+        story_key=state.get("story_key", ""),
+        stage=state.get("current_stage", ""),
+    )
 
 
 def review_stage(state: dict, stage_config: dict, stage_output: dict) -> dict:
@@ -214,7 +222,14 @@ def review_stage(state: dict, stage_config: dict, stage_output: dict) -> dict:
   - 0.5-0.8: 有小问题但方向正确
   - <0.5: 方向跑偏或质量问题严重，需要重新规划"""
 
-    return _call_llm(base_url, api_key, model, prompt)
+    return _call_llm(
+        base_url,
+        api_key,
+        model,
+        prompt,
+        story_key=state.get("story_key", ""),
+        stage=state.get("current_stage", ""),
+    )
 
 
 def compress_context(workspace: str, story_key: str, current_stage: str) -> str | None:
@@ -270,28 +285,87 @@ def compress_context(workspace: str, story_key: str, current_stage: str) -> str 
     return str(compressed_file.relative_to(workspace))
 
 
-def _call_llm(base_url: str, api_key: str, model: str, prompt: str) -> dict:
+def _call_llm(
+    base_url: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    *,
+    story_key: str = "",
+    stage: str = "",
+) -> dict:
     """调用 LLM 并解析 JSON 响应。"""
-    resp = httpx.post(
-        f"{base_url}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-        },
-        timeout=90,
-    )
-    resp.raise_for_status()
-    msg = resp.json()["choices"][0]["message"]
-    content = msg.get("content", "") or msg.get("reasoning_content", "")
-    if not content.strip():
-        # Reasoning model spent all tokens on reasoning, content is empty
-        raise RuntimeError(
-            "LLM returned empty content — reasoning model may have exhausted tokens. "
-            "Try increasing max_tokens or using a non-reasoning model."
+    t0 = time.monotonic()
+    try:
+        resp = httpx.post(
+            f"{base_url}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+            },
+            timeout=90,
         )
-    return _parse_llm_response(content)
+        resp.raise_for_status()
+        body = resp.json()
+        msg = body["choices"][0]["message"]
+        content = msg.get("content", "") or msg.get("reasoning_content", "")
+        usage = body.get("usage", {})
+        _trace_llm(
+            model=model,
+            usage=usage,
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            story_key=story_key,
+            stage=stage,
+        )
+        if not content.strip():
+            raise RuntimeError(
+                "LLM returned empty content — reasoning model may have exhausted tokens."
+            )
+        return _parse_llm_response(content)
+    except Exception as exc:
+        _trace_llm(
+            model=model,
+            usage={},
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            success=False,
+            error=type(exc).__name__,
+            story_key=story_key,
+            stage=stage,
+        )
+        raise
+
+
+def _trace_llm(
+    *,
+    model: str,
+    usage: dict,
+    duration_ms: int,
+    operation: str = "plan_stage",
+    story_key: str = "",
+    stage: str = "",
+    success: bool = True,
+    error: str = "",
+):
+    """Record LLM call trace to DB."""
+    try:
+        from ..db.models import log_llm_trace
+
+        log_llm_trace(
+            story_key=story_key,
+            stage=stage,
+            operation=operation,
+            model=model,
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+            duration_ms=duration_ms,
+            success=success,
+            error=error,
+        )
+    except Exception:
+        pass
 
 
 def _parse_llm_response(content: str) -> dict:
@@ -343,16 +417,34 @@ def _stream_llm(
 
 def _call_llm_for_text(base_url: str, api_key: str, model: str, prompt: str) -> str:
     """调用 LLM 获取文本响应（用于 Condenser）。"""
-    resp = httpx.post(
-        f"{base_url}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
-        },
-        timeout=90,
-    )
-    resp.raise_for_status()
-    msg = resp.json()["choices"][0]["message"]
-    return msg.get("content", "") or msg.get("reasoning_content", "")
+    t0 = time.monotonic()
+    try:
+        resp = httpx.post(
+            f"{base_url}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+            },
+            timeout=90,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        msg = body["choices"][0]["message"]
+        usage = body.get("usage", {})
+        _trace_llm(
+            model=model,
+            usage=usage,
+            duration_ms=int((time.monotonic() - t0) * 1000),
+        )
+        return msg.get("content", "") or msg.get("reasoning_content", "")
+    except Exception as exc:
+        _trace_llm(
+            model=model,
+            usage={},
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            success=False,
+            error=type(exc).__name__,
+        )
+        raise

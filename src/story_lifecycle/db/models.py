@@ -102,6 +102,21 @@ def init_db():
                 payload TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS llm_trace (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                story_key TEXT,
+                stage TEXT,
+                operation TEXT NOT NULL,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                total_tokens INTEGER,
+                duration_ms INTEGER,
+                success INTEGER NOT NULL DEFAULT 1,
+                error TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         # Idempotent column migration
         try:
@@ -255,6 +270,41 @@ def log_event(story_key: str, stage: str, event_type: str, payload: dict | None 
                 stage,
                 event_type,
                 json.dumps(payload or {}, ensure_ascii=False),
+            ),
+        )
+
+
+def log_llm_trace(
+    *,
+    story_key: str = "",
+    stage: str = "",
+    operation: str,
+    model: str,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_tokens: int = 0,
+    duration_ms: int = 0,
+    success: bool = True,
+    error: str = "",
+):
+    """Record an LLM call trace with token usage."""
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO llm_trace (story_key, stage, operation, model,
+               prompt_tokens, completion_tokens, total_tokens,
+               duration_ms, success, error)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                story_key,
+                stage,
+                operation,
+                model,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+                duration_ms,
+                1 if success else 0,
+                error,
             ),
         )
 
