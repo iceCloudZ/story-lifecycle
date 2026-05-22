@@ -94,6 +94,23 @@ def get_compiled_graph():
 
 def run_story(story_key: str):
     """Run a story's lifecycle. Blocks until interrupt or END."""
+    import traceback
+    import logging
+    log = logging.getLogger("story-lifecycle.graph")
+
+    try:
+        _run_story_impl(story_key)
+    except Exception:
+        log.error(f"run_story failed for {story_key}:\n{traceback.format_exc()}")
+        # Also write to a known file for debugging
+        err_file = STORY_HOME / "graph_error.log"
+        err_file.write_text(
+            f"run_story failed for {story_key}:\n{traceback.format_exc()}",
+            encoding="utf-8",
+        )
+
+
+def _run_story_impl(story_key: str):
     story = db.get_story(story_key)
     if not story:
         return
@@ -135,6 +152,11 @@ def resume_story(story_key: str):
 
 def start_story_async(story_key: str):
     """Submit a story for execution. Non-blocking."""
+    import logging
+    log = logging.getLogger("story-lifecycle.graph")
+    err_file = STORY_HOME / "graph_error.log"
+    err_file.write_text(f"start_story_async called for {story_key}\n", encoding="utf-8")
+    log.info(f"Submitting story {story_key} to executor")
     _executor.submit(run_story, story_key)
 
 
