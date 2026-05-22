@@ -72,26 +72,22 @@ def set_tui_app(app: object) -> None:
 
 
 def emit_plan_stream(story_key: str, chunk: str) -> None:
-    """Send planning stream chunk to TUI (thread-safe via post_message)."""
-    if _tui_app is not None:
-        _tui_app.post_message(PlanStreamMsg(story_key, chunk))  # type: ignore[union-attr]
+    """No-op: post_message not reliable from background threads."""
+    pass
 
 
 def emit_terminal_opened(story_key: str) -> None:
-    """Notify TUI that terminal window has opened (thread-safe via post_message)."""
-    # Debug: log to file to confirm this function is called
-    (STORY_HOME / "terminal_opened.log").write_text(
-        f"emit_terminal_opened: {story_key}  tui={_tui_app is not None}",
-        encoding="utf-8",
+    """Write status flag that TUI spinner polls."""
+    (STORY_HOME / "tui_status").write_text(
+        f"terminal_opened|{story_key}", encoding="utf-8"
     )
-    if _tui_app is not None:
-        _tui_app.post_message(TerminalOpenedMsg(story_key))  # type: ignore[union-attr]
 
 
 def emit_plan_done(story_key: str, summary: str, ok: bool = True) -> None:
-    """Notify TUI that planning is complete (thread-safe via post_message)."""
-    if _tui_app is not None:
-        _tui_app.post_message(PlanDoneMsg(story_key, summary, ok))  # type: ignore[union-attr]
+    """Write plan result that TUI spinner polls."""
+    (STORY_HOME / "tui_status").write_text(
+        f"plan_done|{story_key}|{summary}|{ok}", encoding="utf-8"
+    )
 
 
 def build_graph() -> StateGraph:
