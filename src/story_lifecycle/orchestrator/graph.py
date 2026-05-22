@@ -48,6 +48,14 @@ class PlanStreamMsg(Message):
         super().__init__()
 
 
+class TerminalOpenedMsg(Message):
+    """Cross-thread message: terminal window has been opened."""
+
+    def __init__(self, story_key: str):
+        self.story_key = story_key
+        super().__init__()
+
+
 class PlanDoneMsg(Message):
     """Cross-thread message: planning complete."""
 
@@ -67,6 +75,12 @@ def emit_plan_stream(story_key: str, chunk: str) -> None:
     """Send planning stream chunk to TUI (thread-safe via post_message)."""
     if _tui_app is not None:
         _tui_app.post_message(PlanStreamMsg(story_key, chunk))  # type: ignore[union-attr]
+
+
+def emit_terminal_opened(story_key: str) -> None:
+    """Notify TUI that terminal window has opened (thread-safe via post_message)."""
+    if _tui_app is not None:
+        _tui_app.post_message(TerminalOpenedMsg(story_key))  # type: ignore[union-attr]
 
 
 def emit_plan_done(story_key: str, summary: str, ok: bool = True) -> None:

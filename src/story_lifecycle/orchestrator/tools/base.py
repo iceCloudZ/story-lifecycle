@@ -52,14 +52,19 @@ class BaseTool:
             ttyd.send_keys(session, "Enter")
             launched = True
 
-        # Fallback: launch in a new terminal window
+        # Notify TUI that CLI has been dispatched
+        from ..graph import emit_terminal_opened
+
         if not launched:
+            # Fallback: launch in a new terminal window
             tmp = (
                 Path(tempfile.gettempdir())
                 / f"story-prompt-{key}-{state['current_stage']}.md"
             )
             tmp.write_text(prompt, encoding="utf-8")
             ttyd.launch_cli(key, workspace, launch, str(tmp))
+
+        emit_terminal_opened(key)
 
         state["execution_count"] = state.get("execution_count", 0) + 1
         state["stage_start_time"] = time.time()

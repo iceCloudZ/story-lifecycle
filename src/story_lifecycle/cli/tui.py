@@ -14,7 +14,7 @@ from textual.widgets import Footer, Static, Input, Button
 from textual.reactive import reactive
 
 from ..db import models as db
-from ..orchestrator.graph import PlanDoneMsg, set_tui_app
+from ..orchestrator.graph import PlanDoneMsg, TerminalOpenedMsg, set_tui_app
 from ..orchestrator.service import (
     get_story_cli_model,
     pause_story,
@@ -511,6 +511,7 @@ class StoryBoardApp(App):
                 # Show initial plan panel (timer takes over rotation)
                 self._plan_story_key = key
                 self._spinner_idx = 0
+                self._plan_label = "正在规划中..."
                 panel = self.query_one("#plan-panel")
                 panel.update(
                     f"[bold]{key}[/]  [dim]design  │[/]  "
@@ -589,38 +590,32 @@ class StoryBoardApp(App):
         self._show_detail = True
 
     def on_plan_done_msg(self, message: PlanDoneMsg) -> None:
-        """Handle planning completion — spinner keeps going until execute."""
+        """Handle planning completion — update label, keep spinning."""
+        self._plan_label = f"规划完成: {message.summary[:50]}"
+
+    def on_terminal_opened_msg(self, message: TerminalOpenedMsg) -> None:
+        """Handle terminal opened — stop spinner, show result."""
+        self._spinner_idx = -1
+        summary = getattr(self, "_plan_label", "")
+        panel = self.query_one("#plan-panel")
+        panel.update(
+            f"[bold]{message.story_key}[/]  [dim]design  │[/]  "
+            f"[bold green]✓ 终端已启动[/]  [dim]{summary}[/]"
+        )
+        self.set_timer(5, lambda: panel.set_class(False, "visible"))
 
     async def tick_spinner(self) -> None:
         """Rotate spinner character during planning."""
         if self._spinner_idx < 0:
             return
-        # Auto-stop when execute_stage has run (terminal window opened)
-        s = db.get_story(self._plan_story_key)
-        if s and s.get("execution_count", 0) > 0:
-            self._spinner_idx = -1
-            summary = s.get("context_json", "{}")
-            try:
-                import json
-
-                ctx = json.loads(summary)
-                info = ctx.get("plan_summary", "")
-            except Exception:
-                info = ""
-            panel = self.query_one("#plan-panel")
-            panel.update(
-                f"[bold]{self._plan_story_key}[/]  [dim]design  │[/]  "
-                f"[bold green]✓ 终端已启动[/]  [dim]{info[:40]}[/]"
-            )
-            self.set_timer(5, lambda: panel.set_class(False, "visible"))
-            return
         frames = ["|", "/", "-", "\\"]
         self._spinner_idx = (self._spinner_idx + 1) % len(frames)
         spinner = frames[self._spinner_idx]
+        label = getattr(self, "_plan_label", "正在规划中...")
         panel = self.query_one("#plan-panel")
         panel.update(
             f"[bold]{self._plan_story_key}[/]  [dim]design  │[/]  "
-            f"[bold cyan]{spinner}[/] [dim]正在规划中...[/]"
+            f"[bold cyan]{spinner}[/] [dim]{label}[/]"
         )
         panel.set_class(True, "visible")
 
