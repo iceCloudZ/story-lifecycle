@@ -420,6 +420,8 @@ class StoryBoardApp(App):
 
     def _launch_cli_direct(self, s: dict, workspace: str):
         """Fallback: launch AI CLI independently when no multiplexer is available."""
+        import json
+
         from ..adapters import get_adapter
         from ..orchestrator.nodes import get_stage_config, _render_prompt
 
@@ -434,13 +436,18 @@ class StoryBoardApp(App):
             model = cfg.get("model", "sonnet")
             adapter = get_adapter(adapter_name)
 
+            try:
+                ctx = json.loads(s.get("context_json") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                ctx = {}
+
             state = {
                 "story_key": story_key,
                 "title": s.get("title", ""),
                 "workspace": workspace,
                 "profile": profile,
                 "current_stage": stage,
-                "context": {},
+                "context": ctx,
             }
             prompt = _render_prompt(stage, state)
 
@@ -480,8 +487,9 @@ class StoryBoardApp(App):
                     prd_path=prd_path or None,
                 )
                 self.refresh_stories()
-                # Auto-start first stage execution
-                self._start_stage(key)
+                self.run_worker(
+                    lambda: self._start_stage(key), thread=True, exclusive=True
+                )
             except Exception as e:
                 panel = self.query_one("#detail-panel")
                 panel.update(f"[red]Failed to create story: {e}[/]")
@@ -491,7 +499,9 @@ class StoryBoardApp(App):
         self.push_screen(NewStoryDialog(), on_result)
 
     def _start_stage(self, story_key: str):
-        """Launch AI CLI for the current stage."""
+        """Launch AI CLI for the current stage. Runs in background worker."""
+        import json
+
         from ..adapters import get_adapter
         from ..orchestrator.nodes import get_stage_config, _render_prompt
 
@@ -509,48 +519,42 @@ class StoryBoardApp(App):
             model = cfg.get("model", "sonnet")
             adapter = get_adapter(adapter_name)
 
+            # Load context from DB (includes prd_path)
+            try:
+                ctx = json.loads(s.get("context_json") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                ctx = {}
+
             state = {
                 "story_key": story_key,
                 "title": s.get("title", ""),
                 "workspace": workspace,
                 "profile": profile,
                 "current_stage": stage,
-                "context": {},
+                "context": ctx,
             }
             prompt = _render_prompt(stage, state)
             launch = adapter.launch_cmd(model)
 
-            session = ttyd.session_name(story_key)
-            ttyd.create_session(session, workspace)
-
-            if ttyd.session_alive(session):
-                # Multiplexer path: send keys + paste prompt
-                ttyd.send_keys(session, launch, "Enter")
-                import time
-
-                time.sleep(8)
-                ttyd.paste_text(session, prompt)
-                ttyd.send_keys(session, "Enter")
-                db.log_stage(story_key, stage, "execute", "Started in session")
-                attach = ttyd.attach_cmd(session)
-                with self.suspend():
-                    os.system(attach)
-            else:
-                # No multiplexer: launch independently
-                tmp = (
-                    Path(tempfile.gettempdir()) / f"story-prompt-{story_key}-{stage}.md"
-                )
-                tmp.write_text(prompt, encoding="utf-8")
-                db.log_stage(story_key, stage, "execute", "Direct launch")
-                ttyd.launch_cli(story_key, workspace, launch, str(tmp))
+            # Always launch in a new terminal window — avoids TUI crash from
+            # calling suspend() in a worker thread.
+            tmp = Path(tempfile.gettempdir()) / f"story-prompt-{story_key}-{stage}.md"
+            tmp.write_text(prompt, encoding="utf-8")
+            db.log_stage(story_key, stage, "execute", "Launched in new window")
+            ttyd.launch_cli(story_key, workspace, launch, str(tmp))
         except Exception as e:
-            panel = self.query_one("#detail-panel")
-            panel.update(
+            self.call_from_thread(
+                self._show_error,
                 f"[yellow]Story created but execution failed: {e}[/]\n\n"
-                "  Press [e] to enter the session manually."
+                "  Press [[e]] to enter the session manually.",
             )
-            panel.set_class(True, "visible")
-            self._show_detail = True
+
+    def _show_error(self, message: str):
+        """Show error in detail panel (safe to call from any thread)."""
+        panel = self.query_one("#detail-panel")
+        panel.update(message)
+        panel.set_class(True, "visible")
+        self._show_detail = True
 
     def action_skip_stage(self):
         if not self.stories:
