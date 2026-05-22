@@ -15,7 +15,7 @@ from textual.widgets import Footer, Static, Input, Button
 from textual.reactive import reactive
 
 from ..db import models as db
-from ..orchestrator.graph import set_tui_app
+from ..orchestrator.graph import set_tui_app, take_plan_done, take_terminal_opened
 from ..orchestrator.service import (
     get_story_cli_model,
     pause_story,
@@ -350,8 +350,20 @@ class StoryBoardApp(App):
         yield Static(id="footer-bar")
         yield Footer()
 
-    # Braille spinner frames (smooth rotation like Claude Code)
-    _SPINNER_FRAMES = ["⣾", "⣷", "⣯", "⣟", "⡿", "⢿", "⣻", "⣽"]
+    # 4x4 braille grid spinner — 3-dot trail rotating clockwise
+    _SPINNER_FRAMES: list[str] = []
+    for _off in range(12):
+        _bits = [0, 0]
+        for _i in range(3):
+            _ci, _b = [
+                (0, 0x01), (0, 0x08), (1, 0x01), (1, 0x08),  # top row
+                (1, 0x10), (1, 0x20),                          # right col
+                (1, 0x80), (1, 0x40),                          # bottom-right
+                (0, 0x80), (0, 0x40),                          # bottom-left
+                (0, 0x04), (0, 0x02),                          # left col
+            ][(_off + _i) % 12]
+            _bits[_ci] |= _b
+        _SPINNER_FRAMES.append(chr(0x2800 + _bits[0]) + chr(0x2800 + _bits[1]))
 
     def on_mount(self):
         set_tui_app(self)
@@ -521,7 +533,7 @@ class StoryBoardApp(App):
                 panel = self.query_one("#plan-panel")
                 panel.update(
                     f"[bold]{key}[/]  [dim]design  │[/]  "
-                    f"[bold cyan]⣾[/] {self._plan_label}  [dim]0s[/]"
+                    f"[bold cyan]⠉⠁[/] {self._plan_label}  [dim]0s[/]"
                 )
                 panel.set_class(True, "visible")
 
@@ -595,22 +607,7 @@ class StoryBoardApp(App):
         panel.set_class(True, "visible")
         self._show_detail = True
 
-    # ---- cross-thread handlers (called via call_from_thread) ----
-
-    def _on_plan_done(self, story_key: str, summary: str, ok: bool = True) -> None:
-        """Handle plan completion from graph thread."""
-        if story_key != self._plan_story_key:
-            return
-        self._plan_label = summary[:60] if ok else f"⚠ {summary[:60]}"
-        self._plan_done = True
-        self._update_plan_panel()
-
-    def _on_terminal_opened(self, story_key: str) -> None:
-        """Handle terminal opened from graph thread."""
-        if story_key != self._plan_story_key:
-            return
-        self._plan_label = "✓ 终端已启动"
-        self._update_plan_panel()
+    # ---- plan panel rendering ----
 
     def _elapsed_str(self) -> str:
         elapsed = int(time.time() - self._plan_start_time)
@@ -632,13 +629,22 @@ class StoryBoardApp(App):
         )
 
     async def tick_spinner(self) -> None:
-        """Rotate spinner animation only."""
+        """Rotate spinner and poll in-memory status bus."""
         if self._spinner_idx < 0:
             return
-        self._spinner_idx += 1
-        self._update_plan_panel()
-        panel = self.query_one("#plan-panel")
-        panel.set_class(True, "visible")
+        try:
+            result = take_plan_done(self._plan_story_key)
+            if result:
+                summary, ok = result
+                self._plan_label = summary[:60] if ok else f"⚠ {summary[:60]}"
+            if take_terminal_opened(self._plan_story_key):
+                self._plan_label = "✓ 终端已启动"
+            self._spinner_idx += 1
+            self._update_plan_panel()
+            panel = self.query_one("#plan-panel")
+            panel.set_class(True, "visible")
+        except Exception:
+            pass  # never let a tick crash kill the interval
 
     def action_skip_stage(self):
         if not self.stories:
@@ -681,7 +687,7 @@ class StoryBoardApp(App):
         self.refresh_stories()
 
     async def watchdog_check(self):
-        from ..orchestrator.graph import resume_story
+        from ..orchestrator.graph import resume_story, is_story_running
         from ..db import models as db
 
         active = [s for s in self.stories if s["status"] == "active"]
@@ -691,7 +697,7 @@ class StoryBoardApp(App):
             ws = s["workspace"]
             done_file = Path(ws) / ".story-done" / key / f"{stage}.json"
 
-            if done_file.exists():
+            if done_file.exists() and not is_story_running(key):
                 try:
                     resume_story(key)
                 except Exception:

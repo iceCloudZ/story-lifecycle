@@ -12,7 +12,6 @@ from langgraph.types import interrupt
 
 from ..db import models as db
 from ..terminal import ttyd
-from ..terminal.platform_ops import file_lock
 from . import planner
 from . import router as llm_router
 
@@ -607,6 +606,8 @@ def poll_completion_node(state: StoryState) -> StoryState:
     Uses interrupt() to yield the worker thread when file not ready.
     Watchdog resumes via graph.invoke(None, config).
     """
+    import time as _time
+
     key = state["story_key"]
     stage = state["current_stage"]
     workspace = state["workspace"]
@@ -615,18 +616,27 @@ def poll_completion_node(state: StoryState) -> StoryState:
     # Check for done file first — if output exists, the stage succeeded
     # regardless of whether the session is still alive.
     if done_file.exists():
-        try:
-            with open(done_file, "r") as f:
-                file_lock(f)
+        data = None
+        for attempt in range(5):
+            try:
                 data = robust_json_parse(done_file)
+                break
+            except PermissionError:
+                _time.sleep(0.5)
+            except Exception:
+                break
+        if data is None:
+            state["last_error"] = "Failed to read .done file after retries"
+            return state
+        try:
             done_file.unlink()
-            state["context"].update(data)
-            cfg = get_stage_config(state.get("profile", "minimal"), stage)
-            for field in cfg.get("expected_outputs", []):
-                if field in data:
-                    db.update_context(key, field, str(data[field]))
-        except Exception as e:
-            state["last_error"] = f"Failed to parse .done file: {e}"
+        except PermissionError:
+            pass
+        state["context"].update(data)
+        cfg = get_stage_config(state.get("profile", "minimal"), stage)
+        for field in cfg.get("expected_outputs", []):
+            if field in data:
+                db.update_context(key, field, str(data[field]))
         return state
 
     # No done file yet — check if the session crashed

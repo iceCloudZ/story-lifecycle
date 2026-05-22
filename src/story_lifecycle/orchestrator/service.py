@@ -1,5 +1,6 @@
 """Shared service layer — single entry point for TUI and server."""
 
+import shutil
 from pathlib import Path
 
 from ..db import models as db
@@ -23,6 +24,11 @@ def create_and_start_story(
     profile_data = load_profile(profile)
     stages = profile_data.get("stages", {})
     first_stage = next(iter(stages)) if stages else "design"
+
+    # Clean stale done files from previous runs
+    done_dir = Path(ws) / ".story-done" / story_key
+    if done_dir.exists():
+        shutil.rmtree(done_dir, ignore_errors=True)
 
     # Handle PRD content
     if prd_path:

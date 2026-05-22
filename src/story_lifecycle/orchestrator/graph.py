@@ -1,5 +1,6 @@
 """LangGraph StateGraph — the orchestration engine."""
 
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -33,6 +34,15 @@ _executor = ThreadPoolExecutor(max_workers=4)
 # TUI reference for cross-thread notifications (set by StoryBoardApp.on_mount)
 _tui_app: object | None = None
 
+# In-memory status bus — thread-safe, no file I/O
+_status_lock = threading.Lock()
+_plan_done: dict[str, tuple[str, bool]] = {}
+_terminal_opened: set[str] = set()
+
+# Execution guard — prevent double submission
+_running_stories: set[str] = set()
+_running_lock = threading.Lock()
+
 
 def set_tui_app(app: object) -> None:
     global _tui_app
@@ -40,20 +50,40 @@ def set_tui_app(app: object) -> None:
 
 
 def emit_plan_stream(story_key: str, chunk: str) -> None:
-    """No-op: streaming not implemented for call_from_thread."""
     pass
 
 
 def emit_terminal_opened(story_key: str) -> None:
-    """Notify TUI that terminal has been opened."""
-    if _tui_app:
-        _tui_app.call_from_thread(_tui_app._on_terminal_opened, story_key)
+    """Signal that the CLI terminal has been opened."""
+    with _status_lock:
+        _terminal_opened.add(story_key)
 
 
 def emit_plan_done(story_key: str, summary: str, ok: bool = True) -> None:
-    """Notify TUI that planning is complete."""
-    if _tui_app:
-        _tui_app.call_from_thread(_tui_app._on_plan_done, story_key, summary, ok)
+    """Signal that planning is complete."""
+    with _status_lock:
+        _plan_done[story_key] = (summary, ok)
+
+
+def take_plan_done(story_key: str) -> tuple[str, bool] | None:
+    """Atomically read and clear plan_done status."""
+    with _status_lock:
+        return _plan_done.pop(story_key, None)
+
+
+def take_terminal_opened(story_key: str) -> bool:
+    """Atomically read and clear terminal_opened status."""
+    with _status_lock:
+        if story_key in _terminal_opened:
+            _terminal_opened.discard(story_key)
+            return True
+        return False
+
+
+def is_story_running(story_key: str) -> bool:
+    """Check if a story is currently being executed."""
+    with _running_lock:
+        return story_key in _running_stories
 
 
 def build_graph() -> StateGraph:
@@ -131,12 +161,14 @@ def run_story(story_key: str):
         _run_story_impl(story_key)
     except Exception:
         log.error(f"run_story failed for {story_key}:\n{traceback.format_exc()}")
-        # Also write to a known file for debugging
         err_file = STORY_HOME / "graph_error.log"
         err_file.write_text(
             f"run_story failed for {story_key}:\n{traceback.format_exc()}",
             encoding="utf-8",
         )
+    finally:
+        with _running_lock:
+            _running_stories.discard(story_key)
 
 
 def _run_story_impl(story_key: str):
@@ -188,8 +220,13 @@ def resume_story(story_key: str):
 
 
 def start_story_async(story_key: str):
-    """Submit a story for execution. Non-blocking."""
+    """Submit a story for execution. Non-blocking. Skips if already running."""
     import logging
+
+    with _running_lock:
+        if story_key in _running_stories:
+            return
+        _running_stories.add(story_key)
 
     log = logging.getLogger("story-lifecycle.graph")
     err_file = STORY_HOME / "graph_error.log"
