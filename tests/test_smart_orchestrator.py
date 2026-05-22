@@ -1,0 +1,531 @@
+"""Integration tests for Smart Orchestrator Phase 1.
+
+Tests exercise the graph nodes with mocked LLM/ttyd/adapter,
+validating the new plan → execute → poll → review → router topology.
+"""
+
+import json
+import tempfile
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+
+import pytest
+
+from story_lifecycle.db import models as db
+from story_lifecycle.orchestrator.nodes import (
+    StoryState,
+    plan_stage_node,
+    execute_stage_node,
+    review_stage_node,
+    router_node,
+    advance_node,
+    skip_node,
+    fail_node,
+    retry_node,
+    route_after_plan,
+    route_after_poll,
+    MAX_REVIEW_RETRIES,
+)
+
+
+@pytest.fixture(autouse=True)
+def _init_db():
+    db.init_db()
+    yield
+
+
+def _make_state(**overrides) -> StoryState:
+    """Build a minimal StoryState for testing."""
+    base: StoryState = {
+        "story_key": "TEST-001",
+        "title": "Test Story",
+        "workspace": "/tmp/test-workspace",
+        "profile": "minimal",
+        "current_stage": "design",
+        "status": "active",
+        "complexity": "M",
+        "context": {},
+        "execution_count": 0,
+        "last_error": None,
+        "stage_start_time": 0.0,
+        "plan_summary": None,
+        "review_summary": None,
+        "trajectory_score": None,
+        "plan": None,
+    }
+    base.update(overrides)
+    return base
+
+
+# -------- routing functions --------
+
+
+class TestRouteAfterPlan:
+    def test_execute_when_not_skipping(self):
+        state = _make_state(status="active")
+        assert route_after_plan(state) == "execute_stage"
+
+    def test_skip_when_skipping(self):
+        state = _make_state(status="skipping")
+        assert route_after_plan(state) == "skip_stage"
+
+
+class TestRouteAfterPoll:
+    def test_review_when_no_error(self):
+        state = _make_state(last_error=None)
+        assert route_after_poll(state) == "review_stage"
+
+    def test_router_when_error(self):
+        state = _make_state(last_error="crashed")
+        assert route_after_poll(state) == "router"
+
+
+# -------- plan_stage_node --------
+
+
+class TestPlanStageNode:
+    @patch("story_lifecycle.orchestrator.nodes.planner")
+    def test_fallback_when_no_api_key(self, mock_planner):
+        mock_planner.is_available.return_value = False
+        mock_planner.compress_context.return_value = None
+
+        state = _make_state()
+        result = plan_stage_node(state)
+
+        assert result["plan_summary"] == "Fallback: using profile config"
+        assert result["plan"] is not None
+        assert result["plan"]["adapter"] in ("claude", None)
+        assert result.get("status") != "skipping"
+
+    @patch("story_lifecycle.orchestrator.nodes.planner")
+    def test_llm_plan_generates_task_file(self, mock_planner):
+        mock_planner.is_available.return_value = True
+        mock_planner.compress_context.return_value = None
+        mock_planner.plan_stage.return_value = {
+            "adapter": "claude",
+            "provider": "deepseek",
+            "model": "sonnet",
+            "skip": False,
+            "summary": "Design the API layer",
+            "extra_instructions": "Create REST endpoints for user management",
+            "reasoning": "Need to define API contracts first",
+            "trajectory_score": 0.85,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = _make_state(workspace=tmp)
+            result = plan_stage_node(state)
+
+            assert result["plan_summary"] == "Design the API layer"
+            assert result["trajectory_score"] == 0.85
+            assert result["plan"]["adapter"] == "claude"
+
+            plan_path = result["context"].get("plan_path")
+            assert plan_path is not None
+            plan_file = Path(tmp) / plan_path
+            assert plan_file.exists()
+            content = plan_file.read_text(encoding="utf-8")
+            assert "Create REST endpoints" in content
+
+    @patch("story_lifecycle.orchestrator.nodes.planner")
+    def test_skip_when_plan_says_skip(self, mock_planner):
+        mock_planner.is_available.return_value = True
+        mock_planner.compress_context.return_value = None
+        mock_planner.plan_stage.return_value = {
+            "skip": True,
+            "reasoning": "Stage not needed for this complexity",
+            "summary": "Skipping design",
+        }
+
+        state = _make_state()
+        result = plan_stage_node(state)
+
+        assert result["status"] == "skipping"
+        assert "跳过" in (result["plan_summary"] or "")
+
+    @patch("story_lifecycle.orchestrator.nodes.planner")
+    def test_fallback_on_planner_exception(self, mock_planner):
+        mock_planner.is_available.return_value = True
+        mock_planner.compress_context.return_value = None
+        mock_planner.plan_stage.side_effect = Exception("LLM timeout")
+
+        state = _make_state()
+        result = plan_stage_node(state)
+
+        assert result["plan_summary"] == "Fallback: using profile config"
+
+
+# -------- review_stage_node --------
+
+
+class TestReviewStageNode:
+    def test_circuit_breaker_skips_on_error(self):
+        state = _make_state(last_error="CC process crashed")
+        result = review_stage_node(state)
+
+        assert result.get("review_summary") is None
+
+    @patch("story_lifecycle.orchestrator.nodes.planner")
+    def test_retry_fatigue_forces_fail(self, mock_planner):
+        mock_planner.is_available.return_value = True
+
+        state = _make_state(
+            execution_count=MAX_REVIEW_RETRIES,
+            context={"output": "some data"},
+        )
+        # Need stage config with expected_outputs
+        with patch(
+            "story_lifecycle.orchestrator.nodes.get_stage_config",
+            return_value={"expected_outputs": ["output"]},
+        ):
+            result = review_stage_node(state)
+
+        assert result["last_error"] is not None
+        assert "重试上限" in result["review_summary"]
+
+    @patch("story_lifecycle.orchestrator.nodes.planner")
+    def test_review_pass(self, mock_planner):
+        mock_planner.is_available.return_value = True
+        mock_planner.review_stage.return_value = {
+            "quality": "pass",
+            "summary": "Design looks good",
+            "feedback": "All requirements addressed",
+            "issues": [],
+            "suggestions": ["Consider adding error codes"],
+            "trajectory_score": 0.9,
+            "context_updates": {},
+            "reasoning": "Complete and well-structured",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = _make_state(
+                workspace=tmp,
+                context={"prd_path": "prd/TEST-001.md"},
+            )
+            with patch(
+                "story_lifecycle.orchestrator.nodes.get_stage_config",
+                return_value={"expected_outputs": ["prd_path"]},
+            ):
+                result = review_stage_node(state)
+
+            assert result["review_summary"] == "Design looks good"
+            assert result["trajectory_score"] == 0.9
+            assert result.get("last_error") is None
+
+    @patch("story_lifecycle.orchestrator.nodes.planner")
+    def test_review_revise_sets_error(self, mock_planner):
+        mock_planner.is_available.return_value = True
+        mock_planner.review_stage.return_value = {
+            "quality": "revise",
+            "summary": "Missing error handling",
+            "feedback": "Need try/catch blocks",
+            "issues": [
+                {
+                    "type": "missing_error_handling",
+                    "severity": "high",
+                    "location": "api.py:42",
+                    "description": "No error handling for DB connection",
+                }
+            ],
+            "suggestions": ["Add try/except around DB calls"],
+            "trajectory_score": 0.4,
+            "context_updates": {},
+            "reasoning": "Critical issue found",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = _make_state(
+                workspace=tmp,
+                context={"prd_path": "prd/TEST-001.md"},
+            )
+            with patch(
+                "story_lifecycle.orchestrator.nodes.get_stage_config",
+                return_value={"expected_outputs": ["prd_path"]},
+            ):
+                result = review_stage_node(state)
+
+            assert result["last_error"] is not None
+            assert "1 high severity" in result["last_error"]
+
+    @patch("story_lifecycle.orchestrator.nodes.planner")
+    def test_review_fail(self, mock_planner):
+        mock_planner.is_available.return_value = True
+        mock_planner.review_stage.return_value = {
+            "quality": "fail",
+            "summary": "Completely off-track",
+            "feedback": "Fundamental architecture mismatch",
+            "issues": [],
+            "suggestions": [],
+            "trajectory_score": 0.1,
+            "context_updates": {},
+            "reasoning": "Irrecoverable",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = _make_state(
+                workspace=tmp,
+                context={"prd_path": "prd/TEST-001.md"},
+            )
+            with patch(
+                "story_lifecycle.orchestrator.nodes.get_stage_config",
+                return_value={"expected_outputs": ["prd_path"]},
+            ):
+                result = review_stage_node(state)
+
+            assert result["last_error"] is not None
+            assert "off-track" in result["last_error"]
+
+
+# -------- router_node --------
+
+
+class TestRouterNode:
+    def test_happy_path_advance(self):
+        state = _make_state(last_error=None)
+        with patch(
+            "story_lifecycle.orchestrator.nodes.get_stage_config",
+            return_value={"confirm": False},
+        ):
+            result = router_node(state)
+        assert result == "advance"
+
+    def test_happy_path_wait_confirm(self):
+        state = _make_state(last_error=None)
+        with patch(
+            "story_lifecycle.orchestrator.nodes.get_stage_config",
+            return_value={"confirm": True},
+        ):
+            result = router_node(state)
+        assert result == "wait_confirm"
+
+    def test_retry_fatigue_fail(self):
+        state = _make_state(
+            last_error="Some error",
+            review_summary="达到重试上限 (3 次)",
+        )
+        result = router_node(state)
+        assert result == "fail"
+
+    def test_low_trajectory_score_kill(self):
+        state = _make_state(
+            last_error="Bad output",
+            trajectory_score=0.2,
+        )
+        result = router_node(state)
+        assert result == "fail"
+
+    def test_review_driven_retry(self):
+        state = _make_state(
+            last_error="Review: missing tests (1 high severity issues)",
+            review_summary="Needs more tests",
+            execution_count=1,
+        )
+        result = router_node(state)
+        assert result == "retry"
+
+    def test_review_driven_exhausted_fail(self):
+        state = _make_state(
+            last_error="Review: still broken",
+            review_summary="Still failing",
+            execution_count=MAX_REVIEW_RETRIES,
+        )
+        result = router_node(state)
+        assert result == "fail"
+
+    def test_llm_router_fallback_on_error(self):
+        state = _make_state(
+            last_error="Execution failed",
+        )
+        with patch(
+            "story_lifecycle.orchestrator.nodes.llm_router"
+        ) as mock_router:
+            mock_router.route.return_value = {
+                "action": "retry",
+                "reasoning": "Transient error",
+                "provider_override": "openai",
+            }
+            result = router_node(state)
+        assert result == "retry"
+        assert state["context"]["_provider"] == "openai"
+
+
+# -------- execute_stage_node --------
+
+
+class TestExecuteStageNode:
+    def _mock_tool(self):
+        tool = MagicMock()
+        tool.execute.side_effect = lambda state, args: {
+            **state,
+            "execution_count": state.get("execution_count", 0) + 1,
+            "stage_start_time": 1.0,
+            "last_error": None,
+        }
+        return tool
+
+    @patch("story_lifecycle.orchestrator.tools.get_tool")
+    def test_reads_adapter_from_plan(self, mock_get_tool):
+        mock_tool = self._mock_tool()
+        mock_get_tool.return_value = mock_tool
+
+        state = _make_state(
+            plan={"adapter": "claude", "provider": "deepseek", "model": "opus"},
+        )
+        result = execute_stage_node(state)
+
+        mock_get_tool.assert_called_with("stage_tool")
+        tool_args = mock_tool.execute.call_args[0][1]
+        assert tool_args["adapter"] == "claude"
+        assert tool_args["provider"] == "deepseek"
+        assert tool_args["model"] == "opus"
+        assert result["execution_count"] == 1
+
+    @patch("story_lifecycle.orchestrator.tools.get_tool")
+    def test_falls_back_to_profile_config(self, mock_get_tool):
+        mock_tool = self._mock_tool()
+        mock_get_tool.return_value = mock_tool
+
+        state = _make_state(plan=None)
+        result = execute_stage_node(state)
+
+        assert result["execution_count"] == 1
+
+    @patch("story_lifecycle.orchestrator.tools.get_tool")
+    def test_prepends_plan_file_to_prompt(self, mock_get_tool):
+        mock_tool = self._mock_tool()
+        mock_get_tool.return_value = mock_tool
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plan_dir = Path(tmp) / ".story-context" / "TEST-001"
+            plan_dir.mkdir(parents=True)
+            plan_file = plan_dir / "plan_design.md"
+            plan_file.write_text("# Task: Build API", encoding="utf-8")
+
+            state = _make_state(
+                workspace=tmp,
+                context={"plan_path": ".story-context/TEST-001/plan_design.md"},
+            )
+            execute_stage_node(state)
+
+            tool_args = mock_tool.execute.call_args[0][1]
+            assert "Task: Build API" in tool_args["prompt"]
+
+    @patch("story_lifecycle.orchestrator.tools.get_tool")
+    def test_dispatches_skill_tool(self, mock_get_tool):
+        mock_tool = self._mock_tool()
+        mock_get_tool.return_value = mock_tool
+
+        state = _make_state(
+            plan={"tool": "skill_tool", "adapter": "claude", "model": "sonnet"},
+        )
+        execute_stage_node(state)
+
+        mock_get_tool.assert_called_with("skill_tool")
+
+
+# -------- action nodes --------
+
+
+class TestAdvanceNode:
+    def test_advance_to_next_stage(self):
+        db.upsert_story("TEST-ADV", title="Test", workspace="/tmp", status="active")
+        state = _make_state(
+            story_key="TEST-ADV",
+            context={"prd_path": "prd.md"},
+        )
+        with patch(
+            "story_lifecycle.orchestrator.nodes.resolve_next_stage",
+            return_value="implement",
+        ), patch(
+            "story_lifecycle.orchestrator.nodes.get_stage_config",
+            return_value={"expected_outputs": ["prd_path"]},
+        ):
+            result = advance_node(state)
+
+        assert result["current_stage"] == "implement"
+        assert result["execution_count"] == 0
+
+
+class TestRetryNode:
+    def test_clears_error(self):
+        state = _make_state(last_error="Previous error")
+        result = retry_node(state)
+        assert result["last_error"] is None
+
+
+class TestSkipNode:
+    def test_fills_expected_outputs(self):
+        db.upsert_story("TEST-001", title="Test", workspace="/tmp")
+        state = _make_state()
+        with patch(
+            "story_lifecycle.orchestrator.nodes.get_stage_config",
+            return_value={"expected_outputs": ["prd_path", "spec_path"]},
+        ):
+            result = skip_node(state)
+
+        assert result["context"]["prd_path"] == "SKIPPED"
+        assert result["context"]["spec_path"] == "SKIPPED"
+        assert result["last_error"] is None
+
+
+class TestFailNode:
+    def test_marks_blocked(self):
+        db.upsert_story("TEST-001", title="Test", workspace="/tmp")
+        state = _make_state(last_error="Something broke")
+        result = fail_node(state)
+        assert result["status"] == "blocked"
+
+
+# -------- event_log --------
+
+
+class TestEventLog:
+    def test_log_and_retrieve_events(self):
+        import uuid
+        key = f"EVT-{uuid.uuid4().hex[:8]}"
+        db.log_event(key, "design", "plan", {"adapter": "claude"})
+        db.log_event(key, "design", "execute", {"attempt": 1})
+        db.log_event(key, "design", "review", {"quality": "pass"})
+
+        events = db.get_story_events(key)
+        assert len(events) == 3
+        assert events[0]["event_type"] == "plan"
+        assert events[1]["event_type"] == "execute"
+        assert events[2]["event_type"] == "review"
+
+        payload = json.loads(events[2]["payload"])
+        assert payload["quality"] == "pass"
+
+    def test_no_events_returns_empty(self):
+        events = db.get_story_events("NONEXISTENT-999")
+        assert events == []
+
+
+# -------- graph compilation --------
+
+
+class TestGraphCompilation:
+    def test_build_and_compile(self):
+        from story_lifecycle.orchestrator.graph import build_graph
+
+        g = build_graph()
+        compiled = g.compile()
+        assert compiled is not None
+
+    def test_graph_has_all_nodes(self):
+        from story_lifecycle.orchestrator.graph import build_graph
+
+        g = build_graph()
+        expected = {
+            "plan_stage",
+            "execute_stage",
+            "poll_completion",
+            "review_stage",
+            "router",
+            "advance",
+            "retry",
+            "skip_stage",
+            "fail_stage",
+            "wait_confirm",
+        }
+        assert set(g.nodes) == expected

@@ -3,7 +3,6 @@
 import json
 import logging
 import re
-import time
 from pathlib import Path
 from typing import TypedDict, Optional
 
@@ -12,7 +11,6 @@ import yaml
 from langgraph.types import interrupt
 
 from ..db import models as db
-from ..adapters import get_adapter
 from ..terminal import ttyd
 from ..terminal.platform_ops import file_lock
 from . import planner
@@ -245,6 +243,11 @@ def review_stage_node(state: StoryState) -> StoryState:
 
     stage = state["current_stage"]
     cfg = get_stage_config(state.get("profile", "minimal"), stage)
+
+    # Review disabled for this stage
+    if not cfg.get("review", True):
+        return state
+
     stage_output = state.get("context", {})
 
     # No expected_outputs → skip review
@@ -406,8 +409,7 @@ def _update_knowledge(
 
 
 def execute_stage_node(state: StoryState) -> StoryState:
-    """Launch CC in a multiplexer session for the current stage."""
-    key = state["story_key"]
+    """Dispatch stage execution via Tool abstraction."""
     stage = state["current_stage"]
     workspace = state["workspace"]
     profile = state.get("profile", "minimal")
@@ -423,26 +425,8 @@ def execute_stage_node(state: StoryState) -> StoryState:
         "_provider", cfg.get("provider", "deepseek")
     )
     model = plan.get("model") or cfg.get("model", "sonnet")
-    adapter = get_adapter(adapter_name)
 
-    # 1. Switch provider
-    if provider:
-        adapter.switch_provider(provider)
-
-    # 2. Ensure ttyd + session (with correct CWD)
-    ttyd.ensure_ttyd(key, workspace)
-
-    # 3. Stop existing CC in session
-    session = ttyd.session_name(key)
-    if ttyd.session_alive(session):
-        ttyd.send_keys(session, "C-c")
-        time.sleep(0.5)
-
-    # 4. Create session if not alive
-    if not ttyd.session_alive(session):
-        ttyd.create_session(session, workspace)
-
-    # 5. Render prompt + prepend plan file if available
+    # Render prompt + prepend plan file if available
     prompt = _render_prompt(stage, state)
     plan_path = state.get("context", {}).get("plan_path")
     if plan_path:
@@ -451,30 +435,22 @@ def execute_stage_node(state: StoryState) -> StoryState:
             plan_content = plan_file.read_text(encoding="utf-8")
             prompt = f"{plan_content}\n\n---\n\n{prompt}"
 
-    # 6. Launch CC
-    launch = adapter.launch_cmd(model)
-    ttyd.send_keys(session, launch, "Enter")
-    time.sleep(8)  # wait for CC to fully initialize
-
-    # 7. Inject prompt via multiplexer paste
-    ttyd.paste_text(session, prompt)
-    ttyd.send_keys(session, "Enter")
-
-    # 8. Track state
-    state["execution_count"] = state.get("execution_count", 0) + 1
-    state["stage_start_time"] = time.time()
-    state["last_error"] = None
-
-    db.log_stage(key, stage, "execute", f"Attempt {state['execution_count']}")
-    db.log_event(key, stage, "execute", {
-        "attempt": state["execution_count"],
+    # Build tool args
+    stage_cfg = get_stage_config(profile, stage)
+    tool_args = {
         "adapter": adapter_name,
         "provider": provider,
         "model": model,
-    })
-    db.update_story(key, execution_count=state["execution_count"], last_error=None)
+        "prompt": prompt,
+        "skill": stage_cfg.get("skill", ""),
+    }
 
-    return state
+    # Dispatch to tool
+    tool_name = plan.get("tool", "stage_tool")
+    from .tools import get_tool
+
+    tool = get_tool(tool_name)
+    return tool.execute(state, tool_args)
 
 
 # -------- node: poll_completion --------
