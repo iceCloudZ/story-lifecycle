@@ -23,6 +23,12 @@ def _ensure_registered():
     if not _TOOLS:
         from .stage_tool import StageTool
         from .skill_tool import SkillTool
+        from .research_tool import ResearchTool
+        from .benchmark_tool import BenchmarkTool
+        from .review_tool import ReviewTool
 
         register_tool("stage_tool", StageTool)
         register_tool("skill_tool", SkillTool)
+        register_tool("research_tool", ResearchTool)
+        register_tool("benchmark_tool", BenchmarkTool)
+        register_tool("review_tool", ReviewTool)

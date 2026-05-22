@@ -50,7 +50,7 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "plan_stage",
         route_after_plan,
-        {"skip_stage": "skip_stage", "execute_stage": "execute_stage"},
+        {"skip_stage": "skip_stage", "execute_stage": "execute_stage", "end": END},
     )
 
     graph.add_edge("execute_stage", "poll_completion")

@@ -12,6 +12,8 @@ def create_and_start_story(
     profile: str = "minimal",
     workspace: str = "",
     prd_path: str | None = None,
+    parent_key: str | None = None,
+    subtask_index: int = 0,
 ) -> str:
     """Create a story via service layer. Writes to DB and returns story_key.
 
@@ -41,6 +43,8 @@ def create_and_start_story(
         profile=profile,
         current_stage=first_stage,
         status="active",
+        parent_key=parent_key,
+        subtask_index=subtask_index,
     )
 
     if prd_path:

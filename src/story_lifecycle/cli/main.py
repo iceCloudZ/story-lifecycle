@@ -167,6 +167,21 @@ def _board_static():
         console.print("[dim]No active stories. Create one with: story new <KEY>[/]")
         return
 
+    # Sort: parents first, then children grouped under parent
+    parents = [s for s in stories if not s.get("parent_key")]
+    children = [s for s in stories if s.get("parent_key")]
+
+    display_list = []
+    for p in parents:
+        display_list.append(p)
+        display_list.extend(sorted(
+            [c for c in children if c["parent_key"] == p["story_key"]],
+            key=lambda c: c.get("subtask_index", 0),
+        ))
+    # Orphans (children whose parent not in list)
+    parent_keys = {p["story_key"] for p in parents}
+    display_list.extend(c for c in children if c["parent_key"] not in parent_keys)
+
     table = Table(title="Story Board", show_lines=False)
     table.add_column("Story", style="cyan", no_wrap=True)
     table.add_column("Title", style="white")
@@ -175,17 +190,22 @@ def _board_static():
     table.add_column("Retries", justify="center")
     table.add_column("Workspace", style="dim")
 
-    for s in stories:
+    for s in display_list:
         status_str = {
             "active": "[bold green]> active[/]",
             "paused": "[bold yellow]|| paused[/]",
             "blocked": "[bold red]X blocked[/]",
             "completed": "[dim green]OK done[/]",
+            "waiting_subtasks": "[bold magenta]≡ waiting subs[/]",
         }.get(s.get("status", ""), s.get("status", ""))
 
+        is_child = bool(s.get("parent_key"))
+        key_str = f"  └─ {s['story_key']}" if is_child else s.get("story_key", "")
+        title_str = f"  {s.get('title', '')}" if is_child else (s.get("title") or "")[:40]
+
         table.add_row(
-            s.get("story_key", ""),
-            (s.get("title") or "")[:40],
+            key_str,
+            title_str[:42],
             s.get("current_stage", ""),
             status_str,
             str(s.get("execution_count", 0)),

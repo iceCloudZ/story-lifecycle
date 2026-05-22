@@ -110,6 +110,19 @@ def plan_stage(state: dict, stage_config: dict, adapters: list[str]) -> dict:
   "trajectory_score": 0.85
 }}}}
 
+## 子 Story 拆分（可选）
+如果这个 Story 的复杂度为 L，或者涉及多个独立模块，你可以选择拆分为子 Story。
+在返回的 JSON 中加入：
+{{{{
+  "split": true,
+  "subtasks": [
+    {{{{ "key_suffix": "auth", "title": "实现认证模块", "summary": "根据设计文档实现 auth.py", "depends_on": [] }}}},
+    {{{{ "key_suffix": "api", "title": "实现 API 层", "summary": "实现 api.py 路由", "depends_on": ["auth"] }}}}
+  ]
+}}}}
+不拆分时不要包含 split 和 subtasks 字段。子 Story 共享父 Story 知识库，各自独立执行。
+depends_on 填写其他 subtask 的 key_suffix，控制执行顺序（有依赖的子任务等前置完成后才启动）。
+
 注意：
 - extra_instructions 是给工程师看的任务书，要具体、可操作
 - 参考 Story 知识库和团队记忆，让指令更"懂项目"

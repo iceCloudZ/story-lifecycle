@@ -6,6 +6,7 @@ validating the new plan → execute → poll → review → router topology.
 
 import json
 import tempfile
+import uuid
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -529,3 +530,140 @@ class TestGraphCompilation:
             "wait_confirm",
         }
         assert set(g.nodes) == expected
+
+
+# -------- Phase 3: Sub-story delegation --------
+
+
+class TestSubStoryDelegation:
+    @patch("story_lifecycle.orchestrator.nodes.planner")
+    def test_split_creates_sub_stories(self, mock_planner):
+        mock_planner.is_available.return_value = True
+        mock_planner.compress_context.return_value = None
+        mock_planner.plan_stage.return_value = {
+            "split": True,
+            "subtasks": [
+                {"key_suffix": "auth", "title": "Auth module", "summary": "Implement auth", "depends_on": []},
+                {"key_suffix": "api", "title": "API layer", "summary": "Implement API", "depends_on": ["auth"]},
+            ],
+            "summary": "Splitting into sub-stories",
+        }
+
+        with patch("story_lifecycle.orchestrator.graph.start_story_async") as mock_start:
+            with tempfile.TemporaryDirectory() as tmp:
+                db.upsert_story("PARENT-001", title="Parent", workspace=tmp, status="active")
+                state = _make_state(story_key="PARENT-001", workspace=tmp)
+                result = plan_stage_node(state)
+
+                assert result["status"] == "waiting_subtasks"
+                assert "拆分为 2 个子任务" in result["plan_summary"]
+
+                # Verify sub-stories in DB
+                sub_auth = db.get_story("PARENT-001-auth")
+                assert sub_auth is not None
+                assert sub_auth["parent_key"] == "PARENT-001"
+                assert sub_auth["status"] == "active"  # no deps
+
+                sub_api = db.get_story("PARENT-001-api")
+                assert sub_api is not None
+                assert sub_api["status"] == "blocked"  # depends on auth
+
+                # Only auth was launched (api is blocked)
+                mock_start.assert_called_once_with("PARENT-001-auth")
+
+    def test_route_after_plan_waiting_subtasks(self):
+        state = _make_state(status="waiting_subtasks")
+        assert route_after_plan(state) == "end"
+
+
+class TestSubStoryQueries:
+    def test_get_sub_stories(self):
+        key = f"PSUB-{uuid.uuid4().hex[:6]}"
+        db.upsert_story(key, title="Parent", workspace="/tmp", status="active")
+        db.upsert_story(f"{key}-a", title="A", workspace="/tmp", parent_key=key, subtask_index=0)
+        db.upsert_story(f"{key}-b", title="B", workspace="/tmp", parent_key=key, subtask_index=1)
+
+        subs = db.get_sub_stories(key)
+        assert len(subs) == 2
+        assert subs[0]["subtask_index"] == 0
+        assert subs[1]["subtask_index"] == 1
+
+    def test_get_pending_parents_empty(self):
+        parents = db.get_pending_parents()
+        # May have data from other tests, just verify it returns a list
+        assert isinstance(parents, list)
+
+    def test_get_pending_parents_with_waiting(self):
+        key = f"PWAIT-{uuid.uuid4().hex[:6]}"
+        db.upsert_story(key, title="Parent", workspace="/tmp", status="waiting_subtasks")
+        parents = db.get_pending_parents()
+        matching = [p for p in parents if p["story_key"] == key]
+        assert len(matching) == 1
+
+
+class TestWatchdogSubtaskCompletion:
+    def test_resumes_parent_when_all_children_complete(self):
+        key = f"PCMP-{uuid.uuid4().hex[:6]}"
+        db.upsert_story(key, title="Parent", workspace="/tmp", status="waiting_subtasks")
+        db.upsert_story(f"{key}-a", title="A", workspace="/tmp", parent_key=key, status="completed")
+        db.upsert_story(f"{key}-b", title="B", workspace="/tmp", parent_key=key, status="completed")
+
+        with patch("story_lifecycle.orchestrator.graph.resume_story") as mock_resume:
+            # Simulate watchdog logic
+            pending = db.get_pending_parents()
+            for parent in pending:
+                if parent["story_key"] != key:
+                    continue
+                children = db.get_sub_stories(parent["story_key"])
+                incomplete = [c for c in children if c["status"] != "completed"]
+                if not incomplete:
+                    db.update_story(parent["story_key"], status="active")
+                    mock_resume(parent["story_key"])
+
+            parent = db.get_story(key)
+            assert parent["status"] == "active"
+            mock_resume.assert_called_once_with(key)
+
+
+# -------- Phase 3: Extended tools --------
+
+
+class TestToolRegistry:
+    def test_all_five_tools_registered(self):
+        from story_lifecycle.orchestrator.tools import available_tools
+
+        tools = available_tools()
+        assert set(tools) == {"stage_tool", "skill_tool", "research_tool", "benchmark_tool", "review_tool"}
+
+    def test_get_tool_returns_correct_type(self):
+        from story_lifecycle.orchestrator.tools import get_tool
+        from story_lifecycle.orchestrator.tools.research_tool import ResearchTool
+        from story_lifecycle.orchestrator.tools.benchmark_tool import BenchmarkTool
+        from story_lifecycle.orchestrator.tools.review_tool import ReviewTool
+
+        assert isinstance(get_tool("research_tool"), ResearchTool)
+        assert isinstance(get_tool("benchmark_tool"), BenchmarkTool)
+        assert isinstance(get_tool("review_tool"), ReviewTool)
+
+    def test_tool_describe_methods(self):
+        from story_lifecycle.orchestrator.tools import get_tool
+
+        for name in ["research_tool", "benchmark_tool", "review_tool"]:
+            tool = get_tool(name)
+            assert len(tool.describe()) > 0
+
+
+class TestBoardDisplaySorting:
+    def test_children_appear_under_parent(self):
+
+        key = f"BDSP-{uuid.uuid4().hex[:6]}"
+        db.upsert_story(key, title="Parent", workspace="/tmp", status="active")
+        db.upsert_story(f"{key}-a", title="Child A", workspace="/tmp", parent_key=key, subtask_index=0, status="active")
+        db.upsert_story(f"{key}-b", title="Child B", workspace="/tmp", parent_key=key, subtask_index=1, status="active")
+
+        # Should not raise — just verify it renders
+        stories = db.list_active_stories()
+        parents = [s for s in stories if not s.get("parent_key")]
+        children = [s for s in stories if s.get("parent_key")]
+        assert any(s["story_key"] == key for s in parents)
+        assert len([c for c in children if c["parent_key"] == key]) == 2

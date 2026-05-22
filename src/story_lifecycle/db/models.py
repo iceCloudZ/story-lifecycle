@@ -71,6 +71,15 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+    # Idempotent column migration
+    try:
+        conn.execute("ALTER TABLE story ADD COLUMN parent_key TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE story ADD COLUMN subtask_index INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -84,13 +93,15 @@ def create_story(
     workspace: str,
     profile: str = "minimal",
     current_stage: str = "design",
+    parent_key: str | None = None,
+    subtask_index: int = 0,
 ) -> dict:
     conn = get_conn()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
-        """INSERT INTO story (story_key, title, workspace, profile, current_stage, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'active', ?, ?)""",
-        (story_key, title, str(workspace), profile, current_stage, now, now),
+        """INSERT INTO story (story_key, title, workspace, profile, current_stage, status, created_at, updated_at, parent_key, subtask_index)
+           VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)""",
+        (story_key, title, str(workspace), profile, current_stage, now, now, parent_key, subtask_index),
     )
     conn.commit()
     row = conn.execute(
@@ -112,8 +123,27 @@ def get_story(story_key: str) -> dict | None:
 def list_active_stories() -> list[dict]:
     conn = get_conn()
     rows = conn.execute(
-        """SELECT * FROM story WHERE status IN ('active', 'paused', 'blocked')
+        """SELECT * FROM story WHERE status IN ('active', 'paused', 'blocked', 'waiting_subtasks')
            ORDER BY updated_at DESC"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_sub_stories(parent_key: str) -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM story WHERE parent_key = ? ORDER BY subtask_index",
+        (parent_key,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_pending_parents() -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM story WHERE status = 'waiting_subtasks'"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -236,9 +266,11 @@ def upsert_story(
             values = list(kwargs.values()) + [story_key]
             conn.execute(f"UPDATE story SET {sets} WHERE story_key = ?", values)
     else:
+        parent_key = kwargs.pop("parent_key", None)
+        subtask_index = kwargs.pop("subtask_index", 0)
         conn.execute(
-            """INSERT INTO story (story_key, title, workspace, profile, current_stage, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO story (story_key, title, workspace, profile, current_stage, status, created_at, updated_at, parent_key, subtask_index)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 story_key,
                 title,
@@ -248,6 +280,8 @@ def upsert_story(
                 status,
                 now,
                 now,
+                parent_key,
+                subtask_index,
             ),
         )
     conn.commit()

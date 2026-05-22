@@ -58,12 +58,14 @@ class StoryCard(Static):
         retries = s.get("execution_count", 0)
         last_error = s.get("last_error", "")
         profile_name = s.get("profile", "minimal")
+        is_child = bool(s.get("parent_key"))
 
         badge = {
             "active": "[bold green]> active[/]",
             "paused": "[bold yellow]|| paused[/]",
             "blocked": "[bold red]X blocked[/]",
             "completed": "[dim green]OK done[/]",
+            "waiting_subtasks": "[bold magenta]≡ waiting subs[/]",
         }.get(status, status)
 
         try:
@@ -77,9 +79,10 @@ class StoryCard(Static):
         cli_line = f"  [dim]CLI: {cli_info['cli']} · Model: {cli_info['model']}[/]"
 
         cursor = "[bold cyan]▸[/] " if self._selected else "  "
+        indent = "  └─ " if is_child else ""
 
         lines = [
-            f"{cursor}[bold cyan]{key}[/]  {title}",
+            f"{cursor}{indent}[bold cyan]{key}[/]  {title}",
             f"  {bar}  {badge}  [dim]retries: {retries}[/]",
             cli_line,
         ]
@@ -577,6 +580,7 @@ class StoryBoardApp(App):
 
     async def watchdog_check(self):
         from ..orchestrator.graph import resume_story
+        from ..db import models as db
 
         active = [s for s in self.stories if s["status"] == "active"]
         for s in active:
@@ -588,6 +592,24 @@ class StoryBoardApp(App):
             if done_file.exists():
                 try:
                     resume_story(key)
+                except Exception:
+                    pass
+
+        # Check for parents waiting on subtasks
+        pending_parents = db.get_pending_parents()
+        for parent in pending_parents:
+            children = db.get_sub_stories(parent["story_key"])
+            incomplete = [
+                c for c in children
+                if c["status"] not in ("completed",)
+            ]
+            if not incomplete:
+                db.update_story(parent["story_key"], status="active")
+                db.log_event(parent["story_key"], "", "subtasks_completed", {
+                    "children": [c["story_key"] for c in children],
+                })
+                try:
+                    resume_story(parent["story_key"])
                 except Exception:
                     pass
 
