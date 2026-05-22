@@ -298,7 +298,9 @@ def run_doctor_fix(interactive: bool = True):
             console.print(f"  [yellow]INSTALLING[/] {tool['name']} via {pm_name}...")
 
         # Run install
-        console.print(f"    [dim]Running: {cmd if isinstance(cmd, str) else ' '.join(cmd)}[/]")
+        console.print(
+            f"    [dim]Running: {cmd if isinstance(cmd, str) else ' '.join(cmd)}[/]"
+        )
         try:
             if isinstance(cmd, str):
                 result = subprocess.run(
@@ -325,7 +327,9 @@ def run_doctor_fix(interactive: bool = True):
     # Summary
     console.print()
     if installed_ok:
-        console.print(f"[green]Installed ({len(installed_ok)}):[/] {', '.join(installed_ok)}")
+        console.print(
+            f"[green]Installed ({len(installed_ok)}):[/] {', '.join(installed_ok)}"
+        )
     if installed_fail:
         names = ", ".join(n for n, _ in installed_fail)
         console.print(f"[red]Failed ({len(installed_fail)}):[/] {names}")

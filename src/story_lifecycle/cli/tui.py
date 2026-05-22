@@ -487,9 +487,10 @@ class StoryBoardApp(App):
                     prd_path=prd_path or None,
                 )
                 self.refresh_stories()
-                self.run_worker(
-                    lambda: self._start_stage(key), thread=True, exclusive=True
-                )
+                # Start the graph — handles plan → execute → poll → review → advance
+                from ..orchestrator.graph import start_story_async
+
+                start_story_async(key)
             except Exception as e:
                 panel = self.query_one("#detail-panel")
                 panel.update(f"[red]Failed to create story: {e}[/]")

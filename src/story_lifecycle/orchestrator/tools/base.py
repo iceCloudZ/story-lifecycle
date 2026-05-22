@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
 import time
+from pathlib import Path
 
 from ...adapters import get_adapter
 from ...db import models as db
@@ -13,7 +15,10 @@ class BaseTool:
     """Base class for all execution tools. Provides common session management."""
 
     def _launch_in_session(self, state: dict, args: dict, prompt: str) -> dict:
-        """Launch a CLI adapter in a multiplexer session with the given prompt.
+        """Launch a CLI adapter with the given prompt.
+
+        Tries multiplexer session first; falls back to launching in a new
+        terminal window (reliable on all platforms including Windows).
 
         Returns updated state with execution_count, stage_start_time, etc.
         """
@@ -29,19 +34,29 @@ class BaseTool:
         if provider:
             adapter.switch_provider(provider)
 
-        ttyd.ensure_ttyd(key, workspace)
+        launch = adapter.launch_cmd(model)
         session = ttyd.session_name(key)
+        launched = False
+
+        # Try multiplexer session
+        ttyd.create_session(session, workspace)
         if ttyd.session_alive(session):
             ttyd.send_keys(session, "C-c")
             time.sleep(0.5)
-        if not ttyd.session_alive(session):
-            ttyd.create_session(session, workspace)
+            ttyd.send_keys(session, launch, "Enter")
+            time.sleep(8)
+            ttyd.paste_text(session, prompt)
+            ttyd.send_keys(session, "Enter")
+            launched = True
 
-        launch = adapter.launch_cmd(model)
-        ttyd.send_keys(session, launch, "Enter")
-        time.sleep(8)
-        ttyd.paste_text(session, prompt)
-        ttyd.send_keys(session, "Enter")
+        # Fallback: launch in a new terminal window
+        if not launched:
+            tmp = (
+                Path(tempfile.gettempdir())
+                / f"story-prompt-{key}-{state['current_stage']}.md"
+            )
+            tmp.write_text(prompt, encoding="utf-8")
+            ttyd.launch_cli(key, workspace, launch, str(tmp))
 
         state["execution_count"] = state.get("execution_count", 0) + 1
         state["stage_start_time"] = time.time()

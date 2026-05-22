@@ -32,9 +32,9 @@ def _first_run_check():
     console.print()
 
     if has_missing_tools():
-        answer = console.input(
-            "[bold]Install missing tools now? [Y/n][/] "
-        ).strip().lower()
+        answer = (
+            console.input("[bold]Install missing tools now? [Y/n][/] ").strip().lower()
+        )
         if answer in ("", "y", "yes"):
             run_doctor_fix(interactive=True)
             console.print()
@@ -61,7 +61,9 @@ def _first_run_check():
 @click.option("--serve", is_flag=True, help="Start API server instead of board")
 @click.option("--host", default="127.0.0.1", help="Server bind address")
 @click.option("--port", default=8180, help="Server bind port")
-@click.option("--fix", "fix_deps", is_flag=True, help="Auto-install missing dependencies")
+@click.option(
+    "--fix", "fix_deps", is_flag=True, help="Auto-install missing dependencies"
+)
 def cli(serve, host, port, fix_deps):
     """Story Lifecycle Manager — AI-powered development workflow orchestrator."""
     init_db()
