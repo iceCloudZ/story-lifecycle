@@ -324,7 +324,8 @@ def _stream_llm(
         timeout=60,
     ) as resp:
         resp.raise_for_status()
-        for line in resp.iter_lines():
+        for raw_line in resp.iter_lines():
+            line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
             if not line.startswith("data: "):
                 continue
             data = line[6:]

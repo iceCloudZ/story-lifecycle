@@ -176,7 +176,11 @@ def plan_stage_node(state: StoryState) -> StoryState:
             from ..orchestrator.graph import emit_plan_stream, emit_plan_done
 
             adapters = ["claude"]
-            emit_plan_stream(story_key, f"\n\n## 架构师规划: {stage}\n\n")
+            emit_plan_stream(
+                story_key,
+                "[dim]──────────────────────────────[/]\n\n"
+                "[bold bright_cyan]▸ LLM 实时输出[/]\n\n",
+            )
 
             def _on_chunk(text: str):
                 emit_plan_stream(story_key, text)

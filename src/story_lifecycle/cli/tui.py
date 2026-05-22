@@ -495,11 +495,11 @@ class StoryBoardApp(App):
 
                 # Show planning panel immediately
                 self._plan_buffer = (
-                    f"# 架构师规划\n\n"
-                    f"**Story:** {key}\n"
-                    f"**阶段:** design\n\n"
-                    f"---\n\n"
-                    f"正在分析需求，制定执行计划..."
+                    f"[bold bright_cyan]◆ 架构师规划[/]\n\n"
+                    f"[bold]Story:[/] {key}\n"
+                    f"[bold]阶段:[/] design\n"
+                    f"[dim]──────────────────────────────[/]\n\n"
+                    f"[dim]⚙ 正在分析需求，制定执行计划...[/]"
                 )
                 self._plan_story_key = key
                 panel = self.query_one("#detail-panel")
@@ -590,8 +590,13 @@ class StoryBoardApp(App):
 
     def _on_plan_done(self, story_key: str, summary: str, ok: bool = True):
         """Called when planning is complete (from background thread)."""
-        status = "[bold green]✓ 规划完成[/]" if ok else "[bold yellow]⚠ 规划降级[/]"
-        self._plan_buffer += f"\n\n---\n{status}\n**{summary}**\n\n启动 AI CLI..."
+        icon = "✓" if ok else "⚠"
+        color = "green" if ok else "yellow"
+        self._plan_buffer += (
+            f"\n\n[dim]──────────────────────────────[/]\n\n"
+            f"[bold {color}]{icon} {summary}[/]\n\n"
+            f"[dim]启动 AI CLI 执行终端...[/]"
+        )
         panel = self.query_one("#detail-panel")
         panel.update(self._plan_buffer)
         panel.set_class(True, "visible")
