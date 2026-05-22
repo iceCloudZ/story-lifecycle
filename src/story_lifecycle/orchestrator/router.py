@@ -36,6 +36,51 @@ def route(state: dict, stage_config: dict) -> dict:
     return _llm_route(state, stage_config)
 
 
+def _extract_json_object(text: str) -> str | None:
+    """Extract the first complete JSON object using bracket counting."""
+    depth = 0
+    start = None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                return text[start : i + 1]
+    return None
+
+
+def _parse_llm_json(content: str) -> dict:
+    """Parse LLM response as JSON with tolerance for truncation and markdown wrapping."""
+    # Direct parse
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    # Extract from markdown code fence
+    import re
+    m = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", content, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # Bracket-counting extraction (handles truncated output)
+    extracted = _extract_json_object(content)
+    if extracted:
+        try:
+            return json.loads(extracted)
+        except json.JSONDecodeError:
+            pass
+
+    log.warning(f"Failed to parse LLM router response: {content[:200]}")
+    return {"action": "fail", "reasoning": "LLM response not valid JSON"}
+
+
 def _llm_route(state: dict, stage_config: dict) -> dict:
     """Call LLM to make routing decision."""
     import httpx
@@ -71,4 +116,4 @@ Respond with a JSON object:
     )
     resp.raise_for_status()
     content = resp.json()["choices"][0]["message"]["content"]
-    return json.loads(content)
+    return _parse_llm_json(content)

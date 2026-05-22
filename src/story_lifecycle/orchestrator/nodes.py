@@ -278,6 +278,9 @@ def plan_stage_node(state: StoryState) -> StoryState:
         "trajectory_score": None,
     }
     state["plan_summary"] = "Fallback: using profile config"
+    from ..orchestrator.graph import emit_plan_done
+
+    emit_plan_done(story_key, "使用默认配置启动", ok=True)
     return state
 
 
@@ -607,34 +610,33 @@ def poll_completion_node(state: StoryState) -> StoryState:
     key = state["story_key"]
     stage = state["current_stage"]
     workspace = state["workspace"]
-    session = ttyd.session_name(key)
     done_file = Path(workspace) / ".story-done" / key / f"{stage}.json"
 
-    # Check session liveness (only when multiplexer is available)
+    # Check for done file first — if output exists, the stage succeeded
+    # regardless of whether the session is still alive.
+    if done_file.exists():
+        try:
+            with open(done_file, "r") as f:
+                file_lock(f)
+                data = robust_json_parse(done_file)
+            done_file.unlink()
+            state["context"].update(data)
+            cfg = get_stage_config(state.get("profile", "minimal"), stage)
+            for field in cfg.get("expected_outputs", []):
+                if field in data:
+                    db.update_context(key, field, str(data[field]))
+        except Exception as e:
+            state["last_error"] = f"Failed to parse .done file: {e}"
+        return state
+
+    # No done file yet — check if the session crashed
+    session = ttyd.session_name(key)
     if ttyd._MPLEX and not ttyd.session_alive(session):
         state["last_error"] = "CC process crashed (session dead)"
         return state
 
-    # Check for done file
-    if not done_file.exists():
-        # Yield worker thread — Watchdog will resume when file appears
-        interrupt({"reason": "waiting_for_done_file", "stage": stage})
-        return state
-
-    # File exists — parse it
-    try:
-        with open(done_file, "r") as f:
-            file_lock(f)
-            data = robust_json_parse(done_file)
-        done_file.unlink()
-        state["context"].update(data)
-        cfg = get_stage_config(state.get("profile", "minimal"), stage)
-        for field in cfg.get("expected_outputs", []):
-            if field in data:
-                db.update_context(key, field, str(data[field]))
-    except Exception as e:
-        state["last_error"] = f"Failed to parse .done file: {e}"
-
+    # Session alive but no done file — yield and wait
+    interrupt({"reason": "waiting_for_done_file", "stage": stage})
     return state
 
 

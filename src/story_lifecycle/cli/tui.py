@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -349,16 +350,20 @@ class StoryBoardApp(App):
         yield Static(id="footer-bar")
         yield Footer()
 
+    # Braille spinner frames (smooth rotation like Claude Code)
+    _SPINNER_FRAMES = ["⣾", "⣷", "⣯", "⣟", "⡿", "⢿", "⣻", "⣽"]
+
     def on_mount(self):
         set_tui_app(self)
         self._watchdog_interval = 3
         self._show_detail = False
         self._plan_story_key = ""
         self._spinner_idx = -1  # -1 = stopped
+        self._plan_start_time = 0.0
         self.refresh_stories()
         self.set_interval(5, self.refresh_stories)
         self.set_interval(3, self.watchdog_check)
-        self.set_interval(0.15, self.tick_spinner)
+        self.set_interval(0.08, self.tick_spinner)
 
     def refresh_stories(self):
         self.stories = db.list_active_stories()
@@ -512,10 +517,11 @@ class StoryBoardApp(App):
                 self._plan_story_key = key
                 self._spinner_idx = 0
                 self._plan_label = "正在规划中..."
+                self._plan_start_time = time.time()
                 panel = self.query_one("#plan-panel")
                 panel.update(
                     f"[bold]{key}[/]  [dim]design  │[/]  "
-                    f"[bold cyan]|[/] [dim]正在规划中...[/]"
+                    f"[bold cyan]⣾[/] {self._plan_label}  [dim]0s[/]"
                 )
                 panel.set_class(True, "visible")
 
@@ -589,38 +595,49 @@ class StoryBoardApp(App):
         panel.set_class(True, "visible")
         self._show_detail = True
 
-    async def tick_spinner(self) -> None:
-        """Rotate spinner character during planning. Polls status file."""
+    # ---- cross-thread handlers (called via call_from_thread) ----
+
+    def _on_plan_done(self, story_key: str, summary: str, ok: bool = True) -> None:
+        """Handle plan completion from graph thread."""
+        if story_key != self._plan_story_key:
+            return
+        self._plan_label = summary[:60] if ok else f"⚠ {summary[:60]}"
+        self._plan_done = True
+        self._update_plan_panel()
+
+    def _on_terminal_opened(self, story_key: str) -> None:
+        """Handle terminal opened from graph thread."""
+        if story_key != self._plan_story_key:
+            return
+        self._plan_label = "✓ 终端已启动"
+        self._update_plan_panel()
+
+    def _elapsed_str(self) -> str:
+        elapsed = int(time.time() - self._plan_start_time)
+        if elapsed < 60:
+            return f"{elapsed}s"
+        return f"{elapsed // 60}m{elapsed % 60:02d}s"
+
+    def _update_plan_panel(self) -> None:
+        """Re-render the plan panel with current spinner frame, label and timer."""
         if self._spinner_idx < 0:
             return
-        # Poll status file written by graph thread
-        from pathlib import Path
-
-        status_file = Path.home() / ".story-lifecycle" / "tui_status"
-        if status_file.exists():
-            raw = status_file.read_text(encoding="utf-8").strip()
-            if raw.startswith("plan_done|"):
-                parts = raw.split("|", 3)
-                if parts[1] == self._plan_story_key:
-                    summary = parts[2] if len(parts) > 2 else ""
-                    ok = parts[3] == "True" if len(parts) > 3 else True
-                    self._plan_label = summary[:60] if ok else f"⚠ {summary[:60]}"
-            elif raw.startswith("terminal_opened|"):
-                parts = raw.split("|")
-                if parts[1] == self._plan_story_key:
-                    self._plan_label = (
-                        f"✓ 终端已启动  [dim]{getattr(self, '_plan_label', '')}[/]"
-                    )
-                    status_file.unlink()
-        frames = ["|", "/", "-", "\\"]
-        self._spinner_idx = (self._spinner_idx + 1) % len(frames)
-        spinner = frames[self._spinner_idx]
-        label = getattr(self, "_plan_label", "正在规划中...")
+        spinner = self._SPINNER_FRAMES[self._spinner_idx % len(self._SPINNER_FRAMES)]
+        label = self._plan_label
+        elapsed = self._elapsed_str()
         panel = self.query_one("#plan-panel")
         panel.update(
             f"[bold]{self._plan_story_key}[/]  [dim]design  │[/]  "
-            f"[bold cyan]{spinner}[/] [dim]{label}[/]"
+            f"[bold cyan]{spinner}[/] {label}  [dim]{elapsed}[/]"
         )
+
+    async def tick_spinner(self) -> None:
+        """Rotate spinner animation only."""
+        if self._spinner_idx < 0:
+            return
+        self._spinner_idx += 1
+        self._update_plan_panel()
+        panel = self.query_one("#plan-panel")
         panel.set_class(True, "visible")
 
     def action_skip_stage(self):

@@ -6,11 +6,6 @@ from pathlib import Path
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-try:
-    from textual.message import Message
-except ImportError:
-    Message = object  # fallback for non-TUI environments
-
 from .nodes import (
     StoryState,
     plan_stage_node,
@@ -39,55 +34,26 @@ _executor = ThreadPoolExecutor(max_workers=4)
 _tui_app: object | None = None
 
 
-class PlanStreamMsg(Message):
-    """Cross-thread message: planning stream chunk."""
-
-    def __init__(self, story_key: str, chunk: str):
-        self.story_key = story_key
-        self.chunk = chunk
-        super().__init__()
-
-
-class TerminalOpenedMsg(Message):
-    """Cross-thread message: terminal window has been opened."""
-
-    def __init__(self, story_key: str):
-        self.story_key = story_key
-        super().__init__()
-
-
-class PlanDoneMsg(Message):
-    """Cross-thread message: planning complete."""
-
-    def __init__(self, story_key: str, summary: str, ok: bool = True):
-        self.story_key = story_key
-        self.summary = summary
-        self.ok = ok
-        super().__init__()
-
-
 def set_tui_app(app: object) -> None:
     global _tui_app
     _tui_app = app
 
 
 def emit_plan_stream(story_key: str, chunk: str) -> None:
-    """No-op: post_message not reliable from background threads."""
+    """No-op: streaming not implemented for call_from_thread."""
     pass
 
 
 def emit_terminal_opened(story_key: str) -> None:
-    """Write status flag that TUI spinner polls."""
-    (STORY_HOME / "tui_status").write_text(
-        f"terminal_opened|{story_key}", encoding="utf-8"
-    )
+    """Notify TUI that terminal has been opened."""
+    if _tui_app:
+        _tui_app.call_from_thread(_tui_app._on_terminal_opened, story_key)
 
 
 def emit_plan_done(story_key: str, summary: str, ok: bool = True) -> None:
-    """Write plan result that TUI spinner polls."""
-    (STORY_HOME / "tui_status").write_text(
-        f"plan_done|{story_key}|{summary}|{ok}", encoding="utf-8"
-    )
+    """Notify TUI that planning is complete."""
+    if _tui_app:
+        _tui_app.call_from_thread(_tui_app._on_plan_done, story_key, summary, ok)
 
 
 def build_graph() -> StateGraph:

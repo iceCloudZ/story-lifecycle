@@ -330,12 +330,12 @@ def launch_cli(story_key: str, workspace: str, launch_cmd: str, prompt_file: str
     script = Path(tempfile.gettempdir()) / f"story-launch-{story_key}.sh"
     script.write_text(
         f"#!/bin/bash\n"
-        f'trap \'echo ""; echo "Exit code: $?"; read -p "Press Enter to close"\' EXIT\n'
         f'cd "{ws}" 2>/dev/null || {{ echo "ERROR: cannot cd to {ws}"; exit 1; }}\n'
         f'echo "Starting: {launch_cmd}"\n'
         f"{launch_cmd} \"$(cat '{pf}')\"\n"
         f'echo ""\n'
-        f'echo "Story {story_key} done. Closing in 3s..."\n',
+        f'echo "Story {story_key} done (exit code: $?). Closing in 3s..."\n'
+        f"sleep 3\n",
         encoding="utf-8",
     )
     script_posix = platform_ops.to_posix_path(str(script))
