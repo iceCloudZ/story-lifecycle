@@ -14,7 +14,7 @@ from textual.widgets import Footer, Static, Input, Button
 from textual.reactive import reactive
 
 from ..db import models as db
-from ..orchestrator.graph import PlanStreamMsg, PlanDoneMsg, set_tui_app
+from ..orchestrator.graph import PlanDoneMsg, set_tui_app
 from ..orchestrator.service import (
     get_story_cli_model,
     pause_story,
@@ -353,11 +353,12 @@ class StoryBoardApp(App):
         set_tui_app(self)
         self._watchdog_interval = 3
         self._show_detail = False
-        self._plan_buffer = ""
         self._plan_story_key = ""
+        self._spinner_idx = -1  # -1 = stopped
         self.refresh_stories()
         self.set_interval(5, self.refresh_stories)
         self.set_interval(3, self.watchdog_check)
+        self.set_interval(0.15, self._tick_spinner)
 
     def refresh_stories(self):
         self.stories = db.list_active_stories()
@@ -507,14 +508,10 @@ class StoryBoardApp(App):
                 )
                 self.refresh_stories()
 
-                # Show planning status in plan-panel
-                self._plan_buffer = (
-                    f"[bold]{key}[/]  [dim]design[/]  [dim]│[/]  正在规划中..."
-                )
+                # Start spinner in plan-panel
                 self._plan_story_key = key
-                panel = self.query_one("#plan-panel")
-                panel.update(self._plan_buffer)
-                panel.set_class(True, "visible")
+                self._spinner_idx = 0
+                self._tick_spinner()
 
                 # Start the graph — handles plan → execute → poll → review → advance
                 from ..orchestrator.graph import start_story_async
@@ -586,25 +583,32 @@ class StoryBoardApp(App):
         panel.set_class(True, "visible")
         self._show_detail = True
 
-    def on_plan_stream_msg(self, message: PlanStreamMsg) -> None:
-        """Handle streaming plan content from background graph thread."""
-        if self._plan_story_key != message.story_key:
-            self._plan_buffer = ""
-            self._plan_story_key = message.story_key
-        self._plan_buffer += message.chunk
-        panel = self.query_one("#plan-panel")
-        panel.update(self._plan_buffer)
-        panel.set_class(True, "visible")
-
     def on_plan_done_msg(self, message: PlanDoneMsg) -> None:
         """Handle planning completion from background thread."""
-        icon = "✓" if message.ok else "⚠"
+        self._spinner_idx = -1  # stop spinner
         color = "green" if message.ok else "yellow"
-        summary = message.summary[:80]
-        self._plan_buffer += f"  [dim]│[/]  [bold {color}]{icon} {summary}[/]"
+        self._plan_buffer = (
+            f"[bold]{message.story_key}[/]  [dim]design  │[/]  "
+            f"[bold {color}]{message.summary}[/]"
+        )
         panel = self.query_one("#plan-panel")
         panel.update(self._plan_buffer)
-        # Keep visible for plan result, then auto-hide on next story create
+        # Auto-hide after 8 seconds
+        self.set_timer(8, lambda: panel.set_class(False, "visible"))
+
+    def _tick_spinner(self) -> None:
+        """Rotate spinner character during planning."""
+        if self._spinner_idx < 0:
+            return
+        frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        self._spinner_idx = (self._spinner_idx + 1) % len(frames)
+        spinner = frames[self._spinner_idx]
+        panel = self.query_one("#plan-panel")
+        panel.update(
+            f"[bold]{self._plan_story_key}[/]  [dim]design  │[/]  "
+            f"{spinner} [dim]正在规划中...[/]"
+        )
+        panel.set_class(True, "visible")
 
     def action_skip_stage(self):
         if not self.stories:
