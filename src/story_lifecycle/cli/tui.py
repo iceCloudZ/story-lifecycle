@@ -495,11 +495,10 @@ class StoryBoardApp(App):
 
                 # Show planning panel immediately
                 self._plan_buffer = (
-                    f"[bold bright_cyan]◆ 架构师规划[/]\n\n"
-                    f"[bold]Story:[/] {key}\n"
-                    f"[bold]阶段:[/] design\n"
+                    f"[bold cyan]◆[/] [bold white]Story[/][bold cyan]Lifecycle[/]\n\n"
+                    f"[bold]{key}[/]  [dim]design[/]\n"
                     f"[dim]──────────────────────────────[/]\n\n"
-                    f"[dim]⚙ 正在分析需求，制定执行计划...[/]"
+                    f"正在规划中..."
                 )
                 self._plan_story_key = key
                 panel = self.query_one("#detail-panel")
@@ -595,7 +594,7 @@ class StoryBoardApp(App):
         self._plan_buffer += (
             f"\n\n[dim]──────────────────────────────[/]\n\n"
             f"[bold {color}]{icon} {summary}[/]\n\n"
-            f"[dim]启动 AI CLI 执行终端...[/]"
+            f"[dim]正在打开终端...[/]"
         )
         panel = self.query_one("#detail-panel")
         panel.update(self._plan_buffer)

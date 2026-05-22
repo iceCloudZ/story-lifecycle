@@ -178,8 +178,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
             adapters = ["claude"]
             emit_plan_stream(
                 story_key,
-                "[dim]──────────────────────────────[/]\n\n"
-                "[bold bright_cyan]▸ LLM 实时输出[/]\n\n",
+                "[dim]──────────────────────────────[/]\n\n[bold]▸ 规划详情[/]\n\n",
             )
 
             def _on_chunk(text: str):
