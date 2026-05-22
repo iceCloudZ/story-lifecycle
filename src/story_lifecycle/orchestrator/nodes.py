@@ -251,8 +251,16 @@ def plan_stage_node(state: StoryState) -> StoryState:
             return state
         except Exception as e:
             log.warning(f"Planner failed, falling back: {e}")
+            import traceback
+
+            (STORY_HOME / "planner_error.log").write_text(
+                f"Planner error for {story_key}:\n{traceback.format_exc()}",
+                encoding="utf-8",
+            )
             emit_plan_done(
-                story_key, f"⚠ 规划降级，使用默认配置  [dim]({e})[/]", ok=False
+                story_key,
+                f"⚠ 规划降级 [{type(e).__name__}] 使用默认配置",
+                ok=False,
             )
 
     # Fallback: generate plan from profile config

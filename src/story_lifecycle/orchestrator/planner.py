@@ -284,7 +284,8 @@ def _call_llm(base_url: str, api_key: str, model: str, prompt: str) -> dict:
         timeout=30,
     )
     resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
+    msg = resp.json()["choices"][0]["message"]
+    content = msg.get("content", "") or msg.get("reasoning_content", "")
     return _parse_llm_response(content)
 
 
@@ -350,4 +351,5 @@ def _call_llm_for_text(base_url: str, api_key: str, model: str, prompt: str) -> 
         timeout=30,
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    msg = resp.json()["choices"][0]["message"]
+    return msg.get("content", "") or msg.get("reasoning_content", "")
