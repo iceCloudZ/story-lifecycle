@@ -279,13 +279,19 @@ def _call_llm(base_url: str, api_key: str, model: str, prompt: str) -> dict:
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
-            "max_tokens": 600,
+            "max_tokens": 4000,
         },
-        timeout=30,
+        timeout=60,
     )
     resp.raise_for_status()
     msg = resp.json()["choices"][0]["message"]
     content = msg.get("content", "") or msg.get("reasoning_content", "")
+    if not content.strip():
+        # Reasoning model spent all tokens on reasoning, content is empty
+        raise RuntimeError(
+            "LLM returned empty content — reasoning model may have exhausted tokens. "
+            "Try increasing max_tokens or using a non-reasoning model."
+        )
     return _parse_llm_response(content)
 
 

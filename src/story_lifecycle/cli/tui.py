@@ -590,19 +590,15 @@ class StoryBoardApp(App):
         self._show_detail = True
 
     def on_plan_done_msg(self, message: PlanDoneMsg) -> None:
-        """Handle planning completion — update label, keep spinning."""
-        self._plan_label = f"规划完成: {message.summary[:50]}"
+        """Handle planning completion — update label, spinner keeps going."""
+        if message.ok:
+            self._plan_label = f"{message.summary[:60]}"
+        else:
+            self._plan_label = f"⚠ {message.summary[:60]}"
 
     def on_terminal_opened_msg(self, message: TerminalOpenedMsg) -> None:
-        """Handle terminal opened — stop spinner, show result."""
-        self._spinner_idx = -1
-        summary = getattr(self, "_plan_label", "")
-        panel = self.query_one("#plan-panel")
-        panel.update(
-            f"[bold]{message.story_key}[/]  [dim]design  │[/]  "
-            f"[bold green]✓ 终端已启动[/]  [dim]{summary}[/]"
-        )
-        self.set_timer(5, lambda: panel.set_class(False, "visible"))
+        """Terminal opened — just note it, spinner runs until next story."""
+        self._plan_label = f"✓ 终端已启动  [dim]{getattr(self, '_plan_label', '')}[/]"
 
     async def tick_spinner(self) -> None:
         """Rotate spinner character during planning."""
