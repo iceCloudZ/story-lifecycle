@@ -14,6 +14,7 @@ from ..db import models as db
 from ..terminal import ttyd
 from . import planner
 from . import router as llm_router
+from .notify import send as notify
 
 log = logging.getLogger("story-lifecycle.nodes")
 
@@ -765,10 +766,12 @@ def advance_node(state: StoryState) -> StoryState:
         db.update_story(key, current_stage=stage, status="completed")
         db.log_stage(key, stage, "complete", "All stages done")
         state["status"] = "completed"
+        notify("Story Lifecycle", f"Story {key}: 全部阶段完成")
         return state
 
     db.log_stage(key, stage, "complete", f"Advanced to {next_stage}")
     db.update_story(key, current_stage=next_stage, status="active")
+    notify("Story Lifecycle", f"Story {key}: {stage} 完成，进入 {next_stage}")
 
     state["current_stage"] = next_stage
     state["status"] = "active"
@@ -814,18 +817,13 @@ def skip_node(state: StoryState) -> StoryState:
 
 def fail_node(state: StoryState) -> StoryState:
     """Mark story as blocked."""
-    db.update_story(
-        state["story_key"],
-        status="blocked",
-        last_error=state.get("last_error", "Unknown error"),
-    )
-    db.log_stage(
-        state["story_key"],
-        state["current_stage"],
-        "fail",
-        state.get("last_error", "Unknown"),
-    )
+    key = state["story_key"]
+    stage = state["current_stage"]
+    error = state.get("last_error", "Unknown error")
+    db.update_story(key, status="blocked", last_error=error)
+    db.log_stage(key, stage, "fail", error)
     state["status"] = "blocked"
+    notify("Story Lifecycle", f"Story {key}: {stage} 失败 — {error[:80]}")
     return state
 
 
