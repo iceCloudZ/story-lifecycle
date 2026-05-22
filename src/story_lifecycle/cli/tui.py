@@ -589,21 +589,30 @@ class StoryBoardApp(App):
         self._show_detail = True
 
     def on_plan_done_msg(self, message: PlanDoneMsg) -> None:
-        """Handle planning completion from background thread."""
-        self._spinner_idx = -1  # stop spinner
-        color = "green" if message.ok else "yellow"
-        self._plan_buffer = (
-            f"[bold]{message.story_key}[/]  [dim]design  │[/]  "
-            f"[bold {color}]{message.summary}[/]"
-        )
-        panel = self.query_one("#plan-panel")
-        panel.update(self._plan_buffer)
-        # Auto-hide after 8 seconds
-        self.set_timer(8, lambda: panel.set_class(False, "visible"))
+        """Handle planning completion — spinner keeps going until execute."""
 
     async def tick_spinner(self) -> None:
         """Rotate spinner character during planning."""
         if self._spinner_idx < 0:
+            return
+        # Auto-stop when execute_stage has run (terminal window opened)
+        s = db.get_story(self._plan_story_key)
+        if s and s.get("execution_count", 0) > 0:
+            self._spinner_idx = -1
+            summary = s.get("context_json", "{}")
+            try:
+                import json
+
+                ctx = json.loads(summary)
+                info = ctx.get("plan_summary", "")
+            except Exception:
+                info = ""
+            panel = self.query_one("#plan-panel")
+            panel.update(
+                f"[bold]{self._plan_story_key}[/]  [dim]design  │[/]  "
+                f"[bold green]✓ 终端已启动[/]  [dim]{info[:40]}[/]"
+            )
+            self.set_timer(5, lambda: panel.set_class(False, "visible"))
             return
         frames = ["|", "/", "-", "\\"]
         self._spinner_idx = (self._spinner_idx + 1) % len(frames)
