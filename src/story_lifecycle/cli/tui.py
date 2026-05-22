@@ -358,7 +358,7 @@ class StoryBoardApp(App):
         self.refresh_stories()
         self.set_interval(5, self.refresh_stories)
         self.set_interval(3, self.watchdog_check)
-        self.set_interval(0.15, self._tick_spinner)
+        self.set_interval(0.15, self.tick_spinner)
 
     def refresh_stories(self):
         self.stories = db.list_active_stories()
@@ -508,10 +508,15 @@ class StoryBoardApp(App):
                 )
                 self.refresh_stories()
 
-                # Start spinner in plan-panel
+                # Show initial plan panel (timer takes over rotation)
                 self._plan_story_key = key
                 self._spinner_idx = 0
-                self._tick_spinner()
+                panel = self.query_one("#plan-panel")
+                panel.update(
+                    f"[bold]{key}[/]  [dim]design  │[/]  "
+                    f"[bold cyan]|[/] [dim]正在规划中...[/]"
+                )
+                panel.set_class(True, "visible")
 
                 # Start the graph — handles plan → execute → poll → review → advance
                 from ..orchestrator.graph import start_story_async
@@ -596,7 +601,7 @@ class StoryBoardApp(App):
         # Auto-hide after 8 seconds
         self.set_timer(8, lambda: panel.set_class(False, "visible"))
 
-    def _tick_spinner(self) -> None:
+    async def tick_spinner(self) -> None:
         """Rotate spinner character during planning."""
         if self._spinner_idx < 0:
             return
