@@ -83,6 +83,25 @@ def resolve_next_stage(state: StoryState) -> Optional[str]:
 # -------- robust JSON parsing --------
 
 
+# -------- robust JSON parsing --------
+
+
+def _extract_json_object(text: str) -> str | None:
+    """Extract the first complete JSON object using bracket counting."""
+    depth = 0
+    start = None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                return text[start : i + 1]
+    return None
+
+
 def robust_json_parse(filepath: Path) -> dict:
     """Parse .done JSON with tolerance for markdown wrapping."""
     raw = filepath.read_text(encoding="utf-8")
@@ -93,11 +112,11 @@ def robust_json_parse(filepath: Path) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Strategy 2: extract first {...} object
-    m = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", raw, re.DOTALL)
-    if m:
+    # Strategy 2: bracket-counting extraction (handles arbitrary nesting)
+    extracted = _extract_json_object(raw)
+    if extracted:
         try:
-            return json.loads(m.group())
+            return json.loads(extracted)
         except json.JSONDecodeError:
             pass
 
@@ -116,11 +135,9 @@ def robust_json_parse(filepath: Path) -> dict:
 
 
 def route_after_plan(state: StoryState) -> str:
-    """Conditional edge after plan_stage: skip, end (subtasks), or execute."""
+    """Conditional edge after plan_stage: skip or execute."""
     if state.get("status") == "skipping":
         return "skip_stage"
-    if state.get("status") == "waiting_subtasks":
-        return "end"
     return "execute_stage"
 
 
@@ -235,10 +252,10 @@ def plan_stage_node(state: StoryState) -> StoryState:
 
 
 def _delegate_subtasks(state: StoryState, plan: dict) -> StoryState:
-    """Split a parent story into sub-stories and launch them."""
+    """Split a parent story into sub-stories. Stores sub_keys in state for
+    the graph runner to launch. Uses interrupt() to pause the parent.
+    """
     import shutil
-
-    from .graph import start_story_async
 
     parent_key = state["story_key"]
     workspace = state["workspace"]
@@ -246,6 +263,7 @@ def _delegate_subtasks(state: StoryState, plan: dict) -> StoryState:
     stage = state["current_stage"]
     subtasks = plan["subtasks"]
 
+    active_sub_keys = []
     for i, sub in enumerate(subtasks):
         sub_key = f"{parent_key}-{sub['key_suffix']}"
         has_deps = bool(sub.get("depends_on"))
@@ -282,9 +300,8 @@ def _delegate_subtasks(state: StoryState, plan: dict) -> StoryState:
             encoding="utf-8",
         )
 
-        # Launch active sub-stories (blocked ones wait for deps)
         if sub_status == "active":
-            start_story_async(sub_key)
+            active_sub_keys.append(sub_key)
 
         db.log_event(parent_key, stage, "delegate", {
             "sub_key": sub_key,
@@ -293,6 +310,8 @@ def _delegate_subtasks(state: StoryState, plan: dict) -> StoryState:
             "status": sub_status,
         })
 
+    # Store keys for graph runner to launch (no circular import)
+    state["_pending_sub_keys"] = active_sub_keys
     state["status"] = "waiting_subtasks"
     state["plan_summary"] = f"拆分为 {len(subtasks)} 个子任务"
     db.update_story(parent_key, status="waiting_subtasks")
@@ -300,6 +319,9 @@ def _delegate_subtasks(state: StoryState, plan: dict) -> StoryState:
         "subtask_count": len(subtasks),
         "sub_keys": [f"{parent_key}-{s['key_suffix']}" for s in subtasks],
     })
+
+    # Pause parent via interrupt — resume_story will wake it up
+    interrupt({"reason": "waiting_for_subtasks", "sub_count": len(subtasks)})
     return state
 
 
@@ -573,8 +595,8 @@ def poll_completion_node(state: StoryState) -> StoryState:
 # -------- node: router --------
 
 
-def router_node(state: StoryState) -> str:
-    """Decide next action. Priority: retry fatigue → low score → review-driven → happy → LLM."""
+def router_node(state: StoryState) -> StoryState:
+    """Compute routing decision and store in state. Does NOT return a string."""
     key = state["story_key"]
     stage = state["current_stage"]
     cfg = get_stage_config(state.get("profile", "minimal"), stage)
@@ -582,7 +604,8 @@ def router_node(state: StoryState) -> str:
     # 1. Retry fatigue — review hit max retries
     if state.get("review_summary") and "达到重试上限" in (state.get("review_summary") or ""):
         db.log_event(key, stage, "router", {"action": "fail", "reason": "retry_fatigue"})
-        return "fail"
+        state["_next_action"] = "fail"
+        return state
 
     # 2. Low trajectory score — hard kill
     score = state.get("trajectory_score")
@@ -590,13 +613,16 @@ def router_node(state: StoryState) -> str:
         db.log_event(key, stage, "router", {
             "action": "fail", "reason": "low_trajectory_score", "score": score,
         })
-        return "fail"
+        state["_next_action"] = "fail"
+        return state
 
     # 3. Happy path — no error
     if not state.get("last_error"):
         if cfg.get("confirm"):
-            return "wait_confirm"
-        return "advance"
+            state["_next_action"] = "wait_confirm"
+        else:
+            state["_next_action"] = "advance"
+        return state
 
     # 4. Review-driven retry — have both error and review context
     if state.get("last_error") and state.get("review_summary"):
@@ -605,11 +631,13 @@ def router_node(state: StoryState) -> str:
             db.log_event(key, stage, "router", {
                 "action": "retry", "reason": "review_driven", "attempt": count,
             })
-            return "retry"
+            state["_next_action"] = "retry"
+            return state
         db.log_event(key, stage, "router", {
             "action": "fail", "reason": "review_retry_exhausted", "attempts": count,
         })
-        return "fail"
+        state["_next_action"] = "fail"
+        return state
 
     # 5. Unhappy path — no review, fall through to LLM router
     decision = llm_router.route(state, cfg)
@@ -619,11 +647,17 @@ def router_node(state: StoryState) -> str:
     if action == "retry":
         if decision.get("provider_override"):
             state["context"]["_provider"] = decision["provider_override"]
-        return "retry"
+        state["_next_action"] = "retry"
     elif action == "skip":
-        return "skip"
+        state["_next_action"] = "skip"
     else:
-        return "fail"
+        state["_next_action"] = "fail"
+    return state
+
+
+def route_from_router(state: StoryState) -> str:
+    """Pure routing function: read _next_action from state, return edge name."""
+    return state.get("_next_action", "fail")
 
 
 # -------- node: advance --------

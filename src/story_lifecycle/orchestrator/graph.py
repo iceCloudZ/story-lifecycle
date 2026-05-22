@@ -15,6 +15,7 @@ from .nodes import (
     route_after_plan,
     route_after_poll,
     router_node,
+    route_from_router,
     advance_node,
     retry_node,
     skip_node,
@@ -50,7 +51,7 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "plan_stage",
         route_after_plan,
-        {"skip_stage": "skip_stage", "execute_stage": "execute_stage", "end": END},
+        {"skip_stage": "skip_stage", "execute_stage": "execute_stage"},
     )
 
     graph.add_edge("execute_stage", "poll_completion")
@@ -65,7 +66,7 @@ def build_graph() -> StateGraph:
 
     graph.add_conditional_edges(
         "router",
-        router_node,
+        route_from_router,
         {
             "advance": "advance",
             "retry": "retry",
@@ -117,7 +118,12 @@ def run_story(story_key: str):
 
     config = {"configurable": {"thread_id": story_key}}
     compiled = get_compiled_graph()
-    compiled.invoke(initial_state, config)
+    result = compiled.invoke(initial_state, config)
+
+    # Launch sub-stories if plan_stage delegated (no circular import)
+    if result and result.get("_pending_sub_keys"):
+        for sub_key in result["_pending_sub_keys"]:
+            _executor.submit(run_story, sub_key)
 
 
 def resume_story(story_key: str):

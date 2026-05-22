@@ -257,10 +257,14 @@ def compress_context(
     compressed_file.parent.mkdir(parents=True, exist_ok=True)
     compressed_file.write_text(compressed, encoding="utf-8")
 
+    # Archive old files instead of deleting
     keep = {f"plan_{current_stage}.md", f"review_{current_stage}.md"}
+    archive = context_dir / "archive"
+    archive.mkdir(exist_ok=True)
+    import shutil
     for f in context_dir.glob("*.md"):
         if f.name not in keep:
-            f.unlink()
+            shutil.move(str(f), str(archive / f.name))
 
     return str(compressed_file.relative_to(workspace))
 
