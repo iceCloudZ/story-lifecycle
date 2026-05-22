@@ -279,9 +279,8 @@ def _call_llm(base_url: str, api_key: str, model: str, prompt: str) -> dict:
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
-            "max_tokens": 4000,
         },
-        timeout=60,
+        timeout=90,
     )
     resp.raise_for_status()
     msg = resp.json()["choices"][0]["message"]
@@ -319,10 +318,9 @@ def _stream_llm(
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
-            "max_tokens": 600,
             "stream": True,
         },
-        timeout=60,
+        timeout=90,
     ) as resp:
         resp.raise_for_status()
         for raw_line in resp.iter_lines():
@@ -352,9 +350,8 @@ def _call_llm_for_text(base_url: str, api_key: str, model: str, prompt: str) -> 
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
-            "max_tokens": 800,
         },
-        timeout=30,
+        timeout=90,
     )
     resp.raise_for_status()
     msg = resp.json()["choices"][0]["message"]
