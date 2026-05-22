@@ -600,13 +600,13 @@ class StoryBoardApp(App):
         """Rotate spinner character during planning."""
         if self._spinner_idx < 0:
             return
-        frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        frames = ["|", "/", "-", "\\"]
         self._spinner_idx = (self._spinner_idx + 1) % len(frames)
         spinner = frames[self._spinner_idx]
         panel = self.query_one("#plan-panel")
         panel.update(
             f"[bold]{self._plan_story_key}[/]  [dim]design  │[/]  "
-            f"{spinner} [dim]正在规划中...[/]"
+            f"[bold cyan]{spinner}[/] [dim]正在规划中...[/]"
         )
         panel.set_class(True, "visible")
 
