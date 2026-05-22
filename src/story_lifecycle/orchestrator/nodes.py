@@ -173,8 +173,15 @@ def plan_stage_node(state: StoryState) -> StoryState:
 
     if planner.is_available():
         try:
+            from ..orchestrator.graph import emit_plan_stream, emit_plan_done
+
             adapters = ["claude"]
-            plan = planner.plan_stage(state, cfg, adapters)
+            emit_plan_stream(story_key, f"\n\n## 架构师规划: {stage}\n\n")
+
+            def _on_chunk(text: str):
+                emit_plan_stream(story_key, text)
+
+            plan = planner.plan_stage(state, cfg, adapters, on_stream=_on_chunk)
 
             if plan.get("skip"):
                 state["status"] = "skipping"
@@ -239,9 +246,11 @@ def plan_stage_node(state: StoryState) -> StoryState:
                     "trajectory_score": plan.get("trajectory_score"),
                 },
             )
+            emit_plan_done(story_key, plan.get("summary", ""))
             return state
         except Exception as e:
             log.warning(f"Planner failed, falling back: {e}")
+            emit_plan_done(story_key, f"规划失败，使用默认配置: {e}", ok=False)
 
     # Fallback: generate plan from profile config
     profile_cfg = load_profile(profile)

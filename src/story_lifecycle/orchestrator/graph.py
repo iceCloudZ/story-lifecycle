@@ -30,6 +30,30 @@ checkpoint_db = STORY_HOME / "checkpoint.db"
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
+# TUI reference for cross-thread notifications (set by StoryBoardApp.on_mount)
+_tui_app: object | None = None
+
+
+def set_tui_app(app: object) -> None:
+    global _tui_app
+    _tui_app = app
+
+
+def emit_plan_stream(story_key: str, chunk: str) -> None:
+    """Send planning stream chunk to TUI (thread-safe)."""
+    if _tui_app and hasattr(_tui_app, "call_from_thread"):
+        _tui_app.call_from_thread(  # type: ignore[union-attr]
+            _tui_app._on_plan_stream, story_key, chunk
+        )
+
+
+def emit_plan_done(story_key: str, summary: str, ok: bool = True) -> None:
+    """Notify TUI that planning is complete (thread-safe)."""
+    if _tui_app and hasattr(_tui_app, "call_from_thread"):
+        _tui_app.call_from_thread(  # type: ignore[union-attr]
+            _tui_app._on_plan_done, story_key, summary, ok
+        )
+
 
 def build_graph() -> StateGraph:
     """Build and return the Story Lifecycle StateGraph."""

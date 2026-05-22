@@ -334,8 +334,13 @@ class StoryBoardApp(App):
         yield Footer()
 
     def on_mount(self):
+        from ..orchestrator.graph import set_tui_app
+
+        set_tui_app(self)
         self._watchdog_interval = 3
         self._show_detail = False
+        self._plan_buffer = ""
+        self._plan_story_key = ""
         self.refresh_stories()
         self.set_interval(5, self.refresh_stories)
         self.set_interval(3, self.watchdog_check)
@@ -487,6 +492,21 @@ class StoryBoardApp(App):
                     prd_path=prd_path or None,
                 )
                 self.refresh_stories()
+
+                # Show planning panel immediately
+                self._plan_buffer = (
+                    f"# 架构师规划\n\n"
+                    f"**Story:** {key}\n"
+                    f"**阶段:** design\n\n"
+                    f"---\n\n"
+                    f"正在分析需求，制定执行计划..."
+                )
+                self._plan_story_key = key
+                panel = self.query_one("#detail-panel")
+                panel.update(self._plan_buffer)
+                panel.set_class(True, "visible")
+                self._show_detail = True
+
                 # Start the graph — handles plan → execute → poll → review → advance
                 from ..orchestrator.graph import start_story_async
 
@@ -554,6 +574,26 @@ class StoryBoardApp(App):
         """Show error in detail panel (safe to call from any thread)."""
         panel = self.query_one("#detail-panel")
         panel.update(message)
+        panel.set_class(True, "visible")
+        self._show_detail = True
+
+    def _on_plan_stream(self, story_key: str, chunk: str):
+        """Receive streaming plan content from background graph thread."""
+        if self._plan_story_key != story_key:
+            self._plan_buffer = ""
+            self._plan_story_key = story_key
+        self._plan_buffer += chunk
+        panel = self.query_one("#detail-panel")
+        panel.update(self._plan_buffer)
+        panel.set_class(True, "visible")
+        self._show_detail = True
+
+    def _on_plan_done(self, story_key: str, summary: str, ok: bool = True):
+        """Called when planning is complete (from background thread)."""
+        status = "[bold green]✓ 规划完成[/]" if ok else "[bold yellow]⚠ 规划降级[/]"
+        self._plan_buffer += f"\n\n---\n{status}\n**{summary}**\n\n启动 AI CLI..."
+        panel = self.query_one("#detail-panel")
+        panel.update(self._plan_buffer)
         panel.set_class(True, "visible")
         self._show_detail = True
 
