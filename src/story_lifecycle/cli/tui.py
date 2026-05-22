@@ -14,6 +14,7 @@ from textual.widgets import Footer, Static, Input, Button
 from textual.reactive import reactive
 
 from ..db import models as db
+from ..orchestrator.graph import PlanStreamMsg, PlanDoneMsg, set_tui_app
 from ..orchestrator.service import (
     get_story_cli_model,
     pause_story,
@@ -274,6 +275,20 @@ class StoryBoardApp(App):
         border-bottom: solid $accent;
     }
 
+    #plan-panel {
+        height: 0;
+        padding: 0;
+        display: none;
+    }
+    #plan-panel.visible {
+        height: auto;
+        max-height: 14;
+        padding: 1 2;
+        background: $panel;
+        border-bottom: solid $accent;
+        display: block;
+    }
+
     #story-list {
         height: 1fr;
         padding: 0;
@@ -328,14 +343,13 @@ class StoryBoardApp(App):
 
     def compose(self) -> ComposeResult:
         yield Static(id="header-bar")
+        yield Static(id="plan-panel")
         yield VerticalScroll(id="story-list")
         yield Static(id="detail-panel")
         yield Static(id="footer-bar")
         yield Footer()
 
     def on_mount(self):
-        from ..orchestrator.graph import set_tui_app
-
         set_tui_app(self)
         self._watchdog_interval = 3
         self._show_detail = False
@@ -493,18 +507,14 @@ class StoryBoardApp(App):
                 )
                 self.refresh_stories()
 
-                # Show planning panel immediately
+                # Show planning status in plan-panel
                 self._plan_buffer = (
-                    f"[bold cyan]◆[/] [bold white]Story[/][bold cyan]Lifecycle[/]\n\n"
-                    f"[bold]{key}[/]  [dim]design[/]\n"
-                    f"[dim]──────────────────────────────[/]\n\n"
-                    f"正在规划中..."
+                    f"[bold]{key}[/]  [dim]design[/]  [dim]│[/]  正在规划中..."
                 )
                 self._plan_story_key = key
-                panel = self.query_one("#detail-panel")
+                panel = self.query_one("#plan-panel")
                 panel.update(self._plan_buffer)
                 panel.set_class(True, "visible")
-                self._show_detail = True
 
                 # Start the graph — handles plan → execute → poll → review → advance
                 from ..orchestrator.graph import start_story_async
@@ -576,30 +586,25 @@ class StoryBoardApp(App):
         panel.set_class(True, "visible")
         self._show_detail = True
 
-    def _on_plan_stream(self, story_key: str, chunk: str):
-        """Receive streaming plan content from background graph thread."""
-        if self._plan_story_key != story_key:
+    def on_plan_stream_msg(self, message: PlanStreamMsg) -> None:
+        """Handle streaming plan content from background graph thread."""
+        if self._plan_story_key != message.story_key:
             self._plan_buffer = ""
-            self._plan_story_key = story_key
-        self._plan_buffer += chunk
-        panel = self.query_one("#detail-panel")
+            self._plan_story_key = message.story_key
+        self._plan_buffer += message.chunk
+        panel = self.query_one("#plan-panel")
         panel.update(self._plan_buffer)
         panel.set_class(True, "visible")
-        self._show_detail = True
 
-    def _on_plan_done(self, story_key: str, summary: str, ok: bool = True):
-        """Called when planning is complete (from background thread)."""
-        icon = "✓" if ok else "⚠"
-        color = "green" if ok else "yellow"
-        self._plan_buffer += (
-            f"\n\n[dim]──────────────────────────────[/]\n\n"
-            f"[bold {color}]{icon} {summary}[/]\n\n"
-            f"[dim]正在打开终端...[/]"
-        )
-        panel = self.query_one("#detail-panel")
+    def on_plan_done_msg(self, message: PlanDoneMsg) -> None:
+        """Handle planning completion from background thread."""
+        icon = "✓" if message.ok else "⚠"
+        color = "green" if message.ok else "yellow"
+        summary = message.summary[:80]
+        self._plan_buffer += f"  [dim]│[/]  [bold {color}]{icon} {summary}[/]"
+        panel = self.query_one("#plan-panel")
         panel.update(self._plan_buffer)
-        panel.set_class(True, "visible")
-        self._show_detail = True
+        # Keep visible for plan result, then auto-hide on next story create
 
     def action_skip_stage(self):
         if not self.stories:

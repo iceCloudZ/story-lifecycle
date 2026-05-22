@@ -6,6 +6,11 @@ from pathlib import Path
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+try:
+    from textual.message import Message
+except ImportError:
+    Message = object  # fallback for non-TUI environments
+
 from .nodes import (
     StoryState,
     plan_stage_node,
@@ -34,25 +39,40 @@ _executor = ThreadPoolExecutor(max_workers=4)
 _tui_app: object | None = None
 
 
+class PlanStreamMsg(Message):
+    """Cross-thread message: planning stream chunk."""
+
+    def __init__(self, story_key: str, chunk: str):
+        self.story_key = story_key
+        self.chunk = chunk
+        super().__init__()
+
+
+class PlanDoneMsg(Message):
+    """Cross-thread message: planning complete."""
+
+    def __init__(self, story_key: str, summary: str, ok: bool = True):
+        self.story_key = story_key
+        self.summary = summary
+        self.ok = ok
+        super().__init__()
+
+
 def set_tui_app(app: object) -> None:
     global _tui_app
     _tui_app = app
 
 
 def emit_plan_stream(story_key: str, chunk: str) -> None:
-    """Send planning stream chunk to TUI (thread-safe)."""
-    if _tui_app and hasattr(_tui_app, "call_from_thread"):
-        _tui_app.call_from_thread(  # type: ignore[union-attr]
-            _tui_app._on_plan_stream, story_key, chunk
-        )
+    """Send planning stream chunk to TUI (thread-safe via post_message)."""
+    if _tui_app is not None:
+        _tui_app.post_message(PlanStreamMsg(story_key, chunk))  # type: ignore[union-attr]
 
 
 def emit_plan_done(story_key: str, summary: str, ok: bool = True) -> None:
-    """Notify TUI that planning is complete (thread-safe)."""
-    if _tui_app and hasattr(_tui_app, "call_from_thread"):
-        _tui_app.call_from_thread(  # type: ignore[union-attr]
-            _tui_app._on_plan_done, story_key, summary, ok
-        )
+    """Notify TUI that planning is complete (thread-safe via post_message)."""
+    if _tui_app is not None:
+        _tui_app.post_message(PlanDoneMsg(story_key, summary, ok))  # type: ignore[union-attr]
 
 
 def build_graph() -> StateGraph:
