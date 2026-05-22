@@ -167,8 +167,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
         compressed_path = planner.compress_context(workspace, story_key, stage)
         if compressed_path:
             state["context"]["knowledge_path"] = compressed_path
-            db.log_event(story_key, stage, "condense",
-                         {"output": compressed_path})
+            db.log_event(story_key, stage, "condense", {"output": compressed_path})
     except Exception as e:
         log.warning(f"Condenser failed: {e}")
 
@@ -180,8 +179,12 @@ def plan_stage_node(state: StoryState) -> StoryState:
             if plan.get("skip"):
                 state["status"] = "skipping"
                 state["plan_summary"] = f"跳过: {plan.get('reasoning', '')}"
-                db.log_event(story_key, stage, "plan",
-                             {"action": "skip", "reasoning": plan.get("reasoning", "")})
+                db.log_event(
+                    story_key,
+                    stage,
+                    "plan",
+                    {"action": "skip", "reasoning": plan.get("reasoning", "")},
+                )
                 return state
 
             # Planner decided to split into sub-stories
@@ -189,7 +192,9 @@ def plan_stage_node(state: StoryState) -> StoryState:
                 return _delegate_subtasks(state, plan)
 
             # Write plan task file
-            plan_file = Path(workspace) / ".story-context" / story_key / f"plan_{stage}.md"
+            plan_file = (
+                Path(workspace) / ".story-context" / story_key / f"plan_{stage}.md"
+            )
             plan_file.parent.mkdir(parents=True, exist_ok=True)
 
             # Append previous review suggestions if present
@@ -224,11 +229,16 @@ def plan_stage_node(state: StoryState) -> StoryState:
             state["context"]["plan_summary"] = plan.get("summary", "")
             state["plan"] = plan
 
-            db.log_event(story_key, stage, "plan", {
-                "adapter": plan.get("adapter"),
-                "summary": plan.get("summary", "")[:100],
-                "trajectory_score": plan.get("trajectory_score"),
-            })
+            db.log_event(
+                story_key,
+                stage,
+                "plan",
+                {
+                    "adapter": plan.get("adapter"),
+                    "summary": plan.get("summary", "")[:100],
+                    "trajectory_score": plan.get("trajectory_score"),
+                },
+            )
             return state
         except Exception as e:
             log.warning(f"Planner failed, falling back: {e}")
@@ -303,22 +313,32 @@ def _delegate_subtasks(state: StoryState, plan: dict) -> StoryState:
         if sub_status == "active":
             active_sub_keys.append(sub_key)
 
-        db.log_event(parent_key, stage, "delegate", {
-            "sub_key": sub_key,
-            "title": sub.get("title", ""),
-            "depends_on": sub.get("depends_on", []),
-            "status": sub_status,
-        })
+        db.log_event(
+            parent_key,
+            stage,
+            "delegate",
+            {
+                "sub_key": sub_key,
+                "title": sub.get("title", ""),
+                "depends_on": sub.get("depends_on", []),
+                "status": sub_status,
+            },
+        )
 
     # Store keys for graph runner to launch (no circular import)
     state["_pending_sub_keys"] = active_sub_keys
     state["status"] = "waiting_subtasks"
     state["plan_summary"] = f"拆分为 {len(subtasks)} 个子任务"
     db.update_story(parent_key, status="waiting_subtasks")
-    db.log_event(parent_key, stage, "split", {
-        "subtask_count": len(subtasks),
-        "sub_keys": [f"{parent_key}-{s['key_suffix']}" for s in subtasks],
-    })
+    db.log_event(
+        parent_key,
+        stage,
+        "split",
+        {
+            "subtask_count": len(subtasks),
+            "sub_keys": [f"{parent_key}-{s['key_suffix']}" for s in subtasks],
+        },
+    )
 
     # Pause parent via interrupt — resume_story will wake it up
     interrupt({"reason": "waiting_for_subtasks", "sub_count": len(subtasks)})
@@ -354,12 +374,14 @@ def review_stage_node(state: StoryState) -> StoryState:
     # Retry fatigue
     execution_count = state.get("execution_count", 0)
     if execution_count >= MAX_REVIEW_RETRIES:
-        state["last_error"] = (
-            f"Review retry limit reached ({MAX_REVIEW_RETRIES} times)"
-        )
+        state["last_error"] = f"Review retry limit reached ({MAX_REVIEW_RETRIES} times)"
         state["review_summary"] = f"达到重试上限 ({MAX_REVIEW_RETRIES} 次)"
-        db.log_event(state["story_key"], stage, "review",
-                     {"quality": "forced_fail", "retries": execution_count})
+        db.log_event(
+            state["story_key"],
+            stage,
+            "review",
+            {"quality": "forced_fail", "retries": execution_count},
+        )
         return state
 
     if planner.is_available():
@@ -403,9 +425,7 @@ def review_stage_node(state: StoryState) -> StoryState:
             # State stores index only
             state["review_summary"] = review.get("summary", "")
             state["trajectory_score"] = review.get("trajectory_score")
-            state["context"]["review_path"] = str(
-                review_file.relative_to(workspace)
-            )
+            state["context"]["review_path"] = str(review_file.relative_to(workspace))
             state["context"]["review_summary"] = review.get("summary", "")
 
             # Maintain knowledge base
@@ -417,7 +437,9 @@ def review_stage_node(state: StoryState) -> StoryState:
                     val = str(v)
                     if len(val) > 200:
                         detail_file = (
-                            Path(workspace) / ".story-context" / story_key
+                            Path(workspace)
+                            / ".story-context"
+                            / story_key
                             / f"{stage}_{k}.md"
                         )
                         detail_file.write_text(val, encoding="utf-8")
@@ -431,9 +453,7 @@ def review_stage_node(state: StoryState) -> StoryState:
             quality = review.get("quality", "pass")
             if quality == "revise":
                 high_issues = [
-                    i
-                    for i in review.get("issues", [])
-                    if i.get("severity") == "high"
+                    i for i in review.get("issues", []) if i.get("severity") == "high"
                 ]
                 state["last_error"] = (
                     f"Review: {review.get('summary', 'needs revision')} "
@@ -442,12 +462,17 @@ def review_stage_node(state: StoryState) -> StoryState:
             elif quality == "fail":
                 state["last_error"] = f"Review failed: {review.get('summary', '')}"
 
-            db.log_event(story_key, stage, "review", {
-                "quality": quality,
-                "summary": review.get("summary", "")[:100],
-                "issues_count": len(review.get("issues", [])),
-                "trajectory_score": review.get("trajectory_score"),
-            })
+            db.log_event(
+                story_key,
+                stage,
+                "review",
+                {
+                    "quality": quality,
+                    "summary": review.get("summary", "")[:100],
+                    "issues_count": len(review.get("issues", [])),
+                    "trajectory_score": review.get("trajectory_score"),
+                },
+            )
             return state
         except Exception as e:
             log.warning(f"Reviewer failed, skipping review: {e}")
@@ -602,17 +627,28 @@ def router_node(state: StoryState) -> StoryState:
     cfg = get_stage_config(state.get("profile", "minimal"), stage)
 
     # 1. Retry fatigue — review hit max retries
-    if state.get("review_summary") and "达到重试上限" in (state.get("review_summary") or ""):
-        db.log_event(key, stage, "router", {"action": "fail", "reason": "retry_fatigue"})
+    if state.get("review_summary") and "达到重试上限" in (
+        state.get("review_summary") or ""
+    ):
+        db.log_event(
+            key, stage, "router", {"action": "fail", "reason": "retry_fatigue"}
+        )
         state["_next_action"] = "fail"
         return state
 
     # 2. Low trajectory score — hard kill
     score = state.get("trajectory_score")
     if score is not None and score < 0.3:
-        db.log_event(key, stage, "router", {
-            "action": "fail", "reason": "low_trajectory_score", "score": score,
-        })
+        db.log_event(
+            key,
+            stage,
+            "router",
+            {
+                "action": "fail",
+                "reason": "low_trajectory_score",
+                "score": score,
+            },
+        )
         state["_next_action"] = "fail"
         return state
 
@@ -628,14 +664,28 @@ def router_node(state: StoryState) -> StoryState:
     if state.get("last_error") and state.get("review_summary"):
         count = state.get("execution_count", 0)
         if count < MAX_REVIEW_RETRIES:
-            db.log_event(key, stage, "router", {
-                "action": "retry", "reason": "review_driven", "attempt": count,
-            })
+            db.log_event(
+                key,
+                stage,
+                "router",
+                {
+                    "action": "retry",
+                    "reason": "review_driven",
+                    "attempt": count,
+                },
+            )
             state["_next_action"] = "retry"
             return state
-        db.log_event(key, stage, "router", {
-            "action": "fail", "reason": "review_retry_exhausted", "attempts": count,
-        })
+        db.log_event(
+            key,
+            stage,
+            "router",
+            {
+                "action": "fail",
+                "reason": "review_retry_exhausted",
+                "attempts": count,
+            },
+        )
         state["_next_action"] = "fail"
         return state
 

@@ -6,11 +6,22 @@ from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone
 
-VALID_COLUMNS = frozenset({
-    "title", "workspace", "profile", "current_stage", "status",
-    "complexity", "context_json", "execution_count", "last_error",
-    "updated_at", "parent_key", "subtask_index",
-})
+VALID_COLUMNS = frozenset(
+    {
+        "title",
+        "workspace",
+        "profile",
+        "current_stage",
+        "status",
+        "complexity",
+        "context_json",
+        "execution_count",
+        "last_error",
+        "updated_at",
+        "parent_key",
+        "subtask_index",
+    }
+)
 
 
 def get_db_path() -> Path:
@@ -126,7 +137,17 @@ def create_story(
         conn.execute(
             """INSERT INTO story (story_key, title, workspace, profile, current_stage, status, created_at, updated_at, parent_key, subtask_index)
                VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)""",
-            (story_key, title, str(workspace), profile, current_stage, now, now, parent_key, subtask_index),
+            (
+                story_key,
+                title,
+                str(workspace),
+                profile,
+                current_stage,
+                now,
+                now,
+                parent_key,
+                subtask_index,
+            ),
         )
         row = conn.execute(
             "SELECT * FROM story WHERE story_key = ?", (story_key,)
@@ -224,14 +245,17 @@ def delete_story(story_key: str):
 # -------- Event log --------
 
 
-def log_event(
-    story_key: str, stage: str, event_type: str, payload: dict | None = None
-):
+def log_event(story_key: str, stage: str, event_type: str, payload: dict | None = None):
     """Record an event to event_log. Structured replacement for log_stage."""
     with _db() as conn:
         conn.execute(
             "INSERT INTO event_log (story_key, stage, event_type, payload) VALUES (?, ?, ?, ?)",
-            (story_key, stage, event_type, json.dumps(payload or {}, ensure_ascii=False)),
+            (
+                story_key,
+                stage,
+                event_type,
+                json.dumps(payload or {}, ensure_ascii=False),
+            ),
         )
 
 

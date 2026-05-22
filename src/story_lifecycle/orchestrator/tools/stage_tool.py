@@ -7,6 +7,7 @@ from .base import BaseTool
 
 class StageTool(BaseTool):
     """标准阶段执行：启动 CLI，注入任务书，等待完成。"""
+
     _tool_name = "stage_tool"
 
     def execute(self, state: dict, args: dict) -> dict:

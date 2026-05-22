@@ -7,6 +7,7 @@ from .base import BaseTool
 
 class BenchmarkTool(BaseTool):
     """性能基准工具：运行性能测试并记录结果。"""
+
     _tool_name = "benchmark_tool"
 
     def execute(self, state: dict, args: dict) -> dict:
@@ -26,5 +27,7 @@ class BenchmarkTool(BaseTool):
         )
 
         state = self._launch_in_session(state, args, prompt)
-        state["context"]["benchmark_path"] = f".story-context/{key}/benchmark_{stage}.md"
+        state["context"]["benchmark_path"] = (
+            f".story-context/{key}/benchmark_{stage}.md"
+        )
         return state

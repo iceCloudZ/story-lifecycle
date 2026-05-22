@@ -518,6 +518,7 @@ class StoryBoardApp(App):
                 # Multiplexer path: send keys + paste prompt
                 ttyd.send_keys(session, launch, "Enter")
                 import time
+
                 time.sleep(8)
                 ttyd.paste_text(session, prompt)
                 ttyd.send_keys(session, "Enter")
@@ -527,14 +528,18 @@ class StoryBoardApp(App):
                     os.system(attach)
             else:
                 # No multiplexer: launch independently
-                tmp = Path(tempfile.gettempdir()) / f"story-prompt-{story_key}-{stage}.md"
+                tmp = (
+                    Path(tempfile.gettempdir()) / f"story-prompt-{story_key}-{stage}.md"
+                )
                 tmp.write_text(prompt, encoding="utf-8")
                 db.log_stage(story_key, stage, "execute", "Direct launch")
                 ttyd.launch_cli(story_key, workspace, launch, str(tmp))
         except Exception as e:
             panel = self.query_one("#detail-panel")
-            panel.update(f"[yellow]Story created but execution failed: {e}[/]\n\n"
-                         "  Press [e] to enter the session manually.")
+            panel.update(
+                f"[yellow]Story created but execution failed: {e}[/]\n\n"
+                "  Press [e] to enter the session manually."
+            )
             panel.set_class(True, "visible")
             self._show_detail = True
 
@@ -598,25 +603,36 @@ class StoryBoardApp(App):
         # Unblock sub-stories whose dependencies are complete
         from ..orchestrator.graph import start_story_async
 
-        blocked_stories = [s for s in self.stories if s["status"] == "blocked" and s.get("parent_key")]
+        blocked_stories = [
+            s for s in self.stories if s["status"] == "blocked" and s.get("parent_key")
+        ]
         for story in blocked_stories:
             parent_key = story["parent_key"]
             siblings = db.get_sub_stories(parent_key)
-            completed_keys = {c["story_key"] for c in siblings if c["status"] in ("completed",)}
+            completed_keys = {
+                c["story_key"] for c in siblings if c["status"] in ("completed",)
+            }
             # Check deps from delegate event
             events = db.get_story_events(parent_key)
             deps = []
             for ev in events:
                 if ev["event_type"] == "delegate" and ev.get("payload"):
                     import json as _json
-                    payload = _json.loads(ev["payload"]) if isinstance(ev["payload"], str) else ev["payload"]
+
+                    payload = (
+                        _json.loads(ev["payload"])
+                        if isinstance(ev["payload"], str)
+                        else ev["payload"]
+                    )
                     if payload.get("sub_key") == story["story_key"]:
                         deps = payload.get("depends_on", [])
                         break
             required = {f"{parent_key}-{d}" for d in deps}
             if required and required.issubset(completed_keys):
                 db.update_story(story["story_key"], status="active")
-                db.log_event(story["story_key"], "", "unblocked", {"deps_met": list(required)})
+                db.log_event(
+                    story["story_key"], "", "unblocked", {"deps_met": list(required)}
+                )
                 start_story_async(story["story_key"])
 
         # Check for parents waiting on subtasks
@@ -624,10 +640,7 @@ class StoryBoardApp(App):
         pending_parents = db.get_pending_parents()
         for parent in pending_parents:
             children = db.get_sub_stories(parent["story_key"])
-            incomplete = [
-                c for c in children
-                if c["status"] not in TERMINAL_STATES
-            ]
+            incomplete = [c for c in children if c["status"] not in TERMINAL_STATES]
             if not incomplete:
                 # Atomic status transition to prevent double-resume
                 conn = db.get_conn()
@@ -638,9 +651,14 @@ class StoryBoardApp(App):
                 conn.commit()
                 conn.close()
                 if updated:
-                    db.log_event(parent["story_key"], "", "subtasks_completed", {
-                        "children": [c["story_key"] for c in children],
-                    })
+                    db.log_event(
+                        parent["story_key"],
+                        "",
+                        "subtasks_completed",
+                        {
+                            "children": [c["story_key"] for c in children],
+                        },
+                    )
                     try:
                         resume_story(parent["story_key"])
                     except Exception:

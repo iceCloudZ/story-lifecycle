@@ -11,14 +11,18 @@ import subprocess
 def _kill_by_port_windows(port: int):
     try:
         r = subprocess.run(
-            ["netstat", "-aon"], capture_output=True, text=True, timeout=5,
+            ["netstat", "-aon"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         for line in r.stdout.splitlines():
             if f":{port}" in line and "LISTENING" in line:
                 pid = line.split()[-1]
                 subprocess.run(
                     ["taskkill", "/F", "/PID", pid],
-                    capture_output=True, timeout=5,
+                    capture_output=True,
+                    timeout=5,
                 )
                 break
     except Exception:
@@ -29,7 +33,8 @@ def _kill_by_port_unix(port: int):
     try:
         subprocess.run(
             ["pkill", "-f", f"ttyd.*port {port}"],
-            capture_output=True, timeout=5,
+            capture_output=True,
+            timeout=5,
         )
     except Exception:
         pass
@@ -41,9 +46,14 @@ def _kill_by_port_unix(port: int):
 def _port_in_use_windows(port: int) -> bool:
     try:
         r = subprocess.run(
-            ["netstat", "-aon"], capture_output=True, text=True, timeout=5,
+            ["netstat", "-aon"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
-        return any(f":{port}" in line and "LISTENING" in line for line in r.stdout.splitlines())
+        return any(
+            f":{port}" in line and "LISTENING" in line for line in r.stdout.splitlines()
+        )
     except Exception:
         return False
 
@@ -52,7 +62,8 @@ def _port_in_use_unix(port: int) -> bool:
     try:
         r = subprocess.run(
             ["pgrep", "-f", f"ttyd.*port {port}"],
-            capture_output=True, timeout=5,
+            capture_output=True,
+            timeout=5,
         )
         return r.returncode == 0
     except Exception:
@@ -64,11 +75,13 @@ def _port_in_use_unix(port: int) -> bool:
 
 def _file_lock_windows(f):
     import msvcrt
+
     msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
 
 
 def _file_lock_unix(f):
     import fcntl
+
     fcntl.flock(f.fileno(), fcntl.LOCK_EX)
 
 
@@ -88,7 +101,15 @@ def _find_git_bash() -> str | None:
     """Find Git Bash executable (not WSL bash)."""
     for candidate in (
         os.path.join(os.environ.get("ProgramFiles", ""), "Git", "bin", "bash.exe"),
-        os.path.join(os.environ.get("ProgramFiles(x86)", "",), "Git", "bin", "bash.exe"),
+        os.path.join(
+            os.environ.get(
+                "ProgramFiles(x86)",
+                "",
+            ),
+            "Git",
+            "bin",
+            "bash.exe",
+        ),
     ):
         if os.path.isfile(candidate):
             return candidate
@@ -118,6 +139,7 @@ def open_terminal_window(title: str, bash_args: list[str]):
                     stderr=subprocess.DEVNULL,
                 )
                 return
+
 
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200

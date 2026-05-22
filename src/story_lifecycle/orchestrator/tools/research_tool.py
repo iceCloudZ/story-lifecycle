@@ -7,6 +7,7 @@ from .base import BaseTool
 
 class ResearchTool(BaseTool):
     """调研工具：搜索文档、分析代码库，产出研究报告。"""
+
     _tool_name = "research_tool"
 
     def execute(self, state: dict, args: dict) -> dict:

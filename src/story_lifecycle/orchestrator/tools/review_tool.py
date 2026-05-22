@@ -7,6 +7,7 @@ from .base import BaseTool
 
 class ReviewTool(BaseTool):
     """代码审查工具：结构化代码审查，产出审查报告。"""
+
     _tool_name = "review_tool"
 
     def execute(self, state: dict, args: dict) -> dict:
@@ -31,5 +32,7 @@ class ReviewTool(BaseTool):
         )
 
         state = self._launch_in_session(state, args, prompt)
-        state["context"]["code_review_path"] = f".story-context/{key}/code_review_{stage}.md"
+        state["context"]["code_review_path"] = (
+            f".story-context/{key}/code_review_{stage}.md"
+        )
         return state

@@ -43,7 +43,6 @@ def _run(cmd: list, **kwargs):
         return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
 
-
 # -------- persistent port registry --------
 
 
@@ -70,9 +69,7 @@ def _load_ports():
 def _save_ports():
     """Persist current _story_ports to disk."""
     STORY_HOME.mkdir(parents=True, exist_ok=True)
-    _ports_file().write_text(
-        json.dumps(_story_ports, indent=2), encoding="utf-8"
-    )
+    _ports_file().write_text(json.dumps(_story_ports, indent=2), encoding="utf-8")
 
 
 # Load persisted ports on module import
@@ -332,11 +329,11 @@ def launch_cli(story_key: str, workspace: str, launch_cmd: str, prompt_file: str
     pf = platform_ops.to_posix_path(prompt_file)
     script = Path(tempfile.gettempdir()) / f"story-launch-{story_key}.sh"
     script.write_text(
-        f'#!/bin/bash\n'
+        f"#!/bin/bash\n"
         f'trap \'echo ""; echo "Exit code: $?"; read -p "Press Enter to close"\' EXIT\n'
         f'cd "{ws}" 2>/dev/null || {{ echo "ERROR: cannot cd to {ws}"; exit 1; }}\n'
         f'echo "Starting: {launch_cmd}"\n'
-        f'{launch_cmd} "$(cat \'{pf}\')"\n'
+        f"{launch_cmd} \"$(cat '{pf}')\"\n"
         f'echo ""\n'
         f'echo "Story {story_key} done. Closing in 3s..."\n',
         encoding="utf-8",

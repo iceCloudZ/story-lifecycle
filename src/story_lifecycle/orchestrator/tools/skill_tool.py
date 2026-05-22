@@ -7,6 +7,7 @@ from .base import BaseTool
 
 class SkillTool(BaseTool):
     """纯 skill 执行：在已有 CLI 会话中运行 skill，不重新启动。"""
+
     _tool_name = "skill_tool"
 
     def execute(self, state: dict, args: dict) -> dict:

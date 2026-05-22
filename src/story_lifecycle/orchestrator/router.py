@@ -7,11 +7,14 @@ import logging
 
 log = logging.getLogger("story-lifecycle.router")
 
+
 def _get_api_key():
     return os.environ.get("STORY_LLM_API_KEY", "")
 
+
 def _get_base_url():
     return os.environ.get("STORY_LLM_BASE_URL", "https://api.deepseek.com")
+
 
 def _get_model():
     return os.environ.get("STORY_LLM_MODEL", "deepseek-chat")

@@ -89,7 +89,9 @@ def new(story_key, title, profile, workspace, content):
     # If no PRD provided, ask user interactively
     if not prd_content:
         console.print("\n[bold yellow]No PRD provided.[/]")
-        console.print("Paste PRD content, a file path, or press Enter to skip (AI will ask you).\n")
+        console.print(
+            "Paste PRD content, a file path, or press Enter to skip (AI will ask you).\n"
+        )
 
         raw = click.prompt("PRD / file path", default="", show_default=False)
         if raw.strip():
@@ -174,10 +176,12 @@ def _board_static():
     display_list = []
     for p in parents:
         display_list.append(p)
-        display_list.extend(sorted(
-            [c for c in children if c["parent_key"] == p["story_key"]],
-            key=lambda c: c.get("subtask_index", 0),
-        ))
+        display_list.extend(
+            sorted(
+                [c for c in children if c["parent_key"] == p["story_key"]],
+                key=lambda c: c.get("subtask_index", 0),
+            )
+        )
     # Orphans (children whose parent not in list)
     parent_keys = {p["story_key"] for p in parents}
     display_list.extend(c for c in children if c["parent_key"] not in parent_keys)
@@ -201,7 +205,9 @@ def _board_static():
 
         is_child = bool(s.get("parent_key"))
         key_str = f"  └─ {s['story_key']}" if is_child else s.get("story_key", "")
-        title_str = f"  {s.get('title', '')}" if is_child else (s.get("title") or "")[:40]
+        title_str = (
+            f"  {s.get('title', '')}" if is_child else (s.get("title") or "")[:40]
+        )
 
         table.add_row(
             key_str,
@@ -309,6 +315,7 @@ def log_cmd(story_key):
         if payload:
             try:
                 import json
+
                 data = json.loads(payload)
                 detail = ", ".join(f"{k}={v}" for k, v in data.items())[:120]
             except (json.JSONDecodeError, TypeError):

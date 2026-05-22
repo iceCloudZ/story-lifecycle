@@ -47,13 +47,18 @@ class BaseTool:
         state["stage_start_time"] = time.time()
         state["last_error"] = None
 
-        db.log_event(key, state["current_stage"], "execute", {
-            "attempt": state["execution_count"],
-            "tool": tool_name,
-            "adapter": adapter_name,
-            "provider": args.get("provider"),
-            "model": model,
-        })
+        db.log_event(
+            key,
+            state["current_stage"],
+            "execute",
+            {
+                "attempt": state["execution_count"],
+                "tool": tool_name,
+                "adapter": adapter_name,
+                "provider": args.get("provider"),
+                "model": model,
+            },
+        )
         db.update_story(key, execution_count=state["execution_count"], last_error=None)
         return state
 
