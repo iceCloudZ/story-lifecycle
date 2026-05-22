@@ -8,8 +8,12 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .nodes import (
     StoryState,
+    plan_stage_node,
     execute_stage_node,
     poll_completion_node,
+    review_stage_node,
+    route_after_plan,
+    route_after_poll,
     router_node,
     advance_node,
     retry_node,
@@ -30,8 +34,10 @@ def build_graph() -> StateGraph:
     """Build and return the Story Lifecycle StateGraph."""
     graph = StateGraph(StoryState)
 
+    graph.add_node("plan_stage", plan_stage_node)
     graph.add_node("execute_stage", execute_stage_node)
     graph.add_node("poll_completion", poll_completion_node)
+    graph.add_node("review_stage", review_stage_node)
     graph.add_node("router", router_node)
     graph.add_node("advance", advance_node)
     graph.add_node("retry", retry_node)
@@ -39,11 +45,26 @@ def build_graph() -> StateGraph:
     graph.add_node("fail_stage", fail_node)
     graph.add_node("wait_confirm", wait_confirm_node)
 
-    graph.add_edge(START, "execute_stage")
+    graph.add_edge(START, "plan_stage")
+
+    graph.add_conditional_edges(
+        "plan_stage",
+        route_after_plan,
+        {"skip_stage": "skip_stage", "execute_stage": "execute_stage"},
+    )
+
     graph.add_edge("execute_stage", "poll_completion")
 
     graph.add_conditional_edges(
         "poll_completion",
+        route_after_poll,
+        {"review_stage": "review_stage", "router": "router"},
+    )
+
+    graph.add_edge("review_stage", "router")
+
+    graph.add_conditional_edges(
+        "router",
         router_node,
         {
             "advance": "advance",
@@ -54,11 +75,11 @@ def build_graph() -> StateGraph:
         },
     )
 
-    graph.add_edge("advance", "execute_stage")
-    graph.add_edge("retry", "execute_stage")
+    graph.add_edge("advance", "plan_stage")
+    graph.add_edge("retry", "plan_stage")
     graph.add_edge("skip_stage", "advance")
     graph.add_edge("fail_stage", END)
-    graph.add_edge("wait_confirm", "execute_stage")
+    graph.add_edge("wait_confirm", "plan_stage")
 
     return graph
 
@@ -88,6 +109,10 @@ def run_story(story_key: str):
         "execution_count": story.get("execution_count", 0),
         "last_error": None,
         "stage_start_time": 0.0,
+        "plan_summary": None,
+        "review_summary": None,
+        "trajectory_score": None,
+        "plan": None,
     }
 
     config = {"configurable": {"thread_id": story_key}}

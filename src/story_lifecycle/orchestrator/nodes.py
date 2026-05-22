@@ -1,6 +1,7 @@
-"""LangGraph node implementations — execute, poll, advance, skip, retry, fail."""
+"""LangGraph node implementations — plan, execute, poll, review, advance, skip, retry, fail."""
 
 import json
+import logging
 import re
 import time
 from pathlib import Path
@@ -14,12 +15,15 @@ from ..db import models as db
 from ..adapters import get_adapter
 from ..terminal import ttyd
 from ..terminal.platform_ops import file_lock
+from . import planner
 from . import router as llm_router
 
+log = logging.getLogger("story-lifecycle.nodes")
 
 TIMEOUT_SECONDS = 30 * 60  # 30 minutes per stage
 POLL_INTERVAL = 15  # seconds between poll checks
 STORY_HOME = Path.home() / ".story-lifecycle"
+MAX_REVIEW_RETRIES = 3
 
 
 class StoryState(TypedDict, total=False):
@@ -34,6 +38,12 @@ class StoryState(TypedDict, total=False):
     execution_count: int
     last_error: Optional[str]
     stage_start_time: float
+
+    # Smart Orchestrator fields
+    plan_summary: Optional[str]
+    review_summary: Optional[str]
+    trajectory_score: Optional[float]
+    plan: Optional[dict]
 
 
 # -------- stage config --------
@@ -104,6 +114,294 @@ def robust_json_parse(filepath: Path) -> dict:
     raise ValueError(f"Cannot parse JSON from {filepath}: {raw[:200]}")
 
 
+# -------- routing functions --------
+
+
+def route_after_plan(state: StoryState) -> str:
+    """Conditional edge after plan_stage: skip or execute."""
+    if state.get("status") == "skipping":
+        return "skip_stage"
+    return "execute_stage"
+
+
+def route_after_poll(state: StoryState) -> str:
+    """Conditional edge after poll_completion: review or router (if error)."""
+    if state.get("last_error"):
+        return "router"
+    return "review_stage"
+
+
+# -------- node: plan_stage --------
+
+
+def plan_stage_node(state: StoryState) -> StoryState:
+    """架构师/PM 角色：规划当前阶段。无 LLM 时退化为默认 plan。
+
+    不调用其他节点。skip 通过 conditional edge 路由。
+    """
+    stage = state["current_stage"]
+    profile = state.get("profile", "minimal")
+    cfg = get_stage_config(profile, stage)
+    workspace = state["workspace"]
+    story_key = state["story_key"]
+
+    # Trigger Condenser if needed
+    try:
+        compressed_path = planner.compress_context(workspace, story_key, stage)
+        if compressed_path:
+            state["context"]["knowledge_path"] = compressed_path
+            db.log_event(story_key, stage, "condense",
+                         {"output": compressed_path})
+    except Exception as e:
+        log.warning(f"Condenser failed: {e}")
+
+    if planner.is_available():
+        try:
+            adapters = ["claude"]
+            plan = planner.plan_stage(state, cfg, adapters)
+
+            if plan.get("skip"):
+                state["status"] = "skipping"
+                state["plan_summary"] = f"跳过: {plan.get('reasoning', '')}"
+                db.log_event(story_key, stage, "plan",
+                             {"action": "skip", "reasoning": plan.get("reasoning", "")})
+                return state
+
+            # Write plan task file
+            plan_file = Path(workspace) / ".story-context" / story_key / f"plan_{stage}.md"
+            plan_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Append previous review suggestions if present
+            review_path = state.get("context", {}).get("review_path")
+            review_section = ""
+            if review_path:
+                rf = Path(workspace) / review_path
+                if rf.exists():
+                    review_section = (
+                        f"\n## 前序 Review 建议\n"
+                        f"请先处理以下问题：\n{rf.read_text(encoding='utf-8')}"
+                    )
+
+            plan_file.write_text(
+                f"# 任务书: {stage}\n\n"
+                f"## 执行指令\n{plan.get('extra_instructions', '')}\n"
+                f"{review_section}\n\n"
+                f"## 配置\n"
+                f"- Adapter: {plan.get('adapter', 'claude')}\n"
+                f"- Provider: {plan.get('provider', 'deepseek')}\n"
+                f"- Model: {plan.get('model', 'sonnet')}\n\n"
+                f"## 决策理由\n{plan.get('reasoning', '')}\n\n"
+                f"## 路径评分\n"
+                f"当前路径评分: {plan.get('trajectory_score', 'N/A')}/1.0",
+                encoding="utf-8",
+            )
+
+            # State stores index only
+            state["plan_summary"] = plan.get("summary", "")
+            state["trajectory_score"] = plan.get("trajectory_score")
+            state["context"]["plan_path"] = str(plan_file.relative_to(workspace))
+            state["context"]["plan_summary"] = plan.get("summary", "")
+            state["plan"] = plan
+
+            db.log_event(story_key, stage, "plan", {
+                "adapter": plan.get("adapter"),
+                "summary": plan.get("summary", "")[:100],
+                "trajectory_score": plan.get("trajectory_score"),
+            })
+            return state
+        except Exception as e:
+            log.warning(f"Planner failed, falling back: {e}")
+
+    # Fallback: generate plan from profile config
+    profile_cfg = load_profile(profile)
+    state["plan"] = {
+        "adapter": cfg.get("cli", profile_cfg.get("cli", "claude")),
+        "provider": state.get("context", {}).get(
+            "_provider", cfg.get("provider", "deepseek")
+        ),
+        "model": cfg.get("model", "sonnet"),
+        "skip": False,
+        "extra_instructions": "",
+        "summary": "Fallback: using profile config",
+        "reasoning": "Fallback: using profile config",
+        "trajectory_score": None,
+    }
+    state["plan_summary"] = "Fallback: using profile config"
+    return state
+
+
+# -------- node: review_stage --------
+
+
+def review_stage_node(state: StoryState) -> StoryState:
+    """QA/评审员角色：结构化审查阶段产出。仅在 happy path 执行。
+
+    断路器：有 last_error 时直接跳过。
+    重试疲劳：超过 MAX_REVIEW_RETRIES 次直接 fail。
+    """
+    # Circuit breaker
+    if state.get("last_error"):
+        return state
+
+    stage = state["current_stage"]
+    cfg = get_stage_config(state.get("profile", "minimal"), stage)
+    stage_output = state.get("context", {})
+
+    # No expected_outputs → skip review
+    if not stage_output or not cfg.get("expected_outputs"):
+        return state
+
+    # Retry fatigue
+    execution_count = state.get("execution_count", 0)
+    if execution_count >= MAX_REVIEW_RETRIES:
+        state["last_error"] = (
+            f"Review retry limit reached ({MAX_REVIEW_RETRIES} times)"
+        )
+        state["review_summary"] = f"达到重试上限 ({MAX_REVIEW_RETRIES} 次)"
+        db.log_event(state["story_key"], stage, "review",
+                     {"quality": "forced_fail", "retries": execution_count})
+        return state
+
+    if planner.is_available():
+        try:
+            review = planner.review_stage(state, cfg, stage_output)
+            workspace = state["workspace"]
+            story_key = state["story_key"]
+
+            # Write review file
+            review_file = (
+                Path(workspace) / ".story-context" / story_key / f"review_{stage}.md"
+            )
+            review_file.parent.mkdir(parents=True, exist_ok=True)
+
+            issues_table = ""
+            for issue in review.get("issues", []):
+                issues_table += (
+                    f"| {issue.get('type', '')} | {issue.get('severity', '')} "
+                    f"| {issue.get('location', '')} | {issue.get('description', '')} |\n"
+                )
+
+            suggestions_list = "\n".join(
+                f"- {s}" for s in review.get("suggestions", [])
+            )
+
+            no_issues_row = "| （无） | | | |\n"
+            review_file.write_text(
+                f"# 评审: {stage}\n\n"
+                f"## 结论: {review.get('quality', 'pass')}\n\n"
+                f"## 摘要\n{review.get('summary', '')}\n\n"
+                f"## 问题列表\n"
+                f"| 类型 | 严重度 | 位置 | 描述 |\n"
+                f"|------|--------|------|------|\n"
+                f"{issues_table or no_issues_row}\n"
+                f"## 建议\n{suggestions_list or '（无）'}\n\n"
+                f"## 路径评分\n{review.get('trajectory_score', 'N/A')}/1.0\n\n"
+                f"## 详细理由\n{review.get('reasoning', '')}",
+                encoding="utf-8",
+            )
+
+            # State stores index only
+            state["review_summary"] = review.get("summary", "")
+            state["trajectory_score"] = review.get("trajectory_score")
+            state["context"]["review_path"] = str(
+                review_file.relative_to(workspace)
+            )
+            state["context"]["review_summary"] = review.get("summary", "")
+
+            # Maintain knowledge base
+            _update_knowledge(workspace, story_key, stage, review, stage_output)
+
+            # context_updates — store index only
+            if review.get("context_updates"):
+                for k, v in review["context_updates"].items():
+                    val = str(v)
+                    if len(val) > 200:
+                        detail_file = (
+                            Path(workspace) / ".story-context" / story_key
+                            / f"{stage}_{k}.md"
+                        )
+                        detail_file.write_text(val, encoding="utf-8")
+                        state["context"][k + "_path"] = str(
+                            detail_file.relative_to(workspace)
+                        )
+                        state["context"][k] = val[:100] + "..."
+                    else:
+                        state["context"][k] = val
+
+            quality = review.get("quality", "pass")
+            if quality == "revise":
+                high_issues = [
+                    i
+                    for i in review.get("issues", [])
+                    if i.get("severity") == "high"
+                ]
+                state["last_error"] = (
+                    f"Review: {review.get('summary', 'needs revision')} "
+                    f"({len(high_issues)} high severity issues)"
+                )
+            elif quality == "fail":
+                state["last_error"] = f"Review failed: {review.get('summary', '')}"
+
+            db.log_event(story_key, stage, "review", {
+                "quality": quality,
+                "summary": review.get("summary", "")[:100],
+                "issues_count": len(review.get("issues", [])),
+                "trajectory_score": review.get("trajectory_score"),
+            })
+            return state
+        except Exception as e:
+            log.warning(f"Reviewer failed, skipping review: {e}")
+
+    return state
+
+
+def _update_knowledge(
+    workspace: str, story_key: str, stage: str, review: dict, stage_output: dict
+):
+    """Reviewer maintains Story-level knowledge base."""
+    knowledge_dir = Path(workspace) / ".story-knowledge" / story_key
+    knowledge_dir.mkdir(parents=True, exist_ok=True)
+
+    # design.md on design stage pass
+    if stage == "design" and review.get("quality") == "pass":
+        design_file = knowledge_dir / "design.md"
+        design_file.write_text(
+            f"# 设计要点: {story_key}\n\n"
+            f"## 需求概述\n{stage_output.get('summary', '')}\n\n"
+            f"## 复杂度\n{stage_output.get('complexity', 'M')}\n\n"
+            f"## 技术约束\n{stage_output.get('constraints', '无特殊约束')}",
+            encoding="utf-8",
+        )
+
+    # Append decisions
+    decisions_file = knowledge_dir / "decisions.md"
+    if not decisions_file.exists():
+        decisions_file.write_text(f"# 决策记录: {story_key}\n", encoding="utf-8")
+
+    with open(decisions_file, "a", encoding="utf-8") as f:
+        f.write(f"\n## {stage} 阶段\n")
+        f.write(f"- 结论: {review.get('summary', '')}\n")
+        f.write(f"- 路径评分: {review.get('trajectory_score', 'N/A')}\n")
+        for issue in review.get("issues", []):
+            f.write(
+                f"- 问题: [{issue.get('severity', '')}] "
+                f"{issue.get('description', '')} @ {issue.get('location', '')}\n"
+            )
+
+    # Append constraints if found
+    constraints = stage_output.get("constraints") or stage_output.get("边界条件")
+    if constraints:
+        constraints_file = knowledge_dir / "constraints.md"
+        existing = (
+            constraints_file.read_text(encoding="utf-8")
+            if constraints_file.exists()
+            else ""
+        )
+        if str(constraints) not in existing:
+            with open(constraints_file, "a", encoding="utf-8") as f:
+                f.write(f"\n## {stage} 阶段添加\n{constraints}\n")
+
+
 # -------- node: execute_stage --------
 
 
@@ -115,11 +413,16 @@ def execute_stage_node(state: StoryState) -> StoryState:
     profile = state.get("profile", "minimal")
 
     cfg = get_stage_config(profile, stage)
-    adapter_name = cfg.get("cli", load_profile(profile).get("cli", "claude"))
-    provider = state.get("context", {}).get(
+
+    # Read adapter/provider/model from plan (fallback to profile config)
+    plan = state.get("plan") or {}
+    adapter_name = plan.get("adapter") or cfg.get(
+        "cli", load_profile(profile).get("cli", "claude")
+    )
+    provider = plan.get("provider") or state.get("context", {}).get(
         "_provider", cfg.get("provider", "deepseek")
     )
-    model = cfg.get("model", "sonnet")
+    model = plan.get("model") or cfg.get("model", "sonnet")
     adapter = get_adapter(adapter_name)
 
     # 1. Switch provider
@@ -139,8 +442,14 @@ def execute_stage_node(state: StoryState) -> StoryState:
     if not ttyd.session_alive(session):
         ttyd.create_session(session, workspace)
 
-    # 5. Render prompt
+    # 5. Render prompt + prepend plan file if available
     prompt = _render_prompt(stage, state)
+    plan_path = state.get("context", {}).get("plan_path")
+    if plan_path:
+        plan_file = Path(workspace) / plan_path
+        if plan_file.exists():
+            plan_content = plan_file.read_text(encoding="utf-8")
+            prompt = f"{plan_content}\n\n---\n\n{prompt}"
 
     # 6. Launch CC
     launch = adapter.launch_cmd(model)
@@ -157,6 +466,12 @@ def execute_stage_node(state: StoryState) -> StoryState:
     state["last_error"] = None
 
     db.log_stage(key, stage, "execute", f"Attempt {state['execution_count']}")
+    db.log_event(key, stage, "execute", {
+        "attempt": state["execution_count"],
+        "adapter": adapter_name,
+        "provider": provider,
+        "model": model,
+    })
     db.update_story(key, execution_count=state["execution_count"], last_error=None)
 
     return state
@@ -208,18 +523,45 @@ def poll_completion_node(state: StoryState) -> StoryState:
 
 
 def router_node(state: StoryState) -> str:
-    """Decide next action. Happy path: direct advance. Unhappy path: LLM router."""
-    # Happy path — no error, no confirm needed
+    """Decide next action. Priority: retry fatigue → low score → review-driven → happy → LLM."""
+    key = state["story_key"]
+    stage = state["current_stage"]
+    cfg = get_stage_config(state.get("profile", "minimal"), stage)
+
+    # 1. Retry fatigue — review hit max retries
+    if state.get("review_summary") and "达到重试上限" in (state.get("review_summary") or ""):
+        db.log_event(key, stage, "router", {"action": "fail", "reason": "retry_fatigue"})
+        return "fail"
+
+    # 2. Low trajectory score — hard kill
+    score = state.get("trajectory_score")
+    if score is not None and score < 0.3:
+        db.log_event(key, stage, "router", {
+            "action": "fail", "reason": "low_trajectory_score", "score": score,
+        })
+        return "fail"
+
+    # 3. Happy path — no error
     if not state.get("last_error"):
-        cfg = get_stage_config(state.get("profile", "minimal"), state["current_stage"])
         if cfg.get("confirm"):
             return "wait_confirm"
         return "advance"
 
-    # Unhappy path — call LLM router (or rule-based fallback)
-    cfg = get_stage_config(state.get("profile", "minimal"), state["current_stage"])
-    decision = llm_router.route(state, cfg)
+    # 4. Review-driven retry — have both error and review context
+    if state.get("last_error") and state.get("review_summary"):
+        count = state.get("execution_count", 0)
+        if count < MAX_REVIEW_RETRIES:
+            db.log_event(key, stage, "router", {
+                "action": "retry", "reason": "review_driven", "attempt": count,
+            })
+            return "retry"
+        db.log_event(key, stage, "router", {
+            "action": "fail", "reason": "review_retry_exhausted", "attempts": count,
+        })
+        return "fail"
 
+    # 5. Unhappy path — no review, fall through to LLM router
+    decision = llm_router.route(state, cfg)
     state["_router_decision"] = decision
 
     action = decision.get("action", "fail")
@@ -371,6 +713,11 @@ Story: {state["story_key"]}
     ctx = state.get("context", {})
     has_prd = bool(ctx.get("prd_path"))
 
+    # Get stage skill from profile
+    profile_name = state.get("profile", "minimal")
+    stage_cfg = get_stage_config(profile_name, stage)
+    skill = stage_cfg.get("skill", "")
+
     vars_map = {
         "{story_key}": state["story_key"],
         "{title}": state.get("title", ""),
@@ -392,6 +739,12 @@ Story: {state["story_key"]}
         ),
         "{spec_path_section}": (
             f"- Spec 路径: {ctx['spec_path']}" if ctx.get("spec_path") else ""
+        ),
+        "{skill}": skill,
+        "{skill_instruction}": (
+            f"请先执行 skill: `{skill}` 来进行结构化分析，然后基于分析结果完成本阶段任务。"
+            if skill
+            else ""
         ),
     }
     for key, value in vars_map.items():

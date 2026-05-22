@@ -21,6 +21,9 @@ docs/superpowers/
 .story/
 story.db
 checkpoint.db
+.story-context/
+.story-knowledge/
+.story-done/
 
 # OS
 .DS_Store

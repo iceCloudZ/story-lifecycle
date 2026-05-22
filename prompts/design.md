@@ -6,6 +6,7 @@
 - 标题: {title}
 {prd_path_section}
 {no_prd_section}
+{skill_instruction}
 
 ## 步骤
 

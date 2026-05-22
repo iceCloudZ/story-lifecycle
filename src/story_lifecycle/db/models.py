@@ -61,6 +61,15 @@ def init_db():
             detail TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS event_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            story_key TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            payload TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
     """)
     conn.commit()
     conn.close()
@@ -170,6 +179,33 @@ def delete_story(story_key: str):
         conn.execute("DELETE FROM story WHERE id = ?", (row["id"],))
     conn.commit()
     conn.close()
+
+
+# -------- Event log --------
+
+
+def log_event(
+    story_key: str, stage: str, event_type: str, payload: dict | None = None
+):
+    """Record an event to event_log. Structured replacement for log_stage."""
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO event_log (story_key, stage, event_type, payload) VALUES (?, ?, ?, ?)",
+        (story_key, stage, event_type, json.dumps(payload or {}, ensure_ascii=False)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_story_events(story_key: str) -> list[dict]:
+    """Return all events for a story, ordered by id."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM event_log WHERE story_key = ? ORDER BY id",
+        (story_key,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def upsert_story(

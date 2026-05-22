@@ -21,7 +21,6 @@ from ..orchestrator.service import (
     fail_story,
     skip_stage,
 )
-from ..terminal import ttyd
 from .setup import is_configured, load_config_to_env, run_setup
 from .doctor import run_doctor
 
@@ -128,7 +127,7 @@ def new(story_key, title, profile, workspace, content):
     console.print(f"\n[green]Story created: {s['story_key']}[/]")
     console.print(f"  Stage: {s['current_stage']}")
     console.print(f"  Workspace: {s['workspace']}")
-    console.print(f"\n  Open terminal: [bold]story enter {s['story_key']}[/]")
+    console.print("\n  [bold]story board[/] to manage and launch")
 
 
 # -------- story board --------
@@ -195,26 +194,8 @@ def _board_static():
 
     console.print(table)
     console.print(
-        "\n[dim]Commands: story new | story enter <key> | story skip <key> --stage <name> | story fail <key>[/]"
+        "\n[dim]Commands: story new | story board | story skip <key> --stage <name> | story fail <key>[/]"
     )
-
-
-# -------- story enter --------
-
-
-@cli.command()
-@click.argument("story_key")
-def enter(story_key):
-    """Open the ttyd terminal for a story to interact with the AI."""
-    s = db.get_story(story_key)
-    if not s:
-        console.print(f"[red]Story not found: {story_key}[/]")
-        return
-
-    url = ttyd.ensure_ttyd(story_key, s["workspace"])
-    console.print(f"[green]Opening terminal for {story_key}...[/]")
-    console.print(f"  URL: {url}")
-    console.print(f"  Session: [bold]{ttyd.session_name(story_key)}[/]")
 
 
 # -------- story status --------
@@ -282,6 +263,44 @@ def resume(story_key):
     """Resume a paused or blocked story."""
     db.update_story(story_key, status="active")
     console.print(f"[green]Resumed {story_key}[/]")
+
+
+# -------- story log --------
+
+
+@cli.command("log")
+@click.argument("story_key")
+def log_cmd(story_key):
+    """Show event log for a story."""
+    events = db.get_story_events(story_key)
+    if not events:
+        console.print(f"[dim]No events found for {story_key}[/]")
+        return
+
+    table = Table(title=f"Event Log: {story_key}", show_lines=False)
+    table.add_column("Time", style="dim", width=19)
+    table.add_column("Stage", style="cyan")
+    table.add_column("Event", style="green")
+    table.add_column("Detail", style="white")
+
+    for e in events:
+        payload = e.get("payload") or ""
+        detail = ""
+        if payload:
+            try:
+                import json
+                data = json.loads(payload)
+                detail = ", ".join(f"{k}={v}" for k, v in data.items())[:120]
+            except (json.JSONDecodeError, TypeError):
+                detail = str(payload)[:120]
+        table.add_row(
+            e.get("created_at", "")[:19],
+            e.get("stage", ""),
+            e.get("event_type", ""),
+            detail,
+        )
+
+    console.print(table)
 
 
 # -------- story serve --------
