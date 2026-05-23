@@ -178,6 +178,29 @@ def _render_detail(story: dict) -> str:
     except json.JSONDecodeError:
         pass
 
+    # Quality findings panel
+    try:
+        from ..db import models as qdb
+
+        findings = qdb.get_open_findings(key)
+        if findings:
+            lines.append("  [bold red]Quality Findings:[/]")
+            for f in findings[:5]:
+                sev = f["severity"].upper()
+                color = (
+                    "red" if sev == "HIGH" else "yellow" if sev == "MEDIUM" else "green"
+                )
+                lines.append(
+                    f"    [{color}]● {sev}[/{color}] {f['category']}: {f['description']}"
+                )
+        patterns = qdb.get_active_learned_patterns(limit=3)
+        if patterns:
+            lines.append("  [bold cyan]Learned Patterns:[/]")
+            for p in patterns:
+                lines.append(f"    ◆ {p['pattern']}")
+    except Exception:
+        pass
+
     return "\n".join(lines)
 
 

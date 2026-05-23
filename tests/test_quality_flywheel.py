@@ -429,3 +429,31 @@ def test_dor_check(tmp_path):
     result2 = check_dor("S2", "design")
     assert result2["ready"] is False
     assert "title" in result2["missing"]
+
+
+def test_tui_quality_data_queryable(tmp_path):
+    """Quality data should be queryable for TUI display."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.quality import record_finding
+
+    record_finding(
+        "S1",
+        "implement",
+        {
+            "source": "code_review",
+            "severity": "high",
+            "category": "routing",
+            "description": "advance_node missing error path",
+        },
+    )
+
+    # Verify data is queryable for TUI
+    findings = db.get_open_findings("S1")
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "high"
+    assert findings[0]["category"] == "routing"
