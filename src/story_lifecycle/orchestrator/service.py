@@ -242,7 +242,7 @@ def _check_parent_auto_resume(parent_key: str):
 class CreateFromSourceResult:
     status: str  # "created" | "need_manual_select" | "failed"
     story_key: str | None = None
-    bug_item: "SourceItem | None" = None
+    bug_item: object | None = None
     error: str | None = None
 
 
@@ -253,7 +253,7 @@ def create_story_from_source(
     generate_prd: bool = True,
     auto_start: bool = True,
 ) -> CreateFromSourceResult:
-    from ..sources.base import resolve_bug_parent, SourceItem
+    from ..sources.base import resolve_bug_parent
     from ..sources import get_source
     from ..sources.prd_providers import fetch_prd_content, save_prd
 
