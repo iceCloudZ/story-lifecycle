@@ -248,6 +248,199 @@ class ManualSource(StorySource):
         return True
 ```
 
+## 5.5 PRD 内容提供者（PrdProvider）
+
+### 问题
+
+PRD 来源和故事来源是**两个正交维度**：
+
+- 故事来源：TAPD / Jira / Manual
+- PRD 来源：TAPD 正文 / 钉钉文档 / Confluence / 本地文件 / 用户手动
+
+同一个 TAPD 需求，PRD 可能在 TAPD 正文里，也可能在钉钉文档链接里，也可能在本地文件里。不同团队/用户的 PRD 获取方式不同，需要独立抽象。
+
+### PrdContent 数据结构
+
+```python
+@dataclass
+class PrdContent:
+    source_type: str        # "tapd_body" | "dingtalk_doc" | "local_file" | "manual"
+    markdown: str           # PRD 正文（已转为 markdown）
+    file_path: str | None   # 保存到本地的路径（如果有）
+    attachments: list[str]  # 附件/图片路径
+```
+
+### PrdProvider 接口
+
+```python
+class PrdProvider(ABC):
+    """PRD 内容提供者 — 从不同来源获取 PRD 内容"""
+
+    @abstractmethod
+    def can_handle(self, item: SourceItem) -> bool:
+        """判断是否能处理这个条目的 PRD 获取"""
+
+    @abstractmethod
+    def fetch_content(self, item: SourceItem) -> PrdContent | None:
+        """提取 PRD 内容，返回 None 表示获取失败"""
+```
+
+### 内置 Provider（链式尝试）
+
+按优先级尝试，第一个成功的就用：
+
+```python
+# src/story_lifecycle/sources/prd_providers.py
+
+class TapdBodyPrdProvider(PrdProvider):
+    """从 TAPD 正文直接提取 PRD — 适用于需求内容写在 TAPD 里的情况。"""
+
+    def can_handle(self, item: SourceItem) -> bool:
+        return item.source == "tapd" and bool(item.description.strip())
+
+    def fetch_content(self, item: SourceItem) -> PrdContent | None:
+        # HTML → Markdown 转换
+        md = html_to_markdown(item.description)
+        return PrdContent(source_type="tapd_body", markdown=md, file_path=None, attachments=[])
+
+
+class DingTalkLinkPrdProvider(PrdProvider):
+    """检测钉钉文档链接 → 抓取内容 → 转 MD。
+
+    钉钉文档 URL 格式: https://dingtalk.com/doc/xxx 或 https://doc.dingtalk.com/xxx
+    """
+
+    DINGTALK_PATTERNS = [
+        r"https?://(?:doc\.)?dingtalk\.com/\S+",
+        r"https?://(?:[\w-]+\.)?dingtalk\.com/document/\S+",
+    ]
+
+    def can_handle(self, item: SourceItem) -> bool:
+        return bool(self._extract_dingtalk_url(item.description))
+
+    def fetch_content(self, item: SourceItem) -> PrdContent | None:
+        url = self._extract_dingtalk_url(item.description)
+        if not url:
+            return None
+        # 抓取钉钉文档内容
+        md = self._fetch_dingtalk_doc(url)
+        if not md:
+            return None
+        return PrdContent(source_type="dingtalk_doc", markdown=md, file_path=None, attachments=[])
+
+    def _extract_dingtalk_url(self, text: str) -> str | None:
+        import re
+        for pattern in self.DINGTALK_PATTERNS:
+            m = re.search(pattern, text)
+            if m:
+                return m.group(0)
+        return None
+
+    def _fetch_dingtalk_doc(self, url: str) -> str | None:
+        """抓取钉钉文档。可能需要认证 token。"""
+        # 方案 1: web_reader MCP（如果可访问）
+        # 方案 2: 钉钉开放平台 API
+        # 方案 3: 用户手动提供（返回 None，由 FallbackPrdProvider 处理）
+        ...
+
+
+class LocalFilePrdProvider(PrdProvider):
+    """从本地文件路径读取 PRD — 适用于用户已下载/准备好的文件。"""
+
+    def can_handle(self, item: SourceItem) -> bool:
+        # 检测 description 中是否有本地文件路径
+        import re
+        return bool(re.search(r'(?:^|\n)(/\S+\.md|[A-Z]:\\\S+\.md)', item.description))
+
+    def fetch_content(self, item: SourceItem) -> PrdContent | None:
+        import re
+        m = re.search(r'(?:^|\n)(/\S+\.md|[A-Z]:\\\S+\.md)', item.description)
+        if not m:
+            return None
+        path = m.group(1)
+        p = Path(path)
+        if not p.exists():
+            return None
+        return PrdContent(
+            source_type="local_file",
+            markdown=p.read_text(encoding="utf-8"),
+            file_path=str(p),
+            attachments=[],
+        )
+
+
+class FallbackPrdProvider(PrdProvider):
+    """兜底 — 所有 Provider 都无法处理时，用条目基本信息生成简易 PRD。"""
+
+    def can_handle(self, item: SourceItem) -> bool:
+        return True  # 始终可处理
+
+    def fetch_content(self, item: SourceItem) -> PrdContent | None:
+        md = (
+            f"# {item.title}\n\n"
+            f"**来源**: {item.source} ({item.id})\n"
+            f"**优先级**: {item.priority}\n"
+            f"**处理人**: {item.owner}\n\n"
+            f"## 需求描述\n\n{item.description}\n"
+        )
+        return PrdContent(source_type="fallback", markdown=md, file_path=None, attachments=[])
+```
+
+### Provider 链调度
+
+```python
+# src/story_lifecycle/sources/prd_providers.py
+
+DEFAULT_PRD_PROVIDERS = [
+    TapdBodyPrdProvider(),
+    DingTalkLinkPrdProvider(),
+    LocalFilePrdProvider(),
+    FallbackPrdProvider(),      # 兜底，永远在最后
+]
+
+
+def fetch_prd_content(
+    item: SourceItem,
+    providers: list[PrdProvider] | None = None,
+) -> PrdContent | None:
+    """按优先级尝试各 Provider，返回第一个成功的结果。"""
+    chain = providers or DEFAULT_PRD_PROVIDERS
+    for provider in chain:
+        if provider.can_handle(item):
+            content = provider.fetch_content(item)
+            if content:
+                return content
+    return None
+```
+
+### 用户自定义 Provider
+
+用户可在 config.yaml 中配置 Provider 链，或通过插件注册：
+
+```yaml
+story_source:
+  enabled: tapd
+  prd_providers:
+    - dingtalk_link    # 先检测钉钉链接
+    - tapd_body        # 再尝试 TAPD 正文
+    - local_file       # 再尝试本地文件
+    - fallback         # 兜底
+```
+
+### 钉钉文档的具体实现路径
+
+钉钉文档获取有多种方案，需要根据团队实际情况选择：
+
+| 方案 | 实现 | 适用场景 |
+|------|------|---------|
+| web_reader MCP | `mcp__web_reader__webReader` 直接抓 URL | 钉钉文档公开可访问时 |
+| 钉钉开放平台 API | 调用文档 API，需 appKey/appSecret | 企业有钉钉开发权限时 |
+| 用户手动下载 | 返回 None → FallbackPrdProvider → TUI 提示用户提供路径 | 以上都不可用时 |
+
+**P0 实现**：先跳过钉钉自动抓取，`DingTalkLinkPrdProvider` 检测到钉钉链接后返回 None，由 FallbackPrdProvider 兜底。用户可在 TUI 中手动指定本地文件路径。
+
+**P1 实现**：根据团队实际情况选择钉钉集成方案。
+
 ## 6. Service 层扩展
 
 ### 6.1 创建故事的来源感知
@@ -266,9 +459,12 @@ def create_story_from_source(
     title = item.title
     prd_path = None
 
-    # 需求类型 → 生成 PRD
+    # 需求类型 → 通过 PrdProvider 链获取 PRD
     if generate_prd and item.item_type == "requirement":
-        prd_path = _generate_prd(item, workspace)
+        from ..sources.prd_providers import fetch_prd_content
+        prd_content = fetch_prd_content(item)
+        if prd_content and prd_content.markdown:
+            prd_path = _save_prd(story_key, prd_content, workspace)
 
     # Bug 类型 → 创建为子故事（如果有关联父需求）
     if item.item_type == "bug" and item.parent_id:
@@ -304,23 +500,17 @@ def _derive_story_key(item: SourceItem) -> str:
     return f"{item.source.upper()}-{item.id[-6:]}"
 
 
-def _generate_prd(item: SourceItem, workspace: str) -> str | None:
-    """调用 prd-generator skill 生成 PRD。"""
-    # 需求类条目：将平台描述写入临时文件，交给 PRD 生成流程
-    # 这里只是启动流程，实际 PRD 内容由 prd-generator skill 生成
+def _save_prd(story_key: str, prd_content: PrdContent, workspace: str) -> str:
+    """将 PrdContent 保存为本地 PRD 文件。"""
     prd_dir = Path(workspace) / "prd"
     prd_dir.mkdir(exist_ok=True)
-    prd_file = prd_dir / f"{_derive_story_key(item)}.md"
 
-    # 写入原始描述作为初始 PRD
-    prd_file.write_text(
-        f"# {item.title}\n\n"
-        f"**来源**: {item.source} ({item.id})\n"
-        f"**优先级**: {item.priority}\n"
-        f"**处理人**: {item.owner}\n\n"
-        f"## 需求描述\n\n{item.description}\n",
-        encoding="utf-8",
-    )
+    # 如果 PrdProvider 已经指定了文件路径（如 LocalFilePrdProvider），直接用
+    if prd_content.file_path and Path(prd_content.file_path).exists():
+        return prd_content.file_path
+
+    prd_file = prd_dir / f"{story_key}.md"
+    prd_file.write_text(prd_content.markdown, encoding="utf-8")
     return str(prd_file)
 ```
 
@@ -545,6 +735,7 @@ src/story_lifecycle/
 ├── sources/                    # 新增模块
 │   ├── __init__.py            # 注册表 + get_source
 │   ├── base.py                # StorySource 抽象类 + SourceItem
+│   ├── prd_providers.py       # PrdProvider 抽象 + 内置 Provider 链
 │   ├── manual_source.py       # 手动适配器（默认）
 │   └── tapd_source.py         # TAPD 适配器
 ├── orchestrator/
