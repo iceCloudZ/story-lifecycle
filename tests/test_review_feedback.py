@@ -235,11 +235,13 @@ def test_dedupe_candidates_merges_similar():
     ]
 
     deduped = dedupe_candidates(candidates)
-    # Different descriptions → not merged even with same category+location
-    assert len(deduped) == 3
+    # Same category+location merged, descriptions concatenated, higher severity kept
+    assert len(deduped) == 2
     routing = [c for c in deduped if c["category"] == "routing"]
-    assert len(routing) == 2
+    assert len(routing) == 1
     assert routing[0]["severity"] == "high"
+    assert "路由错误 A" in routing[0]["description"]
+    assert "路由问题，类似A" in routing[0]["description"]
 
 
 def test_dedupe_candidates_against_existing(tmp_path):
@@ -274,8 +276,9 @@ def test_dedupe_candidates_against_existing(tmp_path):
     ]
 
     deduped = dedupe_candidates(candidates, story_key="S1")
-    # Different descriptions → both kept (DB dedupe uses description[:50] too)
-    assert len(deduped) == 2
+    # routing|api.py:10 deduped against DB, style|utils.py:5 kept
+    assert len(deduped) == 1
+    assert deduped[0]["category"] == "style"
 
 
 def test_import_review_creates_candidate_findings(tmp_path):
@@ -654,6 +657,71 @@ def test_api_decide_finding_not_found(tmp_path):
         },
     )
     assert resp.status_code == 404
+
+
+def test_api_mark_verified_with_evidence(tmp_path):
+    """PUT /api/finding/{id}/decide mark_verified writes verification_event_id."""
+    client = _get_api_client(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+    fid = db.create_finding(
+        "S1", "review", "review_feedback", "high", "error_handling", "test finding"
+    )
+
+    resp = client.put(
+        f"/api/finding/{fid}/decide",
+        json={
+            "action": "mark_verified",
+            "reason": "test passed",
+            "verification_event_id": 42,
+        },
+    )
+    assert resp.status_code == 200
+    finding = db.get_finding(fid)
+    assert finding["status"] == "verified"
+    events = db.get_story_events("S1")
+    verified_events = []
+    for e in events:
+        if e.get("event_type") != "finding_status_changed":
+            continue
+        payload = e.get("payload", "{}")
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if "verified" in payload.get("to", ""):
+            verified_events.append({"payload": payload})
+    assert len(verified_events) == 1
+    assert verified_events[0]["payload"]["evidence"]["verification_event_id"] == 42
+
+
+def test_approvals_decide_accept_single_event(tmp_path):
+    """approvals decide --accept writes exactly one status change event."""
+    db = _setup_db(tmp_path)
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+    fid = db.create_finding(
+        "S1", "review", "review_feedback", "high", "error_handling", "test"
+    )
+
+    from click.testing import CliRunner
+
+    runner = CliRunner()
+    from story_lifecycle.cli.review_feedback import approvals_group
+
+    result = runner.invoke(approvals_group, ["decide", fid, "--accept"])
+    assert result.exit_code == 0
+
+    events = db.get_story_events("S1")
+    accept_events = []
+    for e in events:
+        if e.get("event_type") != "finding_status_changed":
+            continue
+        payload = e.get("payload", "{}")
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if payload.get("to") == "accepted":
+            accept_events.append(e)
+    assert len(accept_events) == 1, f"Expected 1 accept event, got {len(accept_events)}"
 
 
 # ── Task 6: E2E integration test ──

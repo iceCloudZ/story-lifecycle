@@ -104,6 +104,7 @@ def _parse_json_review(content: str) -> list[dict]:
 
 _SEVERITY_PATTERN = re.compile(r"\[(HIGH|MEDIUM|LOW)\]", re.IGNORECASE)
 _BULLET_PATTERN = re.compile(r"^[-*]\s+(.+)$", re.MULTILINE)
+_LOCATION_PATTERN = re.compile(r"(\S+\.py(?::\d+)?)", re.IGNORECASE)
 
 
 def _parse_bullet_review(content: str) -> list[dict]:
@@ -120,12 +121,17 @@ def _parse_bullet_review(content: str) -> list[dict]:
             severity = sev_match.group(1).lower()
             line = _SEVERITY_PATTERN.sub("", line).strip()
 
+        location = ""
+        loc_match = _LOCATION_PATTERN.search(line)
+        if loc_match:
+            location = loc_match.group(1)
+
         candidates.append(
             {
                 "severity": severity,
                 "category": "unknown",
                 "description": line[:500],
-                "location": "",
+                "location": location,
                 "recommendation": "",
                 "root_cause": "",
                 "evidence": [],
@@ -190,18 +196,20 @@ def dedupe_candidates(
     candidates: list[dict],
     story_key: str | None = None,
 ) -> list[dict]:
-    """Merge candidates with same category+location, and dedupe against DB."""
-    # Phase 1: merge within candidates (same category + location)
+    """Merge candidates with same category+location, and dedupe against DB.
+
+    Merges findings about the same type of issue in the same file/location
+    even if described differently — keeps highest severity and concatenates
+    descriptions.
+    """
     seen: dict[str, dict] = {}
     for c in candidates:
-        key = f"{c['category']}|{c.get('location', '')}|{c.get('description', '')[:50]}"
+        key = f"{c['category']}|{c.get('location', '')}"
         if key in seen:
             existing = seen[key]
-            # Keep higher severity
             sev_order = {"high": 3, "medium": 2, "low": 1}
             if sev_order.get(c["severity"], 0) > sev_order.get(existing["severity"], 0):
                 existing["severity"] = c["severity"]
-            # Merge descriptions
             if c["description"] not in existing["description"]:
                 existing["description"] += f"; {c['description']}"
         else:
@@ -209,24 +217,20 @@ def dedupe_candidates(
 
     merged = list(seen.values())
 
-    # Phase 2: dedupe against existing DB findings for same story
+    # Dedupe against existing DB findings for same story
     if story_key:
         try:
             existing = db.get_findings_by_story(story_key)
-            existing_keys = set()
-            for f in existing:
-                existing_keys.add(
-                    f"{f['category']}|{f.get('location', '')}|{f.get('description', '')[:50]}"
-                )
-
+            existing_keys = {
+                f"{f['category']}|{f.get('location', '')}" for f in existing
+            }
             merged = [
                 c
                 for c in merged
-                if f"{c['category']}|{c.get('location', '')}|{c.get('description', '')[:50]}"
-                not in existing_keys
+                if f"{c['category']}|{c.get('location', '')}" not in existing_keys
             ]
         except Exception:
-            pass  # if DB fails, don't block
+            pass
 
     return merged
 

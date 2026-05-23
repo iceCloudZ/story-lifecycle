@@ -531,6 +531,29 @@ def get_findings_by_story(story_key: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_finding_evidence(finding_id: str) -> list[str]:
+    """Get evidence list for a finding from event_log."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT payload FROM event_log WHERE event_type = 'review_feedback_imported' ORDER BY id DESC LIMIT 50",
+        ).fetchall()
+    for r in rows:
+        try:
+            payload = json.loads(r["payload"])
+            if payload.get("finding_id") == finding_id:
+                return payload.get("evidence", [])
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return []
+
+
+def enrich_findings_with_evidence(findings: list[dict]) -> list[dict]:
+    """Attach evidence from event_log to each finding."""
+    for f in findings:
+        f["evidence"] = get_finding_evidence(f["id"])
+    return findings
+
+
 def get_recent_quality_events(
     story_key: str, event_types: list[str], limit: int = 50
 ) -> list[dict]:

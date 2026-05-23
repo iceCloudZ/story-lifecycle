@@ -185,10 +185,11 @@ from .seed_quality import seed_quality_group  # noqa: E402
 
 cli.add_command(seed_quality_group)
 
-from .review_feedback import review_feedback_group, approvals_group  # noqa: E402
+from .review_feedback import review_feedback_group, approvals_group, findings_cmd  # noqa: E402
 
 cli.add_command(review_feedback_group)
 cli.add_command(approvals_group)
+cli.add_command(findings_cmd)
 
 
 def _run_board():

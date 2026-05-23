@@ -203,10 +203,13 @@ def decide(finding_id, action, reason, verification_event_id):
 # ── Approvals group ──
 
 
-@click.group(name="approvals")
-def approvals_group():
+@click.group(name="approvals", invoke_without_command=True)
+@click.pass_context
+def approvals_group(ctx):
     """View and manage the approval queue for pending findings."""
     init_db()
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(approvals_list)
 
 
 @approvals_group.command("list")
@@ -215,6 +218,7 @@ def approvals_list():
     from ..db import models as db
 
     pending = db.get_all_pending_findings()
+    db.enrich_findings_with_evidence(pending)
     if not pending:
         console.print("[dim]No pending findings.[/]")
         return
@@ -225,7 +229,8 @@ def approvals_list():
     table.add_column("Status", style="cyan")
     table.add_column("Severity", style="bold")
     table.add_column("Category")
-    table.add_column("Description", max_width=50)
+    table.add_column("Description", max_width=40)
+    table.add_column("Evidence", max_width=30, style="dim")
     table.add_column("Source", style="dim")
 
     sev_colors = {"high": "red", "medium": "yellow", "low": "green"}
@@ -234,13 +239,15 @@ def approvals_list():
     for f in pending:
         sev = f["severity"]
         status = f["status"]
+        evidence_str = ", ".join(f.get("evidence", []))[:50]
         table.add_row(
             f["id"],
             f["story_key"],
             f"[{status_colors.get(status, 'white')}]{status}[/]",
             f"[{sev_colors.get(sev, 'white')}]{sev.upper()}[/]",
             f["category"],
-            f["description"][:80],
+            f["description"][:60],
+            evidence_str or "-",
             f["source"],
         )
 
@@ -329,6 +336,62 @@ def decide_approval(finding_id, action, reason, verification_event_id):
 
     if reason:
         console.print(f"  Reason: [dim]{reason}[/]")
+
+
+# ── Standalone findings command ──
+
+
+@click.command(name="findings")
+@click.argument("story_key")
+def findings_cmd(story_key):
+    """List all findings for a story (any source).
+
+    \b
+    Examples:
+      story findings STORY-123
+    """
+    from ..db import models as db
+
+    findings = db.get_findings_by_story(story_key)
+    if not findings:
+        console.print(f"[dim]No findings for story '{story_key}'.[/]")
+        return
+
+    table = Table(title=f"Findings: {story_key}")
+    table.add_column("ID", style="dim", max_width=20)
+    table.add_column("Status", style="cyan")
+    table.add_column("Severity", style="bold")
+    table.add_column("Category")
+    table.add_column("Description", max_width=40)
+    table.add_column("Location", max_width=20, style="dim")
+    table.add_column("Source", style="dim")
+
+    sev_colors = {"high": "red", "medium": "yellow", "low": "green"}
+    status_colors = {
+        "open": "cyan",
+        "accepted": "green",
+        "fixed": "green",
+        "verified": "bold green",
+        "rejected": "red",
+        "deferred": "yellow",
+        "learned": "blue",
+    }
+
+    for f in findings:
+        sev = f["severity"]
+        status = f["status"]
+        table.add_row(
+            f["id"],
+            f"[{status_colors.get(status, 'white')}]{status}[/]",
+            f"[{sev_colors.get(sev, 'white')}]{sev.upper()}[/]",
+            f["category"],
+            f["description"][:60],
+            f.get("location", "")[:25],
+            f["source"],
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]{len(findings)} finding(s)[/]")
 
 
 # ── Board integration ──

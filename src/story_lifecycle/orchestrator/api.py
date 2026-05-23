@@ -461,7 +461,7 @@ def api_decide_finding(finding_id: str, req: DecideFindingRequest):
                 "reason": req.reason,
             },
         )
-    elif action == "mark_verified":
+    elif action in ("mark_verified", "verify"):
         evidence = None
         if req.verification_event_id:
             evidence = {"verification_event_id": req.verification_event_id}
@@ -471,7 +471,7 @@ def api_decide_finding(finding_id: str, req: DecideFindingRequest):
     else:
         raise HTTPException(
             400,
-            f"Unknown action: {action}. Use: accept/reject/defer/downgrade/mark_verified",
+            f"Unknown action: {action}. Use: accept/reject/defer/downgrade/verify",
         )
 
     updated = db.get_finding(finding_id)
@@ -480,6 +480,7 @@ def api_decide_finding(finding_id: str, req: DecideFindingRequest):
 
 @app.get("/api/approvals")
 def api_approvals():
-    """Get approval queue: all pending (open + accepted) findings."""
+    """Get approval queue: all pending (open + accepted) findings with evidence."""
     findings = db.get_all_pending_findings()
+    db.enrich_findings_with_evidence(findings)
     return {"findings": findings}
