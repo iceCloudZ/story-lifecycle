@@ -45,6 +45,13 @@ PRESET_PROVIDERS = {
 }
 
 
+def _merge_config(existing: dict, updates: dict) -> dict:
+    """Merge updates into existing config. Preserves keys not in updates."""
+    merged = dict(existing)
+    merged.update(updates)
+    return merged
+
+
 def is_configured() -> bool:
     """Check if the user has completed setup."""
     if not CONFIG_FILE.exists():
@@ -172,8 +179,10 @@ def run_setup():
 
 
 def save_config(config: dict):
+    existing = get_config()
+    merged = _merge_config(existing, config)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(yaml.dump(config, default_flow_style=False))
+    CONFIG_FILE.write_text(yaml.dump(merged, default_flow_style=False, allow_unicode=True))
 
 
 def load_config_to_env():
