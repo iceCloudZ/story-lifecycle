@@ -330,12 +330,5 @@ def decide_approval(finding_id, action, reason, verification_event_id):
     if reason:
         console.print(f"  Reason: [dim]{reason}[/]")
 
-    if action == "accept":
-        update_finding_status(story_key, finding_id, "accepted", reason=reason)
-        console.print(f"[green]Accepted[/] {finding_id}")
-    elif action == "reject":
-        update_finding_status(story_key, finding_id, "rejected", reason=reason)
-        console.print(f"[red]Rejected[/] {finding_id}")
 
-    if reason:
-        console.print(f"  Reason: [dim]{reason}[/]")
+# ── Board integration ──

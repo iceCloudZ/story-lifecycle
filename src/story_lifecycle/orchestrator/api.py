@@ -54,6 +54,7 @@ class ReviewFeedbackRequest(BaseModel):
 class DecideFindingRequest(BaseModel):
     action: str  # accept, reject, defer, downgrade, mark_verified
     reason: str = ""
+    verification_event_id: int | None = None
 
 
 # -------- app lifecycle --------
@@ -461,7 +462,12 @@ def api_decide_finding(finding_id: str, req: DecideFindingRequest):
             },
         )
     elif action == "mark_verified":
-        update_finding_status(story_key, finding_id, "verified", reason=req.reason)
+        evidence = None
+        if req.verification_event_id:
+            evidence = {"verification_event_id": req.verification_event_id}
+        update_finding_status(
+            story_key, finding_id, "verified", reason=req.reason, evidence=evidence
+        )
     else:
         raise HTTPException(
             400,
