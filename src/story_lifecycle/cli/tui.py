@@ -822,7 +822,7 @@ class StoryBoardApp(App):
                 "current_stage": stage,
                 "context": ctx,
             }
-            prompt = _render_prompt(stage, state)
+            prompt, _ = _render_prompt(stage, state)
 
             tmp = Path(tempfile.gettempdir()) / f"story-prompt-{story_key}-{stage}.md"
             tmp.write_text(prompt, encoding="utf-8")
@@ -920,7 +920,7 @@ class StoryBoardApp(App):
                 "current_stage": stage,
                 "context": ctx,
             }
-            prompt = _render_prompt(stage, state)
+            prompt, _ = _render_prompt(stage, state)
             launch = adapter.launch_cmd(model)
 
             # Always launch in a new terminal window — avoids TUI crash from

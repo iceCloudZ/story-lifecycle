@@ -16,6 +16,12 @@ from ..terminal import ttyd
 from . import planner
 from . import router as llm_router
 from .notify import send as notify
+from .observability import (
+    log_node_error,
+    log_route_decision,
+    log_prompt_context,
+    log_dod_check,
+)
 
 log = logging.getLogger("story-lifecycle.nodes")
 
@@ -266,6 +272,17 @@ def plan_stage_node(state: StoryState) -> StoryState:
                 f"Planner error for {story_key}:\n{traceback.format_exc()}",
                 encoding="utf-8",
             )
+            log_node_error(
+                story_key,
+                stage,
+                "plan_stage_node",
+                type(e).__name__,
+                str(e)[:200],
+                execution_count=state.get("execution_count", 0),
+                recoverable=True,
+                action="fallback_to_default_plan",
+                file_hint=str(STORY_HOME / "planner_error.log"),
+            )
             emit_plan_done(
                 story_key,
                 f"⚠ 规划降级 [{type(e).__name__}] 使用默认配置",
@@ -513,6 +530,16 @@ def review_stage_node(state: StoryState) -> StoryState:
             return state
         except Exception as e:
             log.warning(f"Reviewer failed, skipping review: {e}")
+            log_node_error(
+                state["story_key"],
+                stage,
+                "review_stage_node",
+                type(e).__name__,
+                str(e)[:200],
+                execution_count=state.get("execution_count", 0),
+                recoverable=True,
+                action="skip_review",
+            )
 
     return state
 
@@ -640,13 +667,14 @@ def execute_stage_node(state: StoryState) -> StoryState:
     model = plan.get("model") or cfg.get("model", "sonnet")
 
     # Render prompt + prepend plan file if available
-    prompt = _render_prompt(stage, state)
+    prompt, prompt_meta = _render_prompt(stage, state)
     plan_path = state.get("context", {}).get("plan_path")
     if plan_path:
         plan_file = Path(workspace) / plan_path
         if plan_file.exists():
             plan_content = plan_file.read_text(encoding="utf-8")
             prompt = f"{plan_content}\n\n---\n\n{prompt}"
+            prompt_meta["has_plan_file"] = True
 
     # Build tool args
     stage_cfg = get_stage_config(profile, stage)
@@ -657,6 +685,32 @@ def execute_stage_node(state: StoryState) -> StoryState:
         "prompt": prompt,
         "skill": stage_cfg.get("skill", ""),
     }
+
+    # Observability: log prompt context
+    try:
+        import hashlib
+
+        prompt_meta["prompt_sha256"] = hashlib.sha256(
+            prompt.encode("utf-8")
+        ).hexdigest()
+        # Stable quality context hash (packet + checklist only)
+        qp = tool_args.get("prompt", "")
+        quality_only = qp if prompt_meta.get("quality_packet_injected") else ""
+        prompt_meta["quality_context_sha256"] = hashlib.sha256(
+            quality_only.encode("utf-8")
+        ).hexdigest()
+        log_prompt_context(state, prompt_meta)
+    except Exception:
+        log_node_error(
+            state["story_key"],
+            stage,
+            "execute_stage_node",
+            "ObservabilityError",
+            "Failed to log prompt_context",
+            execution_count=state.get("execution_count", 0),
+            recoverable=True,
+            action="continue_without_quality_context",
+        )
 
     # Dispatch to tool
     tool_name = plan.get("tool", "stage_tool")
@@ -696,6 +750,17 @@ def poll_completion_node(state: StoryState) -> StoryState:
                 break
         if data is None:
             state["last_error"] = "Failed to read .done file after retries"
+            log_node_error(
+                key,
+                stage,
+                "poll_completion_node",
+                "JSONParseError",
+                f"Failed to parse {done_file}",
+                execution_count=state.get("execution_count", 0),
+                recoverable=True,
+                action="set_last_error",
+                file_hint=str(done_file),
+            )
             return state
         try:
             done_file.unlink()
@@ -712,6 +777,16 @@ def poll_completion_node(state: StoryState) -> StoryState:
     session = ttyd.session_name(key)
     if ttyd._MPLEX and not ttyd.session_alive(session):
         state["last_error"] = "CC process crashed (session dead)"
+        log_node_error(
+            key,
+            stage,
+            "poll_completion_node",
+            "SessionDead",
+            f"CC session {session} is dead, no done file found",
+            execution_count=state.get("execution_count", 0),
+            recoverable=True,
+            action="set_last_error",
+        )
         return state
 
     # Session alive but no done file — yield and wait
@@ -736,6 +811,7 @@ def router_node(state: StoryState) -> StoryState:
             key, stage, "router", {"action": "fail", "reason": "retry_fatigue"}
         )
         state["_next_action"] = "fail"
+        log_route_decision(state, "fail", "retry_fatigue", router_mode="review")
         return state
 
     # 2. Low trajectory score — hard kill
@@ -752,14 +828,17 @@ def router_node(state: StoryState) -> StoryState:
             },
         )
         state["_next_action"] = "fail"
+        log_route_decision(state, "fail", "low_trajectory_score", router_mode="rule")
         return state
 
     # 3. Happy path — no error
     if not state.get("last_error"):
         if cfg.get("confirm"):
             state["_next_action"] = "wait_confirm"
+            log_route_decision(state, "wait_confirm", "happy_path", router_mode="rule")
         else:
             state["_next_action"] = "advance"
+            log_route_decision(state, "advance", "happy_path", router_mode="rule")
         return state
 
     # 4. Review-driven retry — have both error and review context
@@ -771,6 +850,9 @@ def router_node(state: StoryState) -> StoryState:
             {"action": "fail", "reason": "missing_expected_outputs"},
         )
         state["_next_action"] = "fail"
+        log_route_decision(
+            state, "fail", "missing_expected_outputs", router_mode="rule"
+        )
         return state
 
     if state.get("last_error") and state.get("review_summary"):
@@ -787,6 +869,7 @@ def router_node(state: StoryState) -> StoryState:
                 },
             )
             state["_next_action"] = "retry"
+            log_route_decision(state, "retry", "review_driven", router_mode="review")
             return state
         db.log_event(
             key,
@@ -799,11 +882,32 @@ def router_node(state: StoryState) -> StoryState:
             },
         )
         state["_next_action"] = "fail"
+        log_route_decision(
+            state, "fail", "review_retry_exhausted", router_mode="review"
+        )
         return state
 
     # 5. Unhappy path — no review, fall through to LLM router
-    decision = llm_router.route(state, cfg)
-    state["_router_decision"] = decision
+    try:
+        decision = llm_router.route(state, cfg)
+        state["_router_decision"] = decision
+    except Exception as e:
+        log_route_decision(
+            state,
+            "fail",
+            f"llm_exception:{type(e).__name__}",
+            router_mode="llm_fallback",
+            extra={"llm_error": str(e)[:200]},
+        )
+        # Also write old event for backward compat
+        db.log_event(
+            key,
+            stage,
+            "router",
+            {"action": "fail", "reason": f"llm_exception:{type(e).__name__}"},
+        )
+        state["_next_action"] = "fail"
+        return state
 
     action = decision.get("action", "fail")
     if action == "retry":
@@ -814,6 +918,7 @@ def router_node(state: StoryState) -> StoryState:
         state["_next_action"] = "skip"
     else:
         state["_next_action"] = "fail"
+    log_route_decision(state, state["_next_action"], "llm_router", router_mode="llm")
     return state
 
 
@@ -853,11 +958,34 @@ def advance_node(state: StoryState) -> StoryState:
         from .quality import check_dod
 
         dod = check_dod(key, stage)
+        # Enrich dod with counts for observability
+        try:
+            open_high = db.get_open_findings(key, min_severity="high")
+            dod["open_high_count"] = len(open_high)
+            verifications = db.get_recent_quality_events(
+                key, ["verification_result"], limit=1
+            )
+            dod["verification_present"] = len(verifications) > 0
+        except Exception:
+            dod.setdefault("open_high_count", 0)
+            dod.setdefault("verification_present", False)
+        log_dod_check(state, dod)
         if not dod["passed"]:
             state["last_error"] = f"DoD gate failed: {dod['blocking']}"
             return state
-    except Exception:
-        pass
+    except Exception as e:
+        log_node_error(
+            key,
+            stage,
+            "advance_node",
+            type(e).__name__,
+            str(e)[:200],
+            execution_count=state.get("execution_count", 0),
+            recoverable=False,
+            action="do_not_silently_pass",
+        )
+        state["last_error"] = f"DoD check failed: {e}"
+        return state
 
     next_stage = resolve_next_stage(state)
     if not next_stage:
@@ -1050,8 +1178,11 @@ def _build_prd_task_section(state: StoryState, stage: str, has_prd: bool) -> str
         return ""
 
 
-def _render_prompt(stage: str, state: StoryState) -> str:
-    """Render a prompt for the given stage. Reads built-in templates or falls back to defaults."""
+def _render_prompt(stage: str, state: StoryState) -> tuple[str, dict]:
+    """Render a prompt for the given stage. Returns (prompt_text, metadata_dict).
+
+    Reads built-in templates or falls back to defaults.
+    """
     template_paths = [
         STORY_HOME / "prompts" / f"{stage}.md",
         Path(__file__).parent.parent.parent.parent / "prompts" / f"{stage}.md",
@@ -1133,19 +1264,37 @@ Story: {state["story_key"]}
     # Quality Packet injection
     quality_section = ""
     checklist = ""
+    quality_packet_injected = False
+    quality_checklist_injected = False
+    open_findings_count = 0
+    learned_patterns_count = 0
+    relevance_tags: list[str] = []
     try:
         from .quality import build_quality_packet, build_quality_checklist
 
-        tags = _derive_relevance_tags(state, stage)
+        relevance_tags = _derive_relevance_tags(state, stage)
         quality_packet = build_quality_packet(
-            state["story_key"], stage, relevant_tags=tags
+            state["story_key"], stage, relevant_tags=relevance_tags
         )
         empty_marker = (
             f"Quality Packet for {state['story_key']}\n\nOpen Findings: none\n"
         )
         if quality_packet.strip() != empty_marker.strip():
             quality_section = f"## Quality Packet\n\n{quality_packet}"
+            quality_packet_injected = True
         checklist = build_quality_checklist(state["story_key"], stage)
+        if checklist.strip():
+            quality_checklist_injected = True
+        # Count findings and patterns from the packet for metadata
+        try:
+            from ..db import models as _qdb
+
+            findings = _qdb.get_open_findings(state["story_key"])
+            open_findings_count = len(findings)
+            patterns = _qdb.find_relevant_patterns(relevance_tags, limit=5)
+            learned_patterns_count = len(patterns)
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -1192,4 +1341,13 @@ Story: {state["story_key"]}
     for key, value in vars_map.items():
         template = template.replace(key, value)
 
-    return template
+    metadata = {
+        "quality_packet_injected": quality_packet_injected,
+        "quality_checklist_injected": quality_checklist_injected,
+        "open_findings_count": open_findings_count,
+        "learned_patterns_count": learned_patterns_count,
+        "relevance_tags": relevance_tags,
+        "has_prd": has_prd,
+        "has_plan_file": False,  # set by caller when plan file prepended
+    }
+    return template, metadata
