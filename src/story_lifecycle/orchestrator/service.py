@@ -345,6 +345,18 @@ def create_story_from_source(
     )
     db.update_story(key, source_type=item.source, source_id=item.id)
 
+    # Record story_intake event for quality flywheel
+    try:
+        from .quality import record_story_intake
+        record_story_intake(
+            story_key=key,
+            source=item.source,
+            source_id=item.id,
+            metadata={"has_prd": bool(prd_path), "item_type": item.item_type},
+        )
+    except Exception:
+        pass
+
     if auto_start:
         from .graph import start_story_async
         start_story_async(key)
