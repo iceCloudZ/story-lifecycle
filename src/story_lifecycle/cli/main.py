@@ -56,7 +56,7 @@ def _first_run_check():
     return True
 
 
-@click.command()
+@click.group(invoke_without_command=True)
 @click.version_option(
     version=__import__("importlib.metadata").metadata.version("story-lifecycle")
 )
@@ -66,8 +66,11 @@ def _first_run_check():
 @click.option(
     "--fix", "fix_deps", is_flag=True, help="Auto-install missing dependencies"
 )
-def cli(serve, host, port, fix_deps):
+@click.pass_context
+def cli(ctx, serve, host, port, fix_deps):
     """Story Lifecycle Manager — AI-powered development workflow orchestrator."""
+    if ctx.invoked_subcommand is not None:
+        return
     init_db()
     load_config_to_env()
 
@@ -83,6 +86,14 @@ def cli(serve, host, port, fix_deps):
         return
 
     _run_board()
+
+
+@cli.command()
+def demo():
+    """Run a simulated lifecycle — no LLM, no AI CLI needed."""
+    from .demo import run_demo
+
+    run_demo()
 
 
 def _run_board():

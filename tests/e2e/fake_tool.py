@@ -1,16 +1,14 @@
 """FakeStageTool — writes .story-done without real AI, for headless E2E."""
 
-import json
-from pathlib import Path
-
-from story_lifecycle.db import models as db
+from story_lifecycle.orchestrator.demo_tool import DemoTool
 
 
-class FakeStageTool:
-    """Replaces real tool execution. Writes .story-done based on scenario config."""
+class FakeStageTool(DemoTool):
+    """Replaces real tool execution. Uses Scenario config for payloads."""
 
     def __init__(self, scenario):
         self.scenario = scenario
+        super().__init__()
 
     def execute(self, state: dict, args: dict) -> dict:
         key = state["story_key"]
@@ -18,9 +16,14 @@ class FakeStageTool:
         workspace = state["workspace"]
         next_count = state.get("execution_count", 0) + 1
 
+        from pathlib import Path
+
         done_dir = Path(workspace) / ".story-done" / key
         done_dir.mkdir(parents=True, exist_ok=True)
         done_file = done_dir / f"{stage}.json"
+
+        import json
+        from story_lifecycle.db import models as db
 
         # Check if scenario has raw_done (for testing invalid JSON)
         raw = self.scenario.stage_raw_done(stage)
