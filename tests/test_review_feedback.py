@@ -309,3 +309,15 @@ def test_import_review_creates_candidate_findings(tmp_path):
     assert len(findings) == 1
     assert findings[0]["source"] == "review_feedback"
     assert findings[0]["description"] == "缺少空指针检查"
+
+
+# ── Task 5: Reviewer role guardrail ──
+
+
+def test_review_prompt_contains_readonly_guardrail():
+    """Review prompt in planner.py must contain reviewer read-only constraint."""
+    from story_lifecycle.orchestrator.planner import review_stage
+
+    import inspect
+    source = inspect.getsource(review_stage)
+    assert "只读" in source or "read-only" in source.lower() or "不改代码" in source or "不要修改" in source

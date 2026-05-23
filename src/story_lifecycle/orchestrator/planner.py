@@ -170,7 +170,7 @@ def review_stage(state: dict, stage_config: dict, stage_output: dict) -> dict:
 ## ⚠️ 路径评分偏低
 前序阶段路径评分: {prev_score}/1.0。如果当前产出仍未改善，建议 quality: "fail" 以触发重新规划或切换工具。"""
 
-    prompt = f"""你是一个开发团队的 QA/评审员。你的职责是结构化审查产出质量，记录问题和建议。
+    prompt = f"""你是一个开发团队的 QA/评审员。你是评审员，只读不改——你不修改任何代码或文件，只负责审查、记录问题和建议。
 
 一个阶段刚刚完成，请进行质量审查。
 
