@@ -200,3 +200,118 @@ def test_extract_bug_context_llm_error_fallback():
 
     assert result["mode"] == "rule_fallback"
     assert "点按钮" in result["data"].get("steps_to_reproduce", "")
+
+
+# ── match_pattern_recurrence ──
+
+
+def test_match_pattern_recurrence_llm_match():
+    """LLM identifies semantic match between issue and pattern."""
+    from story_lifecycle.orchestrator.semantic import match_pattern_recurrence
+
+    llm_output = {
+        "matches": [
+            {
+                "pattern_id": "p-001",
+                "matched": True,
+                "confidence": "high",
+                "reasoning": "issue 描述缺少降级路径与 pattern 规则一致",
+                "evidence": ["issue.description", "pattern.rule"],
+            }
+        ]
+    }
+    fake = _make_fake_llm_response(llm_output)
+
+    issue = {
+        "description": "接口没有 fallback 机制，一旦服务挂了就全完了",
+        "category": "error_handling",
+    }
+    patterns = [
+        {"id": "p-001", "pattern": "缺少回滚方案", "rule": "变更必须有回滚或降级路径"}
+    ]
+
+    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
+        with patch("httpx.post", return_value=fake):
+            result = match_pattern_recurrence(issue, patterns)
+
+    assert result["ok"] is True
+    assert result["mode"] == "llm"
+    assert len(result["data"]["matches"]) == 1
+    assert result["data"]["matches"][0]["pattern_id"] == "p-001"
+
+
+def test_match_pattern_recurrence_fallback():
+    """Without LLM, uses keyword matching fallback."""
+    from story_lifecycle.orchestrator.semantic import match_pattern_recurrence
+
+    issue = {"description": "缺少回滚方案导致无法恢复", "category": "error_handling"}
+    patterns = [
+        {"id": "p-001", "pattern": "缺少回滚方案", "rule": "变更必须有回滚路径"}
+    ]
+
+    with patch.dict("os.environ", {}, clear=True):
+        result = match_pattern_recurrence(issue, patterns)
+
+    assert result["mode"] == "rule_fallback"
+    assert len(result["data"]["matches"]) >= 1
+
+
+def test_match_pattern_recurrence_no_match():
+    """LLM returns no matches when issue is unrelated to patterns."""
+    from story_lifecycle.orchestrator.semantic import match_pattern_recurrence
+
+    llm_output = {
+        "matches": [
+            {
+                "pattern_id": "p-001",
+                "matched": False,
+                "confidence": "high",
+                "reasoning": "unrelated",
+            }
+        ]
+    }
+    fake = _make_fake_llm_response(llm_output)
+
+    issue = {"description": "UI button color wrong", "category": "ui"}
+    patterns = [
+        {"id": "p-001", "pattern": "缺少回滚方案", "rule": "变更必须有回滚路径"}
+    ]
+
+    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
+        with patch("httpx.post", return_value=fake):
+            result = match_pattern_recurrence(issue, patterns)
+
+    assert result["ok"] is True
+    assert len([m for m in result["data"]["matches"] if m.get("matched")]) == 0
+
+
+def test_match_pattern_recurrence_filters_low_confidence():
+    """LLM matches with low confidence are excluded from results."""
+    from story_lifecycle.orchestrator.semantic import match_pattern_recurrence
+
+    llm_output = {
+        "matches": [
+            {
+                "pattern_id": "p-001",
+                "matched": True,
+                "confidence": "low",
+                "reasoning": "weak signal",
+                "evidence": [],
+            }
+        ]
+    }
+    fake = _make_fake_llm_response(llm_output)
+
+    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
+        with patch("httpx.post", return_value=fake):
+            result = match_pattern_recurrence(
+                {"description": "test", "category": ""},
+                [{"id": "p-001", "pattern": "test", "rule": "test"}],
+            )
+
+    high_conf = [
+        m
+        for m in result["data"]["matches"]
+        if m.get("matched") and m.get("confidence") != "low"
+    ]
+    assert len(high_conf) == 0

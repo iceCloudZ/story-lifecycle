@@ -560,23 +560,55 @@ def _check_pattern_recurrence(
         return
 
     recurrences = []
-    for issue in issues:
-        desc = issue.get("description", "")
-        cat = issue.get("category", "")
-        issue_text = f"{cat} {desc}".lower()
-        for p in patterns:
-            pattern_name = p.get("pattern", "")
-            rule = p.get("rule", "")
-            # Keyword matching: check if issue text contains pattern keywords
-            if _match_pattern(issue_text, pattern_name, rule):
-                recurrences.append(
-                    {
-                        "pattern_id": p["id"],
-                        "pattern": pattern_name,
-                        "issue": issue,
-                    }
-                )
-                break  # one pattern per issue
+    mode = "rule_fallback"
+
+    try:
+        from .semantic import match_pattern_recurrence
+
+        for issue in issues:
+            result = match_pattern_recurrence(issue, patterns)
+            mode = result.get("mode", "rule_fallback")
+            for m in result["data"].get("matches", []):
+                pid = m["pattern_id"]
+                pattern_obj = next((p for p in patterns if p["id"] == pid), None)
+                if pattern_obj:
+                    recurrences.append(
+                        {
+                            "pattern_id": pid,
+                            "pattern": pattern_obj.get("pattern", ""),
+                            "confidence": m.get("confidence", "low"),
+                            "reasoning": m.get("reasoning", ""),
+                            "issue": issue,
+                        }
+                    )
+                else:
+                    recurrences.append(
+                        {
+                            "pattern_id": pid,
+                            "pattern": "",
+                            "confidence": m.get("confidence", "low"),
+                            "reasoning": m.get("reasoning", ""),
+                            "issue": issue,
+                        }
+                    )
+    except Exception:
+        # Fallback to original keyword matching
+        for issue in issues:
+            desc = issue.get("description", "")
+            cat = issue.get("category", "")
+            issue_text = f"{cat} {desc}".lower()
+            for p in patterns:
+                if _match_pattern(issue_text, p.get("pattern", ""), p.get("rule", "")):
+                    recurrences.append(
+                        {
+                            "pattern_id": p["id"],
+                            "pattern": p.get("pattern", ""),
+                            "confidence": "low",
+                            "reasoning": "keyword fallback",
+                            "issue": issue,
+                        }
+                    )
+                    break
 
     if recurrences:
         db.log_event(
@@ -584,6 +616,7 @@ def _check_pattern_recurrence(
             stage,
             "pattern_recurrence",
             {
+                "mode": mode,
                 "recurrences": recurrences,
                 "count": len(recurrences),
             },

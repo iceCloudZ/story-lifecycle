@@ -291,3 +291,96 @@ def extract_bug_context(markdown: str, title: str = "") -> SemanticResult:
     # Fallback to regex
     fallback_data = _regex_extract_bug_context(markdown, title)
     return _fallback_result(fallback_data)
+
+
+# ── Pattern Recurrence Matching ──
+
+PATTERN_RECURRENCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "matches": {
+            "type": "array",
+        },
+        "confidence": {"enum": ["high", "medium", "low"]},
+    },
+    "required": ["matches"],
+}
+
+
+def _keyword_match_pattern(issue_text: str, pattern_name: str, rule: str) -> bool:
+    """Simple keyword matching — adapted from nodes._match_pattern for Chinese text.
+
+    Unlike the original which requires >=2 keyword hits (designed for space-delimited
+    languages), this version accepts >=1 match because Chinese patterns produce fewer
+    space-split tokens.
+    """
+    keywords = (pattern_name + " " + rule).lower().split()
+    matches = sum(1 for kw in keywords if len(kw) >= 2 and kw in issue_text)
+    return matches >= 1
+
+
+def match_pattern_recurrence(issue: dict, patterns: list[dict]) -> SemanticResult:
+    """Check if a review issue matches any active learned patterns via LLM semantics."""
+    if not patterns:
+        return _fallback_result({"matches": []}, ["no candidate patterns"])
+
+    issue_desc = issue.get("description", "")
+    issue_cat = issue.get("category", "")
+    issue_text = f"{issue_cat} {issue_desc}".lower()
+
+    patterns_desc = "\n".join(
+        f"- ID: {p['id']}, pattern: {p.get('pattern', '')}, rule: {p.get('rule', '')}"
+        for p in patterns
+    )
+
+    prompt = f"""判断以下 review issue 是否复发了某个 learned pattern。
+
+Issue:
+- category: {issue_cat}
+- description: {issue_desc}
+
+Candidate Patterns:
+{patterns_desc}
+
+对每个 pattern，判断是否语义匹配（不需要完全相同的措辞，语义相同即可）。
+只输出 JSON:
+{{
+  "matches": [
+    {{
+      "pattern_id": "pattern id",
+      "matched": true/false,
+      "confidence": "high|medium|low",
+      "reasoning": "为什么匹配或不匹配",
+      "evidence": ["具体证据"]
+    }}
+  ]
+}}
+
+只输出 confidence 为 high 或 medium 的匹配。low confidence 的标记 matched=false。"""
+
+    llm_result = _call_semantic_llm(prompt, PATTERN_RECURRENCE_SCHEMA)
+
+    if llm_result["ok"] and llm_result["mode"] == "llm":
+        # Filter: only keep high/medium confidence matches
+        filtered = []
+        for m in llm_result["data"].get("matches", []):
+            if m.get("matched") and m.get("confidence") in ("high", "medium"):
+                filtered.append(m)
+        llm_result["data"]["matches"] = filtered
+        return llm_result
+
+    # Fallback to keyword matching
+    fallback_matches = []
+    for p in patterns:
+        if _keyword_match_pattern(issue_text, p.get("pattern", ""), p.get("rule", "")):
+            fallback_matches.append(
+                {
+                    "pattern_id": p["id"],
+                    "matched": True,
+                    "confidence": "low",
+                    "reasoning": "keyword fallback match",
+                    "evidence": [],
+                }
+            )
+
+    return _fallback_result({"matches": fallback_matches})
