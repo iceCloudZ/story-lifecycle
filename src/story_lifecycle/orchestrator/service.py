@@ -270,6 +270,7 @@ def create_story_from_source(
     generate_prd: bool = True,
     generate_ai_prd: bool = False,
     auto_start: bool = True,
+    force_standalone: bool = False,
 ) -> CreateFromSourceResult:
     from ..sources.base import resolve_bug_parent
     from ..sources import get_source
@@ -287,8 +288,8 @@ def create_story_from_source(
         if prd_content and prd_content.markdown:
             prd_path = save_prd(story_key, prd_content, workspace)
 
-    # Bug -> resolve parent
-    if item.item_type == "bug":
+    # Bug -> resolve parent (skip when force_standalone to avoid infinite loop)
+    if item.item_type == "bug" and not force_standalone:
         active_stories = _get_all_stories()
         result = resolve_bug_parent(item, active_stories)
 

@@ -1238,7 +1238,7 @@ class StoryBoardApp(App):
                                 return  # Cancel
                             if parent_key is None:
                                 # Standalone
-                                r2 = create_story_from_source(item, auto_start=True, generate_ai_prd=use_ai_prd)
+                                r2 = create_story_from_source(item, auto_start=True, generate_ai_prd=use_ai_prd, force_standalone=True)
                                 if r2.status == "created":
                                     self.notify(f"已创建独立故事: {r2.story_key}")
                             else:
