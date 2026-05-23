@@ -56,3 +56,22 @@ def test_derive_story_key():
     # last 6 chars of "JIRA-567" is "RA-567", prefixed with "JIRA-" -> "JIRA-RA-567"
     result = _derive_story_key(jira_item)
     assert result == "JIRA-RA-567"
+
+
+def test_fetch_bug_content_aggregation():
+    """BugContext should aggregate from multiple providers."""
+    from story_lifecycle.sources.base import SourceItem
+    from story_lifecycle.sources.bug_providers import fetch_bug_content
+
+    bug = SourceItem(
+        id="bug_123",
+        source="tapd",
+        item_type="bug",
+        title="登录后页面空白",
+        description="<p>复现步骤：\n1. 登录\n2. 跳转首页</p><p>实际结果：空白</p>",
+    )
+
+    ctx = fetch_bug_content(bug)
+    assert ctx.description == "登录后页面空白"
+    assert ctx.source_type == "aggregated"
+    assert ctx.raw_markdown != ""
