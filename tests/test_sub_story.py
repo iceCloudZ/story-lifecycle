@@ -4,6 +4,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from story_lifecycle.db.models import (
     get_story,
     init_db,
@@ -170,5 +172,54 @@ def test_resume_parent_abort_subs(tmp_path):
 
         child = m.get_story("FEAT-004-sub-1")
         assert child["status"] == "aborted"
+    finally:
+        m.get_db_path = original
+
+
+def test_nested_sub_story_rejected(tmp_path):
+    """Sub-story cannot create its own sub-stories."""
+    m, original = _init_fresh_db(tmp_path)
+    try:
+        m.create_story(story_key="FEAT-005", title="Grandparent", workspace=str(tmp_path))
+        m.create_story(
+            story_key="FEAT-005-sub-1",
+            title="Child",
+            workspace=str(tmp_path),
+            parent_key="FEAT-005",
+            subtask_index=0,
+        )
+
+        from story_lifecycle.orchestrator.service import create_sub_story
+        with pytest.raises(ValueError, match="嵌套"):
+            create_sub_story(
+                parent_key="FEAT-005-sub-1",
+                sub_type="bug-fix",
+                description="Should fail",
+            )
+    finally:
+        m.get_db_path = original
+
+
+def test_context_size_control(tmp_path):
+    """Large parent context should be truncated for sub-story."""
+    m, original = _init_fresh_db(tmp_path)
+    try:
+        m.create_story(story_key="FEAT-006", title="Big ctx", workspace=str(tmp_path))
+        # Create context > 1MB
+        big_value = "x" * (2 * 1024 * 1024)
+        big_ctx = json.dumps({"huge_field": big_value, "small_field": "keep_me"})
+        m.update_story("FEAT-006", context_json=big_ctx)
+
+        from story_lifecycle.orchestrator.service import create_sub_story
+        sub_key = create_sub_story(
+            parent_key="FEAT-006",
+            description="Should skip big field",
+        )
+
+        child = m.get_story(sub_key)
+        ctx = json.loads(child["context_json"])
+        assert "huge_field" not in ctx
+        assert ctx["small_field"] == "keep_me"
+        assert "huge_field" in ctx.get("_skipped_fields", [])
     finally:
         m.get_db_path = original
