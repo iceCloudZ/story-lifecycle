@@ -524,8 +524,10 @@ def get_recent_quality_events(
 def create_learned_pattern(
     pattern, applies_to, rule, source_findings=None, confidence="medium"
 ) -> str:
+    import uuid
+
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    pid = f"pattern-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{id(now) % 10000:04d}"
+    pid = f"pattern-{uuid.uuid4().hex[:12]}"
     with _db() as conn:
         conn.execute(
             "INSERT INTO learned_pattern (id, pattern, applies_to, rule, source_findings, confidence, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",

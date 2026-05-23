@@ -487,3 +487,295 @@ def test_api_quality_data_integration(tmp_path):
     db.log_event("S1", "implement", "readiness_check", {"ready": True})
     events = db.get_recent_quality_events("S1", ["readiness_check"])
     assert len(events) == 1
+
+
+def test_quality_flywheel_e2e(tmp_path):
+    """End-to-end: intake -> finding -> fix -> verify -> learn -> next story gets pattern.
+
+    Simulates the full quality flywheel across two stories:
+    - Story S1: code review finds issue, fix it, verify, propose learned pattern
+    - Story S2: quality packet includes learned pattern, DoD passes, checklist correct
+    """
+    import json as _json
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.quality import (
+        record_finding,
+        update_finding_status,
+        record_verification,
+        record_story_intake,
+        build_quality_packet,
+        build_quality_checklist,
+        check_dor,
+        check_dod,
+        propose_learned_pattern,
+        approve_pattern,
+        activate_pattern,
+    )
+
+    # ================================================================
+    # Phase 1: Story S1 — intake
+    # ================================================================
+    db.upsert_story(
+        "TAPD-100100",
+        title="逾期利息收取方式调整",
+        workspace=str(tmp_path / "ws"),
+        profile="minimal",
+        current_stage="design",
+        status="active",
+    )
+    db.update_story("TAPD-100100", source_type="tapd", source_id="100100")
+
+    record_story_intake(
+        "TAPD-100100",
+        "tapd",
+        "100100",
+        metadata={"has_prd": True, "item_type": "requirement"},
+    )
+    intake_events = db.get_recent_quality_events("TAPD-100100", ["story_intake"])
+    assert len(intake_events) == 1
+    intake_data = (
+        _json.loads(intake_events[0]["payload"])
+        if isinstance(intake_events[0]["payload"], str)
+        else intake_events[0]["payload"]
+    )
+    assert intake_data["source"] == "tapd"
+
+    # DoR check — should pass (has title)
+    dor = check_dor("TAPD-100100", "design")
+    assert dor["ready"] is True
+
+    # ================================================================
+    # Phase 2: S1 design -> implement, code review finds issue
+    # ================================================================
+    fid1 = record_finding(
+        "TAPD-100100",
+        "implement",
+        {
+            "source": "code_review",
+            "severity": "high",
+            "category": "routing",
+            "description": "advance_node missing error path after review",
+            "location": "nodes.py:747",
+            "recommendation": "route last_error to router node",
+            "root_cause": "route_after_advance only checks completed status",
+        },
+    )
+    assert fid1 is not None
+
+    # DoD should BLOCK — open high finding
+    dod = check_dod("TAPD-100100", "implement")
+    assert dod["passed"] is False
+    assert len(dod["blocking"]) == 1
+
+    # Quality packet shows open finding
+    packet = build_quality_packet("TAPD-100100", "implement")
+    assert "HIGH" in packet
+    assert "routing" in packet
+    assert "advance_node missing error path" in packet
+
+    # Checklist includes the fix
+    checklist = build_quality_checklist("TAPD-100100", "implement")
+    assert "Fix: advance_node missing error path" in checklist
+    assert "Approach: route last_error to router node" in checklist
+
+    # ================================================================
+    # Phase 3: Fix the finding
+    # ================================================================
+    update_finding_status("TAPD-100100", fid1, "accepted")
+    update_finding_status("TAPD-100100", fid1, "fixed")
+
+    # Verify the fix
+    record_verification(
+        "TAPD-100100",
+        "test",
+        commands=[
+            {"cmd": "pytest", "status": "passed", "summary": "85 passed in 2.3s"},
+            {
+                "cmd": "ruff check src tests",
+                "status": "passed",
+                "summary": "All checks passed",
+            },
+        ],
+        covered_findings=[fid1],
+        commit="abc1234",
+    )
+    update_finding_status(
+        "TAPD-100100",
+        fid1,
+        "verified",
+        reason="pytest + ruff passed",
+        evidence={"verification_event_id": 1},
+    )
+
+    # DoD should now PASS — no open high findings
+    dod2 = check_dod("TAPD-100100", "implement")
+    assert dod2["passed"] is True
+    assert dod2["blocking"] == []
+    # But has a warning — missing verification (only for story stage check, verify baseline exists)
+    verifications = db.get_recent_quality_events("TAPD-100100", ["verification_result"])
+    assert len(verifications) == 1
+
+    # ================================================================
+    # Phase 4: Mark as learned, propose pattern
+    # ================================================================
+    update_finding_status("TAPD-100100", fid1, "learned")
+
+    pid1 = propose_learned_pattern(
+        story_key="TAPD-100100",
+        pattern="Graph routing changes require path-level assertions",
+        applies_to=["orchestrator.graph", "orchestrator.nodes"],
+        rule="Do not assert final status only. Assert event_counts, last_error, or next_action.",
+        source_findings=[fid1],
+        confidence="high",
+    )
+    assert pid1 is not None
+
+    # Human approval workflow
+    approve_pattern(pid1)
+    activate_pattern(pid1)
+
+    # Pattern is now active
+    active = db.get_active_learned_patterns()
+    assert len(active) == 1
+    assert active[0]["status"] == "active"
+
+    # ================================================================
+    # Phase 5: Story S2 — new story should see learned pattern
+    # ================================================================
+    db.upsert_story(
+        "TAPD-100200",
+        title="还款方式优化",
+        workspace=str(tmp_path / "ws2"),
+        profile="minimal",
+        current_stage="design",
+        status="active",
+    )
+    db.update_story("TAPD-100200", source_type="tapd", source_id="100200")
+
+    record_story_intake(
+        "TAPD-100200",
+        "tapd",
+        "100200",
+        metadata={"has_prd": False, "item_type": "requirement"},
+    )
+
+    # DoR for S2
+    dor_s2 = check_dor("TAPD-100200", "design")
+    assert dor_s2["ready"] is True  # has title
+    assert "no PRD file" in dor_s2["warnings"]  # but no PRD
+
+    # Quality packet for S2 with orchestrator.nodes tags — should include learned pattern
+    packet_s2 = build_quality_packet(
+        "TAPD-100200",
+        "implement",
+        relevant_tags=["orchestrator.nodes", "orchestrator.graph"],
+    )
+    assert "Graph routing changes require path-level assertions" in packet_s2
+    assert "Do not assert final status only" in packet_s2
+    # S2 has no findings, so open findings section says none
+    assert "Open Findings: none" in packet_s2
+
+    # DoD for S2 — no findings, should pass
+    dod_s2 = check_dod("TAPD-100200", "implement")
+    assert dod_s2["passed"] is True
+
+    # ================================================================
+    # Phase 6: S2 review finds a recurrence of the same pattern
+    # ================================================================
+    fid2 = record_finding(
+        "TAPD-100200",
+        "implement",
+        {
+            "source": "code_review",
+            "severity": "high",
+            "category": "routing",
+            "description": "router_node only checks last_error, missing retry count assertion",
+            "location": "nodes.py:820",
+            "recommendation": "assert retry count in addition to error message",
+        },
+    )
+
+    # DoD should block again
+    dod_s2_blocked = check_dod("TAPD-100200", "implement")
+    assert dod_s2_blocked["passed"] is False
+
+    # Fix + verify
+    update_finding_status("TAPD-100200", fid2, "accepted")
+    update_finding_status("TAPD-100200", fid2, "fixed")
+    record_verification(
+        "TAPD-100200",
+        "test",
+        commands=[
+            {"cmd": "pytest", "status": "passed", "summary": "92 passed in 2.8s"},
+            {"cmd": "ruff check src tests", "status": "passed"},
+        ],
+        covered_findings=[fid2],
+        commit="def5678",
+    )
+    update_finding_status(
+        "TAPD-100200",
+        fid2,
+        "verified",
+        reason="all tests pass",
+        evidence={"verification_event_id": 2},
+    )
+    update_finding_status("TAPD-100200", fid2, "learned")
+
+    # Propose a refined pattern
+    pid2 = propose_learned_pattern(
+        story_key="TAPD-100200",
+        pattern="Router assertions must include retry count and error message",
+        applies_to=["orchestrator.graph", "orchestrator.nodes", "orchestrator.router"],
+        rule="When testing router_node, assert retry_count > 0 AND last_error is set.",
+        source_findings=[fid1, fid2],
+        confidence="high",
+    )
+    approve_pattern(pid2)
+    activate_pattern(pid2)
+
+    # ================================================================
+    # Phase 7: Verify final state
+    # ================================================================
+    # Two active patterns
+    all_active = db.get_active_learned_patterns()
+    assert len(all_active) == 2
+
+    # Relevance search — both match orchestrator.nodes
+    relevant = db.find_relevant_patterns(["orchestrator.nodes"])
+    assert len(relevant) == 2
+
+    # Relevance search — only one matches orchestrator.router
+    router_only = db.find_relevant_patterns(["orchestrator.router"])
+    assert len(router_only) == 1
+    assert (
+        router_only[0]["pattern"]
+        == "Router assertions must include retry count and error message"
+    )
+
+    # S1 has no open findings (all learned)
+    assert len(db.get_open_findings("TAPD-100100")) == 0
+
+    # S2 has no open findings (all learned)
+    assert len(db.get_open_findings("TAPD-100200")) == 0
+
+    # Audit trail — check key events exist
+    all_s1_events = db.get_story_events("TAPD-100100")
+    event_types = {e["event_type"] for e in all_s1_events}
+    assert "story_intake" in event_types
+    assert "code_review_finding" in event_types
+    assert "finding_status_changed" in event_types
+    assert "verification_result" in event_types
+    assert "learned_pattern" in event_types
+    assert "readiness_check" in event_types
+
+    # Final quality packet for a hypothetical S3 with all patterns
+    packet_s3 = build_quality_packet(
+        "TAPD-100300", "implement", relevant_tags=["orchestrator.graph"]
+    )
+    assert "Graph routing changes require path-level assertions" in packet_s3
+    assert "Router assertions must include retry count" in packet_s3
