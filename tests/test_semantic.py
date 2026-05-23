@@ -402,3 +402,49 @@ def test_rerank_relevant_patterns_fallback():
 
     assert result["mode"] == "rule_fallback"
     assert len(result["data"]["selected"]) == 1
+
+
+# ── summarize_review_for_learning ──
+
+
+def test_summarize_review_llm_success():
+    """LLM produces structured review summary."""
+    from story_lifecycle.orchestrator.semantic import summarize_review_for_learning
+
+    llm_output = {
+        "quality": "revise",
+        "key_issues": [
+            {
+                "severity": "high",
+                "description": "missing error handling",
+                "evidence": "api.py:42",
+                "recommendation": "add try/except",
+            },
+        ],
+        "useful_for_learning": True,
+        "summary": "Review found missing error handling in API layer",
+    }
+    fake = _make_fake_llm_response(llm_output)
+
+    review_md = "## Review\nquality: revise\n\n### Issues\n- missing error handling at api.py:42"
+
+    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
+        with patch("httpx.post", return_value=fake):
+            result = summarize_review_for_learning(review_md)
+
+    assert result["ok"] is True
+    assert result["data"]["quality"] == "revise"
+    assert result["data"]["useful_for_learning"] is True
+
+
+def test_summarize_review_fallback():
+    """Without LLM, uses marker-based fallback."""
+    from story_lifecycle.orchestrator.semantic import summarize_review_for_learning
+
+    review_md = "## Review\nquality: pass\n\n### Issues\n- minor style issue"
+
+    with patch.dict("os.environ", {}, clear=True):
+        result = summarize_review_for_learning(review_md)
+
+    assert result["mode"] == "rule_fallback"
+    assert "quality" in result["data"]

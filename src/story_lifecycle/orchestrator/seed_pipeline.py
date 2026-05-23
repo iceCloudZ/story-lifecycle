@@ -292,6 +292,18 @@ def _summarize_test_result(content: str) -> str:
 
 
 def _summarize_review(content: str) -> str:
+    """Summarize review content for seed analyst context."""
+    # Try LLM semantic summary first
+    try:
+        from .semantic import summarize_review_for_learning
+
+        result = summarize_review_for_learning(content)
+        if result["ok"] and result["mode"] == "llm":
+            return result["data"].get("summary", content[:1500])
+    except Exception:
+        pass
+
+    # Fallback: marker-based extraction
     markers = ["quality", "issues", "suggestions", "评分", "Review", "问题"]
     found: list[str] = []
     for line in content.splitlines():

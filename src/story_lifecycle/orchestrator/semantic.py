@@ -461,3 +461,80 @@ Candidates:
         for p in candidate_patterns[:limit]
     ]
     return _fallback_result({"selected": selected, "rejected": []})
+
+
+# ── Review Summary for Learning ──
+
+REVIEW_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "quality": {"enum": ["pass", "revise", "fail", "unknown"]},
+        "key_issues": {"type": "array"},
+        "useful_for_learning": {"type": "boolean"},
+        "summary": {"type": "string"},
+        "confidence": {"enum": ["high", "medium", "low"]},
+    },
+    "required": ["quality", "summary"],
+}
+
+
+def _marker_summarize_review(content: str) -> dict:
+    """Fallback marker-based review summary (same logic as existing seed_pipeline)."""
+    markers = ["quality", "issues", "suggestions", "评分", "review", "问题"]
+    found = []
+    for line in content.splitlines():
+        for m in markers:
+            if m.lower() in line.lower():
+                found.append(line.strip()[:300])
+    return {
+        "quality": "unknown",
+        "key_issues": [],
+        "useful_for_learning": bool(found),
+        "summary": "\n".join(found) if found else content[:1500],
+    }
+
+
+def summarize_review_for_learning(review_markdown: str) -> SemanticResult:
+    """Summarize a review for seed pipeline learning via LLM."""
+    # If review is structured JSON, parse directly
+    try:
+        data = json.loads(review_markdown)
+        if isinstance(data, dict) and "quality" in data:
+            return _ok_result(
+                {
+                    "quality": data.get("quality", "unknown"),
+                    "key_issues": data.get("issues", data.get("key_issues", [])),
+                    "useful_for_learning": True,
+                    "summary": json.dumps(data, ensure_ascii=False)[:1000],
+                }
+            )
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    prompt = f"""分析以下 code review 结果，提取对质量学习有价值的信息。只输出 JSON。
+
+Review 内容:
+{review_markdown[:3000]}
+
+输出格式:
+{{
+  "quality": "pass|revise|fail|unknown",
+  "key_issues": [
+    {{
+      "severity": "high|medium|low",
+      "description": "问题描述",
+      "evidence": "原文证据或文件位置",
+      "recommendation": "建议"
+    }}
+  ],
+  "useful_for_learning": true/false,
+  "summary": "适合喂给后续分析的压缩摘要",
+  "confidence": "high|medium|low"
+}}"""
+
+    llm_result = _call_semantic_llm(prompt, REVIEW_SUMMARY_SCHEMA)
+
+    if llm_result["ok"] and llm_result["mode"] == "llm":
+        return llm_result
+
+    return _fallback_result(_marker_summarize_review(review_markdown))
