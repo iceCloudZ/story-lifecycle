@@ -121,6 +121,27 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # Finding table for quality flywheel
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS finding (
+                id TEXT PRIMARY KEY,
+                story_key TEXT NOT NULL,
+                stage TEXT,
+                source TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                category TEXT NOT NULL,
+                location TEXT,
+                description TEXT NOT NULL,
+                recommendation TEXT,
+                root_cause TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                verification_event_id INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_finding_story_status ON finding(story_key, status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_finding_severity ON finding(severity, status)")
         # Idempotent column migration
         try:
             conn.execute("ALTER TABLE story ADD COLUMN parent_key TEXT")
@@ -394,3 +415,54 @@ def upsert_story(
                     subtask_index,
                 ),
             )
+
+
+# -------- Finding helpers --------
+
+
+def create_finding(story_key, stage, source, severity, category, description,
+                   location=None, recommendation=None, root_cause=None) -> str:
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    fid = f"finding-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{id(now) % 10000:04d}"
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO finding (id, story_key, stage, source, severity, category, location, description, recommendation, root_cause, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (fid, story_key, stage, source, severity, category, location, description, recommendation, root_cause, "open", now, now),
+        )
+    return fid
+
+
+def get_finding(finding_id: str) -> dict | None:
+    with _db() as conn:
+        rows = conn.execute("SELECT * FROM finding WHERE id = ?", (finding_id,)).fetchall()
+    return dict(rows[0]) if rows else None
+
+
+def update_finding(finding_id: str, **kwargs) -> None:
+    kwargs["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sets = ", ".join(f"{k} = ?" for k in kwargs)
+    vals = list(kwargs.values()) + [finding_id]
+    with _db() as conn:
+        conn.execute(f"UPDATE finding SET {sets} WHERE id = ?", vals)
+
+
+def get_open_findings(story_key: str, min_severity: str = "medium") -> list[dict]:
+    severity_order = {"high": 3, "medium": 2, "low": 1}
+    min_level = severity_order.get(min_severity, 2)
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM finding WHERE story_key = ? AND status = 'open'",
+            (story_key,),
+        ).fetchall()
+    return [dict(r) for r in rows if severity_order.get(r["severity"], 0) >= min_level]
+
+
+def get_recent_quality_events(story_key: str, event_types: list[str], limit: int = 50) -> list[dict]:
+    """Get recent events of specified types from event_log."""
+    placeholders = ",".join("?" * len(event_types))
+    with _db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM event_log WHERE story_key = ? AND event_type IN ({placeholders}) ORDER BY id DESC LIMIT ?",
+            [story_key] + event_types + [limit],
+        ).fetchall()
+    return [dict(r) for r in rows]
