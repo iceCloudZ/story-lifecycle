@@ -751,7 +751,16 @@ def apply_reviewed(proposal: dict) -> dict:
             continue
         f = proposed_findings[idx]
         try:
-            quality.record_finding(
+            evidence_list = f.get("evidence", [])
+            confidence = f.get("confidence", "medium")
+            # Embed evidence + confidence in root_cause for DB auditability
+            root_cause = f.get("root_cause", "")
+            if evidence_list:
+                evidence_note = "Evidence: " + ", ".join(evidence_list)
+                root_cause = (
+                    f"{root_cause}\n{evidence_note}" if root_cause else evidence_note
+                )
+            fid = quality.record_finding(
                 story_key=story_key,
                 stage="seed_analysis",
                 finding={
@@ -761,9 +770,26 @@ def apply_reviewed(proposal: dict) -> dict:
                     "description": f["description"],
                     "location": f.get("location", ""),
                     "recommendation": f.get("recommendation", ""),
-                    "root_cause": f.get("root_cause", ""),
+                    "root_cause": root_cause,
+                    "evidence": evidence_list,
+                    "confidence": confidence,
                 },
             )
+            # Apply target status if specified
+            target_status = f.get("target_status", "open")
+            if target_status == "verified":
+                verification_evidence = f.get("verification_evidence")
+                quality.update_finding_status(
+                    story_key,
+                    fid,
+                    "verified",
+                    reason="Seed from historical story with verification evidence",
+                    evidence=(
+                        {"verification_event_id": verification_evidence}
+                        if verification_evidence
+                        else None
+                    ),
+                )
             findings_written += 1
         except Exception as exc:
             errors.append(f"Finding[{idx}]: write failed: {exc}")
@@ -776,7 +802,8 @@ def apply_reviewed(proposal: dict) -> dict:
             continue
         p = proposed_patterns[idx]
         try:
-            quality.propose_learned_pattern(
+            evidence_list = p.get("evidence", [])
+            pid = quality.propose_learned_pattern(
                 story_key=story_key,
                 pattern=p["pattern"],
                 applies_to=p["applies_to"],
@@ -784,6 +811,23 @@ def apply_reviewed(proposal: dict) -> dict:
                 source_findings=[],
                 confidence=p.get("confidence", "medium"),
             )
+            # Preserve evidence chain in event log
+            if evidence_list or p.get("confidence"):
+                try:
+                    from ..db import models as db
+
+                    db.log_event(
+                        story_key,
+                        "seed_analysis",
+                        "seed_pattern_evidence",
+                        {
+                            "pattern_id": pid,
+                            "evidence": evidence_list,
+                            "confidence": p.get("confidence", "medium"),
+                        },
+                    )
+                except Exception:
+                    pass
             patterns_written += 1
         except Exception as exc:
             errors.append(f"Pattern[{idx}]: write failed: {exc}")

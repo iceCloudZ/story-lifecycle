@@ -144,10 +144,18 @@ def analyze(manifest, dry_run, workspace):
             "Use --write to save the proposal file.[/]"
         )
     else:
-        target = Path(ws) / ".story/quality-seed/reviewed" / f"{story_key}.json"
+        reviewed_dir = Path(ws) / ".story/quality-seed/reviewed"
+        reviewed_dir.mkdir(parents=True, exist_ok=True)
         console.print(f"\n[green]Proposal written to: {proposal_path}[/]")
-        console.print("[dim]Review and edit the file, then run:")
-        console.print(f"  [bold]story seed-quality apply {target}[/]")
+        console.print("\n[dim]Next steps:")
+        console.print("  1. Edit the proposal file and fill in review_status")
+        console.print(
+            "  2. Copy to reviewed: "
+            f"[bold]cp {proposal_path} {reviewed_dir / f'{story_key}.json'}[/]"
+        )
+        console.print(
+            f"  3. Apply: [bold]story seed-quality apply {reviewed_dir / f'{story_key}.json'}[/]"
+        )
         console.print("[/dim]")
 
 

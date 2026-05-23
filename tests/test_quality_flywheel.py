@@ -1500,3 +1500,146 @@ def test_apply_handles_out_of_range_index(tmp_path):
     assert result["findings_written"] == 0
     assert len(result["errors"]) == 1
     assert "99" in result["errors"][0]
+
+
+def test_apply_preserves_evidence_in_root_cause(tmp_path):
+    """apply_reviewed should embed evidence in finding root_cause for auditability."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.seed_pipeline import apply_reviewed
+
+    proposal = {
+        "manifest": {"story_key": "S_EV"},
+        "review_status": {
+            "findings_approved": [0],
+            "patterns_approved": [],
+            "findings_rejected": [],
+            "patterns_rejected": [],
+            "reviewed_at": "2026-05-23T00:00:00Z",
+        },
+        "proposed_findings": [
+            {
+                "severity": "high",
+                "category": "routing",
+                "description": "Finding with evidence",
+                "evidence": ["prd/001.md", "plan/001.md"],
+                "confidence": "high",
+                "root_cause": "Root cause text",
+            },
+        ],
+        "proposed_patterns": [],
+    }
+
+    result = apply_reviewed(proposal)
+    assert result["findings_written"] == 1
+
+    findings = db.get_open_findings("S_EV")
+    assert len(findings) == 1
+    rc = findings[0]["root_cause"]
+    assert "Evidence:" in rc
+    assert "prd/001.md" in rc
+    assert "plan/001.md" in rc
+    assert "Root cause text" in rc
+
+
+def test_apply_finding_target_status_verified(tmp_path):
+    """apply_reviewed should support target_status=verified for historical findings."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.seed_pipeline import apply_reviewed
+
+    proposal = {
+        "manifest": {"story_key": "S_VF"},
+        "review_status": {
+            "findings_approved": [0],
+            "patterns_approved": [],
+            "findings_rejected": [],
+            "patterns_rejected": [],
+            "reviewed_at": "2026-05-23T00:00:00Z",
+        },
+        "proposed_findings": [
+            {
+                "severity": "medium",
+                "category": "routing",
+                "description": "Already-fixed issue",
+                "evidence": ["prd/001.md"],
+                "confidence": "high",
+                "target_status": "verified",
+            },
+        ],
+        "proposed_patterns": [],
+    }
+
+    result = apply_reviewed(proposal)
+    assert result["findings_written"] == 1
+
+    # Should NOT appear in open findings (it's verified, not open)
+    open_findings = db.get_open_findings("S_VF", min_severity="low")
+    assert len(open_findings) == 0
+
+    # But should have written an audit event
+    events = db.get_recent_quality_events("S_VF", ["finding_status_changed"])
+    assert len(events) >= 1
+    import json as _json
+
+    payload = events[0]["payload"]
+    data = _json.loads(payload) if isinstance(payload, str) else payload
+    assert data["to"] == "verified"
+
+
+def test_apply_pattern_logs_evidence_event(tmp_path):
+    """apply_reviewed should log seed_pattern_evidence event for patterns."""
+    import json as _json
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.seed_pipeline import apply_reviewed
+
+    proposal = {
+        "manifest": {"story_key": "S_PEV"},
+        "review_status": {
+            "findings_approved": [],
+            "patterns_approved": [0],
+            "findings_rejected": [],
+            "patterns_rejected": [],
+            "reviewed_at": "2026-05-23T00:00:00Z",
+        },
+        "proposed_findings": [],
+        "proposed_patterns": [
+            {
+                "pattern": "Pattern with evidence",
+                "applies_to": ["orchestrator", "nodes"],
+                "rule": "Do X when Y",
+                "evidence": ["prd/001.md", "plan/001.md"],
+                "confidence": "high",
+            },
+        ],
+    }
+
+    result = apply_reviewed(proposal)
+    assert result["patterns_written"] == 1
+
+    # Check seed_pattern_evidence event was logged
+    events = db.get_recent_quality_events("S_PEV", ["seed_pattern_evidence"])
+    assert len(events) == 1
+    payload = events[0]["payload"]
+    data = _json.loads(payload) if isinstance(payload, str) else payload
+    assert "prd/001.md" in data["evidence"]
+    assert "plan/001.md" in data["evidence"]
+    assert data["confidence"] == "high"
+
+    # Pattern itself should be proposed, not active
+    proposed = db.get_proposed_learned_patterns()
+    assert len(proposed) == 1
+    assert proposed[0]["pattern"] == "Pattern with evidence"
