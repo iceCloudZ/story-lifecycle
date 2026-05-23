@@ -61,6 +61,12 @@ class StoryCard(Static):
         last_error = s.get("last_error", "")
         profile_name = s.get("profile", "minimal")
         is_child = bool(s.get("parent_key"))
+        sub_type = s.get("sub_type") or ""
+        type_badge = ""
+        if sub_type:
+            colors = {"bug-fix": "red", "integration": "yellow", "refinement": "blue", "redo": "orange"}
+            color = colors.get(sub_type, "grey")
+            type_badge = f" [{color}][{sub_type}][/{color}]"
 
         badge = {
             "active": "[bold green]> active[/]",
@@ -84,7 +90,7 @@ class StoryCard(Static):
         indent = "  └─ " if is_child else ""
 
         lines = [
-            f"{cursor}{indent}[bold cyan]{key}[/]  {title}",
+            f"{cursor}{indent}[bold cyan]{key}[/]{type_badge}  {title}",
             f"  {bar}  {badge}  [dim]retries: {retries}[/]",
             cli_line,
         ]
@@ -218,6 +224,86 @@ class NewStoryDialog(ModalScreen):
         self.query_one("#input-key", Input).focus()
 
 
+class SubStoryDialog(ModalScreen):
+    """Modal dialog for creating a sub-story."""
+
+    CSS = """
+    SubStoryDialog {
+        align: center middle;
+    }
+    #sub-dialog {
+        width: 60;
+        height: auto;
+        padding: 1 2;
+        background: $surface;
+        border: thick $accent;
+    }
+    #sub-dialog Input {
+        margin: 1 0;
+    }
+    #sub-dialog Static {
+        margin: 0 0 1 0;
+    }
+    #sub-btn-row {
+        height: auto;
+        margin-top: 1;
+    }
+    #sub-btn-row Button {
+        margin-right: 1;
+    }
+    """
+
+    SUB_TYPES = [
+        ("bug-fix", "缺陷修复", "implement"),
+        ("integration", "联调适配", "implement"),
+        ("refinement", "需求补充", "design"),
+        ("redo", "返工重做", "design"),
+        ("custom", "自定义...", ""),
+    ]
+
+    def __init__(self, parent_key: str):
+        self._parent_key = parent_key
+        self._selected_type_idx = 0
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="sub-dialog"):
+            yield Static(f"[bold]New Sub-story for {self._parent_key}[/]")
+            yield Static("Type:")
+            for i, (key, label, _) in enumerate(self.SUB_TYPES):
+                marker = ">" if i == 0 else " "
+                yield Static(f"  {marker} {label} ({key})")
+            yield Static("Start Stage (empty = auto):")
+            yield Input(placeholder="e.g. implement (auto-derived from type)", id="input-stage")
+            yield Static("Description:")
+            yield Input(placeholder="What needs to be done...", id="input-desc")
+            with Horizontal(id="sub-btn-row"):
+                yield Button("Create", variant="success", id="btn-sub-create")
+                yield Button("Cancel", variant="default", id="btn-sub-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-sub-create":
+            desc = self.query_one("#input-desc", Input).value.strip()
+            if not desc:
+                self.query_one("#input-desc", Input).focus()
+                return
+            _, _, default_stage = self.SUB_TYPES[self._selected_type_idx]
+            custom_stage = self.query_one("#input-stage", Input).value.strip()
+            sub_type = self.SUB_TYPES[self._selected_type_idx][0]
+            if sub_type == "custom":
+                sub_type = ""
+            self.dismiss({
+                "sub_type": sub_type,
+                "start_stage": custom_stage or default_stage or None,
+                "description": desc,
+            })
+        else:
+            self.dismiss(None)
+
+    def on_mount(self):
+        self.query_one("#input-desc", Input).focus()
+
+
 class ConfirmDialog(ModalScreen):
     """Modal dialog for confirming a destructive action."""
 
@@ -333,6 +419,8 @@ class StoryBoardApp(App):
         Binding("shift+r", "refresh", "Refresh", key_display="R"),
         Binding("f5", "refresh", "Refresh"),
         Binding("x", "delete_story", "Delete"),
+        Binding("shift+n", "new_sub_story", "Sub", key_display="N"),
+        Binding("a", "abort_story", "Abort"),
         Binding("shift+d", "run_doctor", "Doctor", key_display="D"),
         Binding("shift+s", "run_setup", "Setup", key_display="S"),
         Binding("question_mark", "help", "Help", key_display="?"),
@@ -414,7 +502,7 @@ class StoryBoardApp(App):
 
         footer = self.query_one("#footer-bar")
         footer.update(
-            " [dim][n] new  [e] enter  [s] skip  [f] fail  [x] delete  [r] resume  [D] doctor  [S] setup  [?] help[/]"
+            " [dim][n] new  [N] sub  [e] enter  [s] skip  [a] abort  [f] fail  [x] delete  [r] resume  [?] help[/]"
         )
 
     def action_cursor_up(self):
@@ -681,6 +769,50 @@ class StoryBoardApp(App):
             return
         s = self.stories[self.selected_index]
         db.update_story(s["story_key"], status="active")
+        self.refresh_stories()
+
+    def action_new_sub_story(self):
+        if not self.stories:
+            return
+        s = self.stories[self.selected_index]
+        key = s["story_key"]
+
+        def on_result(result):
+            if result is None:
+                return
+            try:
+                from ..orchestrator.service import create_sub_story
+                sub_key = create_sub_story(
+                    parent_key=key,
+                    sub_type=result.get("sub_type") or None,
+                    start_stage=result.get("start_stage") or None,
+                    description=result["description"],
+                )
+                self.refresh_stories()
+                panel = self.query_one("#detail-panel")
+                panel.update(f"[green]Created sub-story: {sub_key}[/]")
+                panel.set_class(True, "visible")
+                self._show_detail = True
+            except Exception as e:
+                panel = self.query_one("#detail-panel")
+                panel.update(f"[red]Failed to create sub-story: {e}[/]")
+                panel.set_class(True, "visible")
+                self._show_detail = True
+
+        self.push_screen(SubStoryDialog(key), on_result)
+
+    def action_abort_story(self):
+        if not self.stories:
+            return
+        s = self.stories[self.selected_index]
+        from ..orchestrator.service import abort_story
+        try:
+            abort_story(s["story_key"])
+        except ValueError as e:
+            panel = self.query_one("#detail-panel")
+            panel.update(f"[red]{e}[/]")
+            panel.set_class(True, "visible")
+            self._show_detail = True
         self.refresh_stories()
 
     def action_refresh(self):
