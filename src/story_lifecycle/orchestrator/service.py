@@ -2,6 +2,7 @@
 
 import json as _json
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..db import models as db
@@ -235,3 +236,95 @@ def _check_parent_auto_resume(parent_key: str):
         }
         db.update_context(parent_key, "sub_story_results", _json.dumps(summary, ensure_ascii=False))
         db.log_event(parent_key, "", "subtasks_completed", summary)
+
+
+@dataclass
+class CreateFromSourceResult:
+    status: str  # "created" | "need_manual_select" | "failed"
+    story_key: str | None = None
+    bug_item: "SourceItem | None" = None
+    error: str | None = None
+
+
+def create_story_from_source(
+    item,
+    profile: str = "minimal",
+    workspace: str = "",
+    generate_prd: bool = True,
+    auto_start: bool = True,
+) -> CreateFromSourceResult:
+    from ..sources.base import resolve_bug_parent, SourceItem
+    from ..sources import get_source
+    from ..sources.prd_providers import fetch_prd_content, save_prd
+
+    story_key = _derive_story_key(item)
+    prd_path = None
+
+    # Requirement -> PrdProvider chain
+    if generate_prd and item.item_type == "requirement":
+        prd_content = fetch_prd_content(item)
+        if prd_content and prd_content.markdown:
+            prd_path = save_prd(story_key, prd_content, workspace)
+
+    # Bug -> resolve parent
+    if item.item_type == "bug":
+        active_stories = _get_all_stories()
+        result = resolve_bug_parent(item, active_stories)
+
+        # Auto-import parent if needed
+        if result.need_import_parent and result.parent_source_id:
+            source = get_source(item.source)
+            parent_item = source.get_detail(result.parent_source_id) if source else None
+            if not parent_item:
+                return CreateFromSourceResult(
+                    status="failed",
+                    error=f"无法导入父需求: {item.source}/{result.parent_source_id}",
+                )
+            parent_result = create_story_from_source(
+                parent_item, profile=profile, workspace=workspace,
+                generate_prd=True, auto_start=False,
+            )
+            if parent_result.status != "created" or not parent_result.story_key:
+                return CreateFromSourceResult(
+                    status="failed",
+                    error=f"父需求导入失败: {parent_result.error or parent_result.status}",
+                )
+            result.parent_key = parent_result.story_key
+
+        if result.need_manual_select:
+            return CreateFromSourceResult(status="need_manual_select", bug_item=item)
+        if result.parent_key:
+            sub_key = create_sub_story(
+                parent_key=result.parent_key, sub_type="bug-fix",
+                description=item.description,
+            )
+            db.update_story(sub_key, source_type=item.source, source_id=item.id)
+            if auto_start:
+                from .graph import start_story_async
+                start_story_async(sub_key)
+            return CreateFromSourceResult(status="created", story_key=sub_key)
+
+    # Create normal story
+    key = create_and_start_story(
+        story_key=story_key, title=item.title, profile=profile,
+        workspace=workspace, prd_path=prd_path,
+    )
+    db.update_story(key, source_type=item.source, source_id=item.id)
+
+    if auto_start:
+        from .graph import start_story_async
+        start_story_async(key)
+
+    return CreateFromSourceResult(status="created", story_key=key)
+
+
+def _derive_story_key(item) -> str:
+    return f"TAPD-{item.id[-6:]}" if item.source == "tapd" else f"{item.source.upper()}-{item.id[-6:]}"
+
+
+def _get_all_stories() -> list[dict]:
+    """Get all stories for parent matching."""
+    try:
+        return db.list_active_stories()
+    except Exception:
+        return []
