@@ -425,6 +425,7 @@ def api_list_review_feedback(story_key: str):
     """List review feedback findings for a story."""
     findings = db.get_findings_by_story(story_key)
     review_findings = [f for f in findings if f["source"] == "review_feedback"]
+    db.enrich_findings_with_evidence(review_findings)
     return {"findings": review_findings}
 
 

@@ -136,6 +136,7 @@ def init_db():
                 root_cause TEXT,
                 status TEXT NOT NULL DEFAULT 'open',
                 verification_event_id INTEGER,
+                evidence TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -146,6 +147,11 @@ def init_db():
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_finding_severity ON finding(severity, status)"
         )
+        # Migration: add evidence column to existing finding table
+        try:
+            conn.execute("ALTER TABLE finding ADD COLUMN evidence TEXT DEFAULT '[]'")
+        except Exception:
+            pass  # column already exists
         # Learned pattern table for quality flywheel
         conn.execute("""
             CREATE TABLE IF NOT EXISTS learned_pattern (
@@ -451,14 +457,16 @@ def create_finding(
     location=None,
     recommendation=None,
     root_cause=None,
+    evidence=None,
 ) -> str:
     import uuid
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     fid = f"finding-{uuid.uuid4().hex[:12]}"
+    evidence_json = json.dumps(evidence) if evidence else "[]"
     with _db() as conn:
         conn.execute(
-            "INSERT INTO finding (id, story_key, stage, source, severity, category, location, description, recommendation, root_cause, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO finding (id, story_key, stage, source, severity, category, location, description, recommendation, root_cause, evidence, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 fid,
                 story_key,
@@ -470,6 +478,7 @@ def create_finding(
                 description,
                 recommendation,
                 root_cause,
+                evidence_json,
                 "open",
                 now,
                 now,
@@ -532,25 +541,31 @@ def get_findings_by_story(story_key: str) -> list[dict]:
 
 
 def get_finding_evidence(finding_id: str) -> list[str]:
-    """Get evidence list for a finding from event_log."""
+    """Get evidence list for a finding from the evidence column."""
     with _db() as conn:
-        rows = conn.execute(
-            "SELECT payload FROM event_log WHERE event_type = 'review_feedback_imported' ORDER BY id DESC LIMIT 50",
-        ).fetchall()
-    for r in rows:
+        row = conn.execute(
+            "SELECT evidence FROM finding WHERE id = ?",
+            (finding_id,),
+        ).fetchone()
+    if row and row["evidence"]:
         try:
-            payload = json.loads(r["payload"])
-            if payload.get("finding_id") == finding_id:
-                return payload.get("evidence", [])
+            return json.loads(row["evidence"])
         except (json.JSONDecodeError, TypeError):
             pass
     return []
 
 
 def enrich_findings_with_evidence(findings: list[dict]) -> list[dict]:
-    """Attach evidence from event_log to each finding."""
+    """Attach evidence from the evidence column to each finding."""
     for f in findings:
-        f["evidence"] = get_finding_evidence(f["id"])
+        raw = f.get("evidence")
+        if isinstance(raw, str):
+            try:
+                f["evidence"] = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                f["evidence"] = []
+        elif raw is None:
+            f["evidence"] = []
     return findings
 
 

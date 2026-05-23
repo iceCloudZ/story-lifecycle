@@ -204,7 +204,13 @@ def dedupe_candidates(
     """
     seen: dict[str, dict] = {}
     for c in candidates:
-        key = f"{c['category']}|{c.get('location', '')}"
+        loc = c.get("location", "")
+        if loc:
+            key = f"{c['category']}|{loc}"
+        else:
+            # description fingerprint to avoid merging unrelated items
+            desc_key = c["description"][:80].lower().strip()
+            key = f"{c['category']}|_desc_{desc_key}"
         if key in seen:
             existing = seen[key]
             sev_order = {"high": 3, "medium": 2, "low": 1}
@@ -384,6 +390,7 @@ def import_review(story_key: str, content: str) -> dict:
                 location=c.get("location", ""),
                 recommendation=c.get("recommendation", ""),
                 root_cause=c.get("root_cause", ""),
+                evidence=c.get("evidence", []),
             )
             # Log import event
             db.log_event(

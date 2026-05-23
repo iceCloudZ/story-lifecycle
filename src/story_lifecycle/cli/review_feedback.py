@@ -78,6 +78,7 @@ def list_findings(story_key):
     from ..db import models as db
 
     findings = db.get_findings_by_story(story_key)
+    db.enrich_findings_with_evidence(findings)
     if not findings:
         console.print(f"[dim]No findings for story '{story_key}'.[/]")
         return
@@ -88,6 +89,7 @@ def list_findings(story_key):
     table.add_column("Severity", style="bold")
     table.add_column("Category", style="white")
     table.add_column("Description", max_width=50)
+    table.add_column("Evidence", max_width=30, style="dim")
     table.add_column("Source", style="dim")
 
     sev_colors = {"high": "red", "medium": "yellow", "low": "green"}
@@ -104,12 +106,14 @@ def list_findings(story_key):
     for f in findings:
         sev = f["severity"]
         status = f["status"]
+        evidence_str = ", ".join(f.get("evidence", []))[:50]
         table.add_row(
             f["id"],
             f"[{status_colors.get(status, 'white')}]{status}[/]",
             f"[{sev_colors.get(sev, 'white')}]{sev.upper()}[/]",
             f["category"],
             f["description"][:80],
+            evidence_str or "-",
             f["source"],
         )
 
