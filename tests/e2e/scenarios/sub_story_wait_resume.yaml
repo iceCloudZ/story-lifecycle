@@ -1,0 +1,17 @@
+story_key: E2E-SUB
+title: Sub-story wait and resume
+profile: minimal
+
+# This scenario tests the sub-story delegation flow.
+# The planner mock will be overridden in the test itself
+# since sub-story uses interrupt() which needs special handling.
+
+stages:
+  design:
+    done:
+      spec_path: docs/spec.md
+      complexity: S
+      summary: design done
+
+expect:
+  status: waiting_subtasks

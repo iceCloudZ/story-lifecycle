@@ -1,0 +1,24 @@
+story_key: E2E-MDJSON
+title: Markdown-wrapped JSON parsing
+profile: minimal
+
+stages:
+  design:
+    raw_done: |
+      Here is the result:
+      ```json
+      {
+        "spec_path": "docs/spec.md",
+        "complexity": "S",
+        "summary": "design in markdown fence"
+      }
+      ```
+  implement:
+    done:
+      implementation_summary: implemented
+  test:
+    done:
+      tests_passed: true
+
+expect:
+  status: completed

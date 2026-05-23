@@ -1,0 +1,11 @@
+story_key: E2E-MISS
+title: Missing expected output field
+profile: minimal
+
+stages:
+  design:
+    done:
+      complexity: S
+
+expect:
+  status: blocked

@@ -1,0 +1,23 @@
+story_key: E2E-HAPPY
+title: Headless happy path
+profile: minimal
+
+stages:
+  design:
+    done:
+      spec_path: docs/spec.md
+      complexity: S
+      summary: design completed
+  implement:
+    done:
+      implementation_summary: implemented
+  test:
+    done:
+      tests_passed: true
+
+expect:
+  status: completed
+  final_stage: test
+  context:
+    spec_path: docs/spec.md
+    complexity: "S"

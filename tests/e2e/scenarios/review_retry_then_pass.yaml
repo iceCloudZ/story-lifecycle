@@ -1,0 +1,47 @@
+story_key: E2E-RETRY
+title: Review retry then pass
+profile: minimal
+
+stages:
+  design:
+    executions:
+      - done:
+          spec_path: docs/spec.md
+          complexity: S
+          summary: first draft with flaw
+      - done:
+          spec_path: docs/spec.md
+          complexity: S
+          summary: revised draft
+  implement:
+    done:
+      implementation_summary: implemented
+  test:
+    done:
+      tests_passed: true
+
+reviews:
+  design:
+    executions:
+      - quality: revise
+        summary: missing edge cases
+        issues:
+          - type: missing_tests
+            severity: high
+            location: docs/spec.md
+            description: Edge cases are not covered
+        suggestions:
+          - Add edge case coverage
+        trajectory_score: 0.4
+        context_updates: {}
+        reasoning: need more tests
+      - quality: pass
+        summary: design accepted
+        issues: []
+        suggestions: []
+        trajectory_score: 0.9
+        context_updates: {}
+        reasoning: looks good now
+
+expect:
+  status: completed
