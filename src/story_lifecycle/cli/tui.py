@@ -431,6 +431,62 @@ class InboxScreen(ModalScreen):
         self.dismiss(selected)
 
 
+class ParentSelectDialog(ModalScreen):
+    """Bug 关联父故事的手动选择对话框。"""
+
+    def __init__(self, bug_title: str, stories: list[dict]):
+        self._bug_title = bug_title
+        self._stories = stories
+        self._cursor = 0
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="parent-select-container"):
+            yield Static("[bold]选择父故事[/]", id="parent-title")
+            yield Static(f"Bug: {self._bug_title}", id="parent-desc")
+            yield Static("", id="parent-list")
+            with Horizontal(id="parent-btn-row"):
+                yield Button("确认", variant="success", id="btn-parent-confirm")
+                yield Button("独立创建", variant="warning", id="btn-parent-standalone")
+                yield Button("取消", variant="default", id="btn-parent-cancel")
+
+    def on_mount(self) -> None:
+        self._render()
+
+    def _render(self):
+        lines = []
+        for i, s in enumerate(self._stories):
+            cursor = ">" if i == self._cursor else " "
+            key = s.get("story_key", "")
+            title = s.get("title", "")
+            lines.append(f"  {cursor} {key}  {title}")
+        self.query_one("#parent-list", Static).update("\n".join(lines))
+
+    def key_up(self):
+        if self._cursor > 0:
+            self._cursor -= 1
+            self._render()
+
+    def key_down(self):
+        if self._cursor < len(self._stories) - 1:
+            self._cursor += 1
+            self._render()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-parent-confirm" and self._stories:
+            s = self._stories[self._cursor]
+            self.dismiss(s.get("story_key"))
+        elif event.button.id == "btn-parent-standalone":
+            self.dismiss(None)
+        else:
+            self.dismiss("")
+
+    def key_enter(self):
+        if self._stories:
+            s = self._stories[self._cursor]
+            self.dismiss(s.get("story_key"))
+
+
 class StoryBoardApp(App):
     """Interactive story board TUI."""
 
@@ -1106,7 +1162,23 @@ class StoryBoardApp(App):
                     if r.status == "created":
                         self.notify(f"已创建: {r.story_key}")
                     elif r.status == "need_manual_select":
-                        self.notify(f"需要手动选择父故事: {item.title}", severity="warning")
+                        from ..orchestrator.service import create_sub_story
+                        active = [s for s in self.stories if not s.get("parent_key")]
+
+                        def _on_parent_selected(parent_key):
+                            if parent_key == "":
+                                return  # Cancel
+                            if parent_key is None:
+                                # Standalone
+                                r2 = create_story_from_source(item, auto_start=True)
+                                if r2.status == "created":
+                                    self.notify(f"已创建独立故事: {r2.story_key}")
+                            else:
+                                sub_key = create_sub_story(parent_key=parent_key, sub_type="bug-fix", description=item.description)
+                                if sub_key:
+                                    self.notify(f"已创建子故事: {sub_key}")
+
+                        self.push_screen(ParentSelectDialog(item.title, active), _on_parent_selected)
                     else:
                         self.notify(f"创建失败: {r.error}", severity="error")
                 except Exception as e:
