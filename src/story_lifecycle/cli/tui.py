@@ -253,30 +253,30 @@ class SubStoryDialog(ModalScreen):
     }
     """
 
-    SUB_TYPES = [
-        ("bug-fix", "缺陷修复", "implement"),
-        ("integration", "联调适配", "implement"),
-        ("refinement", "需求补充", "design"),
-        ("redo", "返工重做", "design"),
-        ("custom", "自定义...", ""),
-    ]
-
     def __init__(self, parent_key: str):
         self._parent_key = parent_key
         self._selected_type_idx = 0
+        from ..cli.setup import get_sub_types
+        self._type_configs = get_sub_types()
+        self._type_keys = list(self._type_configs.keys())
         super().__init__()
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="sub-dialog"):
             yield Static(f"[bold]New Sub-story for {self._parent_key}[/]")
             yield Static("Type:")
-            for i, (key, label, _) in enumerate(self.SUB_TYPES):
+            for i, key in enumerate(self._type_keys):
+                cfg = self._type_configs[key]
+                label = cfg.get("label", key)
                 marker = ">" if i == 0 else " "
                 yield Static(f"  {marker} {label} ({key})")
+            yield Static("Custom type (optional, overrides selection):")
+            yield Input(placeholder="e.g. hotfix (leave empty to use selection)", id="input-custom-type")
             yield Static("Start Stage (empty = auto):")
             yield Input(placeholder="e.g. implement (auto-derived from type)", id="input-stage")
             yield Static("Description:")
-            yield Input(placeholder="What needs to be done...", id="input-desc")
+            first_template = list(self._type_configs.values())[0].get("description_template", "")
+            yield Input(value=first_template, id="input-desc")
             with Horizontal(id="sub-btn-row"):
                 yield Button("Create", variant="success", id="btn-sub-create")
                 yield Button("Cancel", variant="default", id="btn-sub-cancel")
@@ -287,11 +287,17 @@ class SubStoryDialog(ModalScreen):
             if not desc:
                 self.query_one("#input-desc", Input).focus()
                 return
-            _, _, default_stage = self.SUB_TYPES[self._selected_type_idx]
+
+            custom_type = self.query_one("#input-custom-type", Input).value.strip()
+            if custom_type:
+                sub_type = custom_type
+                default_stage = ""
+            else:
+                selected_key = self._type_keys[self._selected_type_idx]
+                sub_type = selected_key
+                default_stage = self._type_configs[selected_key].get("default_start_stage", "")
+
             custom_stage = self.query_one("#input-stage", Input).value.strip()
-            sub_type = self.SUB_TYPES[self._selected_type_idx][0]
-            if sub_type == "custom":
-                sub_type = ""
             self.dismiss({
                 "sub_type": sub_type,
                 "start_stage": custom_stage or default_stage or None,
