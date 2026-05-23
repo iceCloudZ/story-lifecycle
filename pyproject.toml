@@ -51,5 +51,8 @@ tui = [
 [project.scripts]
 story = "story_lifecycle.cli.main:cli"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/story_lifecycle"]
