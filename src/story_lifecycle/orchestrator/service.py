@@ -256,6 +256,7 @@ def create_story_from_source(
     from ..sources.base import resolve_bug_parent
     from ..sources import get_source
     from ..sources.prd_providers import fetch_prd_content, save_prd
+    from ..sources.bug_providers import fetch_bug_content, format_bug_context
 
     story_key = _derive_story_key(item)
     prd_path = None
@@ -294,9 +295,11 @@ def create_story_from_source(
         if result.need_manual_select:
             return CreateFromSourceResult(status="need_manual_select", bug_item=item)
         if result.parent_key:
+            bug_ctx = fetch_bug_content(item)
+            bug_desc = format_bug_context(bug_ctx)
             sub_key = create_sub_story(
                 parent_key=result.parent_key, sub_type="bug-fix",
-                description=item.description,
+                description=bug_desc,
             )
             db.update_story(sub_key, source_type=item.source, source_id=item.id)
             if auto_start:
@@ -304,9 +307,15 @@ def create_story_from_source(
                 start_story_async(sub_key)
             return CreateFromSourceResult(status="created", story_key=sub_key)
 
-    # Create normal story
+    # Create normal story (standalone bug or requirement)
+    bug_ctx = None
+    if item.item_type == "bug":
+        bug_ctx = fetch_bug_content(item)
+    title = item.title
+    if bug_ctx:
+        title = bug_ctx.description or item.title
     key = create_and_start_story(
-        story_key=story_key, title=item.title, profile=profile,
+        story_key=story_key, title=title, profile=profile,
         workspace=workspace, prd_path=prd_path,
     )
     db.update_story(key, source_type=item.source, source_id=item.id)
