@@ -505,6 +505,32 @@ def get_open_findings(story_key: str, min_severity: str = "medium") -> list[dict
     return [dict(r) for r in rows if severity_order.get(r["severity"], 0) >= min_level]
 
 
+def get_findings_by_status(statuses: list[str]) -> list[dict]:
+    """Get findings matching any of the given statuses."""
+    placeholders = ",".join("?" * len(statuses))
+    with _db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM finding WHERE status IN ({placeholders}) ORDER BY created_at DESC",
+            statuses,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_all_pending_findings() -> list[dict]:
+    """Get all open + accepted findings across stories (for approval queue)."""
+    return get_findings_by_status(["open", "accepted"])
+
+
+def get_findings_by_story(story_key: str) -> list[dict]:
+    """Get all findings for a story regardless of status."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM finding WHERE story_key = ? ORDER BY created_at",
+            (story_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_recent_quality_events(
     story_key: str, event_types: list[str], limit: int = 50
 ) -> list[dict]:
