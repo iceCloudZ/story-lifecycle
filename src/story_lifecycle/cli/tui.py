@@ -1206,6 +1206,7 @@ class StoryBoardApp(App):
 
         try:
             items = source.fetch_pending()
+            items = [i for i in items if not db.find_by_source_id(i.source, i.id)]
         except Exception as e:
             self.notify(f"获取待办失败: {e}", severity="error")
             return
