@@ -56,7 +56,7 @@ def is_configured() -> bool:
     """Check if the user has completed setup."""
     if not CONFIG_FILE.exists():
         return False
-    config = yaml.safe_load(CONFIG_FILE.read_text()) or {}
+    config = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
     return bool(config.get("api_key"))
 
 
@@ -64,7 +64,7 @@ def get_config() -> dict:
     """Load current config, or empty dict."""
     if not CONFIG_FILE.exists():
         return {}
-    return yaml.safe_load(CONFIG_FILE.read_text()) or {}
+    return yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
 
 
 def run_setup():
@@ -183,7 +183,8 @@ def save_config(config: dict):
     merged = _merge_config(existing, config)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(
-        yaml.dump(merged, default_flow_style=False, allow_unicode=True)
+        yaml.dump(merged, default_flow_style=False, allow_unicode=True),
+        encoding="utf-8",
     )
 
 

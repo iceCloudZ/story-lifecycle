@@ -405,6 +405,15 @@ class ConfirmDialog(ModalScreen):
         self.dismiss(event.button.id == "btn-confirm-yes")
 
 
+class LoadingScreen(ModalScreen):
+    """加载中弹窗 — 显示 spinner 等待异步操作完成。"""
+
+    def compose(self) -> ComposeResult:
+        yield Static("[bold cyan]正在从 TAPD 拉取待办...[/]", id="loading-text")
+
+    BINDINGS = []
+
+
 class InboxScreen(ModalScreen):
     """待办收件箱 — 显示外部平台拉取的待办条目。"""
 
@@ -429,18 +438,22 @@ class InboxScreen(ModalScreen):
                 yield Button("取消", variant="default", id="btn-inbox-cancel")
 
     def on_mount(self) -> None:
-        self._render()
+        self._refresh_list()
 
-    def _render(self):
-        lines = []
+    def _refresh_list(self):
+        from rich.text import Text
+
+        lines: list[Text] = []
         for i, item in enumerate(self._items):
             check = "✓" if i in self._selected else " "
             cursor = ">" if i == self._cursor else " "
-            type_tag = "[需求]" if item.item_type == "requirement" else "[Bug]"
-            lines.append(
-                f"  {cursor} [{check}] {type_tag} {item.title}  ({item.source})"
+            type_tag = "需求" if item.item_type == "requirement" else "Bug"
+            display_id = item.extra.get("short_id", item.id) if item.extra else item.id
+            line = Text(
+                f"  {cursor} [{check}] [{type_tag}] {display_id}  {item.title}  ({item.source})"
             )
-        self.query_one("#inbox-list", Static).update("\n".join(lines))
+            lines.append(line)
+        self.query_one("#inbox-list", Static).update(Text("\n").join(lines))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-inbox-confirm":
@@ -461,24 +474,24 @@ class InboxScreen(ModalScreen):
     def key_up(self):
         if self._cursor > 0:
             self._cursor -= 1
-            self._render()
+            self._refresh_list()
 
     def key_down(self):
         if self._cursor < len(self._items) - 1:
             self._cursor += 1
-            self._render()
+            self._refresh_list()
 
     def key_space(self):
         if self._cursor in self._selected:
             self._selected.discard(self._cursor)
         else:
             self._selected.add(self._cursor)
-        self._render()
+        self._refresh_list()
 
     def key_enter(self):
         if self._cursor not in self._selected:
             self._selected.add(self._cursor)
-        self._render()
+        self._refresh_list()
         selected = [self._items[i] for i in sorted(self._selected)]
         self.dismiss([("normal", item) for item in selected])
 
@@ -503,9 +516,9 @@ class ParentSelectDialog(ModalScreen):
                 yield Button("取消", variant="default", id="btn-parent-cancel")
 
     def on_mount(self) -> None:
-        self._render()
+        self._refresh_list()
 
-    def _render(self):
+    def _refresh_list(self):
         lines = []
         for i, s in enumerate(self._stories):
             cursor = ">" if i == self._cursor else " "
@@ -517,12 +530,12 @@ class ParentSelectDialog(ModalScreen):
     def key_up(self):
         if self._cursor > 0:
             self._cursor -= 1
-            self._render()
+            self._refresh_list()
 
     def key_down(self):
         if self._cursor < len(self._stories) - 1:
             self._cursor += 1
-            self._render()
+            self._refresh_list()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-parent-confirm" and self._stories:
@@ -1266,88 +1279,99 @@ class StoryBoardApp(App):
             self.notify(f"来源 {source_name} 不可用", severity="error")
             return
 
-        try:
-            items = source.fetch_pending()
-            items = [i for i in items if not db.find_by_source_id(i.source, i.id)]
-        except Exception as e:
-            self.notify(f"获取待办失败: {e}", severity="error")
-            return
+        loading = LoadingScreen()
+        self.push_screen(loading)
 
-        if not items:
-            self.notify("没有新的待办")
-            return
-
-        def _on_inbox_result(result):
-            if not result:
+        def _do_fetch():
+            try:
+                items = source.fetch_pending()
+                items = [i for i in items if not db.find_by_source_id(i.source, i.id)]
+            except Exception as e:
+                self.call_from_thread(loading.dismiss)
+                self.call_from_thread(
+                    self.notify, f"获取待办失败: {e}", severity="error"
+                )
                 return
-            from ..orchestrator.service import create_story_from_source
+            self.call_from_thread(loading.dismiss)
+            if not items:
+                self.call_from_thread(self.notify, "没有新的待办")
+                return
+            screen = InboxScreen(items)
+            self.call_from_thread(self.push_screen, screen, self._on_inbox_result)
 
-            for entry in result:
-                try:
-                    if isinstance(entry, tuple) and len(entry) == 2:
-                        mode, item = entry
-                    else:
-                        mode, item = "normal", entry
-                    use_ai_prd = mode == "ai_prd"
-                    r = create_story_from_source(
-                        item, auto_start=True, generate_ai_prd=use_ai_prd
+        import threading
+
+        t = threading.Thread(target=_do_fetch, daemon=True)
+        t.start()
+
+    def _on_inbox_result(self, result):
+        if not result:
+            return
+        from ..orchestrator.service import create_story_from_source
+
+        for entry in result:
+            try:
+                if isinstance(entry, tuple) and len(entry) == 2:
+                    mode, item = entry
+                else:
+                    mode, item = "normal", entry
+                use_ai_prd = mode == "ai_prd"
+                r = create_story_from_source(
+                    item, auto_start=True, generate_ai_prd=use_ai_prd
+                )
+                if r.status == "created":
+                    label = "AI增强PRD" if use_ai_prd else "已创建"
+                    self.notify(f"{label}: {r.story_key}")
+                elif r.status == "need_manual_select":
+                    from ..orchestrator.service import create_sub_story
+
+                    active = [s for s in self.stories if not s.get("parent_key")]
+
+                    def _on_parent_selected(parent_key):
+                        if parent_key == "":
+                            return  # Cancel
+                        if parent_key is None:
+                            # Standalone
+                            r2 = create_story_from_source(
+                                item,
+                                auto_start=True,
+                                generate_ai_prd=use_ai_prd,
+                                force_standalone=True,
+                            )
+                            if r2.status == "created":
+                                self.notify(f"已创建独立故事: {r2.story_key}")
+                        else:
+                            from ..sources.bug_providers import (
+                                fetch_bug_content,
+                                format_bug_context,
+                            )
+                            from ..orchestrator.graph import start_story_async
+                            from ..db import models as db
+
+                            bug_ctx = fetch_bug_content(item)
+                            bug_desc = format_bug_context(bug_ctx)
+                            sub_key = create_sub_story(
+                                parent_key=parent_key,
+                                sub_type="bug-fix",
+                                description=bug_desc,
+                            )
+                            if sub_key:
+                                db.update_story(
+                                    sub_key,
+                                    source_type=item.source,
+                                    source_id=item.id,
+                                )
+                                start_story_async(sub_key)
+                                self.notify(f"已创建子故事: {sub_key}")
+
+                    self.push_screen(
+                        ParentSelectDialog(item.title, active), _on_parent_selected
                     )
-                    if r.status == "created":
-                        label = "AI增强PRD" if use_ai_prd else "已创建"
-                        self.notify(f"{label}: {r.story_key}")
-                    elif r.status == "need_manual_select":
-                        from ..orchestrator.service import create_sub_story
-
-                        active = [s for s in self.stories if not s.get("parent_key")]
-
-                        def _on_parent_selected(parent_key):
-                            if parent_key == "":
-                                return  # Cancel
-                            if parent_key is None:
-                                # Standalone
-                                r2 = create_story_from_source(
-                                    item,
-                                    auto_start=True,
-                                    generate_ai_prd=use_ai_prd,
-                                    force_standalone=True,
-                                )
-                                if r2.status == "created":
-                                    self.notify(f"已创建独立故事: {r2.story_key}")
-                            else:
-                                from ..sources.bug_providers import (
-                                    fetch_bug_content,
-                                    format_bug_context,
-                                )
-                                from ..orchestrator.graph import start_story_async
-                                from ..db import models as db
-
-                                bug_ctx = fetch_bug_content(item)
-                                bug_desc = format_bug_context(bug_ctx)
-                                sub_key = create_sub_story(
-                                    parent_key=parent_key,
-                                    sub_type="bug-fix",
-                                    description=bug_desc,
-                                )
-                                if sub_key:
-                                    db.update_story(
-                                        sub_key,
-                                        source_type=item.source,
-                                        source_id=item.id,
-                                    )
-                                    start_story_async(sub_key)
-                                    self.notify(f"已创建子故事: {sub_key}")
-
-                        self.push_screen(
-                            ParentSelectDialog(item.title, active), _on_parent_selected
-                        )
-                    else:
-                        self.notify(f"创建失败: {r.error}", severity="error")
-                except Exception as e:
-                    self.notify(f"创建失败: {e}", severity="error")
-            self.refresh_stories()
-
-        screen = InboxScreen(items)
-        self.push_screen(screen, _on_inbox_result)
+                else:
+                    self.notify(f"创建失败: {r.error}", severity="error")
+            except Exception as e:
+                self.notify(f"创建失败: {e}", severity="error")
+        self.refresh_stories()
 
     def action_help(self):
         self._show_detail = True

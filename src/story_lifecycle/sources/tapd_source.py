@@ -15,6 +15,8 @@ class TapdSource(StorySource):
             workspace_id=config.get("workspace_id", ""),
         )
         self.owner = config.get("owner", "")
+        if self.owner and not self.owner.endswith(";"):
+            self.owner += ";"
         self.story_status_filter = config.get(
             "story_status", "open,progressing,reopened"
         )
@@ -24,29 +26,57 @@ class TapdSource(StorySource):
 
     def fetch_pending(self) -> list[SourceItem]:
         items = []
-        items.extend(self._fetch_stories())
-        items.extend(self._fetch_bugs())
+        if self.story_status_filter:
+            items.extend(self._fetch_stories())
+        if self.bug_status_filter:
+            items.extend(self._fetch_bugs())
         return items
 
     def _fetch_stories(self) -> list[SourceItem]:
-        raw_list = self._api.get_stories(
-            {
+        seen_ids: set[str] = set()
+        results: list[SourceItem] = []
+        statuses = [s.strip() for s in self.story_status_filter.split(",") if s.strip()]
+        if not statuses or "*" in statuses:
+            statuses = [None]  # single pass without status filter
+        for status in statuses:
+            params = {
                 "entity_type": "stories",
                 "limit": 20,
                 "owner": self.owner,
-                "status": self.story_status_filter,
+                "parent_id": "0",
             }
-        )
-        return [self._parse_story(r) for r in raw_list]
+            if status:
+                params["status"] = status
+            raw_list = self._api.get_stories(params)
+            for r in raw_list:
+                flat = r.get("Story", r)
+                item = self._parse_story(flat)
+                if item.id not in seen_ids:
+                    seen_ids.add(item.id)
+                    results.append(item)
+        return results
 
     def _fetch_bugs(self) -> list[SourceItem]:
-        raw_list = self._api.get_bugs(
-            {
+        seen_ids: set[str] = set()
+        results: list[SourceItem] = []
+        statuses = [s.strip() for s in self.bug_status_filter.split(",") if s.strip()]
+        if not statuses or "*" in statuses:
+            statuses = [None]  # single pass without status filter
+        for status in statuses:
+            params = {
                 "limit": 20,
-                "status": self.bug_status_filter,
+                "owner": self.owner,
             }
-        )
-        return [self._parse_bug(r) for r in raw_list]
+            if status:
+                params["status"] = status
+            raw_list = self._api.get_bugs(params)
+            for r in raw_list:
+                flat = r.get("Bug", r)
+                item = self._parse_bug(flat)
+                if item.id not in seen_ids:
+                    seen_ids.add(item.id)
+                    results.append(item)
+        return results
 
     def get_detail(self, item_id: str) -> SourceItem | None:
         if item_id.startswith("bug_"):
@@ -77,8 +107,15 @@ class TapdSource(StorySource):
             return False
 
     def _parse_story(self, raw: dict) -> SourceItem:
+        full_id = str(raw.get("id", ""))
+        ws_id = str(self._api.workspace_id)
+        short_id = (
+            full_id[len(ws_id) + 3 :].lstrip("0")
+            if len(full_id) > len(ws_id) + 3
+            else full_id
+        )
         return SourceItem(
-            id=str(raw.get("id", "")),
+            id=full_id,
             source="tapd",
             item_type="requirement",
             title=raw.get("name", ""),
@@ -88,6 +125,7 @@ class TapdSource(StorySource):
             status=raw.get("status", ""),
             parent_id=None,
             extra={
+                "short_id": short_id,
                 "category": raw.get("category_name", ""),
                 "iteration_id": raw.get("iteration_id", ""),
             },
