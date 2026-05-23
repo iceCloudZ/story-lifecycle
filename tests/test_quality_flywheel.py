@@ -779,3 +779,127 @@ def test_quality_flywheel_e2e(tmp_path):
     )
     assert "Graph routing changes require path-level assertions" in packet_s3
     assert "Router assertions must include retry count" in packet_s3
+
+
+def test_derive_relevance_tags(tmp_path):
+    """_derive_relevance_tags should extract tags from story context and DB."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.nodes import _derive_relevance_tags
+
+    # Create story with source_type and sub_type in DB
+    db.upsert_story(
+        "S1",
+        title="Test story",
+        workspace=str(tmp_path),
+        current_stage="design",
+    )
+    db.update_story("S1", source_type="tapd", sub_type="requirement")
+
+    state = {
+        "story_key": "S1",
+        "current_stage": "design",
+        "profile": "minimal",
+        "context": {
+            "affected_modules": ["orchestrator.graph", "orchestrator.nodes"],
+            "touched_paths": ["orchestrator/nodes.py", "orchestrator/graph.py"],
+            "category": "routing",
+        },
+    }
+
+    tags = _derive_relevance_tags(state, "design")
+
+    assert "design" in tags
+    assert "orchestrator.graph" in tags
+    assert "orchestrator.nodes" in tags
+    assert "orchestrator" in tags  # extracted from touched_paths
+    assert "routing" in tags
+    assert "minimal" in tags
+    assert "tapd" in tags
+    assert "requirement" in tags
+
+
+def test_derive_relevance_tags_handles_string_modules(tmp_path):
+    """_derive_relevance_tags should handle affected_modules as a single string."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.nodes import _derive_relevance_tags
+
+    db.upsert_story(
+        "S2", title="test", workspace=str(tmp_path), current_stage="implement"
+    )
+
+    state = {
+        "story_key": "S2",
+        "current_stage": "implement",
+        "context": {"affected_modules": "db.models"},
+    }
+
+    tags = _derive_relevance_tags(state, "implement")
+    assert "db.models" in tags
+
+
+def test_build_quality_packet_relevance_filtering(tmp_path):
+    """build_quality_packet with relevant_tags should filter patterns, without should show all."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.quality import (
+        build_quality_packet,
+        propose_learned_pattern,
+        approve_pattern,
+        activate_pattern,
+    )
+
+    # Create two patterns for different domains
+    p1 = propose_learned_pattern(
+        "S1",
+        pattern="Graph routing rules",
+        applies_to=["orchestrator.graph"],
+        rule="Assert path behavior",
+        confidence="high",
+    )
+    approve_pattern(p1)
+    activate_pattern(p1)
+
+    p2 = propose_learned_pattern(
+        "S1",
+        pattern="DB migration rules",
+        applies_to=["db.models"],
+        rule="Test rollback",
+        confidence="high",
+    )
+    approve_pattern(p2)
+    activate_pattern(p2)
+
+    # Without tags → all active patterns shown
+    packet_all = build_quality_packet("S1", "implement")
+    assert "Graph routing rules" in packet_all
+    assert "DB migration rules" in packet_all
+
+    # With orchestrator tags → only graph pattern shown
+    packet_filtered = build_quality_packet(
+        "S1", "implement", relevant_tags=["orchestrator.graph"]
+    )
+    assert "Graph routing rules" in packet_filtered
+    assert "DB migration rules" not in packet_filtered
+
+    # With db tags → only db pattern shown
+    packet_db = build_quality_packet("S1", "implement", relevant_tags=["db.models"])
+    assert "DB migration rules" in packet_db
+    assert "Graph routing rules" not in packet_db
+
+    # No overlap → no patterns
+    packet_none = build_quality_packet("S1", "implement", relevant_tags=["frontend"])
+    assert "Relevant Learned Patterns:" not in packet_none

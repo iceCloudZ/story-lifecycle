@@ -981,17 +981,43 @@ def _derive_relevance_tags(state: StoryState, stage: str) -> list[str]:
     """Derive relevance tags from story context for pattern matching."""
     tags = [stage]
     ctx = state.get("context", {})
+
+    # Affected modules
     modules = ctx.get("affected_modules", [])
     if isinstance(modules, list):
         tags.extend(modules)
     elif isinstance(modules, str):
         tags.append(modules)
+
+    # Touched file paths → derive module tags
+    paths = ctx.get("touched_paths", [])
+    if isinstance(paths, list):
+        for p in paths:
+            if isinstance(p, str) and "/" in p:
+                tags.append(p.split("/")[0])
+            elif isinstance(p, str):
+                tags.append(p)
+
     category = ctx.get("category")
     if category:
         tags.append(category)
     profile = state.get("profile", "")
     if profile:
         tags.append(profile)
+
+    # Source type & sub-type from DB story record
+    try:
+        story = db.get_story(state["story_key"])
+        if story:
+            source_type = story.get("source_type")
+            if source_type:
+                tags.append(source_type)
+            sub_type = story.get("sub_type")
+            if sub_type:
+                tags.append(sub_type)
+    except Exception:
+        pass
+
     return tags
 
 

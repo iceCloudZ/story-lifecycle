@@ -327,7 +327,18 @@ async def get_patterns(status: str = "active"):
 
 @app.put("/api/patterns/{pattern_id}/approve")
 async def approve_pattern_endpoint(pattern_id: str):
+    from fastapi import HTTPException
+
     from .quality import approve_pattern, activate_pattern
+
+    p = db.get_learned_pattern(pattern_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail=f"Pattern not found: {pattern_id}")
+    if p["status"] != "proposed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pattern {pattern_id} is '{p['status']}', must be 'proposed'",
+        )
 
     approve_pattern(pattern_id)
     activate_pattern(pattern_id)
@@ -336,7 +347,18 @@ async def approve_pattern_endpoint(pattern_id: str):
 
 @app.put("/api/patterns/{pattern_id}/reject")
 async def reject_pattern_endpoint(pattern_id: str):
+    from fastapi import HTTPException
+
     from .quality import reject_pattern
+
+    p = db.get_learned_pattern(pattern_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail=f"Pattern not found: {pattern_id}")
+    if p["status"] != "proposed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pattern {pattern_id} is '{p['status']}', must be 'proposed'",
+        )
 
     reject_pattern(pattern_id)
     return {"status": "rejected"}
