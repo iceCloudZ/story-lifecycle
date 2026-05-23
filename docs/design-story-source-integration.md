@@ -108,6 +108,110 @@ def get_available_sources() -> list[str]:
     return list(_registry.keys())
 ```
 
+### 3.4 Bug 父故事解析（BugParentResolver）
+
+Bug 创建为子故事时需要知道关联哪个父故事。不同团队的关联方式不同，需要独立抽象。
+
+```python
+class BugParentResolver(ABC):
+    """Bug 关联父故事的解析策略"""
+
+    @abstractmethod
+    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> str | None:
+        """返回父故事的 story_key，或 None 表示无法自动关联。"""
+
+
+class TapdRelationResolver(BugParentResolver):
+    """TAPD 方式 — 通过 entity_relations API 查询 bug 关联的 story。"""
+
+    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> str | None:
+        if bug.extra.get("related_story_id"):
+            # TAPD bug 有关联 story ID
+            tapd_id = bug.extra["related_story_id"]
+            # 在已有故事中查找（通过 source_id 匹配）
+            for s in existing_stories:
+                ctx = json.loads(s.get("context_json") or "{}")
+                if ctx.get("source_id") == tapd_id:
+                    return s["story_key"]
+        return None
+
+
+class TitlePatternResolver(BugParentResolver):
+    """标题模式 — 从 bug 标题中提取 story ID，如 [STORY-123] 修复登录。"""
+
+    PATTERN = r'\[([A-Z]+-\d+)\]'
+
+    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> str | None:
+        import re
+        m = re.search(self.PATTERN, bug.title)
+        if not m:
+            return None
+        story_key = m.group(1)
+        for s in existing_stories:
+            if s["story_key"] == story_key:
+                return story_key
+        return None
+
+
+class ManualResolver(BugParentResolver):
+    """手动选择 — TUI 弹出故事列表让用户选择。"""
+
+    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> str | None:
+        # 返回特殊标记，TUI 层处理交互
+        return "__manual_select__"
+```
+
+### Resolver 链调度
+
+```python
+DEFAULT_BUG_PARENT_RESOLVERS = [
+    TapdRelationResolver(),    # 先查平台关联关系
+    TitlePatternResolver(),    # 再从标题提取
+    ManualResolver(),          # 兜底：让用户手动选
+]
+
+
+def resolve_bug_parent(
+    bug: SourceItem,
+    existing_stories: list[dict],
+    resolvers: list[BugParentResolver] | None = None,
+) -> str | None:
+    """解析 bug 应关联的父故事。"""
+    chain = resolvers or DEFAULT_BUG_PARENT_RESOLVERS
+    for resolver in chain:
+        parent_key = resolver.resolve(bug, existing_stories)
+        if parent_key:
+            return parent_key
+    return None
+```
+
+配置化：
+
+```yaml
+story_source:
+  bug_parent_resolver:
+    - tapd_relation     # 先查 TAPD 关联关系
+    - title_pattern     # 再从标题提取
+    - manual            # 兜底：手动选择
+```
+
+### TUI 手动选择交互
+
+当 resolver 返回 `__manual_select__` 时，TUI 弹出选择框：
+
+```
+┌─ 选择父故事 ─────────────────────────────────┐
+│ Bug: 登录后页面空白                            │
+│                                               │
+│ 关联到哪个故事？                               │
+│  > FEATURE-001  用户登录功能                   │
+│    FEATURE-002  支付模块重构                   │
+│    [不关联，创建独立故事]                       │
+│                                               │
+│              [确认]    [取消]                   │
+└───────────────────────────────────────────────┘
+```
+
 ## 4. TAPD 适配器
 
 ### 4.1 概览
@@ -466,15 +570,20 @@ def create_story_from_source(
         if prd_content and prd_content.markdown:
             prd_path = _save_prd(story_key, prd_content, workspace)
 
-    # Bug 类型 → 创建为子故事（如果有关联父需求）
-    if item.item_type == "bug" and item.parent_id:
-        parent = db.get_story(item.parent_id)
-        if parent:
+    # Bug 类型 → 解析父故事关联 → 创建子故事或独立故事
+    if item.item_type == "bug":
+        from ..sources.base import resolve_bug_parent
+        active_stories = db.list_active_stories()
+        parent_key = resolve_bug_parent(item, active_stories)
+
+        if parent_key and parent_key != "__manual_select__":
             return create_sub_story(
-                parent_key=item.parent_id,
+                parent_key=parent_key,
                 sub_type="bug-fix",
                 description=item.description,
             )
+        # parent_key == "__manual_select__" → TUI 层弹出选择框
+        # parent_key == None → 创建独立故事
 
     # 创建普通故事
     key = create_and_start_story(
