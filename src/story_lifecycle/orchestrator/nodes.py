@@ -794,6 +794,20 @@ def advance_node(state: StoryState) -> StoryState:
         db.log_stage(key, stage, "complete", "All stages done")
         state["status"] = "completed"
         notify("Story Lifecycle", f"Story {key}: 全部阶段完成")
+
+        # Sync status to external source (P1)
+        story = db.get_story(key)
+        if story:
+            source_type = story.get("source_type")
+            source_id = story.get("source_id")
+            if source_type and source_id:
+                try:
+                    from ..sources import get_source
+                    source = get_source(source_type)
+                    if source:
+                        source.sync_status(source_id, "completed")
+                except Exception as e:
+                    log.warning(f"Failed to sync status to {source_type}: {e}")
         return state
 
     db.log_stage(key, stage, "complete", f"Advanced to {next_stage}")
