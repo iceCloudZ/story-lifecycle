@@ -289,3 +289,54 @@ def get_terminal(story_key: str):
 @app.get("/api/session/health")
 def health():
     return {"status": "ok", "version": "0.1.0"}
+
+
+# -------- quality endpoints --------
+
+
+@app.get("/api/story/{story_key}/findings")
+async def get_findings(story_key: str):
+    findings = db.get_open_findings(story_key)
+    return {"findings": findings}
+
+
+@app.get("/api/story/{story_key}/quality")
+async def get_quality_status(story_key: str):
+    from .quality import check_dor, check_dod
+
+    findings = db.get_open_findings(story_key)
+    patterns = db.get_active_learned_patterns(limit=10)
+    verifications = db.get_recent_quality_events(
+        story_key, ["verification_result"], limit=3
+    )
+    return {
+        "findings": findings,
+        "learned_patterns": patterns,
+        "verifications": verifications,
+        "dor": check_dor(story_key, ""),
+        "dod": check_dod(story_key, ""),
+    }
+
+
+@app.get("/api/patterns")
+async def get_patterns(status: str = "active"):
+    if status == "proposed":
+        return {"patterns": db.get_proposed_learned_patterns()}
+    return {"patterns": db.get_active_learned_patterns()}
+
+
+@app.put("/api/patterns/{pattern_id}/approve")
+async def approve_pattern_endpoint(pattern_id: str):
+    from .quality import approve_pattern, activate_pattern
+
+    approve_pattern(pattern_id)
+    activate_pattern(pattern_id)
+    return {"status": "active"}
+
+
+@app.put("/api/patterns/{pattern_id}/reject")
+async def reject_pattern_endpoint(pattern_id: str):
+    from .quality import reject_pattern
+
+    reject_pattern(pattern_id)
+    return {"status": "rejected"}

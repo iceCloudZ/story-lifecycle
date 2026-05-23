@@ -457,3 +457,33 @@ def test_tui_quality_data_queryable(tmp_path):
     assert len(findings) == 1
     assert findings[0]["severity"] == "high"
     assert findings[0]["category"] == "routing"
+
+
+def test_api_quality_data_integration(tmp_path):
+    """API endpoints should wrap quality data queries."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.quality import record_finding
+
+    record_finding(
+        "S1",
+        "implement",
+        {
+            "source": "code_review",
+            "severity": "high",
+            "category": "routing",
+            "description": "advance_node missing error path",
+        },
+    )
+
+    # Verify DB queryable — API endpoints wrap these
+    findings = db.get_open_findings("S1")
+    assert len(findings) == 1
+
+    db.log_event("S1", "implement", "readiness_check", {"ready": True})
+    events = db.get_recent_quality_events("S1", ["readiness_check"])
+    assert len(events) == 1
