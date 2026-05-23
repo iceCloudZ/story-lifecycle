@@ -538,3 +538,106 @@ Review 内容:
         return llm_result
 
     return _fallback_result(_marker_summarize_review(review_markdown))
+
+
+# ── Debug Recovery Recommendation ──
+
+RECOVERY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "failure_type": {
+            "enum": [
+                "done_file_parse_error",
+                "missing_expected_outputs",
+                "dor_blocked",
+                "dod_blocked",
+                "tool_crash",
+                "review_retry_exhausted",
+                "unknown",
+            ]
+        },
+        "likely_cause": {"type": "string"},
+        "recommended_action": {
+            "enum": [
+                "retry",
+                "retry_with_prompt",
+                "fix_input",
+                "ask_human",
+                "defer",
+                "fail",
+            ]
+        },
+        "safe_to_retry": {"type": "boolean"},
+        "confidence": {"enum": ["high", "medium", "low"]},
+        "evidence": {"type": "array"},
+        "human_message": {"type": "string"},
+    },
+    "required": ["failure_type", "recommended_action", "safe_to_retry"],
+}
+
+
+def recommend_recovery(debug_packet: dict) -> SemanticResult:
+    """Recommend recovery action for a failed story based on debug data."""
+    fallback_data = {
+        "failure_type": "unknown",
+        "recommended_action": "ask_human",
+        "safe_to_retry": False,
+        "confidence": "low",
+        "evidence": [],
+        "human_message": "LLM 不可用，建议人工检查",
+    }
+
+    if not _get_api_key():
+        return SemanticResult(
+            ok=False,
+            mode="unavailable",  # type: ignore[arg-type]
+            confidence="low",  # type: ignore[arg-type]
+            data=fallback_data,
+            warnings=["LLM not configured"],
+        )
+
+    packet_str = json.dumps(debug_packet, ensure_ascii=False, default=str)[:3000]
+
+    prompt = f"""分析以下 story debug 数据，判断失败类型并推荐恢复动作。只输出 JSON。
+
+Debug 数据:
+{packet_str}
+
+输出格式:
+{{
+  "failure_type": "done_file_parse_error|missing_expected_outputs|dor_blocked|dod_blocked|tool_crash|review_retry_exhausted|unknown",
+  "likely_cause": "一句话说明",
+  "recommended_action": "retry|retry_with_prompt|fix_input|ask_human|defer|fail",
+  "safe_to_retry": true/false,
+  "confidence": "high|medium|low",
+  "evidence": ["证据1", "证据2"],
+  "human_message": "给操作者看的中文说明"
+}}
+
+规则:
+- failure_type=unknown 时，recommended_action 必须是 ask_human
+- safe_to_retry=false 时，不能建议 retry 或 retry_with_prompt
+- 只基于输入数据推断，不要编造证据"""
+
+    llm_result = _call_semantic_llm(prompt, RECOVERY_SCHEMA)
+
+    if llm_result["ok"] and llm_result["mode"] == "llm":
+        # Enforce safety rules
+        data = llm_result["data"]
+        if data.get("failure_type") == "unknown":
+            data["recommended_action"] = "ask_human"
+            data["safe_to_retry"] = False
+        if not data.get("safe_to_retry", True):
+            if data.get("recommended_action") in ("retry", "retry_with_prompt"):
+                data["recommended_action"] = "ask_human"
+        llm_result["data"] = data
+        return llm_result
+
+    fallback_data["human_message"] = "LLM 调用失败，建议人工检查"
+    return SemanticResult(
+        ok=False,
+        mode="error",  # type: ignore[arg-type]
+        confidence="low",  # type: ignore[arg-type]
+        data=fallback_data,
+        warnings=["LLM call failed"],
+    )

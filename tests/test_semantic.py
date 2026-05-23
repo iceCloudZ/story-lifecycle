@@ -448,3 +448,95 @@ def test_summarize_review_fallback():
 
     assert result["mode"] == "rule_fallback"
     assert "quality" in result["data"]
+
+
+# ── recommend_recovery ──
+
+
+def test_recommend_recovery_llm():
+    """LLM provides recovery recommendation for a debug packet."""
+    from story_lifecycle.orchestrator.semantic import recommend_recovery
+
+    llm_output = {
+        "failure_type": "done_file_parse_error",
+        "likely_cause": "AI 输出格式不符合 .story-done schema",
+        "recommended_action": "retry_with_prompt",
+        "safe_to_retry": True,
+        "confidence": "high",
+        "evidence": ["node_error: JSONDecodeError"],
+        "human_message": "AI 输出的 JSON 格式有问题，建议重试并在 prompt 中强调 JSON 格式要求",
+    }
+    fake = _make_fake_llm_response(llm_output)
+
+    debug_packet = {
+        "story": {
+            "storyKey": "TEST-001",
+            "status": "error",
+            "lastError": "JSONDecodeError",
+        },
+        "nodeErrors": [{"payload": {"error": "Expecting value: line 1 column 1"}}],
+    }
+
+    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
+        with patch("httpx.post", return_value=fake):
+            result = recommend_recovery(debug_packet)
+
+    assert result["ok"] is True
+    assert result["data"]["failure_type"] == "done_file_parse_error"
+    assert result["data"]["recommended_action"] == "retry_with_prompt"
+    assert result["data"]["safe_to_retry"] is True
+
+
+def test_recommend_recovery_unknown_defaults_to_ask_human():
+    """When LLM returns unknown failure type, action must be ask_human."""
+    from story_lifecycle.orchestrator.semantic import recommend_recovery
+
+    llm_output = {
+        "failure_type": "unknown",
+        "likely_cause": "unclear",
+        "recommended_action": "ask_human",
+        "safe_to_retry": False,
+        "confidence": "medium",
+        "evidence": [],
+        "human_message": "无法确定失败原因，建议人工检查",
+    }
+    fake = _make_fake_llm_response(llm_output)
+
+    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
+        with patch("httpx.post", return_value=fake):
+            result = recommend_recovery({"story": {"status": "error"}})
+
+    assert result["data"]["recommended_action"] == "ask_human"
+
+
+def test_recommend_recovery_enforces_unknown_ask_human():
+    """If LLM returns unknown failure_type but action != ask_human, override to ask_human."""
+    from story_lifecycle.orchestrator.semantic import recommend_recovery
+
+    llm_output = {
+        "failure_type": "unknown",
+        "likely_cause": "unclear",
+        "recommended_action": "retry",
+        "safe_to_retry": True,
+        "confidence": "low",
+        "evidence": [],
+        "human_message": "test",
+    }
+    fake = _make_fake_llm_response(llm_output)
+
+    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
+        with patch("httpx.post", return_value=fake):
+            result = recommend_recovery({"story": {"status": "error"}})
+
+    assert result["data"]["recommended_action"] == "ask_human"
+
+
+def test_recommend_recovery_fallback():
+    """Without LLM, returns conservative fallback."""
+    from story_lifecycle.orchestrator.semantic import recommend_recovery
+
+    with patch.dict("os.environ", {}, clear=True):
+        result = recommend_recovery({"story": {"status": "error"}})
+
+    assert result["mode"] == "unavailable"
+    assert result["data"]["recommended_action"] == "ask_human"
