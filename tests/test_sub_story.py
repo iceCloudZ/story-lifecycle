@@ -96,3 +96,79 @@ def test_create_sub_story(tmp_path):
         assert parent["status"] == "waiting_subtasks"
     finally:
         m.get_db_path = original
+
+
+def test_abort_sub_story(tmp_path):
+    """abort_story should mark story as aborted (not completed)."""
+    m, original = _init_fresh_db(tmp_path)
+    try:
+        m.create_story(story_key="FEAT-002", title="Parent", workspace=str(tmp_path))
+        m.create_story(
+            story_key="FEAT-002-sub-1",
+            title="Sub",
+            workspace=str(tmp_path),
+            parent_key="FEAT-002",
+            subtask_index=0,
+        )
+        m.update_story("FEAT-002-sub-1", sub_type="bug-fix")
+        m.update_story("FEAT-002", status="waiting_subtasks")
+
+        from story_lifecycle.orchestrator.service import abort_story
+        abort_story("FEAT-002-sub-1", "User abort")
+
+        child = m.get_story("FEAT-002-sub-1")
+        assert child["status"] == "aborted"
+        assert child["last_error"] == "User abort"
+    finally:
+        m.get_db_path = original
+
+
+def test_resume_parent(tmp_path):
+    """resume_parent should pause active subs and set parent to active."""
+    m, original = _init_fresh_db(tmp_path)
+    try:
+        m.create_story(story_key="FEAT-003", title="Parent", workspace=str(tmp_path))
+        m.create_story(
+            story_key="FEAT-003-sub-1",
+            title="Sub1",
+            workspace=str(tmp_path),
+            parent_key="FEAT-003",
+            subtask_index=0,
+        )
+        m.update_story("FEAT-003", status="waiting_subtasks")
+        m.update_story("FEAT-003-sub-1", status="active")
+
+        from story_lifecycle.orchestrator.service import resume_parent
+        resume_parent("FEAT-003", strategy="pause_subs")
+
+        parent = m.get_story("FEAT-003")
+        assert parent["status"] == "active"
+
+        child = m.get_story("FEAT-003-sub-1")
+        assert child["status"] == "paused"
+    finally:
+        m.get_db_path = original
+
+
+def test_resume_parent_abort_subs(tmp_path):
+    """resume_parent with abort_subs should abort all subs."""
+    m, original = _init_fresh_db(tmp_path)
+    try:
+        m.create_story(story_key="FEAT-004", title="Parent", workspace=str(tmp_path))
+        m.create_story(
+            story_key="FEAT-004-sub-1",
+            title="Sub1",
+            workspace=str(tmp_path),
+            parent_key="FEAT-004",
+            subtask_index=0,
+        )
+        m.update_story("FEAT-004", status="waiting_subtasks")
+        m.update_story("FEAT-004-sub-1", status="active")
+
+        from story_lifecycle.orchestrator.service import resume_parent
+        resume_parent("FEAT-004", strategy="abort_subs")
+
+        child = m.get_story("FEAT-004-sub-1")
+        assert child["status"] == "aborted"
+    finally:
+        m.get_db_path = original

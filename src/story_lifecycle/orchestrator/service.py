@@ -173,3 +173,65 @@ def create_sub_story(
         db.update_story(parent_key, status="waiting_subtasks")
 
     return story_key
+
+
+def abort_story(story_key: str, reason: str = "User abort"):
+    """Abort a story. Aborted stories don't count as 'completed'."""
+    s = db.get_story(story_key)
+    if not s:
+        raise ValueError(f"Story not found: {story_key}")
+
+    db.update_story(story_key, status="aborted", last_error=reason)
+    db.log_stage(story_key, "", "abort", reason)
+
+    # If this is a sub-story, check if parent can resume
+    if s.get("parent_key"):
+        _check_parent_auto_resume(s["parent_key"])
+
+
+def resume_parent(parent_key: str, strategy: str = "pause_subs"):
+    """Resume a parent from waiting_subtasks. Handles unfinished subs."""
+    parent = db.get_story(parent_key)
+    if not parent:
+        raise ValueError(f"Parent story not found: {parent_key}")
+    if parent["status"] != "waiting_subtasks":
+        raise ValueError("父故事不在等待子故事状态")
+
+    subs = db.get_sub_stories(parent_key)
+    active_subs = [s for s in subs if s["status"] in ("active", "paused", "blocked")]
+
+    if strategy == "pause_subs":
+        for sub in active_subs:
+            db.update_story(sub["story_key"], status="paused")
+            db.log_stage(sub["story_key"], "", "pause", "父故事恢复，子故事被暂停")
+    elif strategy == "abort_subs":
+        for sub in active_subs:
+            abort_story(sub["story_key"], "父故事恢复，子故事被中止")
+
+    db.update_story(parent_key, status="active")
+    db.log_stage(parent_key, "", "resume", "手动恢复")
+
+
+def _check_parent_auto_resume(parent_key: str):
+    """Check if all subs are done; if so, resume parent automatically."""
+    subs = db.get_sub_stories(parent_key)
+    terminal = {"completed", "aborted", "blocked"}
+    unfinished = [s for s in subs if s["status"] not in terminal]
+
+    if not unfinished:
+        import json as _json
+
+        db.update_story(parent_key, status="active")
+        summary = {
+            "total": len(subs),
+            "completed": [
+                {"story_key": s["story_key"], "type": s.get("sub_type")}
+                for s in subs if s["status"] == "completed"
+            ],
+            "aborted": [
+                {"story_key": s["story_key"], "type": s.get("sub_type")}
+                for s in subs if s["status"] == "aborted"
+            ],
+        }
+        db.update_context(parent_key, "sub_story_results", _json.dumps(summary, ensure_ascii=False))
+        db.log_event(parent_key, "", "subtasks_completed", summary)
