@@ -573,6 +573,11 @@ class StoryBoardApp(App):
     selected_index: reactive[int] = reactive(0)
     stories: reactive[list[dict]] = reactive([])
 
+    def __init__(self):
+        super().__init__()
+        self._source_enabled = False
+        self._pending_items: list = []
+
     def compose(self) -> ComposeResult:
         yield Static(id="header-bar")
         yield Static(id="plan-panel")
@@ -608,6 +613,18 @@ class StoryBoardApp(App):
         self.set_interval(5, self.refresh_stories)
         self.set_interval(3, self.watchdog_check)
         self.set_interval(0.08, self.tick_spinner)
+
+        # Source polling
+        try:
+            from ..cli.setup import get_config
+            _config = get_config()
+            _source_config = _config.get("story_source", {})
+            if _source_config.get("enabled"):
+                self._source_enabled = True
+                _poll_interval = _source_config.get("poll_interval", 300)
+                self.set_interval(_poll_interval, self._poll_source)
+        except Exception:
+            pass
 
     def _visible_stories(self) -> list[dict]:
         """Return stories visible after collapse filtering."""
@@ -1126,6 +1143,47 @@ class StoryBoardApp(App):
             run_setup()
             load_config_to_env()
         self.refresh_stories()
+
+    # ---- source polling ----
+
+    def _poll_source(self) -> None:
+        """Trigger background poll using Textual worker."""
+        if not self._source_enabled:
+            return
+        self.run_worker(self._do_poll, thread=True, exclusive=True, group="source_poll")
+
+    def _do_poll(self) -> None:
+        """Background thread: fetch pending items from source."""
+        from ..sources import get_source
+        from ..cli.setup import get_config
+        from ..db import models as db
+
+        try:
+            config = get_config()
+            source_name = config.get("story_source", {}).get("enabled", "")
+            source = get_source(source_name)
+            if not source:
+                return
+            items = source.fetch_pending()
+            new_items = [i for i in items if not db.find_by_source_id(i.source, i.id)]
+            if new_items:
+                self._pending_items = new_items
+                self.call_from_thread(self._update_inbox_notification, len(new_items))
+        except Exception:
+            pass
+
+    def _update_inbox_notification(self, count: int):
+        """Update header with inbox notification count."""
+        try:
+            header = self.query_one("#header-bar")
+            if header:
+                header.update(
+                    f"\n  [bold cyan]◆[/] [bold white]Story[/][bold cyan]Lifecycle[/] "
+                    f" [dim]│[/] [bold yellow]{count} 个新待办[/] "
+                    f"[dim]│[/] 按 [[i]] 查看"
+                )
+        except Exception:
+            pass
 
     def action_show_inbox(self):
         from ..sources import get_source
