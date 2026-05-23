@@ -20,7 +20,9 @@ def record_finding(story_key: str, stage: str, finding: dict) -> str:
         recommendation=finding.get("recommendation"),
         root_cause=finding.get("root_cause"),
     )
-    db.log_event(story_key, stage, "code_review_finding", {"finding_id": fid, **finding})
+    db.log_event(
+        story_key, stage, "code_review_finding", {"finding_id": fid, **finding}
+    )
     return fid
 
 
@@ -40,13 +42,18 @@ def update_finding_status(
         kwargs["verification_event_id"] = evidence["verification_event_id"]
     db.update_finding(finding_id, **kwargs)
 
-    db.log_event(story_key, old.get("stage", ""), "finding_status_changed", {
-        "finding_id": finding_id,
-        "from": old_status,
-        "to": status,
-        "reason": reason,
-        "evidence": evidence,
-    })
+    db.log_event(
+        story_key,
+        old.get("stage", ""),
+        "finding_status_changed",
+        {
+            "finding_id": finding_id,
+            "from": old_status,
+            "to": status,
+            "reason": reason,
+            "evidence": evidence,
+        },
+    )
 
 
 def record_verification(
@@ -57,25 +64,42 @@ def record_verification(
     commit: str | None = None,
 ) -> None:
     """Write verification_result event."""
-    db.log_event(story_key, stage, "verification_result", {
-        "commands": commands,
-        "covered_findings": covered_findings or [],
-        "commit": commit,
-        "timestamp": datetime.now().isoformat(),
-    })
+    db.log_event(
+        story_key,
+        stage,
+        "verification_result",
+        {
+            "commands": commands,
+            "covered_findings": covered_findings or [],
+            "commit": commit,
+            "timestamp": datetime.now().isoformat(),
+        },
+    )
 
 
-def record_story_intake(story_key: str, source: str, source_id: str, metadata: dict | None = None) -> None:
+def record_story_intake(
+    story_key: str, source: str, source_id: str, metadata: dict | None = None
+) -> None:
     """Record story intake event."""
-    db.log_event(story_key, "", "story_intake", {
-        "source": source,
-        "source_id": source_id,
-        "timestamp": datetime.now().isoformat(),
-        **(metadata or {}),
-    })
+    db.log_event(
+        story_key,
+        "",
+        "story_intake",
+        {
+            "source": source,
+            "source_id": source_id,
+            "timestamp": datetime.now().isoformat(),
+            **(metadata or {}),
+        },
+    )
 
 
-def build_quality_packet(story_key: str, stage: str, max_items: int = 5, relevant_tags: list[str] | None = None) -> str:
+def build_quality_packet(
+    story_key: str,
+    stage: str,
+    max_items: int = 5,
+    relevant_tags: list[str] | None = None,
+) -> str:
     """Build compact Quality Packet for prompt injection."""
     lines = [f"Quality Packet for {story_key}", ""]
 
@@ -84,7 +108,9 @@ def build_quality_packet(story_key: str, stage: str, max_items: int = 5, relevan
     if findings:
         lines.append("Open Findings:")
         for f in findings[:max_items]:
-            lines.append(f"- [{f['severity'].upper()}] {f['category']}: {f['description']}")
+            lines.append(
+                f"- [{f['severity'].upper()}] {f['category']}: {f['description']}"
+            )
             if f.get("recommendation"):
                 lines.append(f"  Fix: {f['recommendation']}")
         lines.append("")
@@ -109,7 +135,11 @@ def build_quality_packet(story_key: str, stage: str, max_items: int = 5, relevan
     if events:
         lines.append("Verification Baseline:")
         for e in events[:max_items]:
-            payload = json.loads(e.get("payload", "{}")) if isinstance(e.get("payload"), str) else e.get("payload", {})
+            payload = (
+                json.loads(e.get("payload", "{}"))
+                if isinstance(e.get("payload"), str)
+                else e.get("payload", {})
+            )
             for cmd in payload.get("commands", []):
                 lines.append(f"- {cmd.get('cmd', '?')}: {cmd.get('status', '?')}")
         lines.append("")
@@ -149,12 +179,17 @@ def propose_learned_pattern(
         source_findings=source_findings,
         confidence=confidence,
     )
-    db.log_event(story_key, "", "learned_pattern", {
-        "pattern_id": pid,
-        "pattern": pattern,
-        "status": "proposed",
-        "applies_to": applies_to,
-    })
+    db.log_event(
+        story_key,
+        "",
+        "learned_pattern",
+        {
+            "pattern_id": pid,
+            "pattern": pattern,
+            "status": "proposed",
+            "applies_to": applies_to,
+        },
+    )
     return pid
 
 
@@ -176,3 +211,66 @@ def deprecate_pattern(pattern_id: str) -> None:
 def reject_pattern(pattern_id: str) -> None:
     """Reject a proposed pattern. proposed -> rejected."""
     db.update_learned_pattern(pattern_id, status="rejected")
+
+
+def check_dor(story_key: str, stage: str) -> dict:
+    """Definition of Ready check. Returns {ready, missing, warnings}."""
+    story = db.get_story(story_key)
+    if not story:
+        return {"ready": False, "missing": ["story not found"], "warnings": []}
+
+    missing = []
+    warnings = []
+
+    if not story.get("title"):
+        missing.append("title")
+    if not story.get("source_type"):
+        warnings.append("no external source linked")
+
+    ctx = json.loads(story.get("context_json") or "{}")
+    if not ctx.get("prd_path"):
+        warnings.append("no PRD file")
+    if not ctx.get("acceptance_criteria"):
+        warnings.append("no acceptance criteria")
+    if not ctx.get("affected_modules"):
+        warnings.append("affected modules not declared")
+
+    ready = len(missing) == 0
+    db.log_event(
+        story_key,
+        stage,
+        "readiness_check",
+        {
+            "ready": ready,
+            "missing": missing,
+            "warnings": warnings,
+        },
+    )
+    return {"ready": ready, "missing": missing, "warnings": warnings}
+
+
+def check_dod(story_key: str, stage: str) -> dict:
+    """Definition of Done check. Returns {passed, blocking, warnings}."""
+    blocking = []
+    warnings = []
+
+    # No open high findings
+    open_high = db.get_open_findings(story_key, min_severity="high")
+    if open_high:
+        blocking.append(f"{len(open_high)} open high finding(s)")
+
+    # Verification result exists
+    verifications = db.get_recent_quality_events(
+        story_key, ["verification_result"], limit=1
+    )
+    if not verifications:
+        warnings.append("no verification result recorded")
+
+    story = db.get_story(story_key)
+    if story and story.get("sub_type") == "bug-fix":
+        ctx = json.loads(story.get("context_json") or "{}")
+        if not ctx.get("regression_tests_added"):
+            warnings.append("bugfix story missing regression tests")
+
+    passed = len(blocking) == 0
+    return {"passed": passed, "blocking": blocking, "warnings": warnings}

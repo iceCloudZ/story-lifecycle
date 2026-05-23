@@ -1,7 +1,5 @@
 import os
 
-import pytest
-
 
 def test_finding_lifecycle(tmp_path):
     """Finding should support full lifecycle: open -> accepted -> fixed -> verified -> learned."""
@@ -11,8 +9,11 @@ def test_finding_lifecycle(tmp_path):
     db.init_db()
 
     fid = db.create_finding(
-        story_key="S1", stage="implement", source="code_review",
-        severity="high", category="routing",
+        story_key="S1",
+        stage="implement",
+        source="code_review",
+        severity="high",
+        category="routing",
         description="advance_node missing error path",
         location="nodes.py:747",
         recommendation="route last_error to router",
@@ -47,12 +48,16 @@ def test_finding_lifecycle(tmp_path):
 def test_quality_packet_format(tmp_path):
     """Quality Packet should format findings compactly."""
     import os
+
     os.environ["STORY_HOME"] = str(tmp_path)
     from story_lifecycle.db import models as db
+
     db.init_db()
 
     from story_lifecycle.orchestrator.quality import (
-        record_finding, build_quality_packet, build_quality_checklist,
+        record_finding,
+        build_quality_packet,
+        build_quality_checklist,
     )
 
     # No findings → empty packet (just header)
@@ -60,13 +65,17 @@ def test_quality_packet_format(tmp_path):
     assert "Open Findings: none" in packet
 
     # Add finding
-    record_finding("S1", "implement", {
-        "source": "code_review",
-        "severity": "high",
-        "category": "routing",
-        "description": "advance_node missing error path",
-        "recommendation": "route last_error to router",
-    })
+    record_finding(
+        "S1",
+        "implement",
+        {
+            "source": "code_review",
+            "severity": "high",
+            "category": "routing",
+            "description": "advance_node missing error path",
+            "recommendation": "route last_error to router",
+        },
+    )
 
     packet = build_quality_packet("S1", "implement")
     assert "HIGH" in packet
@@ -85,18 +94,27 @@ def test_quality_packet_format(tmp_path):
 def test_finding_verification_reopen(tmp_path):
     """Verification failure should reopen a fixed finding."""
     import os
+
     os.environ["STORY_HOME"] = str(tmp_path)
     from story_lifecycle.db import models as db
+
     db.init_db()
 
-    from story_lifecycle.orchestrator.quality import record_finding, update_finding_status
+    from story_lifecycle.orchestrator.quality import (
+        record_finding,
+        update_finding_status,
+    )
 
-    fid = record_finding("S1", "implement", {
-        "source": "code_review",
-        "severity": "high",
-        "category": "routing",
-        "description": "advance_node missing error path",
-    })
+    fid = record_finding(
+        "S1",
+        "implement",
+        {
+            "source": "code_review",
+            "severity": "high",
+            "category": "routing",
+            "description": "advance_node missing error path",
+        },
+    )
 
     # Accept → Fix
     update_finding_status("S1", fid, "accepted")
@@ -116,8 +134,10 @@ def test_finding_verification_reopen(tmp_path):
 def test_severity_filtering(tmp_path):
     """get_open_findings should filter by minimum severity."""
     import os
+
     os.environ["STORY_HOME"] = str(tmp_path)
     from story_lifecycle.db import models as db
+
     db.init_db()
 
     db.create_finding("S1", "implement", "review", "high", "routing", "high finding")
@@ -139,21 +159,30 @@ def test_severity_filtering(tmp_path):
 def test_record_verification_event(tmp_path):
     """record_verification should log verification_result event."""
     import os
+
     os.environ["STORY_HOME"] = str(tmp_path)
     from story_lifecycle.db import models as db
+
     db.init_db()
 
     from story_lifecycle.orchestrator.quality import record_verification
 
-    record_verification("S1", "test", [
-        {"cmd": "pytest", "status": "passed"},
-        {"cmd": "ruff check", "status": "passed"},
-    ], covered_findings=["f1"], commit="abc123")
+    record_verification(
+        "S1",
+        "test",
+        [
+            {"cmd": "pytest", "status": "passed"},
+            {"cmd": "ruff check", "status": "passed"},
+        ],
+        covered_findings=["f1"],
+        commit="abc123",
+    )
 
     events = db.get_recent_quality_events("S1", ["verification_result"])
     assert len(events) == 1
     payload = events[0]["payload"]
     import json
+
     data = json.loads(payload) if isinstance(payload, str) else payload
     assert len(data["commands"]) == 2
     assert data["covered_findings"] == ["f1"]
@@ -163,18 +192,23 @@ def test_record_verification_event(tmp_path):
 def test_record_story_intake_event(tmp_path):
     """record_story_intake should log story_intake event."""
     import os
+
     os.environ["STORY_HOME"] = str(tmp_path)
     from story_lifecycle.db import models as db
+
     db.init_db()
 
     from story_lifecycle.orchestrator.quality import record_story_intake
 
-    record_story_intake("S1", "tapd", "1001234", {"has_prd": True, "item_type": "requirement"})
+    record_story_intake(
+        "S1", "tapd", "1001234", {"has_prd": True, "item_type": "requirement"}
+    )
 
     events = db.get_recent_quality_events("S1", ["story_intake"])
     assert len(events) == 1
     payload = events[0]["payload"]
     import json
+
     data = json.loads(payload) if isinstance(payload, str) else payload
     assert data["source"] == "tapd"
     assert data["source_id"] == "1001234"
@@ -184,8 +218,10 @@ def test_record_story_intake_event(tmp_path):
 def test_learned_pattern_lifecycle(tmp_path):
     """Learned pattern: proposed -> approved -> active -> deprecated."""
     import os
+
     os.environ["STORY_HOME"] = str(tmp_path)
     from story_lifecycle.db import models as db
+
     db.init_db()
 
     # Propose
@@ -235,8 +271,10 @@ def test_learned_pattern_lifecycle(tmp_path):
 def test_find_relevant_patterns(tmp_path):
     """find_relevant_patterns should match by applies_to overlap."""
     import os
+
     os.environ["STORY_HOME"] = str(tmp_path)
     from story_lifecycle.db import models as db
+
     db.init_db()
 
     # Create and activate two patterns
@@ -276,20 +314,31 @@ def test_find_relevant_patterns(tmp_path):
 def test_learned_pattern_workflow(tmp_path):
     """Full pattern workflow: propose from finding, approve, verify in packet."""
     import os
+
     os.environ["STORY_HOME"] = str(tmp_path)
     from story_lifecycle.db import models as db
+
     db.init_db()
     from story_lifecycle.orchestrator.quality import (
-        record_finding, propose_learned_pattern, approve_pattern,
-        activate_pattern, build_quality_packet,
+        record_finding,
+        propose_learned_pattern,
+        approve_pattern,
+        activate_pattern,
+        build_quality_packet,
     )
 
     # Record finding, mark learned
-    fid = record_finding("S1", "implement", {
-        "source": "code_review", "severity": "high", "category": "routing",
-        "description": "advance_node missing error path",
-        "recommendation": "route last_error to router",
-    })
+    fid = record_finding(
+        "S1",
+        "implement",
+        {
+            "source": "code_review",
+            "severity": "high",
+            "category": "routing",
+            "description": "advance_node missing error path",
+            "recommendation": "route last_error to router",
+        },
+    )
     db.update_finding(fid, status="learned")
 
     # Propose pattern from finding
@@ -308,10 +357,75 @@ def test_learned_pattern_workflow(tmp_path):
     activate_pattern(pid)
 
     # Packet for a different story with same tags should include pattern
-    packet = build_quality_packet("S2", "implement", relevant_tags=["orchestrator.nodes"])
+    packet = build_quality_packet(
+        "S2", "implement", relevant_tags=["orchestrator.nodes"]
+    )
     assert "Graph routing changes require path-level assertions" in packet
     assert "Assert event_counts" in packet
 
     # Packet without tags should also show active patterns
     packet2 = build_quality_packet("S3", "implement")
     assert "Graph routing changes require path-level assertions" in packet2
+
+
+def test_dod_blocks_on_open_high_findings(tmp_path):
+    """DoD gate should block when open high findings exist."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.quality import record_finding, check_dod
+
+    record_finding(
+        "S1",
+        "implement",
+        {
+            "source": "code_review",
+            "severity": "high",
+            "category": "routing",
+            "description": "advance_node missing error path",
+        },
+    )
+
+    result = check_dod("S1", "implement")
+    assert result["passed"] is False
+    assert any("high" in b.lower() for b in result["blocking"])
+
+
+def test_dod_passes_when_no_high_findings(tmp_path):
+    """DoD gate should pass when no high findings exist."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.quality import check_dod
+
+    result = check_dod("S1", "implement")
+    assert result["passed"] is True
+    assert result["blocking"] == []
+
+
+def test_dor_check(tmp_path):
+    """DoR should check title and source."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.quality import check_dor
+
+    db.upsert_story("S1", title="Test story", workspace="/tmp", current_stage="design")
+
+    result = check_dor("S1", "design")
+    assert result["ready"] is True  # title exists
+
+    # Story without title
+    db.upsert_story("S2", title="", workspace="/tmp", current_stage="design")
+    result2 = check_dor("S2", "design")
+    assert result2["ready"] is False
+    assert "title" in result2["missing"]

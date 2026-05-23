@@ -788,6 +788,17 @@ def advance_node(state: StoryState) -> StoryState:
         state["last_error"] = f"Missing expected outputs: {missing}"
         return state  # goes back to router
 
+    # DoD gate: block on open high findings
+    try:
+        from .quality import check_dod
+
+        dod = check_dod(key, stage)
+        if not dod["passed"]:
+            state["last_error"] = f"DoD gate failed: {dod['blocking']}"
+            return state
+    except Exception:
+        pass
+
     next_stage = resolve_next_stage(state)
     if not next_stage:
         db.update_story(key, current_stage=stage, status="completed")
@@ -803,6 +814,7 @@ def advance_node(state: StoryState) -> StoryState:
             if source_type and source_id:
                 try:
                     from ..sources import get_source
+
                     source = get_source(source_type)
                     if source:
                         source.sync_status(source_id, "completed")
@@ -975,15 +987,21 @@ Story: {state["story_key"]}
         if sub_type == "bug-fix":
             review_path = ctx.get("review_path")
             if review_path:
-                context_hints += f"\n- 上次评审: {review_path}\n  请关注评审中提到的问题。"
+                context_hints += (
+                    f"\n- 上次评审: {review_path}\n  请关注评审中提到的问题。"
+                )
         elif sub_type == "integration":
             spec_path = ctx.get("spec_path")
             if spec_path:
-                context_hints += f"\n- 接口文档: {spec_path}\n  请参考设计文档中的接口定义。"
+                context_hints += (
+                    f"\n- 接口文档: {spec_path}\n  请参考设计文档中的接口定义。"
+                )
         elif sub_type == "refinement":
             spec_path = ctx.get("spec_path")
             if spec_path:
-                context_hints += f"\n- 现有设计文档: {spec_path}\n  在此基础上进行补充和调整。"
+                context_hints += (
+                    f"\n- 现有设计文档: {spec_path}\n  在此基础上进行补充和调整。"
+                )
         elif sub_type == "redo":
             review_path = ctx.get("review_path")
             review_summary = ctx.get("review_summary", "")
@@ -1007,8 +1025,11 @@ Story: {state["story_key"]}
     checklist = ""
     try:
         from .quality import build_quality_packet, build_quality_checklist
+
         quality_packet = build_quality_packet(state["story_key"], stage)
-        empty_marker = f"Quality Packet for {state['story_key']}\n\nOpen Findings: none\n"
+        empty_marker = (
+            f"Quality Packet for {state['story_key']}\n\nOpen Findings: none\n"
+        )
         if quality_packet.strip() != empty_marker.strip():
             quality_section = f"## Quality Packet\n\n{quality_packet}"
         checklist = build_quality_checklist(state["story_key"], stage)

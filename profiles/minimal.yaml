@@ -35,3 +35,13 @@ stages:
     max_retries: 2
     expected_outputs: []
     next_default: []
+
+quality:
+  enabled: true
+  readiness_check: true
+  inject_quality_packet: true
+  inject_executor_checklist: true
+  block_on_open_high_findings: true
+  verification_commands:
+    - pytest
+    - ruff check src tests
