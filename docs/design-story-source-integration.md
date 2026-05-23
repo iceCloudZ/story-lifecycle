@@ -1,7 +1,7 @@
 # Story Source Integration 设计文档
 
 > 日期：2026-05-23
-> 状态：待评审
+> 状态：评审完成，已整合改进
 > 作者：zhaozihao
 
 ---
@@ -112,28 +112,38 @@ def get_available_sources() -> list[str]:
 
 Bug 创建为子故事时需要知道关联哪个父故事。不同团队的关联方式不同，需要独立抽象。
 
+> **评审改进**：原设计使用 `__manual_select__` 魔法字符串区分"需要手动选择"和"找到了父故事"。
+> 改为 `ResolveResult` dataclass，显式表达解析结果，避免字符串魔法值泄漏到 Service/TUI 层。
+
 ```python
+@dataclass
+class ResolveResult:
+    """Bug 父故事解析结果"""
+    parent_key: str | None     # 找到的父故事 key，None 表示无法自动关联
+    need_manual_select: bool   # True 表示需要 TUI 弹出选择框
+
+
 class BugParentResolver(ABC):
     """Bug 关联父故事的解析策略"""
 
     @abstractmethod
-    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> str | None:
-        """返回父故事的 story_key，或 None 表示无法自动关联。"""
+    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> ResolveResult | None:
+        """解析结果，返回 None 表示此 resolver 无法处理（跳过）。"""
 
 
 class TapdRelationResolver(BugParentResolver):
     """TAPD 方式 — 通过 entity_relations API 查询 bug 关联的 story。"""
 
-    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> str | None:
-        if bug.extra.get("related_story_id"):
-            # TAPD bug 有关联 story ID
-            tapd_id = bug.extra["related_story_id"]
-            # 在已有故事中查找（通过 source_id 匹配）
-            for s in existing_stories:
-                ctx = json.loads(s.get("context_json") or "{}")
-                if ctx.get("source_id") == tapd_id:
-                    return s["story_key"]
-        return None
+    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> ResolveResult | None:
+        if not bug.extra.get("related_story_id"):
+            return None  # 无法处理，跳过
+        tapd_id = bug.extra["related_story_id"]
+        for s in existing_stories:
+            ctx = json.loads(s.get("context_json") or "{}")
+            if ctx.get("source_id") == tapd_id:
+                return ResolveResult(parent_key=s["story_key"], need_manual_select=False)
+        # 有关联 ID 但找不到对应故事 → 需要手动选择
+        return ResolveResult(parent_key=None, need_manual_select=True)
 
 
 class TitlePatternResolver(BugParentResolver):
@@ -141,24 +151,23 @@ class TitlePatternResolver(BugParentResolver):
 
     PATTERN = r'\[([A-Z]+-\d+)\]'
 
-    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> str | None:
+    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> ResolveResult | None:
         import re
         m = re.search(self.PATTERN, bug.title)
         if not m:
-            return None
+            return None  # 无法处理，跳过
         story_key = m.group(1)
         for s in existing_stories:
             if s["story_key"] == story_key:
-                return story_key
-        return None
+                return ResolveResult(parent_key=story_key, need_manual_select=False)
+        return None  # 标题有 ID 但故事不存在，跳过让下一个 resolver 处理
 
 
 class ManualResolver(BugParentResolver):
     """手动选择 — TUI 弹出故事列表让用户选择。"""
 
-    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> str | None:
-        # 返回特殊标记，TUI 层处理交互
-        return "__manual_select__"
+    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> ResolveResult | None:
+        return ResolveResult(parent_key=None, need_manual_select=True)
 ```
 
 ### Resolver 链调度
@@ -175,14 +184,17 @@ def resolve_bug_parent(
     bug: SourceItem,
     existing_stories: list[dict],
     resolvers: list[BugParentResolver] | None = None,
-) -> str | None:
-    """解析 bug 应关联的父故事。"""
+) -> ResolveResult:
+    """解析 bug 应关联的父故事。短路逻辑：找到 parent_key 立即返回，need_manual_select=True 也立即返回。"""
     chain = resolvers or DEFAULT_BUG_PARENT_RESOLVERS
     for resolver in chain:
-        parent_key = resolver.resolve(bug, existing_stories)
-        if parent_key:
-            return parent_key
-    return None
+        result = resolver.resolve(bug, existing_stories)
+        if result is None:
+            continue  # 此 resolver 无法处理，跳过
+        if result.parent_key or result.need_manual_select:
+            return result
+    # 所有 resolver 都无法处理 → 创建独立故事
+    return ResolveResult(parent_key=None, need_manual_select=False)
 ```
 
 配置化：
@@ -197,7 +209,7 @@ story_source:
 
 ### TUI 手动选择交互
 
-当 resolver 返回 `__manual_select__` 时，TUI 弹出选择框：
+当 `ResolveResult.need_manual_select=True` 时，TUI 弹出选择框：
 
 ```
 ┌─ 选择父故事 ─────────────────────────────────┐
@@ -216,17 +228,19 @@ story_source:
 
 ### 4.1 概览
 
-TAPD 适配器使用已有的 `cli_tapd.py` CLI 工具，不需要额外引入 SDK。
+TAPD 适配器使用已有的 `cli_tapd.py`，通过**进程内 import** 调用（避免 subprocess 开销）。
 
 ```python
 # src/story_lifecycle/sources/tapd_source.py
 
 class TapdSource(StorySource):
-    """TAPD 故事来源 — 使用 cli_tapd.py"""
+    """TAPD 故事来源 — 进程内调用 cli_tapd 模块"""
 
-    CLI_PATH = "C:/Users/zzh58/.claude/scripts/cli_tapd.py"
-    WORKSPACE_ID = "44381896"
-    DEFAULT_OWNER = "赵子豪"
+    def __init__(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("cli_tapd", self.cli_path)
+        self._cli = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self._cli)
 ```
 
 ### 4.2 配置化
@@ -305,31 +319,34 @@ def sync_status(self, item_id: str, status: str):
         self._run_cli("update-story", {"id": item_id, "status": tapd_status})
 ```
 
-### 4.6 _run_cli — CLI 调用封装
+### 4.6 _call — 进程内调用封装
+
+> **评审改进**：原设计使用 `subprocess.run` 调用 CLI 脚本，每次起子进程开销大且阻塞 TUI。
+> 改为进程内 import cli_tapd 模块，直接调用函数，避免 Python 解释器重复启动。
 
 ```python
-def _run_cli(self, command: str, params: dict) -> list[dict]:
-    """调用 cli_tapd.py，返回解析后的 JSON。"""
-    import subprocess, json
-    cmd = [
-        "python", self.cli_path,
-        command,
-        "--workspace-id", self.workspace_id,
-        "--params", json.dumps(params, ensure_ascii=False),
-    ]
-    result = subprocess.run(
-        cmd, capture_output=True, text=True,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
-        timeout=30,
-    )
-    if result.returncode != 0:
-        log.warning(f"TAPD CLI error: {result.stderr}")
-        return []
+def _call(self, command: str, params: dict) -> list[dict]:
+    """进程内调用 cli_tapd 模块，返回解析后的数据。"""
+    import json
+    # cli_tapd 模块通过 importlib 已加载到 self._cli
+    # 直接调用对应函数，避免 subprocess 开销
     try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
+        func = getattr(self._cli, command)
+        result = func(
+            workspace_id=self.workspace_id,
+            params=json.dumps(params, ensure_ascii=False),
+        )
+        if isinstance(result, str):
+            return json.loads(result)
+        return result if isinstance(result, list) else []
+    except Exception as e:
+        log.warning(f"TAPD call error ({command}): {e}")
         return []
 ```
+
+> **注意**：如果 cli_tapd.py 不方便 import（如依赖 argparse 做了全局操作），
+> 可将其核心 API 请求逻辑提取为独立模块 `tapd_api.py`，CLI 入口只做参数解析后调用 API 模块。
+> TapdSource 直接 import `tapd_api` 模块即可。
 
 ## 5. 手动适配器（默认）
 
@@ -604,7 +621,9 @@ class FallbackBugProvider(BugContentProvider):
         )
 ```
 
-### Bug 内容链调度
+### Bug 内容聚合调度
+
+> **评审改进**：原设计使用短路责任链（正文成功则跳过评论），但正文和评论是互补信息，应该**聚合**而非二选一。
 
 ```python
 DEFAULT_BUG_CONTENT_PROVIDERS = [
@@ -617,15 +636,42 @@ DEFAULT_BUG_CONTENT_PROVIDERS = [
 def fetch_bug_content(
     bug: SourceItem,
     providers: list[BugContentProvider] | None = None,
-) -> BugContext | None:
-    """按优先级尝试各 BugContentProvider。"""
+) -> BugContext:
+    """聚合所有 Provider 的结果。正文和评论都是有效上下文，需要合并而非二选一。"""
     chain = providers or DEFAULT_BUG_CONTENT_PROVIDERS
+    combined = BugContext(
+        source_type="aggregated",
+        description=bug.title,
+        steps_to_reproduce="",
+        expected_behavior="",
+        actual_behavior="",
+        environment="",
+        screenshots=[],
+        logs="",
+        raw_markdown="",
+    )
+
     for provider in chain:
         if provider.can_handle(bug):
-            content = provider.fetch_content(bug)
-            if content:
-                return content
-    return None
+            partial = provider.fetch_content(bug)
+            if partial:
+                # 聚合：空字段用 provider 结果填充，非空字段追加
+                if not combined.steps_to_reproduce and partial.steps_to_reproduce:
+                    combined.steps_to_reproduce = partial.steps_to_reproduce
+                if not combined.expected_behavior and partial.expected_behavior:
+                    combined.expected_behavior = partial.expected_behavior
+                if not combined.actual_behavior and partial.actual_behavior:
+                    combined.actual_behavior = partial.actual_behavior
+                if not combined.environment and partial.environment:
+                    combined.environment = partial.environment
+                if not combined.logs and partial.logs:
+                    combined.logs = partial.logs
+                if partial.screenshots:
+                    combined.screenshots.extend(partial.screenshots)
+                if partial.raw_markdown:
+                    combined.raw_markdown += ("\n\n---\n\n" if combined.raw_markdown else "") + partial.raw_markdown
+
+    return combined
 ```
 
 ### Bug 上下文注入到子故事 Prompt
@@ -743,16 +789,17 @@ def create_story_from_source(
     if item.item_type == "bug":
         from ..sources.base import resolve_bug_parent
         active_stories = db.list_active_stories()
-        parent_key = resolve_bug_parent(item, active_stories)
+        result = resolve_bug_parent(item, active_stories)
 
-        if parent_key and parent_key != "__manual_select__":
+        if result.need_manual_select:
+            return {"need_manual_select": True, "bug": item}
+        if result.parent_key:
             return create_sub_story(
-                parent_key=parent_key,
+                parent_key=result.parent_key,
                 sub_type="bug-fix",
                 description=item.description,
             )
-        # parent_key == "__manual_select__" → TUI 层弹出选择框
-        # parent_key == None → 创建独立故事
+        # 无父故事 → 创建独立故事（继续往下执行）
 
     # 创建普通故事
     key = create_and_start_story(
@@ -862,18 +909,6 @@ if state["status"] == "completed":
 Binding("i", "show_inbox", "Inbox"),    # 打开待办收件箱
 ```
 
-### 7.4 收件箱状态标记
-
-故事创建后，来源条目标记为"已创建"，避免重复创建。标记存储在本地：
-
-```python
-# ~/.story-lifecycle/imported.json
-{
-    "1144381896001001234": {"story_key": "TAPD-001234", "imported_at": "2026-05-23T10:00:00"},
-    "bug_1144381896001009351": {"story_key": "TAPD-001234-sub-1", "imported_at": "2026-05-23T11:00:00"}
-}
-```
-
 ## 8. 轮询调度
 
 ### 8.1 TUI 内轮询
@@ -900,6 +935,7 @@ async def _poll_source(self):
     """后台轮询外部来源，发现新条目时显示通知。"""
     from ..sources import get_source
     from ..cli.setup import get_config
+    from ..db.models import get_db
 
     config = get_config()
     source_name = config.get("story_source", {}).get("enabled", "")
@@ -908,9 +944,9 @@ async def _poll_source(self):
         return
 
     items = source.fetch_pending()
-    # 过滤已导入的
-    imported = _load_imported()
-    new_items = [i for i in items if i.id not in imported]
+    # 通过 DB 查询已导入的 source_id，避免重复导入
+    db = get_db()
+    new_items = [i for i in items if not db.find_by_source_id(i.id)]
 
     if new_items:
         self._pending_items = new_items
@@ -962,7 +998,7 @@ Bug 不需要 PRD，直接用 bug 描述创建 bug-fix 子故事。
 
 ## 10. 数据模型
 
-### 10.1 来源映射
+### 10.1 来源映射 + 去重
 
 不需要新增 DB 表。来源信息存在 `context_json` 中：
 
@@ -974,13 +1010,21 @@ Bug 不需要 PRD，直接用 bug 描述创建 bug-fix 子故事。
 }
 ```
 
-### 10.2 已导入记录
+去重通过查询 `context_json` 中的 `source_id` 实现，不需要额外的 `imported.json` 文件：
 
-本地 JSON 文件，避免重复导入：
+```python
+# db/models.py 新增
+def find_by_source_id(self, source_id: str) -> dict | None:
+    """通过 source_id 查找已导入的故事（避免重复导入）。"""
+    rows = self._conn.execute(
+        "SELECT * FROM story WHERE context_json LIKE ?",
+        (f'%"source_id": "{source_id}"%',),
+    ).fetchall()
+    return dict(rows[0]) if rows else None
+```
 
-```
-~/.story-lifecycle/imported.json
-```
+> **评审改进**：原设计使用 `imported.json` 做去重，但这引入了额外的状态文件和同步问题。
+> 改为直接查询 DB 中 `context_json` 的 `source_id` 字段，单一数据源，无文件管理开销。
 
 ## 11. 实现范围与优先级
 
@@ -991,7 +1035,7 @@ Bug 不需要 PRD，直接用 bug 描述创建 bug-fix 子故事。
 3. Service 层 `create_story_from_source()`
 4. TUI 收件箱 `[i]` 按键 + 待办列表
 5. config.yaml 来源配置
-6. imported.json 去重
+6. DB 去重（find_by_source_id）
 
 ### P1 — 增强
 
@@ -1052,7 +1096,7 @@ src/story_lifecycle/
 | 1 | PRD 生成是同步还是异步？ | A) 创建前同步 B) 创建后异步 | 待定 |
 | 2 | Bug 关联父故事靠什么字段？ | A) TAPD 关联关系 B) 用户手动选 | A 优先，B 兜底 |
 | 3 | 多来源同时启用？ | A) 只启用一个 B) 可同时启用多个 | A — 简化实现 |
-| 4 | imported.json 清理策略？ | A) 永久保留 B) 定期清理 C) 按迭代清理 | 待定 |
+| 4 | ~~imported.json 清理策略？~~ | — | **已废弃** — 评审改为 DB 去重（find_by_source_id），无需管理额外文件 |
 | 5 | 自定义类型是否需要专属内容获取路径？ | A) 内容跟着来源走，不跟着类型走 B) 每个类型可配独立 Provider | **A** — 类型是标签，内容由 StorySource + item_type 决定。当前够用，但如果有场景需要（如 perf-tuning 需要拉 benchmark 数据），可能需要 B。待评审确认。 |
 | 6 | integration/refinement/redo 子故事来源？ | A) 全部手动创建 B) refinement 可从 TAPD story 变更检测 C) redo 从 review 评审结果自动触发 | 待定 — 变更检测和 review 自动触发留到后续迭代 |
 | 7 | 钉钉文档 P0 如何处理？ | A) 跳过，Fallback 兜底 B) web_reader MCP 尝试抓取 | A — P0 先跳过 |
