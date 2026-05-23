@@ -877,6 +877,26 @@ Story: {state["story_key"]}
 
     # Variable substitution
     ctx = state.get("context", {})
+
+    # Sub-story context injection
+    parent_key = None
+    current_story = db.get_story(state["story_key"])
+    if current_story:
+        parent_key = current_story.get("parent_key")
+    if parent_key:
+        parent_story = db.get_story(parent_key)
+        parent_title = parent_story.get("title", "") if parent_story else ""
+        sub_desc = ctx.get("sub_description", "")
+        sub_type = current_story.get("sub_type") or ""
+
+        sub_header = (
+            f"## 子任务上下文\n\n"
+            f"- **父故事**: {parent_key} — {parent_title}\n"
+            f"- **类型**: {sub_type}\n"
+            f"- **任务描述**: {sub_desc}\n\n"
+        )
+        template = sub_header + template
+
     has_prd = bool(ctx.get("prd_path"))
 
     # Get stage skill from profile
