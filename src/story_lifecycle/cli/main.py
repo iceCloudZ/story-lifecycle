@@ -150,7 +150,7 @@ def create(key, title, prd, profile, workspace, no_start, dry_run):
             state["context"]["prd_path"] = prd
         for stage_name, stage_cfg in stages.items():
             state["current_stage"] = stage_name
-            prompt = _render_prompt(stage_name, state)
+            prompt, _ = _render_prompt(stage_name, state)
             adapter = stage_cfg.get("cli", profile_data.get("cli", "claude"))
             model = stage_cfg.get("model", "sonnet")
             console.print(f"  [bold cyan]Stage: {stage_name}[/]")
@@ -178,6 +178,11 @@ def demo():
     from .demo import run_demo
 
     run_demo()
+
+
+from .seed_quality import seed_quality_group  # noqa: E402
+
+cli.add_command(seed_quality_group)
 
 
 def _run_board():

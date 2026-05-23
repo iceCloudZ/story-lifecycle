@@ -903,3 +903,600 @@ def test_build_quality_packet_relevance_filtering(tmp_path):
     # No overlap → no patterns
     packet_none = build_quality_packet("S1", "implement", relevant_tags=["frontend"])
     assert "Relevant Learned Patterns:" not in packet_none
+
+
+# -------- seed pipeline tests --------
+
+
+def test_load_manifest_valid():
+    """load_manifest should accept valid YAML manifests."""
+    from story_lifecycle.orchestrator.seed_pipeline import load_manifest
+
+    manifest = load_manifest(
+        {
+            "story_key": "STORY-001",
+            "title": "Test Story",
+            "type": "requirement",
+            "source_root": "/tmp",
+            "artifacts": [
+                {"path": "prd/001.md", "type": "prd"},
+            ],
+            "known_outcomes": ["outcome 1"],
+        }
+    )
+    assert manifest["story_key"] == "STORY-001"
+    assert manifest["type"] == "requirement"
+    assert len(manifest["artifacts"]) == 1
+
+
+def test_load_manifest_rejects_missing_story_key():
+    """load_manifest should reject manifests without story_key."""
+    from story_lifecycle.orchestrator.seed_pipeline import load_manifest
+
+    try:
+        load_manifest({"title": "Test", "type": "requirement", "artifacts": []})
+        assert False, "Expected ValueError"
+    except ValueError as e:
+        assert "story_key" in str(e)
+
+
+def test_load_manifest_rejects_empty_artifacts():
+    """load_manifest should reject manifests with empty artifacts."""
+    from story_lifecycle.orchestrator.seed_pipeline import load_manifest
+
+    try:
+        load_manifest(
+            {
+                "story_key": "S1",
+                "title": "Test",
+                "type": "requirement",
+                "artifacts": [],
+            }
+        )
+        assert False, "Expected ValueError"
+    except ValueError as e:
+        assert "artifacts" in str(e)
+
+
+def test_load_manifest_rejects_invalid_type():
+    """load_manifest should reject invalid story types."""
+    from story_lifecycle.orchestrator.seed_pipeline import load_manifest
+
+    try:
+        load_manifest(
+            {
+                "story_key": "S1",
+                "title": "Test",
+                "type": "unknown_type",
+                "artifacts": [{"path": "x.md", "type": "prd"}],
+            }
+        )
+        assert False, "Expected ValueError"
+    except ValueError as e:
+        assert "type" in str(e)
+
+
+def test_load_manifest_rejects_invalid_artifact_type():
+    """load_manifest should reject unknown artifact types."""
+    from story_lifecycle.orchestrator.seed_pipeline import load_manifest
+
+    try:
+        load_manifest(
+            {
+                "story_key": "S1",
+                "title": "Test",
+                "type": "requirement",
+                "artifacts": [{"path": "x.md", "type": "video"}],
+            }
+        )
+        assert False, "Expected ValueError"
+    except ValueError as e:
+        assert "type" in str(e) or "video" in str(e)
+
+
+def test_artifact_loader_missing_files(tmp_path):
+    """load_artifacts should raise FileNotFoundError listing all missing files."""
+    from story_lifecycle.orchestrator.seed_pipeline import load_artifacts
+
+    manifest = {
+        "story_key": "S1",
+        "source_root": str(tmp_path),
+        "artifacts": [
+            {"path": "missing1.md", "type": "prd"},
+            {"path": "missing2.md", "type": "plan"},
+        ],
+    }
+
+    try:
+        load_artifacts(manifest)
+        assert False, "Expected FileNotFoundError"
+    except FileNotFoundError as e:
+        msg = str(e)
+        assert "missing1.md" in msg
+        assert "missing2.md" in msg
+
+
+def test_artifact_loader_truncation(tmp_path):
+    """load_artifacts should truncate large files and set truncated=True."""
+    from story_lifecycle.orchestrator.seed_pipeline import load_artifacts
+
+    big_file = tmp_path / "big.md"
+    big_file.write_text("x" * 25000, encoding="utf-8")
+
+    manifest = {
+        "story_key": "S1",
+        "source_root": str(tmp_path),
+        "artifacts": [{"path": "big.md", "type": "prd"}],
+    }
+
+    artifacts = load_artifacts(manifest)
+    assert len(artifacts) == 1
+    assert artifacts[0]["truncated"] is True
+    assert len(artifacts[0]["content"]) <= 20_000
+
+
+def test_artifact_loader_empty_file(tmp_path):
+    """load_artifacts should handle empty files."""
+    from story_lifecycle.orchestrator.seed_pipeline import load_artifacts
+
+    (tmp_path / "empty.md").write_text("", encoding="utf-8")
+
+    manifest = {
+        "story_key": "S1",
+        "source_root": str(tmp_path),
+        "artifacts": [{"path": "empty.md", "type": "prd"}],
+    }
+
+    artifacts = load_artifacts(manifest)
+    assert len(artifacts) == 1
+    assert "(empty file)" in artifacts[0]["content"]
+
+
+def test_artifact_loader_absolute_path(tmp_path):
+    """load_artifacts should resolve absolute paths regardless of source_root."""
+    from story_lifecycle.orchestrator.seed_pipeline import load_artifacts
+
+    abs_file = tmp_path / "absolute.md"
+    abs_file.write_text("absolute content", encoding="utf-8")
+
+    manifest = {
+        "story_key": "S1",
+        "source_root": "/nonexistent",
+        "artifacts": [{"path": str(abs_file), "type": "prd"}],
+    }
+
+    artifacts = load_artifacts(manifest)
+    assert len(artifacts) == 1
+    assert "absolute content" in artifacts[0]["content"]
+
+
+def test_context_summarizer(tmp_path):
+    """summarize_context should produce compact text from artifacts."""
+    from story_lifecycle.orchestrator.seed_pipeline import summarize_context
+
+    artifacts = [
+        {
+            "path": "prd/001.md",
+            "type": "prd",
+            "content": "# PRD\n\n验收标准: xyz\n\n详细内容\n" * 10,
+            "truncated": False,
+        },
+        {
+            "path": "plan/001.md",
+            "type": "plan",
+            "content": "实现路径: abc\n风险: 低",
+            "truncated": False,
+        },
+    ]
+    manifest = {"known_outcomes": ["outcome A"]}
+
+    result = summarize_context(artifacts, manifest)
+    assert "prd" in result
+    assert "验收标准" in result
+    assert "实现路径" in result
+    assert "outcome A" in result
+    assert "---" in result  # section separator
+
+
+def test_schema_validator_rejects_broad_applies_to():
+    """validate_proposal should reject patterns with all-broad applies_to."""
+    from story_lifecycle.orchestrator.seed_pipeline import validate_proposal
+
+    llm_output = {
+        "story_key": "S1",
+        "summary": "test",
+        "risk_tags": [],
+        "proposed_findings": [],
+        "proposed_patterns": [
+            {
+                "pattern": "Test pattern",
+                "applies_to": ["backend"],
+                "rule": "Some rule",
+                "evidence": ["x.md"],
+                "confidence": "medium",
+            }
+        ],
+        "review_questions": [],
+    }
+
+    validated, warnings = validate_proposal(llm_output, {"story_key": "S1"})
+    assert len(validated["proposed_patterns"]) == 0
+    assert any("broad" in w.lower() or "rejected" in w.lower() for w in warnings)
+
+
+def test_schema_validator_accepts_narrow_tags():
+    """validate_proposal should accept patterns with at least one non-broad tag."""
+    from story_lifecycle.orchestrator.seed_pipeline import validate_proposal
+
+    llm_output = {
+        "story_key": "S1",
+        "summary": "test",
+        "risk_tags": [],
+        "proposed_findings": [],
+        "proposed_patterns": [
+            {
+                "pattern": "Test pattern",
+                "applies_to": ["backend", "hc-order"],
+                "rule": "Some rule",
+                "evidence": ["x.md"],
+                "confidence": "medium",
+            }
+        ],
+        "review_questions": [],
+    }
+
+    validated, _warnings = validate_proposal(llm_output, {"story_key": "S1"})
+    assert len(validated["proposed_patterns"]) == 1
+
+
+def test_schema_validator_rejects_missing_evidence():
+    """validate_proposal should reject findings without evidence."""
+    from story_lifecycle.orchestrator.seed_pipeline import validate_proposal
+
+    llm_output = {
+        "story_key": "S1",
+        "summary": "test",
+        "risk_tags": [],
+        "proposed_findings": [
+            {
+                "severity": "medium",
+                "category": "routing",
+                "description": "Missing evidence finding",
+                "evidence": [],
+                "confidence": "medium",
+            }
+        ],
+        "proposed_patterns": [],
+        "review_questions": [],
+    }
+
+    validated, warnings = validate_proposal(llm_output, {"story_key": "S1"})
+    assert len(validated["proposed_findings"]) == 0
+    assert any("evidence" in w.lower() for w in warnings)
+
+
+def test_schema_validator_count_limits():
+    """validate_proposal should enforce max findings/patterns limits."""
+    from story_lifecycle.orchestrator.seed_pipeline import validate_proposal
+
+    many_findings = []
+    for i in range(7):
+        many_findings.append(
+            {
+                "severity": "medium",
+                "category": "routing",
+                "description": f"Finding {i}",
+                "evidence": [f"file{i}.md"],
+                "confidence": "medium",
+            }
+        )
+
+    validated, warnings = validate_proposal(
+        {
+            "story_key": "S1",
+            "proposed_findings": many_findings,
+            "proposed_patterns": [],
+        },
+        {"story_key": "S1"},
+    )
+    assert len(validated["proposed_findings"]) == 5
+    assert any(
+        "truncated" in w.lower() or "beyond limit" in w.lower() for w in warnings
+    )
+
+
+def test_schema_validator_invalid_severity():
+    """validate_proposal should default invalid severity to 'medium'."""
+    from story_lifecycle.orchestrator.seed_pipeline import validate_proposal
+
+    llm_output = {
+        "story_key": "S1",
+        "summary": "test",
+        "risk_tags": [],
+        "proposed_findings": [
+            {
+                "severity": "critical",
+                "category": "routing",
+                "description": "Some finding",
+                "evidence": ["x.md"],
+                "confidence": "medium",
+            }
+        ],
+        "proposed_patterns": [],
+        "review_questions": [],
+    }
+
+    validated, warnings = validate_proposal(llm_output, {"story_key": "S1"})
+    assert validated["proposed_findings"][0]["severity"] == "medium"
+    assert any("severity" in w.lower() for w in warnings)
+
+
+def test_schema_validator_empty_proposals():
+    """validate_proposal should accept empty findings/patterns lists."""
+    from story_lifecycle.orchestrator.seed_pipeline import validate_proposal
+
+    llm_output = {
+        "story_key": "S1",
+        "summary": "",
+        "risk_tags": [],
+        "proposed_findings": [],
+        "proposed_patterns": [],
+        "review_questions": [],
+    }
+
+    validated, warnings = validate_proposal(llm_output, {"story_key": "S1"})
+    assert validated["proposed_findings"] == []
+    assert validated["proposed_patterns"] == []
+    assert len(warnings) == 0
+
+
+def test_schema_validator_story_key_mismatch():
+    """validate_proposal should warn and correct story_key mismatch."""
+    from story_lifecycle.orchestrator.seed_pipeline import validate_proposal
+
+    llm_output = {
+        "story_key": "WRONG-KEY",
+        "summary": "",
+        "risk_tags": [],
+        "proposed_findings": [],
+        "proposed_patterns": [],
+        "review_questions": [],
+    }
+
+    validated, warnings = validate_proposal(llm_output, {"story_key": "RIGHT-KEY"})
+    assert validated["story_key"] == "RIGHT-KEY"
+    assert any("mismatch" in w.lower() for w in warnings)
+
+
+def test_write_and_load_proposal_roundtrip(tmp_path):
+    """write_proposal + load_reviewed_proposal should roundtrip correctly."""
+    import json
+
+    from story_lifecycle.orchestrator.seed_pipeline import (
+        write_proposal,
+        load_reviewed_proposal,
+    )
+
+    proposal = {
+        "story_key": "S1",
+        "summary": "test summary",
+        "risk_tags": ["tag1"],
+        "proposed_findings": [],
+        "proposed_patterns": [],
+        "review_questions": ["Q1?"],
+    }
+    manifest = {
+        "story_key": "S1",
+        "title": "Test",
+        "type": "requirement",
+        "source_root": str(tmp_path),
+        "artifacts": [{"path": "x.md", "type": "prd"}],
+    }
+
+    filepath = write_proposal(proposal, manifest, str(tmp_path), dry_run=False)
+    assert filepath is not None
+    assert filepath.exists()
+
+    # Before review: should fail
+    try:
+        load_reviewed_proposal(str(filepath))
+        assert False, "Expected ValueError"
+    except ValueError as e:
+        assert "not been reviewed" in str(e)
+
+    # After review: should succeed
+    doc = json.loads(filepath.read_text(encoding="utf-8"))
+    doc["review_status"]["reviewed_at"] = "2026-05-23T00:00:00Z"
+    doc["review_status"]["findings_approved"] = [0]
+    filepath.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+
+    loaded = load_reviewed_proposal(str(filepath))
+    assert loaded["manifest"]["story_key"] == "S1"
+    assert loaded["review_status"]["reviewed_at"] is not None
+
+
+def test_dry_run_does_not_write(tmp_path):
+    """write_proposal with dry_run=True should return None and not write files."""
+    from story_lifecycle.orchestrator.seed_pipeline import write_proposal
+
+    proposal = {
+        "story_key": "S1",
+        "summary": "",
+        "risk_tags": [],
+        "proposed_findings": [],
+        "proposed_patterns": [],
+        "review_questions": [],
+    }
+    manifest = {
+        "story_key": "S1",
+        "title": "Test",
+        "type": "requirement",
+        "source_root": str(tmp_path),
+        "artifacts": [],
+    }
+
+    result = write_proposal(proposal, manifest, str(tmp_path), dry_run=True)
+    assert result is None
+    # No proposals dir should have been created
+    proposals_dir = tmp_path / ".story/quality-seed/proposals"
+    assert not proposals_dir.exists()
+
+
+def test_apply_writes_to_db(tmp_path):
+    """apply_reviewed should write approved findings/patterns to DB."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.seed_pipeline import apply_reviewed
+
+    proposal = {
+        "manifest": {"story_key": "S1"},
+        "review_status": {
+            "findings_approved": [0],
+            "patterns_approved": [0],
+            "findings_rejected": [1],
+            "patterns_rejected": [],
+            "reviewed_at": "2026-05-23T00:00:00Z",
+        },
+        "proposed_findings": [
+            {
+                "severity": "high",
+                "category": "routing",
+                "description": "Approved finding",
+                "evidence": ["x.md"],
+                "confidence": "medium",
+                "location": "nodes.py",
+                "root_cause": "test",
+                "recommendation": "fix it",
+            },
+            {
+                "severity": "low",
+                "category": "style",
+                "description": "Rejected finding",
+                "evidence": ["y.md"],
+                "confidence": "low",
+            },
+        ],
+        "proposed_patterns": [
+            {
+                "pattern": "Approved pattern",
+                "applies_to": ["orchestrator", "nodes"],
+                "rule": "Do X when Y",
+                "evidence": ["x.md"],
+                "confidence": "medium",
+            },
+        ],
+    }
+
+    result = apply_reviewed(proposal)
+    assert result["findings_written"] == 1
+    assert result["patterns_written"] == 1
+    assert result["errors"] == []
+
+    # Verify finding was written
+    open_findings = db.get_open_findings("S1")
+    assert len(open_findings) == 1
+    assert open_findings[0]["description"] == "Approved finding"
+
+    # Verify pattern was written as proposed
+    proposed = db.get_proposed_learned_patterns()
+    assert len(proposed) == 1
+    assert proposed[0]["pattern"] == "Approved pattern"
+    assert proposed[0]["status"] == "proposed"
+
+    # Verify pattern is NOT active
+    active = db.get_active_learned_patterns()
+    assert len(active) == 0
+
+
+def test_apply_only_writes_approved_indices(tmp_path):
+    """apply_reviewed should only write items at approved index positions."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.seed_pipeline import apply_reviewed
+
+    proposal = {
+        "manifest": {"story_key": "S2"},
+        "review_status": {
+            "findings_approved": [0],  # Only first of three
+            "patterns_approved": [],
+            "findings_rejected": [1, 2],
+            "patterns_rejected": [],
+            "reviewed_at": "2026-05-23T00:00:00Z",
+        },
+        "proposed_findings": [
+            {
+                "severity": "high",
+                "category": "routing",
+                "description": "F1",
+                "evidence": ["a.md"],
+                "confidence": "high",
+            },
+            {
+                "severity": "medium",
+                "category": "style",
+                "description": "F2",
+                "evidence": ["b.md"],
+                "confidence": "medium",
+            },
+            {
+                "severity": "low",
+                "category": "style",
+                "description": "F3",
+                "evidence": ["c.md"],
+                "confidence": "low",
+            },
+        ],
+        "proposed_patterns": [],
+    }
+
+    result = apply_reviewed(proposal)
+    assert result["findings_written"] == 1
+
+    open_findings = db.get_open_findings("S2")
+    assert len(open_findings) == 1
+    assert open_findings[0]["description"] == "F1"
+
+
+def test_apply_handles_out_of_range_index(tmp_path):
+    """apply_reviewed should report error for out-of-range approved indices."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.seed_pipeline import apply_reviewed
+
+    proposal = {
+        "manifest": {"story_key": "S3"},
+        "review_status": {
+            "findings_approved": [99],
+            "patterns_approved": [],
+            "findings_rejected": [],
+            "patterns_rejected": [],
+            "reviewed_at": "2026-05-23T00:00:00Z",
+        },
+        "proposed_findings": [
+            {
+                "severity": "high",
+                "category": "routing",
+                "description": "F1",
+                "evidence": ["a.md"],
+                "confidence": "high",
+            },
+        ],
+        "proposed_patterns": [],
+    }
+
+    result = apply_reviewed(proposal)
+    assert result["findings_written"] == 0
+    assert len(result["errors"]) == 1
+    assert "99" in result["errors"][0]
