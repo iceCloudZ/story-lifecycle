@@ -45,3 +45,6 @@ reviews:
 
 expect:
   status: completed
+  event_counts:
+    execute: 4
+    review: 2

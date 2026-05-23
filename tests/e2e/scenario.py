@@ -23,7 +23,7 @@ class Scenario:
         """Return the done-file payload for a given stage.
 
         execution_index is 1-based. If the stage uses `executions` array,
-        pick the element at execution_index-1 (clamped to last element).
+        pick the element at execution_index-1.
         Otherwise use the single `done` dict or `raw_done` string.
         """
         stage_cfg = self.stages.get(stage, {})
@@ -31,7 +31,11 @@ class Scenario:
         # Multiple executions defined
         if "executions" in stage_cfg:
             execs = stage_cfg["executions"]
-            idx = min(execution_index - 1, len(execs) - 1)
+            idx = execution_index - 1
+            if idx >= len(execs):
+                raise IndexError(
+                    f"No payload configured for stage {stage!r} execution {execution_index}"
+                )
             return execs[idx].get("done", {})
 
         # Raw done (for testing invalid JSON)
@@ -54,6 +58,10 @@ class Scenario:
         stage_reviews = self.reviews.get(stage, {})
         if "executions" in stage_reviews:
             execs = stage_reviews["executions"]
-            idx = min(execution_index - 1, len(execs) - 1)
+            idx = execution_index - 1
+            if idx >= len(execs):
+                raise IndexError(
+                    f"No review configured for stage {stage!r} execution {execution_index}"
+                )
             return execs[idx]
         return stage_reviews if stage_reviews else {"quality": "pass"}

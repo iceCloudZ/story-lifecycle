@@ -1,5 +1,3 @@
-import pytest
-
 from story_lifecycle.db import models as db
 
 

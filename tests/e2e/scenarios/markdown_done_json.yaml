@@ -22,3 +22,8 @@ stages:
 
 expect:
   status: completed
+  context:
+    spec_path: docs/spec.md
+    complexity: "S"
+  event_counts:
+    execute: 3

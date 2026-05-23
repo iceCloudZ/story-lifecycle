@@ -1,6 +1,7 @@
 """E2E runner — patches deps, runs graph, returns result for assertion."""
 
 from pathlib import Path
+import json
 from unittest.mock import patch
 
 from story_lifecycle.db import models as db
@@ -101,3 +102,24 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
     result = E2EResult(key, str(workspace))
     result.refresh()
     return result
+
+
+def assert_scenario_expect(result: E2EResult, expect: dict) -> None:
+    """Assert common scenario expectations against DB state and events."""
+    assert result.story is not None
+
+    if "status" in expect:
+        assert result.story["status"] == expect["status"]
+
+    if "last_error_contains" in expect:
+        assert expect["last_error_contains"] in (result.story.get("last_error") or "")
+
+    if "context" in expect:
+        ctx = json.loads(result.story.get("context_json") or "{}")
+        for key, value in expect["context"].items():
+            assert ctx.get(key) == value
+
+    if "event_counts" in expect:
+        event_types = [event["event_type"] for event in result.events]
+        for event_type, count in expect["event_counts"].items():
+            assert event_types.count(event_type) == count

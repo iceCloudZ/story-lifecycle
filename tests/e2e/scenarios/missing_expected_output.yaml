@@ -9,3 +9,6 @@ stages:
 
 expect:
   status: blocked
+  last_error_contains: "Missing expected outputs"
+  event_counts:
+    execute: 1

@@ -8,6 +8,7 @@ from typing import TypedDict, Optional
 
 import yaml
 
+from langgraph.errors import GraphInterrupt
 from langgraph.types import interrupt
 
 from ..db import models as db
@@ -253,6 +254,8 @@ def plan_stage_node(state: StoryState) -> StoryState:
             )
             plan_text = f"✓ {summary}  [dim]({tool_info})[/]"
             emit_plan_done(story_key, plan_text)
+            return state
+        except GraphInterrupt:
             return state
         except Exception as e:
             log.warning(f"Planner failed, falling back: {e}")
@@ -700,6 +703,16 @@ def router_node(state: StoryState) -> StoryState:
         return state
 
     # 4. Review-driven retry — have both error and review context
+    if str(state.get("last_error", "")).startswith("Missing expected outputs:"):
+        db.log_event(
+            key,
+            stage,
+            "router",
+            {"action": "fail", "reason": "missing_expected_outputs"},
+        )
+        state["_next_action"] = "fail"
+        return state
+
     if state.get("last_error") and state.get("review_summary"):
         count = state.get("execution_count", 0)
         if count < MAX_REVIEW_RETRIES:
@@ -750,7 +763,9 @@ def route_from_router(state: StoryState) -> str:
 
 
 def route_after_advance(state: StoryState) -> str:
-    """After advance: if completed go to END, otherwise loop back to plan_stage."""
+    """After advance: route errors back through router, complete to END, otherwise continue."""
+    if state.get("last_error"):
+        return "router"
     if state.get("status") == "completed":
         return "__end__"
     return "plan_stage"

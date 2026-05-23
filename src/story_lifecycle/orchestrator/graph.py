@@ -154,7 +154,7 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "advance",
         route_after_advance,
-        {"plan_stage": "plan_stage", "__end__": END},
+        {"plan_stage": "plan_stage", "router": "router", "__end__": END},
     )
     graph.add_edge("retry", "plan_stage")
     graph.add_edge("skip_stage", "advance")

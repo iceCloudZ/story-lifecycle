@@ -8,10 +8,12 @@ import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 from story_lifecycle.db import models as db
 from story_lifecycle.orchestrator import graph as graph_mod
 
-from .runner import run_scenario
+from .runner import assert_scenario_expect, run_scenario
 from .scenario import Scenario
 
 
@@ -22,6 +24,13 @@ def _load(name: str) -> Scenario:
     return Scenario(SCENARIOS / f"{name}.yaml")
 
 
+def test_execution_payload_overrun_fails_fast():
+    scenario = _load("review_retry_then_pass")
+
+    with pytest.raises(IndexError, match="No payload configured"):
+        scenario.stage_payload("design", execution_index=3)
+
+
 class TestHappyPath:
     """design -> implement -> test -> completed"""
 
@@ -30,7 +39,7 @@ class TestHappyPath:
         result = run_scenario(scenario, e2e_workspace)
 
         assert result.story is not None
-        assert result.story["status"] == "completed"
+        assert_scenario_expect(result, scenario.expect)
 
         # Verify context has expected fields from design stage
         ctx = json.loads(result.story.get("context_json", "{}"))
@@ -50,7 +59,7 @@ class TestMarkdownDoneJson:
         result = run_scenario(scenario, e2e_workspace)
 
         assert result.story is not None
-        assert result.story["status"] == "completed"
+        assert_scenario_expect(result, scenario.expect)
 
         ctx = json.loads(result.story.get("context_json", "{}"))
         assert ctx.get("spec_path") == "docs/spec.md"
@@ -66,7 +75,7 @@ class TestMissingExpectedOutput:
         result = run_scenario(scenario, e2e_workspace)
 
         assert result.story is not None
-        assert result.story["status"] == "blocked"
+        assert_scenario_expect(result, scenario.expect)
 
 
 class TestReviewRetryThenPass:
@@ -77,7 +86,7 @@ class TestReviewRetryThenPass:
         result = run_scenario(scenario, e2e_workspace)
 
         assert result.story is not None
-        assert result.story["status"] == "completed"
+        assert_scenario_expect(result, scenario.expect)
 
         # Should have multiple execute events (retry)
         execute_events = [e for e in result.events if e["event_type"] == "execute"]
@@ -120,7 +129,7 @@ class TestSubStoryWaitResume:
             patch("story_lifecycle.orchestrator.nodes.notify"),
             patch("story_lifecycle.orchestrator.graph.emit_plan_done"),
             patch("story_lifecycle.orchestrator.graph.emit_terminal_opened"),
-            patch("story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None),
+            patch("story_lifecycle.orchestrator.graph._executor.submit") as mock_submit,
         ):
             # Planner returns a split decision
             mock_planner.is_available.return_value = True
@@ -155,6 +164,8 @@ class TestSubStoryWaitResume:
         parent = db.get_story(key)
         assert parent is not None
         assert parent["status"] == "waiting_subtasks"
+        mock_submit.assert_called_once()
+        assert not (isolated_story_home / "planner_error.log").exists()
 
         # Verify sub-stories exist in DB
         sub_auth = db.get_story(f"{key}-auth")
