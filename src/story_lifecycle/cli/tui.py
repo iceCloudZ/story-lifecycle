@@ -9,7 +9,7 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll, Horizontal
+from textual.containers import Vertical, VerticalScroll, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Static, Input, Button
 from textual.reactive import reactive
@@ -359,6 +359,78 @@ class ConfirmDialog(ModalScreen):
         self.dismiss(event.button.id == "btn-confirm-yes")
 
 
+class InboxScreen(ModalScreen):
+    """待办收件箱 — 显示外部平台拉取的待办条目。"""
+
+    BINDINGS = [
+        Binding("escape", "close_inbox", "Close"),
+        Binding("r", "refresh_inbox", "Refresh"),
+    ]
+
+    def __init__(self, items: list):
+        self._items = items
+        self._selected: set[int] = set()
+        self._cursor = 0
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="inbox-container"):
+            yield Static("[bold]待办收件箱[/]", id="inbox-title")
+            yield Static("", id="inbox-list")
+            with Horizontal(id="inbox-btn-row"):
+                yield Button("确认创建", variant="success", id="btn-inbox-confirm")
+                yield Button("取消", variant="default", id="btn-inbox-cancel")
+
+    def on_mount(self) -> None:
+        self._render()
+
+    def _render(self):
+        lines = []
+        for i, item in enumerate(self._items):
+            check = "✓" if i in self._selected else " "
+            cursor = ">" if i == self._cursor else " "
+            type_tag = "[需求]" if item.item_type == "requirement" else "[Bug]"
+            lines.append(f"  {cursor} [{check}] {type_tag} {item.title}  ({item.source})")
+        self.query_one("#inbox-list", Static).update("\n".join(lines))
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-inbox-confirm":
+            selected = [self._items[i] for i in sorted(self._selected)]
+            self.dismiss(selected)
+        else:
+            self.dismiss([])
+
+    def action_close_inbox(self):
+        self.dismiss([])
+
+    def action_refresh_inbox(self):
+        pass  # Could re-fetch, but for P0 just do nothing
+
+    def key_up(self):
+        if self._cursor > 0:
+            self._cursor -= 1
+            self._render()
+
+    def key_down(self):
+        if self._cursor < len(self._items) - 1:
+            self._cursor += 1
+            self._render()
+
+    def key_space(self):
+        if self._cursor in self._selected:
+            self._selected.discard(self._cursor)
+        else:
+            self._selected.add(self._cursor)
+        self._render()
+
+    def key_enter(self):
+        if self._cursor not in self._selected:
+            self._selected.add(self._cursor)
+        self._render()
+        selected = [self._items[i] for i in sorted(self._selected)]
+        self.dismiss(selected)
+
+
 class StoryBoardApp(App):
     """Interactive story board TUI."""
 
@@ -437,6 +509,7 @@ class StoryBoardApp(App):
         Binding("c", "toggle_collapse", "Fold"),
         Binding("shift+d", "run_doctor", "Doctor", key_display="D"),
         Binding("shift+s", "run_setup", "Setup", key_display="S"),
+        Binding("i", "show_inbox", "Inbox"),
         Binding("question_mark", "help", "Help", key_display="?"),
         Binding("q", "quit", "Quit"),
     ]
@@ -539,7 +612,7 @@ class StoryBoardApp(App):
 
         footer = self.query_one("#footer-bar")
         footer.update(
-            " [dim][n] new  [N] sub  [e] enter  [s] skip  [a] abort  [f] fail  [x] delete  [r] resume  [?] help[/]"
+            " [dim][n] new  [N] sub  [i] inbox  [e] enter  [s] skip  [a] abort  [f] fail  [x] delete  [r] resume  [?] help[/]"
         )
 
     def action_cursor_up(self):
@@ -998,6 +1071,51 @@ class StoryBoardApp(App):
             load_config_to_env()
         self.refresh_stories()
 
+    def action_show_inbox(self):
+        from ..sources import get_source
+        from .setup import get_config
+
+        config = get_config()
+        source_name = config.get("story_source", {}).get("enabled", "")
+        if not source_name:
+            self.notify("未配置外部来源，请运行 story setup", severity="warning")
+            return
+
+        source = get_source(source_name)
+        if not source:
+            self.notify(f"来源 {source_name} 不可用", severity="error")
+            return
+
+        try:
+            items = source.fetch_pending()
+        except Exception as e:
+            self.notify(f"获取待办失败: {e}", severity="error")
+            return
+
+        if not items:
+            self.notify("没有新的待办")
+            return
+
+        def _on_inbox_result(result):
+            if not result:
+                return
+            from ..orchestrator.service import create_story_from_source
+            for item in result:
+                try:
+                    r = create_story_from_source(item, auto_start=True)
+                    if r.status == "created":
+                        self.notify(f"已创建: {r.story_key}")
+                    elif r.status == "need_manual_select":
+                        self.notify(f"需要手动选择父故事: {item.title}", severity="warning")
+                    else:
+                        self.notify(f"创建失败: {r.error}", severity="error")
+                except Exception as e:
+                    self.notify(f"创建失败: {e}", severity="error")
+            self.refresh_stories()
+
+        screen = InboxScreen(items)
+        self.push_screen(screen, _on_inbox_result)
+
     def action_help(self):
         self._show_detail = True
         panel = self.query_one("#detail-panel")
@@ -1016,6 +1134,7 @@ class StoryBoardApp(App):
             "  R/F5    Refresh\n"
             "  D       Doctor (env check)\n"
             "  S       Setup (reconfigure)\n"
+            "  i       Inbox (external source)\n"
             "  ?       Help\n"
             "  q       Quit"
         )
