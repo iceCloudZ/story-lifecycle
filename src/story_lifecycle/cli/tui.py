@@ -1243,8 +1243,15 @@ class StoryBoardApp(App):
                                 if r2.status == "created":
                                     self.notify(f"已创建独立故事: {r2.story_key}")
                             else:
-                                sub_key = create_sub_story(parent_key=parent_key, sub_type="bug-fix", description=item.description)
+                                from ..sources.bug_providers import fetch_bug_content, format_bug_context
+                                from ..orchestrator.graph import start_story_async
+                                from ..db import models as db
+                                bug_ctx = fetch_bug_content(item)
+                                bug_desc = format_bug_context(bug_ctx)
+                                sub_key = create_sub_story(parent_key=parent_key, sub_type="bug-fix", description=bug_desc)
                                 if sub_key:
+                                    db.update_story(sub_key, source_type=item.source, source_id=item.id)
+                                    start_story_async(sub_key)
                                     self.notify(f"已创建子故事: {sub_key}")
 
                         self.push_screen(ParentSelectDialog(item.title, active), _on_parent_selected)
