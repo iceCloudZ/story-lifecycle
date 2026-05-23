@@ -296,22 +296,19 @@ def health():
 
 @app.get("/api/story/{story_key}/debug")
 def debug_story(story_key: str, limit: int = 50, event_type: str = ""):
-    """Read-only debug endpoint. Returns observability events and quality status."""
+    """Read-only debug endpoint. Returns observability events and quality status.
+
+    Query params:
+        limit: Max recentEvents (default 50). Applies at DB level.
+        event_type: Filter recentEvents to this type at DB level.
+    """
     from .observability import build_debug_response
 
-    response = build_debug_response(story_key)
+    response = build_debug_response(
+        story_key, recent_limit=limit, event_type=event_type
+    )
     if "error" in response:
         raise HTTPException(404, response["error"])
-
-    # Apply optional limit override to recentEvents
-    if limit != 50:
-        response["recentEvents"] = response["recentEvents"][:limit]
-
-    # Optional event_type filter on recentEvents
-    if event_type:
-        response["recentEvents"] = [
-            e for e in response["recentEvents"] if e.get("eventType") == event_type
-        ][:limit]
 
     return response
 

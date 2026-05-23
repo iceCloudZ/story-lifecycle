@@ -175,9 +175,20 @@ def _load_events_by_type(
     return [_serialize_event(dict(r)) for r in rows]
 
 
-def _load_recent_events(story_key: str, limit: int = 50) -> list[dict]:
-    """Load recent related events for timeline view. Read-only."""
-    types = list(ALL_DEBUG_EVENT_TYPES)
+def _load_recent_events(
+    story_key: str, limit: int = 50, event_type: str = ""
+) -> list[dict]:
+    """Load recent related events for timeline view. Read-only.
+
+    Args:
+        story_key: The story to query.
+        limit: Max events to return.
+        event_type: If set, query only this event type at the DB level.
+    """
+    if event_type:
+        types = [event_type]
+    else:
+        types = list(ALL_DEBUG_EVENT_TYPES)
     placeholders = ",".join("?" * len(types))
     conn = db.get_conn()
     try:
@@ -208,8 +219,16 @@ def _serialize_event(e: dict) -> dict:
     }
 
 
-def build_debug_response(story_key: str) -> dict:
-    """Build the debug response for a story. Pure read-only."""
+def build_debug_response(
+    story_key: str, recent_limit: int = 50, event_type: str = ""
+) -> dict:
+    """Build the debug response for a story. Pure read-only.
+
+    Args:
+        story_key: The story to query.
+        recent_limit: Max recent events for the timeline bucket.
+        event_type: If set, filter recentEvents to this type at the DB level.
+    """
     from .quality import check_dor, check_dod
 
     s = db.get_story(story_key)
@@ -229,7 +248,9 @@ def build_debug_response(story_key: str) -> dict:
         story_key, ["verification_result"], limit=5
     )
     readiness_checks = _load_events_by_type(story_key, ["readiness_check"], limit=5)
-    recent_events = _load_recent_events(story_key, limit=50)
+    recent_events = _load_recent_events(
+        story_key, limit=recent_limit, event_type=event_type
+    )
     open_findings = db.get_open_findings(story_key)
 
     # Read-only: check_dor with record=False, check_dod is already pure query

@@ -693,11 +693,12 @@ def execute_stage_node(state: StoryState) -> StoryState:
         prompt_meta["prompt_sha256"] = hashlib.sha256(
             prompt.encode("utf-8")
         ).hexdigest()
-        # Stable quality context hash (packet + checklist only)
-        qp = tool_args.get("prompt", "")
-        quality_only = qp if prompt_meta.get("quality_packet_injected") else ""
+        # Stable quality context hash — only packet + checklist, not full prompt
+        quality_text = prompt_meta.get("quality_packet_text", "") + prompt_meta.get(
+            "checklist_text", ""
+        )
         prompt_meta["quality_context_sha256"] = hashlib.sha256(
-            quality_only.encode("utf-8")
+            quality_text.encode("utf-8")
         ).hexdigest()
         log_prompt_context(state, prompt_meta)
     except Exception:
@@ -1344,6 +1345,8 @@ Story: {state["story_key"]}
     metadata = {
         "quality_packet_injected": quality_packet_injected,
         "quality_checklist_injected": quality_checklist_injected,
+        "quality_packet_text": quality_section,
+        "checklist_text": checklist,
         "open_findings_count": open_findings_count,
         "learned_patterns_count": learned_patterns_count,
         "relevance_tags": relevance_tags,
