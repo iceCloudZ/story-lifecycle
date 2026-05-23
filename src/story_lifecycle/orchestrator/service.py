@@ -312,6 +312,9 @@ def create_story_from_source(
                     status="failed",
                     error=f"父需求导入失败: {parent_result.error or parent_result.status}",
                 )
+            # Mark auto-imported parent as paused with import marker
+            db.update_story(parent_result.story_key, status="paused")
+            db.update_context(parent_result.story_key, "source_import_only", "true")
             result.parent_key = parent_result.story_key
 
         if result.need_manual_select:
