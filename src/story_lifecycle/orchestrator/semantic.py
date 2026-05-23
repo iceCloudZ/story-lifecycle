@@ -384,3 +384,80 @@ Candidate Patterns:
             )
 
     return _fallback_result({"matches": fallback_matches})
+
+
+# ── Quality Packet Pattern Rerank ──
+
+
+def rerank_relevant_patterns(
+    story_context: dict,
+    candidate_patterns: list[dict],
+    limit: int = 5,
+) -> SemanticResult:
+    """Use LLM to rerank candidate patterns by actual relevance to the story."""
+    if not candidate_patterns:
+        return _fallback_result({"selected": [], "rejected": []})
+
+    candidates_desc = "\n".join(
+        f"- ID: {p['id']}, pattern: {p.get('pattern', '')}, rule: {p.get('rule', '')}, "
+        f"applies_to: {p.get('applies_to', [])}, confidence: {p.get('confidence', '')}"
+        for p in candidate_patterns
+    )
+
+    story_title = story_context.get("title", "")
+    story_stage = story_context.get("stage", "")
+    story_summary = story_context.get("summary", "")[:500]
+
+    prompt = f"""从以下 candidate learned patterns 中选择与当前 story 真正相关的 pattern。
+
+Story: {story_title}
+Stage: {story_stage}
+Summary: {story_summary}
+
+Candidates:
+{candidates_desc}
+
+只输出 JSON:
+{{
+  "selected": [
+    {{
+      "pattern_id": "id",
+      "relevance": "high|medium",
+      "reasoning": "为什么相关"
+    }}
+  ],
+  "rejected": [
+    {{
+      "pattern_id": "id",
+      "reasoning": "为什么不相关"
+    }}
+  ]
+}}
+
+只选择真正能帮助当前 story 避免重蹈覆辙的 pattern。最多选 {limit} 个。"""
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "selected": {"type": "array"},
+            "rejected": {"type": "array"},
+        },
+        "required": ["selected"],
+    }
+
+    llm_result = _call_semantic_llm(prompt, schema)
+
+    if llm_result["ok"] and llm_result["mode"] == "llm":
+        llm_result["data"]["selected"] = llm_result["data"].get("selected", [])[:limit]
+        return llm_result
+
+    # Fallback: return candidates as-is, truncated to limit
+    selected = [
+        {
+            "pattern_id": p["id"],
+            "relevance": "medium",
+            "reasoning": "tag pre-filter fallback",
+        }
+        for p in candidate_patterns[:limit]
+    ]
+    return _fallback_result({"selected": selected, "rejected": []})

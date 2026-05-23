@@ -315,3 +315,90 @@ def test_match_pattern_recurrence_filters_low_confidence():
         if m.get("matched") and m.get("confidence") != "low"
     ]
     assert len(high_conf) == 0
+
+
+# ── rerank_relevant_patterns ──
+
+
+def test_rerank_relevant_patterns_llm():
+    """LLM reranks patterns by relevance to story context."""
+    from story_lifecycle.orchestrator.semantic import rerank_relevant_patterns
+
+    llm_output = {
+        "selected": [
+            {
+                "pattern_id": "p-001",
+                "relevance": "high",
+                "reasoning": "story involves DB migration",
+            },
+            {
+                "pattern_id": "p-003",
+                "relevance": "medium",
+                "reasoning": "related to error handling",
+            },
+        ],
+        "rejected": [
+            {"pattern_id": "p-002", "reasoning": "unrelated to current story"},
+        ],
+    }
+    fake = _make_fake_llm_response(llm_output)
+
+    story_ctx = {
+        "title": "Add user table migration",
+        "stage": "implement",
+        "type": "feature",
+    }
+    candidates = [
+        {
+            "id": "p-001",
+            "pattern": "require rollback plan",
+            "rule": "all DDL needs rollback",
+            "applies_to": ["migration"],
+            "confidence": "high",
+        },
+        {
+            "id": "p-002",
+            "pattern": "use connection pool",
+            "rule": "DB connections must be pooled",
+            "applies_to": ["database"],
+            "confidence": "medium",
+        },
+        {
+            "id": "p-003",
+            "pattern": "handle DB errors",
+            "rule": "catch and log DB exceptions",
+            "applies_to": ["database"],
+            "confidence": "high",
+        },
+    ]
+
+    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
+        with patch("httpx.post", return_value=fake):
+            result = rerank_relevant_patterns(story_ctx, candidates, limit=5)
+
+    assert result["ok"] is True
+    assert result["mode"] == "llm"
+    assert len(result["data"]["selected"]) == 2
+    assert result["data"]["selected"][0]["pattern_id"] == "p-001"
+
+
+def test_rerank_relevant_patterns_fallback():
+    """Without LLM, returns top candidates as-is."""
+    from story_lifecycle.orchestrator.semantic import rerank_relevant_patterns
+
+    story_ctx = {"title": "test", "stage": "implement", "type": "feature"}
+    candidates = [
+        {
+            "id": "p-001",
+            "pattern": "a",
+            "rule": "b",
+            "applies_to": [],
+            "confidence": "high",
+        },
+    ]
+
+    with patch.dict("os.environ", {}, clear=True):
+        result = rerank_relevant_patterns(story_ctx, candidates, limit=5)
+
+    assert result["mode"] == "rule_fallback"
+    assert len(result["data"]["selected"]) == 1

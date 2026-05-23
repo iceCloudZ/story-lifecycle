@@ -125,12 +125,41 @@ def build_quality_packet(
 
     # Learned patterns (relevance-filtered if tags provided)
     if relevant_tags:
-        patterns = db.find_relevant_patterns(relevant_tags, limit=max_items)
+        candidates = db.find_relevant_patterns(relevant_tags, limit=20)
     else:
-        patterns = db.get_active_learned_patterns(limit=max_items)
+        candidates = db.get_active_learned_patterns(limit=20)
+
+    # LLM rerank if candidates exist
+    patterns = candidates
+    pattern_mode = "tag_overlap"
+    if candidates:
+        try:
+            from .semantic import rerank_relevant_patterns
+
+            story = db.get_story(story_key) or {}
+            ctx = json.loads(story.get("context_json") or "{}")
+            story_context = {
+                "title": story.get("title", story_key),
+                "stage": stage,
+                "type": story.get("sub_type", ""),
+                "summary": ctx.get("prd_summary", "")[:500],
+            }
+            rerank = rerank_relevant_patterns(
+                story_context, candidates, limit=max_items
+            )
+            if rerank["ok"] and rerank["mode"] == "llm":
+                selected_ids = [
+                    s["pattern_id"] for s in rerank["data"].get("selected", [])
+                ]
+                patterns = [p for p in candidates if p["id"] in selected_ids]
+                pattern_mode = "llm_rerank"
+            # else: keep tag overlap order
+        except Exception:
+            pass  # keep candidates as-is
+
     if patterns:
-        lines.append("Relevant Learned Patterns:")
-        for p in patterns:
+        lines.append(f"Relevant Learned Patterns (mode: {pattern_mode}):")
+        for p in patterns[:max_items]:
             lines.append(f"- {p['pattern']}:")
             lines.append(f"  {p['rule']}")
         lines.append("")
