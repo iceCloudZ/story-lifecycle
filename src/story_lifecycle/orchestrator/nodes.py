@@ -1002,6 +1002,19 @@ Story: {state["story_key"]}
         )
         template = sub_header + template
 
+    # Quality Packet injection
+    quality_section = ""
+    checklist = ""
+    try:
+        from .quality import build_quality_packet, build_quality_checklist
+        quality_packet = build_quality_packet(state["story_key"], stage)
+        empty_marker = f"Quality Packet for {state['story_key']}\n\nOpen Findings: none\n"
+        if quality_packet.strip() != empty_marker.strip():
+            quality_section = f"## Quality Packet\n\n{quality_packet}"
+        checklist = build_quality_checklist(state["story_key"], stage)
+    except Exception:
+        pass
+
     has_prd = bool(ctx.get("prd_path"))
 
     # Get stage skill from profile
@@ -1039,6 +1052,8 @@ Story: {state["story_key"]}
             if skill
             else ""
         ),
+        "{quality_packet_section}": quality_section,
+        "{quality_checklist}": checklist,
     }
     for key, value in vars_map.items():
         template = template.replace(key, value)
