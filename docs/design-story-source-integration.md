@@ -490,6 +490,175 @@ class FallbackPrdProvider(PrdProvider):
         return PrdContent(source_type="fallback", markdown=md, file_path=None, attachments=[])
 ```
 
+### 5.5.1 Bug 内容提供者（BugContentProvider）
+
+Bug 创建为子故事时，需要获取完整的 bug 上下文（复现步骤、截图、预期行为等），让 AI CLI 能有效修复。
+
+```python
+@dataclass
+class BugContext:
+    source_type: str            # "tapd_body" | "tapd_comments" | "dingtalk_doc" | "fallback"
+    description: str            # Bug 现象描述
+    steps_to_reproduce: str     # 复现步骤
+    expected_behavior: str      # 预期行为
+    actual_behavior: str        # 实际行为
+    environment: str            # 环境信息
+    screenshots: list[str]      # 截图文件路径
+    logs: str                   # 相关日志/堆栈
+    raw_markdown: str           # 原始完整内容
+
+
+class BugContentProvider(ABC):
+    """Bug 内容提供者 — 从不同来源获取 bug 的完整上下文"""
+
+    @abstractmethod
+    def can_handle(self, bug: SourceItem) -> bool:
+        """判断是否能处理这个 bug 的内容获取"""
+
+    @abstractmethod
+    def fetch_content(self, bug: SourceItem) -> BugContext | None:
+        """提取 bug 完整上下文"""
+```
+
+### 内置 BugContentProvider
+
+```python
+class TapdBodyBugProvider(BugContentProvider):
+    """从 TAPD bug 正文提取 — 解析标准 bug 报告格式。"""
+
+    def can_handle(self, bug: SourceItem) -> bool:
+        return bug.source == "tapd" and bug.item_type == "bug"
+
+    def fetch_content(self, bug: SourceItem) -> BugContext | None:
+        md = html_to_markdown(bug.description)
+        return BugContext(
+            source_type="tapd_body",
+            description=bug.title,
+            steps_to_reproduce=self._extract_section(md, "复现步骤|步骤|重现"),
+            expected_behavior=self._extract_section(md, "预期|期望|期望结果"),
+            actual_behavior=self._extract_section(md, "实际|实际结果|现象"),
+            environment=self._extract_section(md, "环境|版本|设备"),
+            screenshots=self._extract_images(md),
+            logs=self._extract_section(md, "日志|log|堆栈|stack"),
+            raw_markdown=md,
+        )
+
+    def _extract_section(self, md: str, pattern: str) -> str:
+        """从 markdown 中提取特定章节内容。"""
+        import re
+        m = re.search(rf'(?:{pattern})[：:\s]*\n(.*?)(?=\n##|\n#|\Z)', md, re.DOTALL | re.IGNORECASE)
+        return m.group(1).strip() if m else ""
+
+    def _extract_images(self, md: str) -> list[str]:
+        """提取 markdown 中的图片路径，下载到本地。"""
+        import re
+        return re.findall(r'!\[.*?\]\((.*?)\)', md)
+
+
+class TapdCommentsBugProvider(BugContentProvider):
+    """从 TAPD bug 评论中提取补充信息 — 复现步骤常在评论里。"""
+
+    def can_handle(self, bug: SourceItem) -> bool:
+        return bug.source == "tapd" and bug.item_type == "bug"
+
+    def fetch_content(self, bug: SourceItem) -> BugContext | None:
+        # 通过 cli_tapd.py get-comments 拉取评论
+        comments = self._fetch_comments(bug.id)
+        if not comments:
+            return None
+        # 合并评论内容作为补充上下文
+        combined = "\n\n".join(
+            f"**{c['author']}** ({c['created']}):\n{c['description']}"
+            for c in comments
+        )
+        return BugContext(
+            source_type="tapd_comments",
+            description=bug.title,
+            steps_to_reproduce="",
+            expected_behavior="",
+            actual_behavior="",
+            environment="",
+            screenshots=[],
+            logs="",
+            raw_markdown=combined,
+        )
+
+
+class FallbackBugProvider(BugContentProvider):
+    """兜底 — 只有标题和原始描述。"""
+
+    def can_handle(self, bug: SourceItem) -> bool:
+        return True
+
+    def fetch_content(self, bug: SourceItem) -> BugContext | None:
+        return BugContext(
+            source_type="fallback",
+            description=bug.title,
+            steps_to_reproduce="",
+            expected_behavior="",
+            actual_behavior="",
+            environment="",
+            screenshots=[],
+            logs="",
+            raw_markdown=bug.description or bug.title,
+        )
+```
+
+### Bug 内容链调度
+
+```python
+DEFAULT_BUG_CONTENT_PROVIDERS = [
+    TapdBodyBugProvider(),      # 正文解析
+    TapdCommentsBugProvider(),  # 评论补充
+    FallbackBugProvider(),      # 兜底
+]
+
+
+def fetch_bug_content(
+    bug: SourceItem,
+    providers: list[BugContentProvider] | None = None,
+) -> BugContext | None:
+    """按优先级尝试各 BugContentProvider。"""
+    chain = providers or DEFAULT_BUG_CONTENT_PROVIDERS
+    for provider in chain:
+        if provider.can_handle(bug):
+            content = provider.fetch_content(bug)
+            if content:
+                return content
+    return None
+```
+
+### Bug 上下文注入到子故事 Prompt
+
+创建 bug-fix 子故事时，将 `BugContext` 结构化信息注入 `sub_description`：
+
+```python
+def _format_bug_context(ctx: BugContext) -> str:
+    """将 BugContext 格式化为注入 prompt 的描述文本。"""
+    parts = [ctx.description]
+    if ctx.steps_to_reproduce:
+        parts.append(f"\n复现步骤:\n{ctx.steps_to_reproduce}")
+    if ctx.expected_behavior:
+        parts.append(f"\n预期行为: {ctx.expected_behavior}")
+    if ctx.actual_behavior:
+        parts.append(f"\n实际行为: {ctx.actual_behavior}")
+    if ctx.environment:
+        parts.append(f"\n环境: {ctx.environment}")
+    if ctx.logs:
+        parts.append(f"\n相关日志:\n{ctx.logs}")
+    return "\n".join(parts)
+```
+
+### 配置化
+
+```yaml
+story_source:
+  bug_content_providers:
+    - tapd_body         # 正文解析
+    - tapd_comments     # 评论补充
+    - fallback          # 兜底
+```
+
 ### Provider 链调度
 
 ```python
