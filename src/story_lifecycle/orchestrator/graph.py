@@ -43,6 +43,25 @@ _terminal_opened: set[str] = set()
 _running_stories: set[str] = set()
 _running_lock = threading.Lock()
 
+# Workspace mutex — same workspace can only have one executing story
+_workspace_locks: dict[str, threading.Lock] = {}
+
+
+def acquire_workspace(workspace: str, story_key: str) -> bool:
+    """Try to acquire workspace execution lock. Returns True if acquired."""
+    ws = str(workspace)
+    if ws not in _workspace_locks:
+        _workspace_locks[ws] = threading.Lock()
+    return _workspace_locks[ws].acquire(blocking=False)
+
+
+def release_workspace(workspace: str):
+    """Release workspace execution lock."""
+    ws = str(workspace)
+    lock = _workspace_locks.get(ws)
+    if lock and lock.locked():
+        lock.release()
+
 
 def set_tui_app(app: object) -> None:
     global _tui_app
@@ -156,8 +175,17 @@ def run_story(story_key: str):
     import logging
 
     log = logging.getLogger("story-lifecycle.graph")
+    story = db.get_story(story_key)
+    workspace = story["workspace"] if story else ""
 
+    acquired = False
     try:
+        # Workspace mutex: block until workspace is free
+        if workspace:
+            ws_lock = _workspace_locks.setdefault(workspace, threading.Lock())
+            ws_lock.acquire()
+            acquired = True
+
         _run_story_impl(story_key)
     except Exception:
         log.error(f"run_story failed for {story_key}:\n{traceback.format_exc()}")
@@ -167,6 +195,10 @@ def run_story(story_key: str):
             encoding="utf-8",
         )
     finally:
+        if acquired and workspace:
+            ws_lock = _workspace_locks.get(workspace)
+            if ws_lock:
+                ws_lock.release()
         with _running_lock:
             _running_stories.discard(story_key)
 

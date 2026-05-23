@@ -279,6 +279,20 @@ def test_api_resume_parent(tmp_path):
         m.get_db_path = original
 
 
+def test_workspace_mutex(tmp_path):
+    """Only one story per workspace should be able to execute at a time."""
+    m, original = _init_fresh_db(tmp_path)
+    try:
+        from story_lifecycle.orchestrator.graph import acquire_workspace, release_workspace
+        assert acquire_workspace(str(tmp_path), "MUTEX-001") is True
+        assert acquire_workspace(str(tmp_path), "MUTEX-002") is False
+        release_workspace(str(tmp_path))
+        assert acquire_workspace(str(tmp_path), "MUTEX-002") is True
+        release_workspace(str(tmp_path))
+    finally:
+        m.get_db_path = original
+
+
 def test_context_size_control(tmp_path):
     """Large parent context should be truncated for sub-story."""
     m, original = _init_fresh_db(tmp_path)
