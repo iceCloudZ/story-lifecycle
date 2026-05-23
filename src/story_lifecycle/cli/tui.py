@@ -786,6 +786,11 @@ class StoryBoardApp(App):
         session = ttyd.session_name(s["story_key"])
         workspace = s.get("workspace", os.getcwd())
 
+        # Windows / no working multiplexer — launch CLI directly in new window
+        if os.name == "nt" or not ttyd._MPLEX:
+            self._launch_cli_direct(s, workspace)
+            return
+
         # Try to create the session on-the-fly if it doesn't exist
         if not ttyd.session_alive(session):
             ttyd.create_session(session, workspace)
@@ -1029,7 +1034,12 @@ class StoryBoardApp(App):
         if not self.stories:
             return
         s = self.stories[self.selected_index]
-        db.update_story(s["story_key"], status="active")
+        key = s["story_key"]
+        db.update_story(key, status="active", last_error=None)
+        from ..orchestrator.graph import start_story_async, is_story_running
+
+        if not is_story_running(key):
+            start_story_async(key)
         self.refresh_stories()
 
     def action_new_sub_story(self):
@@ -1218,9 +1228,17 @@ class StoryBoardApp(App):
         """Re-run setup wizard in a suspended terminal."""
         from .setup import run_setup, load_config_to_env
 
-        with self.suspend():
-            run_setup()
-            load_config_to_env()
+        if os.name == "nt":
+            import subprocess
+
+            subprocess.Popen(
+                ["python", "-m", "story_lifecycle.cli.setup"],
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+        else:
+            with self.suspend():
+                run_setup()
+        load_config_to_env()
         self.refresh_stories()
 
     # ---- source polling ----

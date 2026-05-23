@@ -800,6 +800,7 @@ def poll_completion_node(state: StoryState) -> StoryState:
             done_file.unlink()
         except PermissionError:
             pass
+        ttyd.clear_launch_state(key)
         state["context"].update(data)
         cfg = get_stage_config(state.get("profile", "minimal"), stage)
         for field in cfg.get("expected_outputs", []):
@@ -807,9 +808,9 @@ def poll_completion_node(state: StoryState) -> StoryState:
                 db.update_context(key, field, str(data[field]))
         return state
 
-    # No done file yet — check if the session crashed
+    # No done file yet — check if the session crashed (only for mplex-launched sessions)
     session = ttyd.session_name(key)
-    if ttyd._MPLEX and not ttyd.session_alive(session):
+    if key in ttyd._mplex_launched and not ttyd.session_alive(session):
         state["last_error"] = "CC process crashed (session dead)"
         log_node_error(
             key,

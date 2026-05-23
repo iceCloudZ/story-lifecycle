@@ -315,12 +315,23 @@ def _ttyd_running(port: int) -> bool:
 
 
 _launched: set[str] = set()
+_mplex_launched: set[str] = set()  # stories actually launched via multiplexer
+
+
+def clear_launch_state(story_key: str):
+    """Clear launch tracking for a story (called when stage completes)."""
+    _launched.discard(story_key)
+    _mplex_launched.discard(story_key)
 
 
 def launch_cli(story_key: str, workspace: str, launch_cmd: str, prompt_file: str):
     """Launch a CLI tool independently so it survives the caller exiting."""
-    if story_key in _launched:
+    # Allow re-launch for new stages by using stage-specific key
+    launch_id = f"{story_key}:{prompt_file}"
+    if launch_id in _launched:
         return
+    _launched.add(launch_id)
+    # Also track the story key for cleanup
     _launched.add(story_key)
 
     from . import platform_ops

@@ -387,7 +387,7 @@ def create_story_from_source(
 
 def _derive_story_key(item) -> str:
     return (
-        f"TAPD-{item.id[-6:]}"
+        f"TAPD-{item.id[-7:]}"
         if item.source == "tapd"
         else f"{item.source.upper()}-{item.id[-6:]}"
     )

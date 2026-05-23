@@ -51,6 +51,7 @@ class BaseTool:
             ttyd.paste_text(session, prompt)
             ttyd.send_keys(session, "Enter")
             launched = True
+            ttyd._mplex_launched.add(key)
 
         # Notify TUI that CLI has been dispatched
         from ..graph import emit_terminal_opened
