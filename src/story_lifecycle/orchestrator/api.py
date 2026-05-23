@@ -33,6 +33,20 @@ class SkipRequest(BaseModel):
     reason: str = ""
 
 
+class CreateSubStoryRequest(BaseModel):
+    sub_type: str = ""
+    start_stage: str = ""
+    description: str
+
+
+class AbortRequest(BaseModel):
+    reason: str = "User abort"
+
+
+class ResumeParentRequest(BaseModel):
+    strategy: str = "pause_subs"  # pause_subs | abort_subs
+
+
 # -------- app lifecycle --------
 
 
@@ -82,6 +96,18 @@ def get_story(story_key: str):
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")
+
+    subs = db.get_sub_stories(story_key)
+    sub_list = [
+        {
+            "storyKey": sub["story_key"],
+            "subType": sub.get("sub_type"),
+            "status": sub["status"],
+            "currentStage": sub["current_stage"],
+        }
+        for sub in subs
+    ] if subs else []
+
     return JSONResponse(
         {
             "storyKey": s["story_key"],
@@ -95,6 +121,9 @@ def get_story(story_key: str):
             "executionCount": s["execution_count"],
             "lastError": s["last_error"],
             "updatedAt": s["updated_at"],
+            "parentKey": s.get("parent_key"),
+            "subType": s.get("sub_type"),
+            "subs": sub_list,
         }
     )
 
@@ -181,6 +210,56 @@ def fail_story(story_key: str, req: SkipRequest = None):
 def delete_story(story_key: str):
     db.delete_story(story_key)
     ttyd.stop_ttyd(story_key)
+    return {"ok": True}
+
+
+@app.post("/api/story/{parent_key}/sub")
+def api_create_sub_story(parent_key: str, req: CreateSubStoryRequest):
+    from .service import create_sub_story as svc_create_sub
+
+    try:
+        sub_key = svc_create_sub(
+            parent_key=parent_key,
+            sub_type=req.sub_type or None,
+            start_stage=req.start_stage or None,
+            description=req.description,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    s = db.get_story(sub_key)
+    return JSONResponse(
+        {
+            "storyKey": s["story_key"],
+            "title": s["title"],
+            "subType": s.get("sub_type"),
+            "parentKey": parent_key,
+            "currentStage": s["current_stage"],
+            "status": s["status"],
+        }
+    )
+
+
+@app.post("/api/story/{story_key}/abort")
+def api_abort_story(story_key: str, req: AbortRequest = None):
+    from .service import abort_story as svc_abort
+
+    try:
+        svc_abort(story_key, req.reason if req else "User abort")
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return {"ok": True}
+
+
+@app.put("/api/story/{parent_key}/resume")
+def api_resume_parent(parent_key: str, req: ResumeParentRequest = None):
+    from .service import resume_parent as svc_resume
+
+    strategy = req.strategy if req else "pause_subs"
+    try:
+        svc_resume(parent_key, strategy=strategy)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return {"ok": True}
 
 

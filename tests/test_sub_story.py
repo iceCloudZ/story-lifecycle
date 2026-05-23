@@ -200,6 +200,85 @@ def test_nested_sub_story_rejected(tmp_path):
         m.get_db_path = original
 
 
+def test_api_create_sub_story(tmp_path):
+    """POST /api/story/{parent_key}/sub should create sub-story."""
+    m, original = _init_fresh_db(tmp_path)
+    try:
+        m.create_story(story_key="API-001", title="Parent", workspace=str(tmp_path))
+
+        from fastapi.testclient import TestClient
+        from story_lifecycle.orchestrator.api import app
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/story/API-001/sub",
+            json={
+                "sub_type": "bug-fix",
+                "start_stage": "implement",
+                "description": "Fix crash",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["storyKey"] == "API-001-sub-1"
+        assert data["subType"] == "bug-fix"
+
+        # Parent should be waiting_subtasks
+        parent = m.get_story("API-001")
+        assert parent["status"] == "waiting_subtasks"
+    finally:
+        m.get_db_path = original
+
+
+def test_api_abort_story(tmp_path):
+    """POST /api/story/{key}/abort should abort a story."""
+    m, original = _init_fresh_db(tmp_path)
+    try:
+        m.create_story(story_key="API-002", title="To abort", workspace=str(tmp_path))
+
+        from fastapi.testclient import TestClient
+        from story_lifecycle.orchestrator.api import app
+        client = TestClient(app)
+
+        resp = client.post("/api/story/API-002/abort", json={"reason": "test abort"})
+        assert resp.status_code == 200
+
+        s = m.get_story("API-002")
+        assert s["status"] == "aborted"
+    finally:
+        m.get_db_path = original
+
+
+def test_api_resume_parent(tmp_path):
+    """PUT /api/story/{parent_key}/resume should resume parent."""
+    m, original = _init_fresh_db(tmp_path)
+    try:
+        m.create_story(story_key="API-003", title="Parent", workspace=str(tmp_path))
+        m.create_story(
+            story_key="API-003-sub-1",
+            title="Sub",
+            workspace=str(tmp_path),
+            parent_key="API-003",
+            subtask_index=0,
+        )
+        m.update_story("API-003", status="waiting_subtasks")
+
+        from fastapi.testclient import TestClient
+        from story_lifecycle.orchestrator.api import app
+        client = TestClient(app)
+
+        resp = client.put(
+            "/api/story/API-003/resume",
+            json={"strategy": "abort_subs"},
+        )
+        assert resp.status_code == 200
+
+        parent = m.get_story("API-003")
+        assert parent["status"] == "active"
+    finally:
+        m.get_db_path = original
+
+
 def test_context_size_control(tmp_path):
     """Large parent context should be truncated for sub-story."""
     m, original = _init_fresh_db(tmp_path)
