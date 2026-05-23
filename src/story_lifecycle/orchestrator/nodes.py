@@ -261,6 +261,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
             log.warning(f"Planner failed, falling back: {e}")
             import traceback
 
+            STORY_HOME.mkdir(parents=True, exist_ok=True)
             (STORY_HOME / "planner_error.log").write_text(
                 f"Planner error for {story_key}:\n{traceback.format_exc()}",
                 encoding="utf-8",
