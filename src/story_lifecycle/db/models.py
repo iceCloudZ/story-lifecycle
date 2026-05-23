@@ -21,6 +21,8 @@ VALID_COLUMNS = frozenset(
         "parent_key",
         "subtask_index",
         "sub_type",
+        "source_type",
+        "source_id",
     }
 )
 
@@ -132,6 +134,17 @@ def init_db():
             conn.execute("ALTER TABLE story ADD COLUMN sub_type TEXT")
         except sqlite3.OperationalError:
             pass
+        for col in ("source_type", "source_id"):
+            try:
+                conn.execute(f"ALTER TABLE story ADD COLUMN {col} TEXT")
+            except sqlite3.OperationalError:
+                pass
+        try:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_story_source ON story(source_type, source_id)"
+            )
+        except sqlite3.OperationalError:
+            pass
 
 
 # -------- CRUD helpers --------
@@ -181,6 +194,16 @@ def get_story(story_key: str) -> dict | None:
             "SELECT * FROM story WHERE story_key = ?", (story_key,)
         ).fetchone()
     return dict(row) if row else None
+
+
+def find_by_source_id(source_type: str, source_id: str) -> dict | None:
+    """Find a story by its external source type and ID (e.g. tapd, 1001234)."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM story WHERE source_type = ? AND source_id = ?",
+            (source_type, source_id),
+        ).fetchall()
+    return dict(rows[0]) if rows else None
 
 
 def list_active_stories() -> list[dict]:
