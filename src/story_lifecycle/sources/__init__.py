@@ -23,3 +23,16 @@ def get_source(name: str, config: dict | None = None) -> StorySource | None:
 
 def get_available_sources() -> list[str]:
     return list(_registry.keys())
+
+
+# Register built-in sources
+from .manual_source import ManualSource  # noqa: E402
+
+register_source("manual", lambda cfg: ManualSource())
+
+try:
+    from .tapd_source import TapdSource
+
+    register_source("tapd", lambda cfg: TapdSource(cfg))
+except ImportError:
+    pass
