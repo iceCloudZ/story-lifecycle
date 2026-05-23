@@ -463,6 +463,11 @@ def review_stage_node(state: StoryState) -> StoryState:
             # Maintain knowledge base
             _update_knowledge(workspace, story_key, stage, review, stage_output)
 
+            # Check for learned pattern recurrence
+            _check_pattern_recurrence(
+                workspace, story_key, stage, review.get("issues", [])
+            )
+
             # context_updates — store index only
             if review.get("context_updates"):
                 for k, v in review["context_updates"].items():
@@ -510,6 +515,60 @@ def review_stage_node(state: StoryState) -> StoryState:
             log.warning(f"Reviewer failed, skipping review: {e}")
 
     return state
+
+
+def _check_pattern_recurrence(
+    workspace: str, story_key: str, stage: str, issues: list[dict]
+):
+    """Check if review issues match any active learned patterns (recurrence detection)."""
+    if not issues:
+        return
+
+    try:
+        patterns = db.get_active_learned_patterns(limit=20)
+    except Exception:
+        return
+
+    if not patterns:
+        return
+
+    recurrences = []
+    for issue in issues:
+        desc = issue.get("description", "")
+        cat = issue.get("category", "")
+        issue_text = f"{cat} {desc}".lower()
+        for p in patterns:
+            pattern_name = p.get("pattern", "")
+            rule = p.get("rule", "")
+            # Keyword matching: check if issue text contains pattern keywords
+            if _match_pattern(issue_text, pattern_name, rule):
+                recurrences.append(
+                    {
+                        "pattern_id": p["id"],
+                        "pattern": pattern_name,
+                        "issue": issue,
+                    }
+                )
+                break  # one pattern per issue
+
+    if recurrences:
+        db.log_event(
+            story_key,
+            stage,
+            "pattern_recurrence",
+            {
+                "recurrences": recurrences,
+                "count": len(recurrences),
+            },
+        )
+
+
+def _match_pattern(issue_text: str, pattern_name: str, rule: str) -> bool:
+    """Simple keyword/substring matching against pattern name and rule."""
+    keywords = (pattern_name + " " + rule).lower().split()
+    # Require at least 2 keyword matches to avoid false positives
+    matches = sum(1 for kw in keywords if len(kw) >= 2 and kw in issue_text)
+    return matches >= 2
 
 
 def _update_knowledge(
@@ -830,6 +889,16 @@ def advance_node(state: StoryState) -> StoryState:
     state["current_stage"] = next_stage
     state["status"] = "active"
     state["execution_count"] = 0
+
+    # Clean up PRD task file after design stage completes
+    if stage == "design":
+        workspace = state.get("workspace", "") or str(Path.cwd())
+        prd_task_file = Path(workspace) / ".story" / f"prd-task-{key}.json"
+        try:
+            prd_task_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     return state
 
 
@@ -919,23 +988,19 @@ def _build_prd_task_section(state: StoryState, stage: str, has_prd: bool) -> str
         return ""
     try:
         prd_task = json.loads(prd_task_file.read_text(encoding="utf-8"))
+        description = prd_task.get("description", "")
         section = (
             "## AI 增强 PRD 任务\n\n"
             f"检测到 PRD 生成任务文件: `{prd_task_file}`\n\n"
             f"- **来源**: {prd_task.get('source', '未知')}\n"
             f"- **平台 ID**: {prd_task.get('source_id', '')}\n"
-            f"- **标题**: {prd_task.get('title', '')}\n\n"
+            f"- **标题**: {prd_task.get('title', '')}\n"
+            f"- **描述**: {description}\n\n"
             "请执行以下步骤:\n"
             "1. 使用 `prd-generator` skill 生成结构化 PRD\n"
             "2. 将生成的 PRD 保存到合适位置（如 `prd/` 目录）\n"
             "3. 在 `.story-done/` 目录写入完成标记\n"
         )
-        # Cleanup: remove the task file after injection to avoid polluting
-        # subsequent stories in the same workspace
-        try:
-            prd_task_file.unlink()
-        except Exception:
-            pass
         return section
     except Exception:
         return ""

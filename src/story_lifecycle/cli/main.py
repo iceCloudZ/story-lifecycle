@@ -89,6 +89,90 @@ def cli(ctx, serve, host, port, fix_deps):
 
 
 @cli.command()
+@click.argument("key")
+@click.option("--title", "-t", default="", help="Story title")
+@click.option("--prd", "-p", default=None, help="Path to PRD markdown file")
+@click.option("--profile", default="minimal", help="Profile name (default: minimal)")
+@click.option("--workspace", "-w", default=None, help="Workspace directory")
+@click.option(
+    "--no-start", is_flag=True, help="Create story without starting execution"
+)
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    help="Print rendered prompts for each stage, do not execute",
+)
+def create(key, title, prd, profile, workspace, no_start, dry_run):
+    """Create a new story and start its lifecycle.
+
+    \b
+    Examples:
+      story create FEAT-001 -t "Add login"
+      story create BUG-042 -p prd/bug-042.md
+      story create FEAT-001 --dry-run
+    """
+    from ..orchestrator.service import create_and_start_story
+    from ..orchestrator.graph import start_story_async
+    from ..orchestrator.nodes import load_profile, _render_prompt
+
+    init_db()
+    ws = workspace or str(Path.cwd())
+
+    key = create_and_start_story(
+        story_key=key,
+        title=title,
+        profile=profile,
+        workspace=ws,
+        prd_path=prd or None,
+    )
+
+    console.print(f"\n[green]Story created:[/] [bold cyan]{key}[/]")
+    if title:
+        console.print(f"  Title: {title}")
+    console.print(f"  Profile: [dim]{profile}[/]")
+    console.print(f"  Workspace: [dim]{ws}[/]")
+
+    if dry_run:
+        console.print("\n[bold]Dry Run — stage prompts:[/]\n")
+        profile_data = load_profile(profile)
+        stages = profile_data.get("stages", {})
+        # Build a minimal state for prompt rendering
+        state = {
+            "story_key": key,
+            "title": title,
+            "workspace": ws,
+            "profile": profile,
+            "current_stage": "",
+            "context": {},
+        }
+        if prd:
+            state["context"]["prd_path"] = prd
+        for stage_name, stage_cfg in stages.items():
+            state["current_stage"] = stage_name
+            prompt = _render_prompt(stage_name, state)
+            adapter = stage_cfg.get("cli", profile_data.get("cli", "claude"))
+            model = stage_cfg.get("model", "sonnet")
+            console.print(f"  [bold cyan]Stage: {stage_name}[/]")
+            console.print(f"    Adapter: {adapter}  Model: {model}")
+            preview = prompt[:500].replace("\n", "\n    ")
+            console.print(f"    Prompt preview:\n    {preview}")
+            if len(prompt) > 500:
+                console.print(f"    [dim]... ({len(prompt)} chars total)[/]")
+            console.print()
+        return
+
+    if not no_start:
+        start_story_async(key)
+        console.print("\n[dim]Graph started. Run [bold]story[/] to open the board.[/]")
+    else:
+        console.print(
+            "\n[dim]Story created but not started. "
+            "Run [bold]story[/] to open the board and press [[r]] to resume.[/]"
+        )
+
+
+@cli.command()
 def demo():
     """Run a simulated lifecycle — no LLM, no AI CLI needed."""
     from .demo import run_demo

@@ -109,27 +109,20 @@ Auto-detects your platform (brew / apt / npm / pip / winget) and installs missin
 ## Quick Start
 
 ```bash
-# Install
-pip install story-lifecycle       # not yet on PyPI — use pip install -e .
+# 1. Install
+pip install -e .
 
-# First run: environment check + guided setup
+# 2. First-run setup (LLM config + environment check)
+story setup
+
+# 3. See it work — simulated lifecycle, no AI needed
+story demo
+
+# 4. Create your first real story
+story create MY-001 -t "Add dark mode toggle"
+
+# 5. Watch the board
 story
-
-# Or manually:
-story --fix          # auto-install missing tools (npm, pip, brew, apt)
-story setup          # configure LLM provider & API key
-
-# Start orchestrator
-story serve
-
-# In another terminal: create a story
-story new STORY-123 --title "Add login feature" --profile minimal
-
-# Watch progress (interactive TUI)
-story
-
-# Enter AI session (Linux/macOS/WSL only)
-story enter STORY-123
 ```
 
 ## Architecture
@@ -172,17 +165,26 @@ story enter STORY-123
 ## CLI Reference
 
 ```
-story                              Launch TUI board (first run: setup wizard)
-story --fix                        Auto-install missing dependencies
-story --serve                      Start API server (port 8180)
-story --version                    Show version
+story                                    Launch TUI board (first run: setup wizard)
+story demo                               Run simulated lifecycle (no AI needed)
+story create <KEY> -t <TITLE>            Create and start a story
+story create <KEY> -t <TITLE> --dry-run  Preview prompts without executing
+story create <KEY> --no-start            Create but don't start (for later resume)
+story --fix                              Auto-install missing dependencies
+story --serve                            Start API server (port 8180)
+story setup                              Configure LLM provider & API key
+story doctor                             Check environment
+story --version                          Show version
 
 # Inside TUI board:
   [n]     Create new story
+  [N]     Create sub-story
+  [i]     Inbox (import from TAPD/Jira)
   [e]     Enter AI session
   [s]     Skip current stage
   [f]     Mark story as failed
   [r]     Resume blocked story
+  [a]     Abort story
   [q]     Quit
 ```
 

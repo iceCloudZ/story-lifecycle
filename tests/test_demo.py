@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from story_lifecycle.cli.demo import run_demo
 from story_lifecycle.db import models as db
 from story_lifecycle.orchestrator import graph as graph_mod
 
@@ -23,7 +22,9 @@ def _run_demo_with_db(tmp_path: Path):
         patch("story_lifecycle.orchestrator.nodes.notify"),
         patch("story_lifecycle.orchestrator.graph.emit_plan_done"),
         patch("story_lifecycle.orchestrator.graph.emit_terminal_opened"),
-        patch("story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None),
+        patch(
+            "story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None
+        ),
     ):
         from story_lifecycle.orchestrator.demo_tool import DemoTool
         from story_lifecycle.orchestrator import nodes as nodes_mod
@@ -82,6 +83,7 @@ class TestDemo:
     def test_demo_no_llm_required(self, tmp_path):
         """Verify demo works without any LLM config."""
         import os
+
         for key in ("STORY_LLM_API_KEY", "STORY_LLM_BASE_URL", "STORY_LLM_MODEL"):
             os.environ.pop(key, None)
 
