@@ -50,7 +50,7 @@ Stories come from your project management tool (TAPD, Jira) and carry real busin
 
 ```bash
 # Create from a real requirement
-story new STORY-1065520 --title "职业邮箱限制" --profile minimal
+story create STORY-1065520 -t "职业邮箱限制"
 
 # Each stage produces structured output
 .story-done/STORY-1065520/design.json    # {"complexity": "M", "spec_path": "docs/..."}
