@@ -4,8 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from .scenario import Scenario
-
 SCENARIOS_DIR = Path(__file__).parent / "scenarios"
 
 

@@ -572,9 +572,8 @@ class TestSubStoryDelegation:
 
     def test_route_after_plan_does_not_route_waiting_subtasks(self):
         state = _make_state(status="waiting_subtasks")
-        # waiting_subtasks is handled by interrupt() inside plan_stage_node,
-        # not by the routing function
-        assert route_after_plan(state) == "execute_stage"
+        # waiting_subtasks now routes to END — graph stops while children run
+        assert route_after_plan(state) == "__end__"
 
 
 class TestSubStoryQueries:

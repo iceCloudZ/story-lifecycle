@@ -17,6 +17,7 @@ from .nodes import (
     route_after_poll,
     router_node,
     route_from_router,
+    route_after_advance,
     advance_node,
     retry_node,
     skip_node,
@@ -125,7 +126,7 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "plan_stage",
         route_after_plan,
-        {"skip_stage": "skip_stage", "execute_stage": "execute_stage"},
+        {"skip_stage": "skip_stage", "execute_stage": "execute_stage", "__end__": END},
     )
 
     graph.add_edge("execute_stage", "poll_completion")
@@ -150,7 +151,11 @@ def build_graph() -> StateGraph:
         },
     )
 
-    graph.add_edge("advance", "plan_stage")
+    graph.add_conditional_edges(
+        "advance",
+        route_after_advance,
+        {"plan_stage": "plan_stage", "__end__": END},
+    )
     graph.add_edge("retry", "plan_stage")
     graph.add_edge("skip_stage", "advance")
     graph.add_edge("fail_stage", END)
@@ -232,6 +237,9 @@ def _run_story_impl(story_key: str):
         "review_summary": None,
         "trajectory_score": None,
         "plan": None,
+        "_next_action": None,
+        "_pending_sub_keys": None,
+        "_router_decision": None,
     }
 
     config = {"configurable": {"thread_id": story_key}}

@@ -1,12 +1,10 @@
 """E2E runner — patches deps, runs graph, returns result for assertion."""
 
-import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from story_lifecycle.db import models as db
 from story_lifecycle.orchestrator import graph as graph_mod
-from story_lifecycle.orchestrator.nodes import StoryState
 
 from .scenario import Scenario
 from .fake_tool import FakeStageTool

@@ -1,7 +1,5 @@
 """Shared pytest fixtures — isolated DB and graph globals reset."""
 
-from pathlib import Path
-
 import pytest
 
 from story_lifecycle.db import models as db
@@ -33,7 +31,7 @@ def isolated_story_home(tmp_path, monkeypatch):
     db_path = story_home / "story.db"
     checkpoint_path = story_home / "checkpoint.db"
 
-    monkeypatch.setattr(db.models, "get_db_path", lambda: db_path)
+    monkeypatch.setattr(db, "get_db_path", lambda: db_path)
     monkeypatch.setattr(graph, "checkpoint_db", checkpoint_path)
     monkeypatch.setattr(nodes_mod, "STORY_HOME", story_home)
 

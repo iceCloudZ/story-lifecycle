@@ -42,6 +42,9 @@ class StoryState(TypedDict, total=False):
     review_summary: Optional[str]
     trajectory_score: Optional[float]
     plan: Optional[dict]
+    _next_action: Optional[str]
+    _pending_sub_keys: Optional[list]
+    _router_decision: Optional[dict]
 
 
 # -------- stage config --------
@@ -135,9 +138,11 @@ def robust_json_parse(filepath: Path) -> dict:
 
 
 def route_after_plan(state: StoryState) -> str:
-    """Conditional edge after plan_stage: skip or execute."""
+    """Conditional edge after plan_stage: skip, execute, or end."""
     if state.get("status") == "skipping":
         return "skip_stage"
+    if state.get("status") == "waiting_subtasks":
+        return "__end__"
     return "execute_stage"
 
 
@@ -744,6 +749,13 @@ def route_from_router(state: StoryState) -> str:
     return state.get("_next_action", "fail")
 
 
+def route_after_advance(state: StoryState) -> str:
+    """After advance: if completed go to END, otherwise loop back to plan_stage."""
+    if state.get("status") == "completed":
+        return "__end__"
+    return "plan_stage"
+
+
 # -------- node: advance --------
 
 
@@ -819,7 +831,7 @@ def fail_node(state: StoryState) -> StoryState:
     """Mark story as blocked."""
     key = state["story_key"]
     stage = state["current_stage"]
-    error = state.get("last_error", "Unknown error")
+    error = state.get("last_error") or "Unknown error"
     db.update_story(key, status="blocked", last_error=error)
     db.log_stage(key, stage, "fail", error)
     state["status"] = "blocked"
