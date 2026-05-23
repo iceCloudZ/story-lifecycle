@@ -878,7 +878,7 @@ Story: {state["story_key"]}
     # Variable substitution
     ctx = state.get("context", {})
 
-    # Sub-story context injection
+    # Sub-story context injection (type-aware)
     parent_key = None
     current_story = db.get_story(state["story_key"])
     if current_story:
@@ -889,11 +889,42 @@ Story: {state["story_key"]}
         sub_desc = ctx.get("sub_description", "")
         sub_type = current_story.get("sub_type") or ""
 
+        type_emphasis = {
+            "bug-fix": "修复以下问题",
+            "integration": "前后端联调修改",
+            "refinement": "需求补充/调整",
+            "redo": "重做",
+        }
+        emphasis = type_emphasis.get(sub_type, "子任务")
+
+        context_hints = ""
+        if sub_type == "bug-fix":
+            review_path = ctx.get("review_path")
+            if review_path:
+                context_hints += f"\n- 上次评审: {review_path}\n  请关注评审中提到的问题。"
+        elif sub_type == "integration":
+            spec_path = ctx.get("spec_path")
+            if spec_path:
+                context_hints += f"\n- 接口文档: {spec_path}\n  请参考设计文档中的接口定义。"
+        elif sub_type == "refinement":
+            spec_path = ctx.get("spec_path")
+            if spec_path:
+                context_hints += f"\n- 现有设计文档: {spec_path}\n  在此基础上进行补充和调整。"
+        elif sub_type == "redo":
+            review_path = ctx.get("review_path")
+            review_summary = ctx.get("review_summary", "")
+            if review_path:
+                context_hints += f"\n- 被否决的方案评审: {review_path}"
+            if review_summary:
+                context_hints += f"\n- 评审摘要: {review_summary}"
+            context_hints += "\n  请推翻旧方案，重新设计和实现。"
+
         sub_header = (
             f"## 子任务上下文\n\n"
             f"- **父故事**: {parent_key} — {parent_title}\n"
-            f"- **类型**: {sub_type}\n"
-            f"- **任务描述**: {sub_desc}\n\n"
+            f"- **类型**: {sub_type} — {emphasis}\n"
+            f"- **任务描述**: {sub_desc}\n"
+            f"{context_hints}\n"
         )
         template = sub_header + template
 
