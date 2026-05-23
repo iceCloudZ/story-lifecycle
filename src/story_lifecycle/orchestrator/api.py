@@ -313,7 +313,7 @@ async def get_quality_status(story_key: str):
         "findings": findings,
         "learned_patterns": patterns,
         "verifications": verifications,
-        "dor": check_dor(story_key, ""),
+        "dor": check_dor(story_key, "", record=False),
         "dod": check_dod(story_key, ""),
     }
 

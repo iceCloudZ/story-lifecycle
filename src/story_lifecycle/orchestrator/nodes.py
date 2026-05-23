@@ -977,6 +977,24 @@ def wait_confirm_node(state: StoryState) -> StoryState:
 # -------- prompt rendering --------
 
 
+def _derive_relevance_tags(state: StoryState, stage: str) -> list[str]:
+    """Derive relevance tags from story context for pattern matching."""
+    tags = [stage]
+    ctx = state.get("context", {})
+    modules = ctx.get("affected_modules", [])
+    if isinstance(modules, list):
+        tags.extend(modules)
+    elif isinstance(modules, str):
+        tags.append(modules)
+    category = ctx.get("category")
+    if category:
+        tags.append(category)
+    profile = state.get("profile", "")
+    if profile:
+        tags.append(profile)
+    return tags
+
+
 def _build_prd_task_section(state: StoryState, stage: str, has_prd: bool) -> str:
     """Build AI-enhanced PRD injection section if prd-task-{story_key}.json exists."""
     if has_prd or stage != "design":
@@ -1092,7 +1110,10 @@ Story: {state["story_key"]}
     try:
         from .quality import build_quality_packet, build_quality_checklist
 
-        quality_packet = build_quality_packet(state["story_key"], stage)
+        tags = _derive_relevance_tags(state, stage)
+        quality_packet = build_quality_packet(
+            state["story_key"], stage, relevant_tags=tags
+        )
         empty_marker = (
             f"Quality Packet for {state['story_key']}\n\nOpen Findings: none\n"
         )

@@ -33,9 +33,14 @@ def update_finding_status(
     reason: str = "",
     evidence: dict | None = None,
 ) -> None:
-    """Update finding status + write audit event."""
+    """Update finding status + write audit event.
+
+    Raises ValueError if finding_id does not exist.
+    """
     old = db.get_finding(finding_id)
-    old_status = old["status"] if old else "unknown"
+    if old is None:
+        raise ValueError(f"Finding not found: {finding_id}")
+    old_status = old["status"]
 
     kwargs = {"status": status}
     if evidence and evidence.get("verification_event_id"):
@@ -213,8 +218,11 @@ def reject_pattern(pattern_id: str) -> None:
     db.update_learned_pattern(pattern_id, status="rejected")
 
 
-def check_dor(story_key: str, stage: str) -> dict:
-    """Definition of Ready check. Returns {ready, missing, warnings}."""
+def check_dor(story_key: str, stage: str, record: bool = True) -> dict:
+    """Definition of Ready check. Returns {ready, missing, warnings}.
+
+    Set record=False for read-only queries (e.g. dashboard polling).
+    """
     story = db.get_story(story_key)
     if not story:
         return {"ready": False, "missing": ["story not found"], "warnings": []}
@@ -236,16 +244,17 @@ def check_dor(story_key: str, stage: str) -> dict:
         warnings.append("affected modules not declared")
 
     ready = len(missing) == 0
-    db.log_event(
-        story_key,
-        stage,
-        "readiness_check",
-        {
-            "ready": ready,
-            "missing": missing,
-            "warnings": warnings,
-        },
-    )
+    if record:
+        db.log_event(
+            story_key,
+            stage,
+            "readiness_check",
+            {
+                "ready": ready,
+                "missing": missing,
+                "warnings": warnings,
+            },
+        )
     return {"ready": ready, "missing": missing, "warnings": warnings}
 
 
