@@ -215,12 +215,15 @@ def dedupe_candidates(
             existing = db.get_findings_by_story(story_key)
             existing_keys = set()
             for f in existing:
-                existing_keys.add(f"{f['category']}|{f.get('location', '')}")
+                existing_keys.add(
+                    f"{f['category']}|{f.get('location', '')}|{f.get('description', '')[:50]}"
+                )
 
             merged = [
                 c
                 for c in merged
-                if f"{c['category']}|{c.get('location', '')}" not in existing_keys
+                if f"{c['category']}|{c.get('location', '')}|{c.get('description', '')[:50]}"
+                not in existing_keys
             ]
         except Exception:
             pass  # if DB fails, don't block

@@ -125,8 +125,15 @@ def list_findings(story_key):
     "--downgrade", "action", flag_value="downgrade", help="Downgrade severity"
 )
 @click.option("--verify", "action", flag_value="verify", help="Mark as verified")
+@click.option(
+    "--verification-event",
+    "verification_event_id",
+    type=int,
+    default=None,
+    help="Verification event ID to link as evidence",
+)
 @click.option("--reason", "-r", default="", help="Reason for the decision")
-def decide(finding_id, action, reason):
+def decide(finding_id, action, reason, verification_event_id):
     """Make a decision on a candidate finding.
 
     \b
@@ -181,7 +188,12 @@ def decide(finding_id, action, reason):
             f"[yellow]Downgraded[/] {finding_id}: {finding['severity']} -> {new_sev}"
         )
     elif action == "verify":
-        update_finding_status(story_key, finding_id, "verified", reason=reason)
+        evidence = {}
+        if verification_event_id:
+            evidence["verification_event_id"] = verification_event_id
+        update_finding_status(
+            story_key, finding_id, "verified", reason=reason, evidence=evidence or None
+        )
         console.print(f"[green]Verified[/] {finding_id}")
 
     if reason:
@@ -240,20 +252,36 @@ def approvals_list():
 @click.argument("finding_id")
 @click.option("--accept", "action", flag_value="accept", help="Accept finding")
 @click.option("--reject", "action", flag_value="reject", help="Reject finding")
+@click.option("--defer", "action", flag_value="defer", help="Defer finding")
+@click.option(
+    "--downgrade", "action", flag_value="downgrade", help="Downgrade severity"
+)
+@click.option("--verify", "action", flag_value="verify", help="Mark as verified")
+@click.option(
+    "--verification-event",
+    "verification_event_id",
+    type=int,
+    default=None,
+    help="Verification event ID to link as evidence",
+)
 @click.option("--reason", "-r", default="", help="Reason")
-def decide_approval(finding_id, action, reason):
+def decide_approval(finding_id, action, reason, verification_event_id):
     """Make a decision on a pending finding.
 
     \b
     Examples:
       story approvals decide finding-xxx --accept
       story approvals decide finding-yyy --reject --reason "not actionable"
+      story approvals decide finding-zzz --defer
+      story approvals decide finding-www --verify --reason "tested"
     """
     from ..db import models as db
     from ..orchestrator.quality import update_finding_status
 
     if not action:
-        console.print("[red]Specify --accept or --reject[/]")
+        console.print(
+            "[red]Specify one of: --accept, --reject, --defer, --downgrade, --verify[/]"
+        )
         sys.exit(1)
 
     finding = db.get_finding(finding_id)
@@ -262,6 +290,45 @@ def decide_approval(finding_id, action, reason):
         sys.exit(1)
 
     story_key = finding["story_key"]
+
+    if action == "accept":
+        update_finding_status(story_key, finding_id, "accepted", reason=reason)
+        console.print(f"[green]Accepted[/] {finding_id}")
+    elif action == "reject":
+        update_finding_status(story_key, finding_id, "rejected", reason=reason)
+        console.print(f"[red]Rejected[/] {finding_id}")
+    elif action == "defer":
+        update_finding_status(story_key, finding_id, "deferred", reason=reason)
+        console.print(f"[yellow]Deferred[/] {finding_id}")
+    elif action == "downgrade":
+        sev_order = {"high": "medium", "medium": "low", "low": "low"}
+        new_sev = sev_order.get(finding["severity"], "low")
+        db.update_finding(finding_id, severity=new_sev)
+        db.log_event(
+            story_key,
+            finding.get("stage", ""),
+            "finding_downgraded",
+            {
+                "finding_id": finding_id,
+                "from": finding["severity"],
+                "to": new_sev,
+                "reason": reason,
+            },
+        )
+        console.print(
+            f"[yellow]Downgraded[/] {finding_id}: {finding['severity']} -> {new_sev}"
+        )
+    elif action == "verify":
+        evidence = {}
+        if verification_event_id:
+            evidence["verification_event_id"] = verification_event_id
+        update_finding_status(
+            story_key, finding_id, "verified", reason=reason, evidence=evidence or None
+        )
+        console.print(f"[green]Verified[/] {finding_id}")
+
+    if reason:
+        console.print(f"  Reason: [dim]{reason}[/]")
 
     if action == "accept":
         update_finding_status(story_key, finding_id, "accepted", reason=reason)

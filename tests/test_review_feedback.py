@@ -274,8 +274,8 @@ def test_dedupe_candidates_against_existing(tmp_path):
     ]
 
     deduped = dedupe_candidates(candidates, story_key="S1")
-    assert len(deduped) == 1
-    assert deduped[0]["category"] == "style"
+    # Different descriptions → both kept (DB dedupe uses description[:50] too)
+    assert len(deduped) == 2
 
 
 def test_import_review_creates_candidate_findings(tmp_path):
