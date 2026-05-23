@@ -338,9 +338,7 @@ class TestRouterNode:
         state = _make_state(
             last_error="Execution failed",
         )
-        with patch(
-            "story_lifecycle.orchestrator.nodes.llm_router"
-        ) as mock_router:
+        with patch("story_lifecycle.orchestrator.nodes.llm_router") as mock_router:
             mock_router.route.return_value = {
                 "action": "retry",
                 "reasoning": "Transient error",
@@ -435,12 +433,15 @@ class TestAdvanceNode:
             story_key="TEST-ADV",
             context={"prd_path": "prd.md"},
         )
-        with patch(
-            "story_lifecycle.orchestrator.nodes.resolve_next_stage",
-            return_value="implement",
-        ), patch(
-            "story_lifecycle.orchestrator.nodes.get_stage_config",
-            return_value={"expected_outputs": ["prd_path"]},
+        with (
+            patch(
+                "story_lifecycle.orchestrator.nodes.resolve_next_stage",
+                return_value="implement",
+            ),
+            patch(
+                "story_lifecycle.orchestrator.nodes.get_stage_config",
+                return_value={"expected_outputs": ["prd_path"]},
+            ),
         ):
             result = advance_node(state)
 
@@ -484,6 +485,7 @@ class TestFailNode:
 class TestEventLog:
     def test_log_and_retrieve_events(self):
         import uuid
+
         key = f"EVT-{uuid.uuid4().hex[:8]}"
         db.log_event(key, "design", "plan", {"adapter": "claude"})
         db.log_event(key, "design", "execute", {"attempt": 1})
@@ -545,14 +547,26 @@ class TestSubStoryDelegation:
         mock_planner.plan_stage.return_value = {
             "split": True,
             "subtasks": [
-                {"key_suffix": "auth", "title": "Auth module", "summary": "Implement auth", "depends_on": []},
-                {"key_suffix": "api", "title": "API layer", "summary": "Implement API", "depends_on": ["auth"]},
+                {
+                    "key_suffix": "auth",
+                    "title": "Auth module",
+                    "summary": "Implement auth",
+                    "depends_on": [],
+                },
+                {
+                    "key_suffix": "api",
+                    "title": "API layer",
+                    "summary": "Implement API",
+                    "depends_on": ["auth"],
+                },
             ],
             "summary": "Splitting into sub-stories",
         }
 
         with tempfile.TemporaryDirectory() as tmp:
-            db.upsert_story("PARENT-001", title="Parent", workspace=tmp, status="active")
+            db.upsert_story(
+                "PARENT-001", title="Parent", workspace=tmp, status="active"
+            )
             state = _make_state(story_key="PARENT-001", workspace=tmp)
             result = plan_stage_node(state)
 
@@ -580,8 +594,12 @@ class TestSubStoryQueries:
     def test_get_sub_stories(self):
         key = f"PSUB-{uuid.uuid4().hex[:6]}"
         db.upsert_story(key, title="Parent", workspace="/tmp", status="active")
-        db.upsert_story(f"{key}-a", title="A", workspace="/tmp", parent_key=key, subtask_index=0)
-        db.upsert_story(f"{key}-b", title="B", workspace="/tmp", parent_key=key, subtask_index=1)
+        db.upsert_story(
+            f"{key}-a", title="A", workspace="/tmp", parent_key=key, subtask_index=0
+        )
+        db.upsert_story(
+            f"{key}-b", title="B", workspace="/tmp", parent_key=key, subtask_index=1
+        )
 
         subs = db.get_sub_stories(key)
         assert len(subs) == 2
@@ -595,7 +613,9 @@ class TestSubStoryQueries:
 
     def test_get_pending_parents_with_waiting(self):
         key = f"PWAIT-{uuid.uuid4().hex[:6]}"
-        db.upsert_story(key, title="Parent", workspace="/tmp", status="waiting_subtasks")
+        db.upsert_story(
+            key, title="Parent", workspace="/tmp", status="waiting_subtasks"
+        )
         parents = db.get_pending_parents()
         matching = [p for p in parents if p["story_key"] == key]
         assert len(matching) == 1
@@ -604,9 +624,15 @@ class TestSubStoryQueries:
 class TestWatchdogSubtaskCompletion:
     def test_resumes_parent_when_all_children_complete(self):
         key = f"PCMP-{uuid.uuid4().hex[:6]}"
-        db.upsert_story(key, title="Parent", workspace="/tmp", status="waiting_subtasks")
-        db.upsert_story(f"{key}-a", title="A", workspace="/tmp", parent_key=key, status="completed")
-        db.upsert_story(f"{key}-b", title="B", workspace="/tmp", parent_key=key, status="completed")
+        db.upsert_story(
+            key, title="Parent", workspace="/tmp", status="waiting_subtasks"
+        )
+        db.upsert_story(
+            f"{key}-a", title="A", workspace="/tmp", parent_key=key, status="completed"
+        )
+        db.upsert_story(
+            f"{key}-b", title="B", workspace="/tmp", parent_key=key, status="completed"
+        )
 
         with patch("story_lifecycle.orchestrator.graph.resume_story") as mock_resume:
             # Simulate watchdog logic
@@ -633,7 +659,13 @@ class TestToolRegistry:
         from story_lifecycle.orchestrator.tools import available_tools
 
         tools = available_tools()
-        assert set(tools) == {"stage_tool", "skill_tool", "research_tool", "benchmark_tool", "review_tool"}
+        assert set(tools) == {
+            "stage_tool",
+            "skill_tool",
+            "research_tool",
+            "benchmark_tool",
+            "review_tool",
+        }
 
     def test_get_tool_returns_correct_type(self):
         from story_lifecycle.orchestrator.tools import get_tool
@@ -658,8 +690,22 @@ class TestBoardDisplaySorting:
 
         key = f"BDSP-{uuid.uuid4().hex[:6]}"
         db.upsert_story(key, title="Parent", workspace="/tmp", status="active")
-        db.upsert_story(f"{key}-a", title="Child A", workspace="/tmp", parent_key=key, subtask_index=0, status="active")
-        db.upsert_story(f"{key}-b", title="Child B", workspace="/tmp", parent_key=key, subtask_index=1, status="active")
+        db.upsert_story(
+            f"{key}-a",
+            title="Child A",
+            workspace="/tmp",
+            parent_key=key,
+            subtask_index=0,
+            status="active",
+        )
+        db.upsert_story(
+            f"{key}-b",
+            title="Child B",
+            workspace="/tmp",
+            parent_key=key,
+            subtask_index=1,
+            status="active",
+        )
 
         # Should not raise — just verify it renders
         stories = db.list_active_stories()

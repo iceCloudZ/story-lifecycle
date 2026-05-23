@@ -49,10 +49,18 @@ def test_derive_story_key():
     from story_lifecycle.sources.base import SourceItem
     from story_lifecycle.orchestrator.service import _derive_story_key
 
-    tapd_item = SourceItem(id="1144381896001001234", source="tapd", item_type="requirement", title="", description="")
+    tapd_item = SourceItem(
+        id="1144381896001001234",
+        source="tapd",
+        item_type="requirement",
+        title="",
+        description="",
+    )
     assert _derive_story_key(tapd_item) == "TAPD-001234"
 
-    jira_item = SourceItem(id="JIRA-567", source="jira", item_type="requirement", title="", description="")
+    jira_item = SourceItem(
+        id="JIRA-567", source="jira", item_type="requirement", title="", description=""
+    )
     # last 6 chars of "JIRA-567" is "RA-567", prefixed with "JIRA-" -> "JIRA-RA-567"
     result = _derive_story_key(jira_item)
     assert result == "JIRA-RA-567"

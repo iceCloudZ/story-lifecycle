@@ -67,7 +67,9 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
         patch("story_lifecycle.orchestrator.nodes.notify"),
         patch("story_lifecycle.orchestrator.graph.emit_plan_done"),
         patch("story_lifecycle.orchestrator.graph.emit_terminal_opened"),
-        patch("story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None),
+        patch(
+            "story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None
+        ),
     ):
         # Disable real LLM planner
         mock_planner.is_available.return_value = False

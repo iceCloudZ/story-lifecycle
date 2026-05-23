@@ -11,6 +11,7 @@ def _init_fresh_db(tmp_path):
     Returns (module, original_get_db_path) so caller can restore.
     """
     import story_lifecycle.db.models as m
+
     original = m.get_db_path
     m.get_db_path = lambda: tmp_path / "story.db"
     m.init_db()
@@ -58,6 +59,7 @@ def test_create_sub_story(tmp_path):
         m.update_context("FEAT-001", "spec_path", ".story-context/FEAT-001/spec.md")
 
         from story_lifecycle.orchestrator.service import create_sub_story
+
         sub_key = create_sub_story(
             parent_key="FEAT-001",
             sub_type="bug-fix",
@@ -105,6 +107,7 @@ def test_abort_sub_story(tmp_path):
         m.update_story("FEAT-002", status="waiting_subtasks")
 
         from story_lifecycle.orchestrator.service import abort_story
+
         abort_story("FEAT-002-sub-1", "User abort")
 
         child = m.get_story("FEAT-002-sub-1")
@@ -130,6 +133,7 @@ def test_resume_parent(tmp_path):
         m.update_story("FEAT-003-sub-1", status="active")
 
         from story_lifecycle.orchestrator.service import resume_parent
+
         resume_parent("FEAT-003", strategy="pause_subs")
 
         parent = m.get_story("FEAT-003")
@@ -157,6 +161,7 @@ def test_resume_parent_abort_subs(tmp_path):
         m.update_story("FEAT-004-sub-1", status="active")
 
         from story_lifecycle.orchestrator.service import resume_parent
+
         resume_parent("FEAT-004", strategy="abort_subs")
 
         child = m.get_story("FEAT-004-sub-1")
@@ -169,7 +174,9 @@ def test_nested_sub_story_rejected(tmp_path):
     """Sub-story cannot create its own sub-stories."""
     m, original = _init_fresh_db(tmp_path)
     try:
-        m.create_story(story_key="FEAT-005", title="Grandparent", workspace=str(tmp_path))
+        m.create_story(
+            story_key="FEAT-005", title="Grandparent", workspace=str(tmp_path)
+        )
         m.create_story(
             story_key="FEAT-005-sub-1",
             title="Child",
@@ -179,6 +186,7 @@ def test_nested_sub_story_rejected(tmp_path):
         )
 
         from story_lifecycle.orchestrator.service import create_sub_story
+
         with pytest.raises(ValueError, match="嵌套"):
             create_sub_story(
                 parent_key="FEAT-005-sub-1",
@@ -197,6 +205,7 @@ def test_api_create_sub_story(tmp_path):
 
         from fastapi.testclient import TestClient
         from story_lifecycle.orchestrator.api import app
+
         client = TestClient(app)
 
         resp = client.post(
@@ -227,6 +236,7 @@ def test_api_abort_story(tmp_path):
 
         from fastapi.testclient import TestClient
         from story_lifecycle.orchestrator.api import app
+
         client = TestClient(app)
 
         resp = client.post("/api/story/API-002/abort", json={"reason": "test abort"})
@@ -254,6 +264,7 @@ def test_api_resume_parent(tmp_path):
 
         from fastapi.testclient import TestClient
         from story_lifecycle.orchestrator.api import app
+
         client = TestClient(app)
 
         resp = client.put(
@@ -272,7 +283,11 @@ def test_workspace_mutex(tmp_path):
     """Only one story per workspace should be able to execute at a time."""
     m, original = _init_fresh_db(tmp_path)
     try:
-        from story_lifecycle.orchestrator.graph import acquire_workspace, release_workspace
+        from story_lifecycle.orchestrator.graph import (
+            acquire_workspace,
+            release_workspace,
+        )
+
         assert acquire_workspace(str(tmp_path), "MUTEX-001") is True
         assert acquire_workspace(str(tmp_path), "MUTEX-002") is False
         release_workspace(str(tmp_path))
@@ -293,6 +308,7 @@ def test_context_size_control(tmp_path):
         m.update_story("FEAT-006", context_json=big_ctx)
 
         from story_lifecycle.orchestrator.service import create_sub_story
+
         sub_key = create_sub_story(
             parent_key="FEAT-006",
             description="Should skip big field",
@@ -310,6 +326,7 @@ def test_context_size_control(tmp_path):
 def test_get_sub_types_default():
     """get_sub_types should return built-in defaults when config has none."""
     from story_lifecycle.cli.setup import get_sub_types
+
     types = get_sub_types()
     assert "bug-fix" in types
     assert types["bug-fix"]["default_start_stage"] == "implement"
@@ -322,17 +339,21 @@ def test_get_sub_types_from_config(tmp_path):
     from story_lifecycle.cli.setup import CONFIG_FILE, get_sub_types
 
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(yaml.dump({
-        "api_key": "test",
-        "sub_story_types": {
-            "hotfix": {
-                "label": "紧急修复",
-                "color": "magenta",
-                "default_start_stage": "implement",
-                "description_template": "紧急修复：",
+    CONFIG_FILE.write_text(
+        yaml.dump(
+            {
+                "api_key": "test",
+                "sub_story_types": {
+                    "hotfix": {
+                        "label": "紧急修复",
+                        "color": "magenta",
+                        "default_start_stage": "implement",
+                        "description_template": "紧急修复：",
+                    }
+                },
             }
-        },
-    }))
+        )
+    )
 
     try:
         types = get_sub_types()
