@@ -41,9 +41,11 @@ class StoryCard(Static):
     }
     """
 
-    def __init__(self, story: dict, selected: bool = False):
+    def __init__(self, story: dict, selected: bool = False, collapsed: bool = False, sub_count: int = 0):
         self.story = story
         self._selected = selected
+        self._collapsed = collapsed
+        self._sub_count = sub_count
         super().__init__(classes="selected" if selected else "")
 
     def set_selected(self, selected: bool):
@@ -86,11 +88,16 @@ class StoryCard(Static):
         cli_info = get_story_cli_model(key)
         cli_line = f"  [dim]CLI: {cli_info['cli']} · Model: {cli_info['model']}[/]"
 
+        collapse_info = ""
+        if self._sub_count > 0:
+            arrow = "▸" if self._collapsed else "▾"
+            collapse_info = f" [dim]({self._sub_count} 个子故事 {arrow})[/]"
+
         cursor = "[bold cyan]▸[/] " if self._selected else "  "
         indent = "  └─ " if is_child else ""
 
         lines = [
-            f"{cursor}{indent}[bold cyan]{key}[/]{type_badge}  {title}",
+            f"{cursor}{indent}[bold cyan]{key}[/]{type_badge}{collapse_info}  {title}",
             f"  {bar}  {badge}  [dim]retries: {retries}[/]",
             cli_line,
         ]
@@ -427,6 +434,7 @@ class StoryBoardApp(App):
         Binding("x", "delete_story", "Delete"),
         Binding("shift+n", "new_sub_story", "Sub", key_display="N"),
         Binding("a", "abort_story", "Abort"),
+        Binding("c", "toggle_collapse", "Fold"),
         Binding("shift+d", "run_doctor", "Doctor", key_display="D"),
         Binding("shift+s", "run_setup", "Setup", key_display="S"),
         Binding("question_mark", "help", "Help", key_display="?"),
@@ -463,6 +471,7 @@ class StoryBoardApp(App):
         set_tui_app(self)
         self._watchdog_interval = 3
         self._show_detail = False
+        self._collapsed_parents: set[str] = set()
         self._plan_story_key = ""
         self._spinner_idx = -1  # -1 = stopped
         self._plan_start_time = 0.0
@@ -470,6 +479,16 @@ class StoryBoardApp(App):
         self.set_interval(5, self.refresh_stories)
         self.set_interval(3, self.watchdog_check)
         self.set_interval(0.08, self.tick_spinner)
+
+    def _visible_stories(self) -> list[dict]:
+        """Return stories visible after collapse filtering."""
+        result = []
+        for s in self.stories:
+            pk = s.get("parent_key")
+            if pk and pk in self._collapsed_parents:
+                continue
+            result.append(s)
+        return result
 
     def refresh_stories(self):
         self.stories = db.list_active_stories()
@@ -499,9 +518,21 @@ class StoryBoardApp(App):
                     Static("[dim]No active stories. Press [[n]] to create one.[/]")
                 )
             else:
+                display_idx = 0
                 for i, s in enumerate(self.stories):
-                    card = StoryCard(s, selected=(i == self.selected_index))
+                    pk = s.get("parent_key")
+                    if pk and pk in self._collapsed_parents:
+                        continue
+                    is_parent = not bool(s.get("parent_key"))
+                    sub_count = len(db.get_sub_stories(s["story_key"])) if is_parent else 0
+                    card = StoryCard(
+                        s,
+                        selected=(display_idx == self.selected_index),
+                        collapsed=(is_parent and s["story_key"] in self._collapsed_parents),
+                        sub_count=sub_count,
+                    )
                     story_list.mount(card)
+                    display_idx += 1
         else:
             for i, card in enumerate(self.query(StoryCard)):
                 card.set_selected(i == self.selected_index)
@@ -512,12 +543,14 @@ class StoryBoardApp(App):
         )
 
     def action_cursor_up(self):
+        visible = self._visible_stories()
         if self.selected_index > 0:
             self.selected_index -= 1
             self._render(full=False)
 
     def action_cursor_down(self):
-        if self.stories and self.selected_index < len(self.stories) - 1:
+        visible = self._visible_stories()
+        if visible and self.selected_index < len(visible) - 1:
             self.selected_index += 1
             self._render(full=False)
 
@@ -820,6 +853,22 @@ class StoryBoardApp(App):
             panel.set_class(True, "visible")
             self._show_detail = True
         self.refresh_stories()
+
+    def action_toggle_collapse(self):
+        if not self.stories:
+            return
+        visible = self._visible_stories()
+        if self.selected_index >= len(visible):
+            return
+        s = visible[self.selected_index]
+        key = s["story_key"]
+        has_children = any(st.get("parent_key") == key for st in self.stories)
+        if has_children:
+            if key in self._collapsed_parents:
+                self._collapsed_parents.discard(key)
+            else:
+                self._collapsed_parents.add(key)
+            self._render()
 
     def action_refresh(self):
         self.refresh_stories()
