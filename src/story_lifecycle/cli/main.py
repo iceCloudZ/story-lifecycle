@@ -69,10 +69,11 @@ def _first_run_check():
 @click.pass_context
 def cli(ctx, serve, host, port, fix_deps):
     """Story Lifecycle Manager — AI-powered development workflow orchestrator."""
-    if ctx.invoked_subcommand is not None:
-        return
     init_db()
     load_config_to_env()
+
+    if ctx.invoked_subcommand is not None:
+        return
 
     if fix_deps:
         run_doctor_fix(interactive=True)
@@ -183,6 +184,11 @@ def demo():
 from .seed_quality import seed_quality_group  # noqa: E402
 
 cli.add_command(seed_quality_group)
+
+from .review_feedback import review_feedback_group, approvals_group  # noqa: E402
+
+cli.add_command(review_feedback_group)
+cli.add_command(approvals_group)
 
 
 def _run_board():

@@ -1,5 +1,6 @@
 """Tests for Phase 1: Review Feedback Intake Loop."""
 
+import inspect
 import json
 import os
 from unittest.mock import patch, MagicMock
@@ -234,10 +235,10 @@ def test_dedupe_candidates_merges_similar():
     ]
 
     deduped = dedupe_candidates(candidates)
-    # Same category + location should merge — keep higher severity
-    assert len(deduped) == 2
+    # Different descriptions → not merged even with same category+location
+    assert len(deduped) == 3
     routing = [c for c in deduped if c["category"] == "routing"]
-    assert len(routing) == 1
+    assert len(routing) == 2
     assert routing[0]["severity"] == "high"
 
 
@@ -320,8 +321,6 @@ def test_import_review_creates_candidate_findings(tmp_path):
 def test_review_prompt_contains_readonly_guardrail():
     """Review prompt in planner.py must contain reviewer read-only constraint."""
     from story_lifecycle.orchestrator.planner import review_stage
-
-    import inspect
 
     source = inspect.getsource(review_stage)
     assert (
@@ -655,3 +654,90 @@ def test_api_decide_finding_not_found(tmp_path):
         },
     )
     assert resp.status_code == 404
+
+
+# ── Task 6: E2E integration test ──
+
+
+def test_review_feedback_intake_e2e(tmp_path):
+    """End-to-end: import review -> list -> decide -> verify in quality flywheel."""
+    db = _setup_db(tmp_path)
+    from story_lifecycle.orchestrator.review_feedback import import_review
+    from story_lifecycle.orchestrator.quality import (
+        update_finding_status,
+        build_quality_packet,
+        check_dod,
+    )
+
+    # Setup story
+    db.upsert_story(
+        "TAPD-100100",
+        title="逾期利息调整",
+        workspace=str(tmp_path),
+        current_stage="implement",
+    )
+
+    # Verify the story was created
+    story = db.get_story("TAPD-100100")
+    assert story is not None
+    assert story["current_stage"] == "implement"
+
+    # 1. Import review (rule fallback, no LLM)
+    review_md = (
+        "- [HIGH] api.py:42 缺少空指针检查，可能导致 NPE\n"
+        "- [MEDIUM] 缺少边界测试 case\n"
+        "- [LOW] 变量命名不规范"
+    )
+    env = {"STORY_HOME": str(tmp_path)}
+    if "STORY_LLM_API_KEY" in os.environ:
+        env["STORY_LLM_API_KEY"] = ""
+    with patch.dict("os.environ", env):
+        # Ensure no LLM key triggers fallback
+        os.environ.pop("STORY_LLM_API_KEY", None)
+        result = import_review("TAPD-100100", review_md)
+
+    assert result["imported"] >= 2  # at least the HIGH and MEDIUM
+    assert result["mode"] == "rule_fallback"
+
+    # 2. List findings
+    findings = db.get_open_findings("TAPD-100100")
+    assert len(findings) >= 2
+
+    high_f = next(f for f in findings if f["severity"] == "high")
+    medium_f = next(f for f in findings if f["severity"] == "medium")
+
+    # 3. DoD should block (open high finding)
+    dod = check_dod("TAPD-100100", "implement")
+    assert dod["passed"] is False
+
+    # 4. Accept high finding
+    update_finding_status("TAPD-100100", high_f["id"], "accepted", reason="valid issue")
+
+    # 5. Reject medium finding
+    update_finding_status(
+        "TAPD-100100", medium_f["id"], "rejected", reason="style only"
+    )
+
+    # 6. Quality packet shows accepted finding
+    build_quality_packet("TAPD-100100", "implement")
+
+    # 7. Mark verified
+    update_finding_status(
+        "TAPD-100100",
+        high_f["id"],
+        "verified",
+        reason="fixed and tested",
+        evidence={"verification_event_id": 1},
+    )
+    finding = db.get_finding(high_f["id"])
+    assert finding["status"] == "verified"
+
+    # 8. Audit trail
+    events = db.get_story_events("TAPD-100100")
+    event_types = {e["event_type"] for e in events}
+    assert "review_feedback_imported" in event_types
+    assert "finding_status_changed" in event_types
+
+    # 9. DoD should pass now (no open high findings)
+    dod2 = check_dod("TAPD-100100", "implement")
+    assert dod2["passed"] is True

@@ -194,7 +194,7 @@ def dedupe_candidates(
     # Phase 1: merge within candidates (same category + location)
     seen: dict[str, dict] = {}
     for c in candidates:
-        key = f"{c['category']}|{c.get('location', '')}"
+        key = f"{c['category']}|{c.get('location', '')}|{c.get('description', '')[:50]}"
         if key in seen:
             existing = seen[key]
             # Keep higher severity
