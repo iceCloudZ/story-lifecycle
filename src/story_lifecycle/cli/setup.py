@@ -188,3 +188,41 @@ def load_config_to_env():
         os.environ["STORY_LLM_BASE_URL"] = config["base_url"]
     if config.get("model") and not os.environ.get("STORY_LLM_MODEL"):
         os.environ["STORY_LLM_MODEL"] = config["model"]
+
+
+DEFAULT_SUB_TYPES = {
+    "bug-fix": {
+        "label": "缺陷修复",
+        "color": "red",
+        "default_start_stage": "implement",
+        "description_template": "修复以下问题：",
+    },
+    "integration": {
+        "label": "联调适配",
+        "color": "yellow",
+        "default_start_stage": "implement",
+        "description_template": "前后端联调修改：",
+    },
+    "refinement": {
+        "label": "需求补充",
+        "color": "blue",
+        "default_start_stage": "design",
+        "description_template": "需求补充/调整：",
+    },
+    "redo": {
+        "label": "返工重做",
+        "color": "orange",
+        "default_start_stage": "design",
+        "description_template": "重做，原因：",
+    },
+}
+
+
+def get_sub_types() -> dict:
+    """Load sub-story types: defaults merged with user config."""
+    config = get_config()
+    types = dict(DEFAULT_SUB_TYPES)
+    user_types = config.get("sub_story_types", {})
+    if user_types:
+        types.update(user_types)
+    return types
