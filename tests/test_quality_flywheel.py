@@ -179,3 +179,95 @@ def test_record_story_intake_event(tmp_path):
     assert data["source"] == "tapd"
     assert data["source_id"] == "1001234"
     assert data["has_prd"] is True
+
+
+def test_learned_pattern_lifecycle(tmp_path):
+    """Learned pattern: proposed -> approved -> active -> deprecated."""
+    import os
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+    db.init_db()
+
+    # Propose
+    pid = db.create_learned_pattern(
+        pattern="Graph routing changes require path-level assertions",
+        applies_to=["orchestrator.graph", "orchestrator.nodes"],
+        rule="Do not assert final status only. Assert event_counts, last_error, retry count.",
+        source_findings=["finding-001"],
+        confidence="high",
+    )
+    assert pid is not None
+    p = db.get_learned_pattern(pid)
+    assert p["status"] == "proposed"
+    assert p["applies_to"] == ["orchestrator.graph", "orchestrator.nodes"]
+    assert p["source_findings"] == ["finding-001"]
+
+    # Approve
+    db.update_learned_pattern(pid, status="approved")
+    assert db.get_learned_pattern(pid)["status"] == "approved"
+
+    # Activate
+    db.update_learned_pattern(pid, status="active")
+    assert db.get_learned_pattern(pid)["status"] == "active"
+
+    # Get active patterns
+    active = db.get_active_learned_patterns()
+    assert len(active) == 1
+    assert active[0]["pattern"] == "Graph routing changes require path-level assertions"
+
+    # Deprecate
+    db.update_learned_pattern(pid, status="deprecated")
+    assert db.get_learned_pattern(pid)["status"] == "deprecated"
+    assert len(db.get_active_learned_patterns()) == 0
+
+    # Reject another pattern
+    pid2 = db.create_learned_pattern(
+        pattern="Always add logging",
+        applies_to=["all-code"],
+        rule="Add logging to every function",
+        source_findings=[],
+        confidence="low",
+    )
+    db.update_learned_pattern(pid2, status="rejected")
+    assert db.get_learned_pattern(pid2)["status"] == "rejected"
+
+
+def test_find_relevant_patterns(tmp_path):
+    """find_relevant_patterns should match by applies_to overlap."""
+    import os
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+    db.init_db()
+
+    # Create and activate two patterns
+    p1 = db.create_learned_pattern(
+        pattern="Graph routing rules",
+        applies_to=["orchestrator.graph", "orchestrator.nodes"],
+        rule="Assert path behavior",
+        source_findings=[],
+    )
+    db.update_learned_pattern(p1, status="approved")
+    db.update_learned_pattern(p1, status="active")
+
+    p2 = db.create_learned_pattern(
+        pattern="DB migration rules",
+        applies_to=["db.models", "migrations"],
+        rule="Always test rollback",
+        source_findings=[],
+    )
+    db.update_learned_pattern(p2, status="approved")
+    db.update_learned_pattern(p2, status="active")
+
+    # Search with graph-related tags
+    relevant = db.find_relevant_patterns(["orchestrator.nodes", "langgraph"])
+    assert len(relevant) == 1
+    assert relevant[0]["pattern"] == "Graph routing rules"
+
+    # Search with db tags
+    relevant2 = db.find_relevant_patterns(["db.models"])
+    assert len(relevant2) == 1
+    assert relevant2[0]["pattern"] == "DB migration rules"
+
+    # No match
+    relevant3 = db.find_relevant_patterns(["frontend", "react"])
+    assert len(relevant3) == 0
