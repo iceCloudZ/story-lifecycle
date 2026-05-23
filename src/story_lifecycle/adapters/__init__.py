@@ -5,7 +5,13 @@ from .claude import ClaudeAdapter
 from .codex import CodexAdapter
 from .shell import ShellAdapter, _load_adapter_configs
 
-__all__ = ["BaseAdapter", "ClaudeAdapter", "CodexAdapter", "ShellAdapter", "get_adapter"]
+__all__ = [
+    "BaseAdapter",
+    "ClaudeAdapter",
+    "CodexAdapter",
+    "ShellAdapter",
+    "get_adapter",
+]
 
 
 def get_adapter(name: str) -> BaseAdapter:

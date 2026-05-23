@@ -62,6 +62,7 @@ def _parse_llm_json(content: str) -> dict:
 
     # Extract from markdown code fence
     import re
+
     m = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", content, re.DOTALL)
     if m:
         try:

@@ -22,12 +22,10 @@ class BugContext:
 
 class BugContentProvider(ABC):
     @abstractmethod
-    def can_handle(self, bug: SourceItem) -> bool:
-        ...
+    def can_handle(self, bug: SourceItem) -> bool: ...
 
     @abstractmethod
-    def fetch_content(self, bug: SourceItem) -> BugContext | None:
-        ...
+    def fetch_content(self, bug: SourceItem) -> BugContext | None: ...
 
 
 class TapdBodyBugProvider(BugContentProvider):
@@ -36,6 +34,7 @@ class TapdBodyBugProvider(BugContentProvider):
 
     def fetch_content(self, bug: SourceItem) -> BugContext | None:
         from .prd_providers import _html_to_markdown
+
         md = _html_to_markdown(bug.description)
         return BugContext(
             source_type="tapd_body",
@@ -50,7 +49,11 @@ class TapdBodyBugProvider(BugContentProvider):
         )
 
     def _extract_section(self, md: str, pattern: str) -> str:
-        m = re.search(rf"(?:{pattern})[：:\s]*\n(.*?)(?=\n##|\n#|\Z)", md, re.DOTALL | re.IGNORECASE)
+        m = re.search(
+            rf"(?:{pattern})[：:\s]*\n(.*?)(?=\n##|\n#|\Z)",
+            md,
+            re.DOTALL | re.IGNORECASE,
+        )
         return m.group(1).strip() if m else ""
 
     def _extract_images(self, md: str) -> list[str]:
@@ -127,7 +130,9 @@ def fetch_bug_content(
                 if partial.screenshots:
                     combined.screenshots.extend(partial.screenshots)
                 if partial.raw_markdown:
-                    combined.raw_markdown += ("\n\n---\n\n" if combined.raw_markdown else "") + partial.raw_markdown
+                    combined.raw_markdown += (
+                        "\n\n---\n\n" if combined.raw_markdown else ""
+                    ) + partial.raw_markdown
 
     return combined
 

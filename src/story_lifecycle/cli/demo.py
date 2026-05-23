@@ -69,7 +69,9 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
         patch("story_lifecycle.orchestrator.nodes.notify"),
         patch("story_lifecycle.orchestrator.graph.emit_plan_done"),
         patch("story_lifecycle.orchestrator.graph.emit_terminal_opened"),
-        patch("story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None),
+        patch(
+            "story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None
+        ),
     ):
         mock_planner.is_available.return_value = False
         mock_planner.compress_context.return_value = None
@@ -80,6 +82,7 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
         mock_ttyd._MPLEX = None
 
         from story_lifecycle.orchestrator import nodes as nodes_mod
+
         with patch.object(nodes_mod, "STORY_HOME", workspace):
             graph_mod._run_story_impl(_DEMO_KEY)
 
@@ -130,7 +133,9 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
                 if isinstance(payload, dict):
                     attempt = payload.get("attempt", "")
                     tool = payload.get("tool", "")
-                    detail = f"attempt {attempt} ({tool})" if tool else str(payload)[:60]
+                    detail = (
+                        f"attempt {attempt} ({tool})" if tool else str(payload)[:60]
+                    )
                 table.add_row(e_stage, etype, detail)
             console.print(table)
             console.print()

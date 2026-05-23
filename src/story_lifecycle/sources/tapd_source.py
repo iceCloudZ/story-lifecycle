@@ -15,8 +15,12 @@ class TapdSource(StorySource):
             workspace_id=config.get("workspace_id", ""),
         )
         self.owner = config.get("owner", "")
-        self.story_status_filter = config.get("story_status", "open,progressing,reopened")
-        self.bug_status_filter = config.get("bug_status", "new,reopened,assigned,resolving")
+        self.story_status_filter = config.get(
+            "story_status", "open,progressing,reopened"
+        )
+        self.bug_status_filter = config.get(
+            "bug_status", "new,reopened,assigned,resolving"
+        )
 
     def fetch_pending(self) -> list[SourceItem]:
         items = []
@@ -25,19 +29,23 @@ class TapdSource(StorySource):
         return items
 
     def _fetch_stories(self) -> list[SourceItem]:
-        raw_list = self._api.get_stories({
-            "entity_type": "stories",
-            "limit": 20,
-            "owner": self.owner,
-            "status": self.story_status_filter,
-        })
+        raw_list = self._api.get_stories(
+            {
+                "entity_type": "stories",
+                "limit": 20,
+                "owner": self.owner,
+                "status": self.story_status_filter,
+            }
+        )
         return [self._parse_story(r) for r in raw_list]
 
     def _fetch_bugs(self) -> list[SourceItem]:
-        raw_list = self._api.get_bugs({
-            "limit": 20,
-            "status": self.bug_status_filter,
-        })
+        raw_list = self._api.get_bugs(
+            {
+                "limit": 20,
+                "status": self.bug_status_filter,
+            }
+        )
         return [self._parse_bug(r) for r in raw_list]
 
     def get_detail(self, item_id: str) -> SourceItem | None:
@@ -48,7 +56,11 @@ class TapdSource(StorySource):
         return self._parse_story(raw) if raw else None
 
     def sync_status(self, item_id: str, status: str):
-        TAPD_STATUS_MAP = {"completed": "done", "blocked": "reopen", "aborted": "postponed"}
+        TAPD_STATUS_MAP = {
+            "completed": "done",
+            "blocked": "reopen",
+            "aborted": "postponed",
+        }
         tapd_status = TAPD_STATUS_MAP.get(status)
         if not tapd_status:
             return

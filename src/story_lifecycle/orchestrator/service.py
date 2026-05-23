@@ -19,15 +19,21 @@ def _save_prd_task(item, workspace: str, story_key: str = ""):
     task_dir.mkdir(parents=True, exist_ok=True)
     suffix = f"-{story_key}" if story_key else ""
     task_file = task_dir / f"prd-task{suffix}.json"
-    task_file.write_text(_json.dumps({
-        "source": item.source,
-        "source_id": item.id,
-        "title": item.title,
-        "description": item.description,
-        "item_type": item.item_type,
-        "priority": item.priority,
-        "owner": item.owner,
-    }, ensure_ascii=False), encoding="utf-8")
+    task_file.write_text(
+        _json.dumps(
+            {
+                "source": item.source,
+                "source_id": item.id,
+                "title": item.title,
+                "description": item.description,
+                "item_type": item.item_type,
+                "priority": item.priority,
+                "owner": item.owner,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 def create_and_start_story(
@@ -160,7 +166,8 @@ def create_sub_story(
             "parent_ref": parent_key,
             "sub_description": description,
             "_skipped_fields": [
-                k for k, v in parent_ctx.items()
+                k
+                for k, v in parent_ctx.items()
                 if isinstance(v, str) and len(v) > 10_000
             ],
         }
@@ -245,14 +252,18 @@ def _check_parent_auto_resume(parent_key: str):
             "total": len(subs),
             "completed": [
                 {"story_key": s["story_key"], "type": s.get("sub_type")}
-                for s in subs if s["status"] == "completed"
+                for s in subs
+                if s["status"] == "completed"
             ],
             "aborted": [
                 {"story_key": s["story_key"], "type": s.get("sub_type")}
-                for s in subs if s["status"] == "aborted"
+                for s in subs
+                if s["status"] == "aborted"
             ],
         }
-        db.update_context(parent_key, "sub_story_results", _json.dumps(summary, ensure_ascii=False))
+        db.update_context(
+            parent_key, "sub_story_results", _json.dumps(summary, ensure_ascii=False)
+        )
         db.log_event(parent_key, "", "subtasks_completed", summary)
 
 
@@ -304,8 +315,11 @@ def create_story_from_source(
                     error=f"无法导入父需求: {item.source}/{result.parent_source_id}",
                 )
             parent_result = create_story_from_source(
-                parent_item, profile=profile, workspace=workspace,
-                generate_prd=True, auto_start=False,
+                parent_item,
+                profile=profile,
+                workspace=workspace,
+                generate_prd=True,
+                auto_start=False,
             )
             if parent_result.status != "created" or not parent_result.story_key:
                 return CreateFromSourceResult(
@@ -323,12 +337,14 @@ def create_story_from_source(
             bug_ctx = fetch_bug_content(item)
             bug_desc = format_bug_context(bug_ctx)
             sub_key = create_sub_story(
-                parent_key=result.parent_key, sub_type="bug-fix",
+                parent_key=result.parent_key,
+                sub_type="bug-fix",
                 description=bug_desc,
             )
             db.update_story(sub_key, source_type=item.source, source_id=item.id)
             if auto_start:
                 from .graph import start_story_async
+
                 start_story_async(sub_key)
             return CreateFromSourceResult(status="created", story_key=sub_key)
 
@@ -340,14 +356,18 @@ def create_story_from_source(
     if bug_ctx:
         title = bug_ctx.description or item.title
     key = create_and_start_story(
-        story_key=story_key, title=title, profile=profile,
-        workspace=workspace, prd_path=prd_path,
+        story_key=story_key,
+        title=title,
+        profile=profile,
+        workspace=workspace,
+        prd_path=prd_path,
     )
     db.update_story(key, source_type=item.source, source_id=item.id)
 
     # Record story_intake event for quality flywheel
     try:
         from .quality import record_story_intake
+
         record_story_intake(
             story_key=key,
             source=item.source,
@@ -359,13 +379,18 @@ def create_story_from_source(
 
     if auto_start:
         from .graph import start_story_async
+
         start_story_async(key)
 
     return CreateFromSourceResult(status="created", story_key=key)
 
 
 def _derive_story_key(item) -> str:
-    return f"TAPD-{item.id[-6:]}" if item.source == "tapd" else f"{item.source.upper()}-{item.id[-6:]}"
+    return (
+        f"TAPD-{item.id[-6:]}"
+        if item.source == "tapd"
+        else f"{item.source.upper()}-{item.id[-6:]}"
+    )
 
 
 def _get_all_stories() -> list[dict]:

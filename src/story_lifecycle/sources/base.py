@@ -29,30 +29,29 @@ class ResolveResult:
 
 class StorySource(ABC):
     @abstractmethod
-    def fetch_pending(self) -> list[SourceItem]:
-        ...
+    def fetch_pending(self) -> list[SourceItem]: ...
 
     @abstractmethod
-    def get_detail(self, item_id: str) -> SourceItem | None:
-        ...
+    def get_detail(self, item_id: str) -> SourceItem | None: ...
 
     @abstractmethod
-    def sync_status(self, item_id: str, status: str):
-        ...
+    def sync_status(self, item_id: str, status: str): ...
 
     @abstractmethod
-    def test_connection(self) -> bool:
-        ...
+    def test_connection(self) -> bool: ...
 
 
 class BugParentResolver(ABC):
     @abstractmethod
-    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> ResolveResult | None:
-        ...
+    def resolve(
+        self, bug: SourceItem, existing_stories: list[dict]
+    ) -> ResolveResult | None: ...
 
 
 class TapdRelationResolver(BugParentResolver):
-    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> ResolveResult | None:
+    def resolve(
+        self, bug: SourceItem, existing_stories: list[dict]
+    ) -> ResolveResult | None:
         if not bug.extra.get("related_story_id"):
             return None
         tapd_id = bug.extra["related_story_id"]
@@ -65,8 +64,11 @@ class TapdRelationResolver(BugParentResolver):
 class TitlePatternResolver(BugParentResolver):
     PATTERN = r"\[([A-Z]+-\d+)\]"
 
-    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> ResolveResult | None:
+    def resolve(
+        self, bug: SourceItem, existing_stories: list[dict]
+    ) -> ResolveResult | None:
         import re
+
         m = re.search(self.PATTERN, bug.title)
         if not m:
             return None
@@ -78,7 +80,9 @@ class TitlePatternResolver(BugParentResolver):
 
 
 class ManualResolver(BugParentResolver):
-    def resolve(self, bug: SourceItem, existing_stories: list[dict]) -> ResolveResult | None:
+    def resolve(
+        self, bug: SourceItem, existing_stories: list[dict]
+    ) -> ResolveResult | None:
         return ResolveResult(need_manual_select=True)
 
 

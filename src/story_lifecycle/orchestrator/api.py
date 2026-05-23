@@ -98,15 +98,19 @@ def get_story(story_key: str):
         raise HTTPException(404, "Story not found")
 
     subs = db.get_sub_stories(story_key)
-    sub_list = [
-        {
-            "storyKey": sub["story_key"],
-            "subType": sub.get("sub_type"),
-            "status": sub["status"],
-            "currentStage": sub["current_stage"],
-        }
-        for sub in subs
-    ] if subs else []
+    sub_list = (
+        [
+            {
+                "storyKey": sub["story_key"],
+                "subType": sub.get("sub_type"),
+                "status": sub["status"],
+                "currentStage": sub["current_stage"],
+            }
+            for sub in subs
+        ]
+        if subs
+        else []
+    )
 
     return JSONResponse(
         {

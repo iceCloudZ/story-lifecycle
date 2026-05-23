@@ -182,7 +182,9 @@ def save_config(config: dict):
     existing = get_config()
     merged = _merge_config(existing, config)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(yaml.dump(merged, default_flow_style=False, allow_unicode=True))
+    CONFIG_FILE.write_text(
+        yaml.dump(merged, default_flow_style=False, allow_unicode=True)
+    )
 
 
 def load_config_to_env():

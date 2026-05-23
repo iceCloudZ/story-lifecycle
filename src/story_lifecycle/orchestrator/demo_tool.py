@@ -10,7 +10,11 @@ from ..db import models as db
 
 # Predefined payloads for the 3-stage minimal profile
 _DEMO_PAYLOADS = {
-    "design": {"spec_path": "docs/spec.md", "complexity": "S", "summary": "Demo design completed"},
+    "design": {
+        "spec_path": "docs/spec.md",
+        "complexity": "S",
+        "summary": "Demo design completed",
+    },
     "implement": {"implementation_summary": "Demo implementation completed"},
     "test": {"tests_passed": True},
 }
@@ -38,7 +42,9 @@ class DemoTool:
         payload = self.payloads.get(stage, {"status": "done"})
         done_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
-        db.log_event(key, stage, "execute", {"attempt": next_count, "tool": "demo_tool"})
+        db.log_event(
+            key, stage, "execute", {"attempt": next_count, "tool": "demo_tool"}
+        )
 
         return {
             **state,

@@ -140,8 +140,12 @@ def init_db():
                 updated_at TEXT NOT NULL
             )
         """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_finding_story_status ON finding(story_key, status)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_finding_severity ON finding(severity, status)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_finding_story_status ON finding(story_key, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_finding_severity ON finding(severity, status)"
+        )
         # Learned pattern table for quality flywheel
         conn.execute("""
             CREATE TABLE IF NOT EXISTS learned_pattern (
@@ -156,7 +160,9 @@ def init_db():
                 updated_at TEXT NOT NULL
             )
         """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_pattern_status ON learned_pattern(status)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pattern_status ON learned_pattern(status)"
+        )
         # Idempotent column migration
         try:
             conn.execute("ALTER TABLE story ADD COLUMN parent_key TEXT")
@@ -435,22 +441,48 @@ def upsert_story(
 # -------- Finding helpers --------
 
 
-def create_finding(story_key, stage, source, severity, category, description,
-                   location=None, recommendation=None, root_cause=None) -> str:
+def create_finding(
+    story_key,
+    stage,
+    source,
+    severity,
+    category,
+    description,
+    location=None,
+    recommendation=None,
+    root_cause=None,
+) -> str:
     import uuid
+
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     fid = f"finding-{uuid.uuid4().hex[:12]}"
     with _db() as conn:
         conn.execute(
             "INSERT INTO finding (id, story_key, stage, source, severity, category, location, description, recommendation, root_cause, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (fid, story_key, stage, source, severity, category, location, description, recommendation, root_cause, "open", now, now),
+            (
+                fid,
+                story_key,
+                stage,
+                source,
+                severity,
+                category,
+                location,
+                description,
+                recommendation,
+                root_cause,
+                "open",
+                now,
+                now,
+            ),
         )
     return fid
 
 
 def get_finding(finding_id: str) -> dict | None:
     with _db() as conn:
-        rows = conn.execute("SELECT * FROM finding WHERE id = ?", (finding_id,)).fetchall()
+        rows = conn.execute(
+            "SELECT * FROM finding WHERE id = ?", (finding_id,)
+        ).fetchall()
     return dict(rows[0]) if rows else None
 
 
@@ -473,7 +505,9 @@ def get_open_findings(story_key: str, min_severity: str = "medium") -> list[dict
     return [dict(r) for r in rows if severity_order.get(r["severity"], 0) >= min_level]
 
 
-def get_recent_quality_events(story_key: str, event_types: list[str], limit: int = 50) -> list[dict]:
+def get_recent_quality_events(
+    story_key: str, event_types: list[str], limit: int = 50
+) -> list[dict]:
     """Get recent events of specified types from event_log."""
     placeholders = ",".join("?" * len(event_types))
     with _db() as conn:
@@ -487,20 +521,34 @@ def get_recent_quality_events(story_key: str, event_types: list[str], limit: int
 # -------- Learned pattern helpers --------
 
 
-def create_learned_pattern(pattern, applies_to, rule, source_findings=None, confidence="medium") -> str:
+def create_learned_pattern(
+    pattern, applies_to, rule, source_findings=None, confidence="medium"
+) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     pid = f"pattern-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{id(now) % 10000:04d}"
     with _db() as conn:
         conn.execute(
             "INSERT INTO learned_pattern (id, pattern, applies_to, rule, source_findings, confidence, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (pid, pattern, json.dumps(applies_to), rule, json.dumps(source_findings or []), confidence, "proposed", now, now),
+            (
+                pid,
+                pattern,
+                json.dumps(applies_to),
+                rule,
+                json.dumps(source_findings or []),
+                confidence,
+                "proposed",
+                now,
+                now,
+            ),
         )
     return pid
 
 
 def get_learned_pattern(pattern_id: str) -> dict | None:
     with _db() as conn:
-        rows = conn.execute("SELECT * FROM learned_pattern WHERE id = ?", (pattern_id,)).fetchall()
+        rows = conn.execute(
+            "SELECT * FROM learned_pattern WHERE id = ?", (pattern_id,)
+        ).fetchall()
     if not rows:
         return None
     r = dict(rows[0])

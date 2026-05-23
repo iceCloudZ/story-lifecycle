@@ -41,7 +41,13 @@ class StoryCard(Static):
     }
     """
 
-    def __init__(self, story: dict, selected: bool = False, collapsed: bool = False, sub_count: int = 0):
+    def __init__(
+        self,
+        story: dict,
+        selected: bool = False,
+        collapsed: bool = False,
+        sub_count: int = 0,
+    ):
         self.story = story
         self._selected = selected
         self._collapsed = collapsed
@@ -66,7 +72,12 @@ class StoryCard(Static):
         sub_type = s.get("sub_type") or ""
         type_badge = ""
         if sub_type:
-            colors = {"bug-fix": "red", "integration": "yellow", "refinement": "blue", "redo": "orange"}
+            colors = {
+                "bug-fix": "red",
+                "integration": "yellow",
+                "refinement": "blue",
+                "redo": "orange",
+            }
             color = colors.get(sub_type, "grey")
             type_badge = f" [{color}][{sub_type}][/{color}]"
 
@@ -264,6 +275,7 @@ class SubStoryDialog(ModalScreen):
         self._parent_key = parent_key
         self._selected_type_idx = 0
         from ..cli.setup import get_sub_types
+
         self._type_configs = get_sub_types()
         self._type_keys = list(self._type_configs.keys())
         super().__init__()
@@ -278,11 +290,18 @@ class SubStoryDialog(ModalScreen):
                 marker = ">" if i == 0 else " "
                 yield Static(f"  {marker} {label} ({key})")
             yield Static("Custom type (optional, overrides selection):")
-            yield Input(placeholder="e.g. hotfix (leave empty to use selection)", id="input-custom-type")
+            yield Input(
+                placeholder="e.g. hotfix (leave empty to use selection)",
+                id="input-custom-type",
+            )
             yield Static("Start Stage (empty = auto):")
-            yield Input(placeholder="e.g. implement (auto-derived from type)", id="input-stage")
+            yield Input(
+                placeholder="e.g. implement (auto-derived from type)", id="input-stage"
+            )
             yield Static("Description:")
-            first_template = list(self._type_configs.values())[0].get("description_template", "")
+            first_template = list(self._type_configs.values())[0].get(
+                "description_template", ""
+            )
             yield Input(value=first_template, id="input-desc")
             with Horizontal(id="sub-btn-row"):
                 yield Button("Create", variant="success", id="btn-sub-create")
@@ -302,14 +321,18 @@ class SubStoryDialog(ModalScreen):
             else:
                 selected_key = self._type_keys[self._selected_type_idx]
                 sub_type = selected_key
-                default_stage = self._type_configs[selected_key].get("default_start_stage", "")
+                default_stage = self._type_configs[selected_key].get(
+                    "default_start_stage", ""
+                )
 
             custom_stage = self.query_one("#input-stage", Input).value.strip()
-            self.dismiss({
-                "sub_type": sub_type,
-                "start_stage": custom_stage or default_stage or None,
-                "description": desc,
-            })
+            self.dismiss(
+                {
+                    "sub_type": sub_type,
+                    "start_stage": custom_stage or default_stage or None,
+                    "description": desc,
+                }
+            )
         else:
             self.dismiss(None)
 
@@ -391,7 +414,9 @@ class InboxScreen(ModalScreen):
             check = "✓" if i in self._selected else " "
             cursor = ">" if i == self._cursor else " "
             type_tag = "[需求]" if item.item_type == "requirement" else "[Bug]"
-            lines.append(f"  {cursor} [{check}] {type_tag} {item.title}  ({item.source})")
+            lines.append(
+                f"  {cursor} [{check}] {type_tag} {item.title}  ({item.source})"
+            )
         self.query_one("#inbox-list", Static).update("\n".join(lines))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -596,11 +621,18 @@ class StoryBoardApp(App):
         _bits = [0, 0]
         for _i in range(3):
             _ci, _b = [
-                (0, 0x01), (0, 0x08), (1, 0x01), (1, 0x08),  # top row
-                (1, 0x10), (1, 0x20),                          # right col
-                (1, 0x80), (1, 0x40),                          # bottom-right
-                (0, 0x80), (0, 0x40),                          # bottom-left
-                (0, 0x04), (0, 0x02),                          # left col
+                (0, 0x01),
+                (0, 0x08),
+                (1, 0x01),
+                (1, 0x08),  # top row
+                (1, 0x10),
+                (1, 0x20),  # right col
+                (1, 0x80),
+                (1, 0x40),  # bottom-right
+                (0, 0x80),
+                (0, 0x40),  # bottom-left
+                (0, 0x04),
+                (0, 0x02),  # left col
             ][(_off + _i) % 12]
             _bits[_ci] |= _b
         _SPINNER_FRAMES.append(chr(0x2800 + _bits[0]) + chr(0x2800 + _bits[1]))
@@ -621,6 +653,7 @@ class StoryBoardApp(App):
         # Source polling
         try:
             from ..cli.setup import get_config
+
             _config = get_config()
             _source_config = _config.get("story_source", {})
             if _source_config.get("enabled"):
@@ -674,11 +707,15 @@ class StoryBoardApp(App):
                     if pk and pk in self._collapsed_parents:
                         continue
                     is_parent = not bool(s.get("parent_key"))
-                    sub_count = len(db.get_sub_stories(s["story_key"])) if is_parent else 0
+                    sub_count = (
+                        len(db.get_sub_stories(s["story_key"])) if is_parent else 0
+                    )
                     card = StoryCard(
                         s,
                         selected=(display_idx == self.selected_index),
-                        collapsed=(is_parent and s["story_key"] in self._collapsed_parents),
+                        collapsed=(
+                            is_parent and s["story_key"] in self._collapsed_parents
+                        ),
                         sub_count=sub_count,
                     )
                     story_list.mount(card)
@@ -970,6 +1007,7 @@ class StoryBoardApp(App):
                 return
             try:
                 from ..orchestrator.service import create_sub_story
+
                 sub_key = create_sub_story(
                     parent_key=key,
                     sub_type=result.get("sub_type") or None,
@@ -994,6 +1032,7 @@ class StoryBoardApp(App):
             return
         s = self.stories[self.selected_index]
         from ..orchestrator.service import abort_story
+
         try:
             abort_story(s["story_key"])
         except ValueError as e:
@@ -1219,19 +1258,23 @@ class StoryBoardApp(App):
             if not result:
                 return
             from ..orchestrator.service import create_story_from_source
+
             for entry in result:
                 try:
                     if isinstance(entry, tuple) and len(entry) == 2:
                         mode, item = entry
                     else:
                         mode, item = "normal", entry
-                    use_ai_prd = (mode == "ai_prd")
-                    r = create_story_from_source(item, auto_start=True, generate_ai_prd=use_ai_prd)
+                    use_ai_prd = mode == "ai_prd"
+                    r = create_story_from_source(
+                        item, auto_start=True, generate_ai_prd=use_ai_prd
+                    )
                     if r.status == "created":
                         label = "AI增强PRD" if use_ai_prd else "已创建"
                         self.notify(f"{label}: {r.story_key}")
                     elif r.status == "need_manual_select":
                         from ..orchestrator.service import create_sub_story
+
                         active = [s for s in self.stories if not s.get("parent_key")]
 
                         def _on_parent_selected(parent_key):
@@ -1239,22 +1282,41 @@ class StoryBoardApp(App):
                                 return  # Cancel
                             if parent_key is None:
                                 # Standalone
-                                r2 = create_story_from_source(item, auto_start=True, generate_ai_prd=use_ai_prd, force_standalone=True)
+                                r2 = create_story_from_source(
+                                    item,
+                                    auto_start=True,
+                                    generate_ai_prd=use_ai_prd,
+                                    force_standalone=True,
+                                )
                                 if r2.status == "created":
                                     self.notify(f"已创建独立故事: {r2.story_key}")
                             else:
-                                from ..sources.bug_providers import fetch_bug_content, format_bug_context
+                                from ..sources.bug_providers import (
+                                    fetch_bug_content,
+                                    format_bug_context,
+                                )
                                 from ..orchestrator.graph import start_story_async
                                 from ..db import models as db
+
                                 bug_ctx = fetch_bug_content(item)
                                 bug_desc = format_bug_context(bug_ctx)
-                                sub_key = create_sub_story(parent_key=parent_key, sub_type="bug-fix", description=bug_desc)
+                                sub_key = create_sub_story(
+                                    parent_key=parent_key,
+                                    sub_type="bug-fix",
+                                    description=bug_desc,
+                                )
                                 if sub_key:
-                                    db.update_story(sub_key, source_type=item.source, source_id=item.id)
+                                    db.update_story(
+                                        sub_key,
+                                        source_type=item.source,
+                                        source_id=item.id,
+                                    )
                                     start_story_async(sub_key)
                                     self.notify(f"已创建子故事: {sub_key}")
 
-                        self.push_screen(ParentSelectDialog(item.title, active), _on_parent_selected)
+                        self.push_screen(
+                            ParentSelectDialog(item.title, active), _on_parent_selected
+                        )
                     else:
                         self.notify(f"创建失败: {r.error}", severity="error")
                 except Exception as e:

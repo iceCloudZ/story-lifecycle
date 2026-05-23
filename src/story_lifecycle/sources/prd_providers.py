@@ -18,12 +18,10 @@ class PrdContent:
 
 class PrdProvider(ABC):
     @abstractmethod
-    def can_handle(self, item: SourceItem) -> bool:
-        ...
+    def can_handle(self, item: SourceItem) -> bool: ...
 
     @abstractmethod
-    def fetch_content(self, item: SourceItem) -> PrdContent | None:
-        ...
+    def fetch_content(self, item: SourceItem) -> PrdContent | None: ...
 
 
 class TapdBodyPrdProvider(PrdProvider):
@@ -46,7 +44,11 @@ class LocalFilePrdProvider(PrdProvider):
         p = Path(m.group(1))
         if not p.exists():
             return None
-        return PrdContent(source_type="local_file", markdown=p.read_text(encoding="utf-8"), file_path=str(p))
+        return PrdContent(
+            source_type="local_file",
+            markdown=p.read_text(encoding="utf-8"),
+            file_path=str(p),
+        )
 
 
 class FallbackPrdProvider(PrdProvider):
