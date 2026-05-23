@@ -422,8 +422,9 @@ def upsert_story(
 
 def create_finding(story_key, stage, source, severity, category, description,
                    location=None, recommendation=None, root_cause=None) -> str:
+    import uuid
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    fid = f"finding-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{id(now) % 10000:04d}"
+    fid = f"finding-{uuid.uuid4().hex[:12]}"
     with _db() as conn:
         conn.execute(
             "INSERT INTO finding (id, story_key, stage, source, severity, category, location, description, recommendation, root_cause, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",

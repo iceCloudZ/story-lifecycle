@@ -2,18 +2,25 @@
 
 from .base import BaseAdapter
 from .claude import ClaudeAdapter
+from .shell import ShellAdapter, _load_adapter_configs
 
-__all__ = ["BaseAdapter", "ClaudeAdapter", "get_adapter"]
+__all__ = ["BaseAdapter", "ClaudeAdapter", "ShellAdapter", "get_adapter"]
 
 
 def get_adapter(name: str) -> BaseAdapter:
-    """Get adapter by name. Case-insensitive."""
-    adapters = {
-        "claude": ClaudeAdapter,
-    }
-    cls = adapters.get(name.lower())
-    if not cls:
-        raise ValueError(
-            f"Unknown CLI adapter: {name}. Available: {list(adapters.keys())}"
-        )
-    return cls()
+    """Get adapter by name. Checks builtins first, then adapters.yaml."""
+    builtin = {"claude": ClaudeAdapter}
+    cls = builtin.get(name.lower())
+    if cls:
+        return cls()
+
+    # Try config-driven adapters from adapters.yaml
+    configs = _load_adapter_configs()
+    if name.lower() in configs:
+        return ShellAdapter(config=configs[name.lower()], name=name.lower())
+
+    raise ValueError(
+        f"Unknown CLI adapter: {name}. "
+        f"Built-in: {list(builtin.keys())}. "
+        f"Configured: {list(configs.keys()) or 'none (create ~/.story-lifecycle/adapters.yaml)'}"
+    )
