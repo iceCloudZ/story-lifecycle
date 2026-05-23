@@ -4,6 +4,9 @@ import json
 import os
 from unittest.mock import patch, MagicMock
 
+from click.testing import CliRunner
+from fastapi.testclient import TestClient
+
 
 def _setup_db(tmp_path):
     """Common DB setup: set STORY_HOME, init_db."""
@@ -319,5 +322,336 @@ def test_review_prompt_contains_readonly_guardrail():
     from story_lifecycle.orchestrator.planner import review_stage
 
     import inspect
+
     source = inspect.getsource(review_stage)
-    assert "只读" in source or "read-only" in source.lower() or "不改代码" in source or "不要修改" in source
+    assert (
+        "只读" in source
+        or "read-only" in source.lower()
+        or "不改代码" in source
+        or "不要修改" in source
+    )
+
+
+# ── Task 3: CLI commands ──
+
+
+def _write_review_file(tmp_path, content: str) -> str:
+    """Write review content to a temp file, return path."""
+    f = tmp_path / "review.md"
+    f.write_text(content, encoding="utf-8")
+    return str(f)
+
+
+def test_cli_review_feedback_import(tmp_path):
+    """story review-feedback import reads file, extracts findings."""
+    db = _setup_db(tmp_path)
+    runner = CliRunner()
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+
+    review_content = (
+        "## Review\n\n- [HIGH] api.py:42 缺少空指针检查\n- [MEDIUM] 缺少边界测试"
+    )
+    review_file = _write_review_file(tmp_path, review_content)
+
+    from story_lifecycle.cli.review_feedback import review_feedback_group
+
+    result = runner.invoke(review_feedback_group, ["import", "S1", review_file])
+
+    assert result.exit_code == 0
+    assert "finding" in result.output.lower() or "candidate" in result.output.lower()
+
+
+def test_cli_review_feedback_list(tmp_path):
+    """story review-feedback list shows imported findings."""
+    db = _setup_db(tmp_path)
+    runner = CliRunner()
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+    db.create_finding(
+        "S1",
+        "review",
+        "review_feedback",
+        "high",
+        "error_handling",
+        "空指针检查缺失",
+        location="api.py:42",
+    )
+
+    from story_lifecycle.cli.review_feedback import review_feedback_group
+
+    result = runner.invoke(review_feedback_group, ["list", "S1"])
+
+    assert result.exit_code == 0
+    assert "空指针" in result.output or "error_handling" in result.output
+
+
+def test_cli_review_feedback_decide_accept(tmp_path):
+    """story review-feedback decide --accept changes finding status."""
+    db = _setup_db(tmp_path)
+    runner = CliRunner()
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+    fid = db.create_finding(
+        "S1", "review", "review_feedback", "high", "error_handling", "空指针检查缺失"
+    )
+
+    from story_lifecycle.cli.review_feedback import review_feedback_group
+
+    result = runner.invoke(review_feedback_group, ["decide", fid, "--accept"])
+
+    assert result.exit_code == 0
+    finding = db.get_finding(fid)
+    assert finding["status"] == "accepted"
+
+
+def test_cli_review_feedback_decide_reject(tmp_path):
+    """story review-feedback decide --reject changes finding status."""
+    db = _setup_db(tmp_path)
+    runner = CliRunner()
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+    fid = db.create_finding(
+        "S1", "review", "review_feedback", "high", "error_handling", "空指针检查缺失"
+    )
+
+    from story_lifecycle.cli.review_feedback import review_feedback_group
+
+    result = runner.invoke(
+        review_feedback_group, ["decide", fid, "--reject", "--reason", "overclaimed"]
+    )
+
+    assert result.exit_code == 0
+    finding = db.get_finding(fid)
+    assert finding["status"] == "rejected"
+
+
+def test_cli_review_feedback_decide_defer(tmp_path):
+    """story review-feedback decide --defer changes finding status."""
+    db = _setup_db(tmp_path)
+    runner = CliRunner()
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+    fid = db.create_finding(
+        "S1", "review", "review_feedback", "low", "style", "格式问题"
+    )
+
+    from story_lifecycle.cli.review_feedback import review_feedback_group
+
+    result = runner.invoke(review_feedback_group, ["decide", fid, "--defer"])
+
+    assert result.exit_code == 0
+    finding = db.get_finding(fid)
+    assert finding["status"] == "deferred"
+
+
+def test_cli_review_feedback_decide_downgrade(tmp_path):
+    """story review-feedback decide --downgrade reduces severity."""
+    db = _setup_db(tmp_path)
+    runner = CliRunner()
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+    fid = db.create_finding(
+        "S1", "review", "review_feedback", "high", "error_handling", "空指针检查缺失"
+    )
+
+    from story_lifecycle.cli.review_feedback import review_feedback_group
+
+    result = runner.invoke(review_feedback_group, ["decide", fid, "--downgrade"])
+
+    assert result.exit_code == 0
+    finding = db.get_finding(fid)
+    assert finding["severity"] == "medium"
+
+
+def test_cli_approvals_list(tmp_path):
+    """story approvals shows pending findings across stories."""
+    db = _setup_db(tmp_path)
+    runner = CliRunner()
+
+    db.create_finding("S1", "review", "review_feedback", "high", "routing", "S1 issue")
+    fid = db.create_finding(
+        "S2", "review", "review_feedback", "medium", "style", "S2 issue"
+    )
+    db.update_finding(fid, status="accepted")
+
+    from story_lifecycle.cli.review_feedback import approvals_group
+
+    result = runner.invoke(approvals_group, ["list"])
+
+    assert result.exit_code == 0
+    assert "S1" in result.output
+    assert "S2" in result.output
+
+
+def test_cli_approvals_decide(tmp_path):
+    """story approvals decide accepts a finding."""
+    db = _setup_db(tmp_path)
+    runner = CliRunner()
+
+    fid = db.create_finding(
+        "S1", "review", "review_feedback", "high", "routing", "test"
+    )
+
+    from story_lifecycle.cli.review_feedback import approvals_group
+
+    result = runner.invoke(approvals_group, ["decide", fid, "--accept"])
+
+    assert result.exit_code == 0
+    finding = db.get_finding(fid)
+    assert finding["status"] == "accepted"
+
+
+# ── Task 4: API endpoints ──
+
+
+def _get_api_client(tmp_path):
+    """Create a TestClient with fresh DB."""
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db.models import init_db
+
+    init_db()
+    from story_lifecycle.orchestrator.api import app
+
+    return TestClient(app)
+
+
+def test_api_import_review_feedback(tmp_path):
+    """POST /api/story/{key}/review-feedback imports review content."""
+    client = _get_api_client(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+
+    resp = client.post(
+        "/api/story/S1/review-feedback",
+        json={
+            "content": "- [HIGH] api.py:42 缺少空指针检查\n- [MEDIUM] 缺少测试",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["imported"] >= 1
+    assert data["mode"] == "rule_fallback"
+
+
+def test_api_list_review_feedback(tmp_path):
+    """GET /api/story/{key}/review-feedback returns imported findings."""
+    client = _get_api_client(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+    db.create_finding(
+        "S1",
+        "review",
+        "review_feedback",
+        "high",
+        "error_handling",
+        "test finding",
+        location="api.py:42",
+    )
+
+    resp = client.get("/api/story/S1/review-feedback")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["findings"]) >= 1
+    assert data["findings"][0]["source"] == "review_feedback"
+
+
+def test_api_decide_finding(tmp_path):
+    """PUT /api/finding/{id}/decide updates finding status."""
+    client = _get_api_client(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+    fid = db.create_finding(
+        "S1", "review", "review_feedback", "high", "error_handling", "test finding"
+    )
+
+    resp = client.put(
+        f"/api/finding/{fid}/decide",
+        json={
+            "action": "accept",
+            "reason": "valid finding",
+        },
+    )
+    assert resp.status_code == 200
+    finding = db.get_finding(fid)
+    assert finding["status"] == "accepted"
+
+
+def test_api_decide_finding_reject(tmp_path):
+    """PUT /api/finding/{id}/decide rejects finding."""
+    client = _get_api_client(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+    fid = db.create_finding(
+        "S1", "review", "review_feedback", "high", "error_handling", "test finding"
+    )
+
+    resp = client.put(
+        f"/api/finding/{fid}/decide",
+        json={
+            "action": "reject",
+            "reason": "overclaimed",
+        },
+    )
+    assert resp.status_code == 200
+    finding = db.get_finding(fid)
+    assert finding["status"] == "rejected"
+
+
+def test_api_decide_finding_downgrade(tmp_path):
+    """PUT /api/finding/{id}/decide downgrades finding severity."""
+    client = _get_api_client(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
+    fid = db.create_finding(
+        "S1", "review", "review_feedback", "high", "error_handling", "test finding"
+    )
+
+    resp = client.put(
+        f"/api/finding/{fid}/decide",
+        json={
+            "action": "downgrade",
+            "reason": "not critical",
+        },
+    )
+    assert resp.status_code == 200
+    finding = db.get_finding(fid)
+    assert finding["severity"] == "medium"
+
+
+def test_api_approvals_queue(tmp_path):
+    """GET /api/approvals returns pending findings across stories."""
+    client = _get_api_client(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.create_finding("S1", "review", "review_feedback", "high", "routing", "S1 issue")
+    db.create_finding("S2", "review", "review_feedback", "medium", "style", "S2 issue")
+    fid_rejected = db.create_finding(
+        "S3", "review", "review_feedback", "low", "style", "S3 rejected"
+    )
+    db.update_finding(fid_rejected, status="rejected")
+
+    resp = client.get("/api/approvals")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["findings"]) == 2
+    stories = {f["story_key"] for f in data["findings"]}
+    assert stories == {"S1", "S2"}
+
+
+def test_api_decide_finding_not_found(tmp_path):
+    """PUT /api/finding/{id}/decide returns 404 for missing finding."""
+    client = _get_api_client(tmp_path)
+
+    resp = client.put(
+        "/api/finding/nonexistent/decide",
+        json={
+            "action": "accept",
+        },
+    )
+    assert resp.status_code == 404
