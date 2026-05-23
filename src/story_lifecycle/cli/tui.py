@@ -379,6 +379,7 @@ class InboxScreen(ModalScreen):
             yield Static("", id="inbox-list")
             with Horizontal(id="inbox-btn-row"):
                 yield Button("确认创建", variant="success", id="btn-inbox-confirm")
+                yield Button("AI增强PRD", variant="primary", id="btn-inbox-ai-prd")
                 yield Button("取消", variant="default", id="btn-inbox-cancel")
 
     def on_mount(self) -> None:
@@ -396,7 +397,10 @@ class InboxScreen(ModalScreen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-inbox-confirm":
             selected = [self._items[i] for i in sorted(self._selected)]
-            self.dismiss(selected)
+            self.dismiss([("normal", item) for item in selected])
+        elif event.button.id == "btn-inbox-ai-prd":
+            selected = [self._items[i] for i in sorted(self._selected)]
+            self.dismiss([("ai_prd", item) for item in selected])
         else:
             self.dismiss([])
 
@@ -428,7 +432,7 @@ class InboxScreen(ModalScreen):
             self._selected.add(self._cursor)
         self._render()
         selected = [self._items[i] for i in sorted(self._selected)]
-        self.dismiss(selected)
+        self.dismiss([("normal", item) for item in selected])
 
 
 class ParentSelectDialog(ModalScreen):
@@ -1214,11 +1218,17 @@ class StoryBoardApp(App):
             if not result:
                 return
             from ..orchestrator.service import create_story_from_source
-            for item in result:
+            for entry in result:
                 try:
-                    r = create_story_from_source(item, auto_start=True)
+                    if isinstance(entry, tuple) and len(entry) == 2:
+                        mode, item = entry
+                    else:
+                        mode, item = "normal", entry
+                    use_ai_prd = (mode == "ai_prd")
+                    r = create_story_from_source(item, auto_start=True, generate_ai_prd=use_ai_prd)
                     if r.status == "created":
-                        self.notify(f"已创建: {r.story_key}")
+                        label = "AI增强PRD" if use_ai_prd else "已创建"
+                        self.notify(f"{label}: {r.story_key}")
                     elif r.status == "need_manual_select":
                         from ..orchestrator.service import create_sub_story
                         active = [s for s in self.stories if not s.get("parent_key")]
@@ -1228,7 +1238,7 @@ class StoryBoardApp(App):
                                 return  # Cancel
                             if parent_key is None:
                                 # Standalone
-                                r2 = create_story_from_source(item, auto_start=True)
+                                r2 = create_story_from_source(item, auto_start=True, generate_ai_prd=use_ai_prd)
                                 if r2.status == "created":
                                     self.notify(f"已创建独立故事: {r2.story_key}")
                             else:

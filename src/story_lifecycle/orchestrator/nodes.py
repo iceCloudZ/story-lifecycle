@@ -895,6 +895,31 @@ def wait_confirm_node(state: StoryState) -> StoryState:
 # -------- prompt rendering --------
 
 
+def _build_prd_task_section(state: StoryState, stage: str, has_prd: bool) -> str:
+    """Build AI-enhanced PRD injection section if prd-task.json exists."""
+    if has_prd or stage != "design":
+        return ""
+    workspace = state.get("workspace", "") or str(Path.cwd())
+    prd_task_file = Path(workspace) / ".story" / "prd-task.json"
+    if not prd_task_file.exists():
+        return ""
+    try:
+        prd_task = json.loads(prd_task_file.read_text(encoding="utf-8"))
+        return (
+            "## AI 增强 PRD 任务\n\n"
+            f"检测到 PRD 生成任务文件: `{prd_task_file}`\n\n"
+            f"- **来源**: {prd_task.get('source', '未知')}\n"
+            f"- **平台 ID**: {prd_task.get('source_id', '')}\n"
+            f"- **标题**: {prd_task.get('title', '')}\n\n"
+            "请执行以下步骤:\n"
+            "1. 使用 `prd-generator` skill 生成结构化 PRD\n"
+            "2. 将生成的 PRD 保存到合适位置（如 `prd/` 目录）\n"
+            "3. 在 `.story-done/` 目录写入完成标记\n"
+        )
+    except Exception:
+        return ""
+
+
 def _render_prompt(stage: str, state: StoryState) -> str:
     """Render a prompt for the given stage. Reads built-in templates or falls back to defaults."""
     template_paths = [
@@ -992,6 +1017,8 @@ Story: {state["story_key"]}
             "1. 先扫描项目目录，查找已有的需求文档（`docs/`、`prd/`、`requirements/` 等），找到则直接使用\n"
             "2. 如果没找到，向用户询问需求详情（TAPD/Jira 链接、文字描述、或其他文档）"
         ),
+        # AI-enhanced PRD injection
+        "{prd_task_section}": _build_prd_task_section(state, stage, has_prd),
         "{requirement_source}": (
             "阅读 PRD 文件" if has_prd else "查找项目已有文档或与用户对话，获取需求详情"
         ),

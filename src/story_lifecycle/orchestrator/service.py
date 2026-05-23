@@ -12,6 +12,23 @@ MAX_CONTEXT_SIZE = 1 * 1024 * 1024  # 1MB
 MAX_SUB_DEPTH = 1
 
 
+def _save_prd_task(item, workspace: str):
+    """Write prd-task.json for AI-enhanced PRD generation."""
+    ws = Path(workspace) if workspace else Path.cwd()
+    task_dir = ws / ".story"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    task_file = task_dir / "prd-task.json"
+    task_file.write_text(_json.dumps({
+        "source": item.source,
+        "source_id": item.id,
+        "title": item.title,
+        "description": item.description,
+        "item_type": item.item_type,
+        "priority": item.priority,
+        "owner": item.owner,
+    }, ensure_ascii=False), encoding="utf-8")
+
+
 def create_and_start_story(
     story_key: str,
     title: str = "",
@@ -251,6 +268,7 @@ def create_story_from_source(
     profile: str = "minimal",
     workspace: str = "",
     generate_prd: bool = True,
+    generate_ai_prd: bool = False,
     auto_start: bool = True,
 ) -> CreateFromSourceResult:
     from ..sources.base import resolve_bug_parent
@@ -261,8 +279,10 @@ def create_story_from_source(
     story_key = _derive_story_key(item)
     prd_path = None
 
-    # Requirement -> PrdProvider chain
-    if generate_prd and item.item_type == "requirement":
+    # Requirement -> PrdProvider chain (or AI-enhanced PRD)
+    if generate_ai_prd and item.item_type == "requirement":
+        _save_prd_task(item, workspace)
+    elif generate_prd and item.item_type == "requirement":
         prd_content = fetch_prd_content(item)
         if prd_content and prd_content.markdown:
             prd_path = save_prd(story_key, prd_content, workspace)
