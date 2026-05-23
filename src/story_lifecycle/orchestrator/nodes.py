@@ -896,16 +896,17 @@ def wait_confirm_node(state: StoryState) -> StoryState:
 
 
 def _build_prd_task_section(state: StoryState, stage: str, has_prd: bool) -> str:
-    """Build AI-enhanced PRD injection section if prd-task.json exists."""
+    """Build AI-enhanced PRD injection section if prd-task-{story_key}.json exists."""
     if has_prd or stage != "design":
         return ""
     workspace = state.get("workspace", "") or str(Path.cwd())
-    prd_task_file = Path(workspace) / ".story" / "prd-task.json"
+    story_key = state.get("story_key", "")
+    prd_task_file = Path(workspace) / ".story" / f"prd-task-{story_key}.json"
     if not prd_task_file.exists():
         return ""
     try:
         prd_task = json.loads(prd_task_file.read_text(encoding="utf-8"))
-        return (
+        section = (
             "## AI 增强 PRD 任务\n\n"
             f"检测到 PRD 生成任务文件: `{prd_task_file}`\n\n"
             f"- **来源**: {prd_task.get('source', '未知')}\n"
@@ -916,6 +917,13 @@ def _build_prd_task_section(state: StoryState, stage: str, has_prd: bool) -> str
             "2. 将生成的 PRD 保存到合适位置（如 `prd/` 目录）\n"
             "3. 在 `.story-done/` 目录写入完成标记\n"
         )
+        # Cleanup: remove the task file after injection to avoid polluting
+        # subsequent stories in the same workspace
+        try:
+            prd_task_file.unlink()
+        except Exception:
+            pass
+        return section
     except Exception:
         return ""
 
