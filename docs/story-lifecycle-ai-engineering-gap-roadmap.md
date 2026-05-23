@@ -28,15 +28,14 @@
 
 ## Roadmap Phases
 
-### Phase 1: Review-To-Learning Loop
+### Phase 1: Review Feedback Intake Loop
 
-目标：把“AI review -> 人工判断 -> finding/pattern 沉淀 -> 下个 story 复用”做成闭环。
+目标：先把“AI review -> LLM 结构化提取 -> 人工判断 -> finding 沉淀”做成闭环。
 
 覆盖能力：
 
 - Review Feedback Intake
 - Human Approval Queue
-- Automatic Learning From Execution 的最小闭环
 - End-To-End User Experience 中和 review/finding/approval 相关的命令
 
 第一阶段只解决一个主线：
@@ -46,28 +45,35 @@ review markdown/json
   -> LLM extract candidate findings
   -> dedupe / merge similar findings
   -> human approve/reject/defer
-  -> verified finding
-  -> LLM propose learned pattern
-  -> human activate
-  -> next story Quality Packet
+  -> write accepted finding
+  -> optional generate fix task
 ```
 
-规则解析只作为兜底和校验，不作为主路径。Review 解析和 Pattern 提议都是语义理解任务，Phase 1 明确使用 LLM 结构化提取，避免把 markdown review 降级为脆弱的 regex ETL。
+规则解析只作为兜底和校验，不作为主路径。Review 解析是语义理解任务，Phase 1 明确使用 LLM 结构化提取，避免把 markdown review 降级为脆弱的 regex ETL。
 
-不做自动决策，不做多 reviewer 仲裁，不做大型 UI。
+不做 pattern 生成，不做 Automatic Learning From Execution，不做自动决策，不做多 reviewer 仲裁，不做大型 UI。
 
-### Phase 2: Debug And Recovery Loop
+### Phase 2: Debug, Pattern, And Recovery Loop
 
-目标：把“系统知道哪里坏了”推进到“系统能告诉人下一步怎么恢复”。
+目标：在 Phase 1 的 accepted / verified findings 基础上，推进 pattern 生成和自动学习；同时把“系统知道哪里坏了”推进到“系统能告诉人下一步怎么恢复”。
 
 覆盖能力：
 
+- Automatic Learning From Execution
+- learned pattern proposal / approval / activation
 - Failure Recovery Loop
 - Story Debug CLI
 - observability API 的 CLI 化
 - DoR/DoD blocked、done file、planner/reviewer fallback 等高频失败的恢复建议
 
-第二阶段主线：
+第二阶段包含两条主线：
+
+```text
+verified findings
+  -> LLM propose learned patterns
+  -> human approve / activate
+  -> next story Quality Packet
+```
 
 ```text
 story stuck / failed / blocked
@@ -77,7 +83,7 @@ story stuck / failed / blocked
   -> human confirm retry / fix / defer
 ```
 
-不做全自动 retry policy，只提供可解释建议和人工确认入口。
+不做自动 activate pattern，不做全自动 retry policy；pattern 激活和恢复动作都必须保留人工确认入口。
 
 ### Phase 3: Artifact, Role, And Scheduling Contracts
 
@@ -196,8 +202,6 @@ Quality Flywheel 和 Seed Pipeline 都依赖人工确认，但目前确认动作
 
 ```text
 pending findings
-pending learned patterns
-pending seed proposals
 pending review decisions
 ```
 
@@ -219,11 +223,12 @@ edit
 downgrade
 defer
 mark verified
-activate pattern
 ```
 
 ### P2
 
+- pending learned patterns / seed proposals 进入统一队列。
+- activate pattern。
 - TUI/Browser 工作台。
 - 批量审批。
 - 审批规则模板。
@@ -351,7 +356,7 @@ review finding
 
 当前这些步骤还没有完全串起来。
 
-### MVP
+### P2 MVP
 
 在 story 完成时生成 learning candidates：
 
@@ -363,7 +368,7 @@ review finding
 
 主路径复用 Seed Pipeline 的 LLM Seed Analyst 能力：输入 verified finding、修复 diff、验证结果和 story context，由 LLM 提议 proposed learned patterns，并输出 confidence、applies_to、evidence。系统只做 schema 校验、去重和入队，不自动 active。
 
-### P2
+### P2 Enhancements
 
 - 跨 story 聚类。
 - pattern 置信度自动更新。
@@ -406,23 +411,24 @@ story review-feedback import STORY-123 review.md
 - notification。
 - story final report。
 
-## Phase 1 Plan: Review-To-Learning Loop
+## Phase 1 Plan: Review Feedback Intake Loop
 
 ### Scope
 
-Phase 1 只做 review/finding/pattern 的闭环，不同时推进 debug、artifact、role 或 scheduling。
+Phase 1 只做 review feedback 到 finding 的闭环，不同时推进 pattern 生成、Automatic Learning、debug、artifact、role 或 scheduling。
 
 包含：
 
 1. Review Feedback Intake
 2. Human Approval Queue
-3. Automatic Learning 的最小候选生成
-4. `story findings` / `story approvals` / `story review-feedback` 等 CLI 主线
-5. Reviewer prompt 最小角色约束：reviewer 只读不改，避免把错误职责混入 learning 数据
+3. `story findings` / `story approvals` / `story review-feedback` 等 CLI 主线
+4. Reviewer prompt 最小角色约束：reviewer 只读不改，避免把错误职责混入 finding 数据
 
 不包含：
 
 - 自动替人接受 finding。
+- pattern 生成、pattern activate 和 Quality Packet 新增注入逻辑。
+- Automatic Learning From Execution。
 - 自动修代码。
 - 多 reviewer 合并。
 - Web dashboard。
@@ -435,16 +441,10 @@ story review-feedback import STORY-123 review.md
   -> LLM 提取 candidate findings，并合并同类项
 
 story approvals
-  -> Human Owner 查看待处理 finding / pattern
+  -> Human Owner 查看待处理 finding / review decision
 
 story approvals decide finding-xxx --accept
   -> finding 写入质量飞轮
-
-story approvals decide pattern-yyy --activate
-  -> learned pattern 进入 active
-
-下一个 story 执行
-  -> Quality Packet 自动包含 active pattern
 ```
 
 ### Phase 1 Deliverables
@@ -453,10 +453,8 @@ story approvals decide pattern-yyy --activate
 | --- | --- |
 | Review import extractor | 使用 LLM 支持 markdown/json review 输入，输出结构化 candidate findings |
 | Finding dedupe/merge | 在进入 queue 前合并同一 story 内语义重复的 findings |
-| Approval queue | 统一展示 pending findings / learned patterns / seed proposals，降低重复噪声 |
-| Decision commands | accept / reject / downgrade / defer / activate |
-| Learning candidate generator | 复用 Seed Analyst，从 verified findings + fix diff + verification 生成 proposed patterns |
-| Quality Packet integration | active patterns 被下一个 story 自动注入 |
+| Approval queue | 统一展示 pending findings / review decisions，降低重复噪声 |
+| Decision commands | accept / reject / downgrade / defer / mark verified |
 | Reviewer role guardrail | Phase 1 prompt 中明确 reviewer 只读不改 |
 
 ### Phase 1 Success Criteria
@@ -465,15 +463,51 @@ story approvals decide pattern-yyy --activate
 2. Human Owner 能在一个队列里 approve/reject/defer finding。
 3. 同一 story 的重复 findings 会在进入队列前合并或聚合展示。
 4. 被 accept 的 finding 会进入 quality flywheel。
-5. story 完成后能基于 verified finding、修复 diff 和验证结果生成 proposed learned patterns。
-6. Human Owner 能 activate pattern。
-7. 下一个类似 story 的 Quality Packet 能看到 active pattern。
+5. 被 mark verified 的 finding 会记录验证证据和状态变更事件。
+6. Phase 1 不生成 learned pattern，也不改变 Quality Packet 的 pattern 注入行为。
 
-## Phase 2 Plan: Debug And Recovery Loop
+## Phase 2A Plan: Pattern And Automatic Learning Loop
 
 ### Scope
 
-Phase 2 把已有 observability API 产品化成 CLI，并为高频失败提供恢复建议。
+Phase 2A 在 Phase 1 的 accepted / verified findings 基础上，再推进 pattern 生成和自动学习闭环。
+
+包含：
+
+1. 从 verified findings、修复 diff、验证结果和 story context 生成 learning candidates。
+2. 复用 Seed Pipeline 的 LLM Seed Analyst 提议 proposed learned patterns。
+3. proposed patterns 进入人工审批队列。
+4. Human Owner approve / activate pattern。
+5. active patterns 被后续 story 的 Quality Packet 注入。
+
+不包含：
+
+- 自动 activate pattern。
+- 自动修代码。
+- 跨 story 聚类和 pattern 置信度自动更新。
+
+### User Flow
+
+```text
+story completed with verified findings
+  -> LLM proposes learned patterns
+  -> Human Owner reviews proposed patterns
+  -> approved / active pattern
+  -> next story Quality Packet includes relevant active patterns
+```
+
+### Success Criteria
+
+1. story 完成后能基于 verified finding、修复 diff 和验证结果生成 proposed learned patterns。
+2. proposed pattern 默认不是 active，必须人工确认。
+3. Human Owner 能 approve / activate pattern。
+4. 下一个类似 story 的 Quality Packet 能看到相关 active pattern。
+
+## Phase 2B Plan: Debug And Recovery Loop
+
+### Scope
+
+Phase 2B 把已有 observability API 产品化成 CLI，并为高频失败提供恢复建议。
 
 包含：
 
@@ -502,7 +536,7 @@ story debug STORY-123 --apply retry
   -> 仅在人确认后执行恢复动作
 ```
 
-### Phase 2 Success Criteria
+### Phase 2B Success Criteria
 
 1. 对 done file 缺失、JSON 解析失败、missing expected outputs、DoD blocked 等高频失败能给出分类。
 2. 每个分类至少有一个 recommended action。
@@ -568,6 +602,7 @@ profile.yaml
 第一阶段不做：
 
 - 自动替人做最终决策。
+- pattern 生成和 Automatic Learning From Execution。
 - 全自动多 AI 调度。
 - 大型 Web 平台。
 - 生产监控接入。
