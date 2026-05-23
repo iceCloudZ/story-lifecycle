@@ -51,3 +51,48 @@ def test_create_story_with_sub_type(tmp_path):
         assert child["parent_key"] == "PARENT-001"
     finally:
         m.get_db_path = original
+
+
+def test_create_sub_story(tmp_path):
+    """create_sub_story should inherit workspace/profile/context from parent."""
+    m, original = _init_fresh_db(tmp_path)
+    try:
+        # Create parent with context
+        m.create_story(
+            story_key="FEAT-001",
+            title="Login feature",
+            workspace=str(tmp_path),
+        )
+        m.update_context("FEAT-001", "prd_path", "prd/FEAT-001.md")
+        m.update_context("FEAT-001", "spec_path", ".story-context/FEAT-001/spec.md")
+
+        from story_lifecycle.orchestrator.service import create_sub_story
+        sub_key = create_sub_story(
+            parent_key="FEAT-001",
+            sub_type="bug-fix",
+            start_stage="implement",
+            description="Fix login blank page",
+        )
+
+        assert sub_key == "FEAT-001-sub-1"
+
+        child = m.get_story(sub_key)
+        assert child is not None
+        assert child["parent_key"] == "FEAT-001"
+        assert child["sub_type"] == "bug-fix"
+        assert child["current_stage"] == "implement"
+        assert child["workspace"] == str(tmp_path)
+        assert child["profile"] == "minimal"
+        assert child["title"] == "Fix login blank page"
+
+        # Context inherited
+        ctx = json.loads(child["context_json"])
+        assert ctx["prd_path"] == "prd/FEAT-001.md"
+        assert ctx["spec_path"] == ".story-context/FEAT-001/spec.md"
+        assert ctx["sub_description"] == "Fix login blank page"
+
+        # Parent moved to waiting_subtasks
+        parent = m.get_story("FEAT-001")
+        assert parent["status"] == "waiting_subtasks"
+    finally:
+        m.get_db_path = original
