@@ -543,7 +543,6 @@ class StoryBoardApp(App):
         )
 
     def action_cursor_up(self):
-        visible = self._visible_stories()
         if self.selected_index > 0:
             self.selected_index -= 1
             self._render(full=False)
