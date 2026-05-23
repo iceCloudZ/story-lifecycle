@@ -20,6 +20,7 @@ VALID_COLUMNS = frozenset(
         "updated_at",
         "parent_key",
         "subtask_index",
+        "sub_type",
     }
 )
 
@@ -125,6 +126,10 @@ def init_db():
             pass
         try:
             conn.execute("ALTER TABLE story ADD COLUMN subtask_index INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE story ADD COLUMN sub_type TEXT")
         except sqlite3.OperationalError:
             pass
 
