@@ -36,6 +36,29 @@ class TapdBodyBugProvider(BugContentProvider):
         from .prd_providers import _html_to_markdown
 
         md = _html_to_markdown(bug.description)
+
+        # Try LLM semantic extraction first
+        try:
+            from ..orchestrator.semantic import extract_bug_context
+
+            result = extract_bug_context(md, title=bug.title)
+            data = result["data"]
+            return BugContext(
+                source_type="tapd_body",
+                description=data.get("description", bug.title),
+                steps_to_reproduce=data.get("steps_to_reproduce", ""),
+                expected_behavior=data.get("expected_behavior", ""),
+                actual_behavior=data.get("actual_behavior", ""),
+                environment=data.get("environment", ""),
+                screenshots=self._extract_images(md),
+                logs=data.get("logs", ""),
+                raw_markdown=md,
+            )
+        except Exception:
+            # Fallback to regex
+            pass
+
+        # Regex fallback (original logic)
         return BugContext(
             source_type="tapd_body",
             description=bug.title,

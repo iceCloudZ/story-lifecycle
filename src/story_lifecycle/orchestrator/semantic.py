@@ -206,3 +206,88 @@ def _call_semantic_llm(prompt: str, schema: dict) -> SemanticResult:
         data=parsed,
         warnings=warnings,
     )
+
+
+# ── Bug Context Extraction ──
+
+BUG_CONTEXT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+        "steps_to_reproduce": {"type": "string"},
+        "expected_behavior": {"type": "string"},
+        "actual_behavior": {"type": "string"},
+        "environment": {"type": "string"},
+        "logs": {"type": "string"},
+        "missing_fields": {"type": "array"},
+        "confidence": {"enum": ["high", "medium", "low"]},
+    },
+    "required": ["description", "confidence"],
+}
+
+# Regex fallback patterns (same logic as existing bug_providers.py)
+
+_SECTION_PATTERNS = {
+    "steps_to_reproduce": "复现步骤|步骤|重现",
+    "expected_behavior": "预期|期望|期望结果",
+    "actual_behavior": "实际|实际结果|现象",
+    "environment": "环境|版本|设备",
+    "logs": "日志|log|堆栈|stack",
+}
+
+
+def _regex_extract_section(md: str, pattern: str) -> str:
+    """Extract a section from markdown using heading keyword matching."""
+    m = re.search(
+        rf"(?:{pattern})[：:\s]*\n(.*?)(?=\n##|\n#|\Z)",
+        md,
+        re.DOTALL | re.IGNORECASE,
+    )
+    return m.group(1).strip() if m else ""
+
+
+def _regex_extract_bug_context(md: str, title: str) -> dict:
+    """Fallback regex-based bug context extraction."""
+    data = {"description": title, "missing_fields": [], "confidence": "low"}
+    for field, pattern in _SECTION_PATTERNS.items():
+        value = _regex_extract_section(md, pattern)
+        data[field] = value
+        if not value:
+            data["missing_fields"].append(field)
+    data["raw_markdown"] = md
+    return data
+
+
+def extract_bug_context(markdown: str, title: str = "") -> SemanticResult:
+    """Extract structured bug context from markdown via LLM, with regex fallback."""
+    prompt = f"""分析以下 Bug 报告，提取结构化信息。只输出 JSON，不要其他内容。
+
+标题: {title}
+
+正文:
+{markdown[:3000]}
+
+输出格式:
+{{
+  "description": "简短问题概述",
+  "steps_to_reproduce": "复现步骤，保留编号或要点",
+  "expected_behavior": "预期结果",
+  "actual_behavior": "实际结果",
+  "environment": "环境、版本、设备",
+  "logs": "错误日志、堆栈、接口返回",
+  "missing_fields": ["字段名"],
+  "confidence": "high|medium|low"
+}}
+
+如果某个字段在正文中找不到，加入 missing_fields。confidence 根据信息完整度判断。"""
+
+    llm_result = _call_semantic_llm(prompt, BUG_CONTEXT_SCHEMA)
+
+    if llm_result["ok"] and llm_result["mode"] == "llm":
+        # Ensure raw_markdown is preserved
+        llm_result["data"]["raw_markdown"] = markdown
+        return llm_result
+
+    # Fallback to regex
+    fallback_data = _regex_extract_bug_context(markdown, title)
+    return _fallback_result(fallback_data)

@@ -146,3 +146,57 @@ def test_call_semantic_llm_schema_validation():
     assert result["ok"] is True
     assert result["data"]["confidence"] == "low"  # default on invalid
     assert any("confidence" in w for w in result["warnings"])
+
+
+# ── extract_bug_context ──
+
+
+def test_extract_bug_context_llm_success():
+    """LLM extracts structured bug context from markdown."""
+    from story_lifecycle.orchestrator.semantic import extract_bug_context
+
+    llm_output = {
+        "description": "登录页面崩溃",
+        "steps_to_reproduce": "1. 打开登录页\n2. 输入特殊字符",
+        "expected_behavior": "正常登录",
+        "actual_behavior": "页面白屏",
+        "environment": "Chrome 120, Windows 11",
+        "logs": "Uncaught TypeError at login.js:42",
+        "missing_fields": [],
+        "confidence": "high",
+    }
+    fake = _make_fake_llm_response(llm_output)
+
+    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
+        with patch("httpx.post", return_value=fake):
+            result = extract_bug_context(
+                "## 现象\n页面白屏\n\n## 复现步骤\n输入特殊字符", "登录页面崩溃"
+            )
+
+    assert result["ok"] is True
+    assert result["mode"] == "llm"
+    assert result["data"]["steps_to_reproduce"] == "1. 打开登录页\n2. 输入特殊字符"
+    assert result["data"]["expected_behavior"] == "正常登录"
+
+
+def test_extract_bug_context_fallback():
+    """Without LLM, returns rule_fallback with regex extraction."""
+    from story_lifecycle.orchestrator.semantic import extract_bug_context
+
+    with patch.dict("os.environ", {}, clear=True):
+        result = extract_bug_context("## 复现步骤\n点按钮\n\n## 预期结果\n成功", "标题")
+
+    assert result["mode"] == "rule_fallback"
+    assert "点按钮" in result["data"].get("steps_to_reproduce", "")
+
+
+def test_extract_bug_context_llm_error_fallback():
+    """LLM error falls back to regex extraction."""
+    from story_lifecycle.orchestrator.semantic import extract_bug_context
+
+    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
+        with patch("httpx.post", side_effect=Exception("timeout")):
+            result = extract_bug_context("## 复现步骤\n点按钮", "标题")
+
+    assert result["mode"] == "rule_fallback"
+    assert "点按钮" in result["data"].get("steps_to_reproduce", "")
