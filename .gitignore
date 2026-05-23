@@ -14,9 +14,6 @@ venv/
 .vscode/
 .idea/
 
-# Design docs (local only)
-docs/superpowers/
-
 # Story Lifecycle local data (user-level, not in repo)
 .story/
 story.db
