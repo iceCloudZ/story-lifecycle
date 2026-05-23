@@ -1573,6 +1573,7 @@ def test_apply_finding_target_status_verified(tmp_path):
                 "evidence": ["prd/001.md"],
                 "confidence": "high",
                 "target_status": "verified",
+                "verification_evidence": 42,
             },
         ],
         "proposed_patterns": [],
@@ -1643,3 +1644,47 @@ def test_apply_pattern_logs_evidence_event(tmp_path):
     proposed = db.get_proposed_learned_patterns()
     assert len(proposed) == 1
     assert proposed[0]["pattern"] == "Pattern with evidence"
+
+
+def test_apply_verified_without_evidence_stays_open(tmp_path):
+    """target_status=verified without verification_evidence should stay open + error."""
+    import os
+
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+
+    db.init_db()
+    from story_lifecycle.orchestrator.seed_pipeline import apply_reviewed
+
+    proposal = {
+        "manifest": {"story_key": "S_NOEV"},
+        "review_status": {
+            "findings_approved": [0],
+            "patterns_approved": [],
+            "findings_rejected": [],
+            "patterns_rejected": [],
+            "reviewed_at": "2026-05-23T00:00:00Z",
+        },
+        "proposed_findings": [
+            {
+                "severity": "medium",
+                "category": "routing",
+                "description": "Verified without evidence",
+                "evidence": ["prd/001.md"],
+                "confidence": "medium",
+                "target_status": "verified",
+                # verification_evidence intentionally missing
+            },
+        ],
+        "proposed_patterns": [],
+    }
+
+    result = apply_reviewed(proposal)
+    # Finding was written but downgraded to open
+    assert result["findings_written"] == 1
+    assert len(result["errors"]) == 1
+    assert "verification_evidence" in result["errors"][0]
+
+    # Should appear as open
+    open_findings = db.get_open_findings("S_NOEV")
+    assert len(open_findings) == 1

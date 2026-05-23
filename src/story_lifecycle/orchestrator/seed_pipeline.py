@@ -779,17 +779,19 @@ def apply_reviewed(proposal: dict) -> dict:
             target_status = f.get("target_status", "open")
             if target_status == "verified":
                 verification_evidence = f.get("verification_evidence")
-                quality.update_finding_status(
-                    story_key,
-                    fid,
-                    "verified",
-                    reason="Seed from historical story with verification evidence",
-                    evidence=(
-                        {"verification_event_id": verification_evidence}
-                        if verification_evidence
-                        else None
-                    ),
-                )
+                if not verification_evidence:
+                    errors.append(
+                        f"Finding[{idx}]: target_status=verified but missing "
+                        "verification_evidence — status left as 'open'"
+                    )
+                else:
+                    quality.update_finding_status(
+                        story_key,
+                        fid,
+                        "verified",
+                        reason="Seed from historical story with verification evidence",
+                        evidence={"verification_event_id": verification_evidence},
+                    )
             findings_written += 1
         except Exception as exc:
             errors.append(f"Finding[{idx}]: write failed: {exc}")
