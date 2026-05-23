@@ -1,7 +1,5 @@
 """Codex CLI adapter."""
 
-import time
-import subprocess
 from .base import BaseAdapter
 
 

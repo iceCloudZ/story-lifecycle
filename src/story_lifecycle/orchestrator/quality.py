@@ -75,7 +75,7 @@ def record_story_intake(story_key: str, source: str, source_id: str, metadata: d
     })
 
 
-def build_quality_packet(story_key: str, stage: str, max_items: int = 5) -> str:
+def build_quality_packet(story_key: str, stage: str, max_items: int = 5, relevant_tags: list[str] | None = None) -> str:
     """Build compact Quality Packet for prompt injection."""
     lines = [f"Quality Packet for {story_key}", ""]
 
@@ -90,6 +90,18 @@ def build_quality_packet(story_key: str, stage: str, max_items: int = 5) -> str:
         lines.append("")
     else:
         lines.append("Open Findings: none")
+        lines.append("")
+
+    # Learned patterns (relevance-filtered if tags provided)
+    if relevant_tags:
+        patterns = db.find_relevant_patterns(relevant_tags, limit=max_items)
+    else:
+        patterns = db.get_active_learned_patterns(limit=max_items)
+    if patterns:
+        lines.append("Relevant Learned Patterns:")
+        for p in patterns:
+            lines.append(f"- {p['pattern']}:")
+            lines.append(f"  {p['rule']}")
         lines.append("")
 
     # Verification baseline
@@ -119,3 +131,48 @@ def build_quality_checklist(story_key: str, stage: str) -> str:
     lines.append("- [ ] Run: pytest && ruff check src tests")
     lines.append("")
     return "\n".join(lines)
+
+
+def propose_learned_pattern(
+    story_key: str,
+    pattern: str,
+    applies_to: list[str],
+    rule: str,
+    source_findings: list[str] | None = None,
+    confidence: str = "medium",
+) -> str:
+    """Propose a learned pattern from verified findings. Status: proposed."""
+    pid = db.create_learned_pattern(
+        pattern=pattern,
+        applies_to=applies_to,
+        rule=rule,
+        source_findings=source_findings,
+        confidence=confidence,
+    )
+    db.log_event(story_key, "", "learned_pattern", {
+        "pattern_id": pid,
+        "pattern": pattern,
+        "status": "proposed",
+        "applies_to": applies_to,
+    })
+    return pid
+
+
+def approve_pattern(pattern_id: str) -> None:
+    """Approve a proposed pattern. proposed -> approved."""
+    db.update_learned_pattern(pattern_id, status="approved")
+
+
+def activate_pattern(pattern_id: str) -> None:
+    """Activate an approved pattern. approved -> active."""
+    db.update_learned_pattern(pattern_id, status="active")
+
+
+def deprecate_pattern(pattern_id: str) -> None:
+    """Deprecate an active pattern. active -> deprecated."""
+    db.update_learned_pattern(pattern_id, status="deprecated")
+
+
+def reject_pattern(pattern_id: str) -> None:
+    """Reject a proposed pattern. proposed -> rejected."""
+    db.update_learned_pattern(pattern_id, status="rejected")

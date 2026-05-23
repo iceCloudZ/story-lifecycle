@@ -271,3 +271,47 @@ def test_find_relevant_patterns(tmp_path):
     # No match
     relevant3 = db.find_relevant_patterns(["frontend", "react"])
     assert len(relevant3) == 0
+
+
+def test_learned_pattern_workflow(tmp_path):
+    """Full pattern workflow: propose from finding, approve, verify in packet."""
+    import os
+    os.environ["STORY_HOME"] = str(tmp_path)
+    from story_lifecycle.db import models as db
+    db.init_db()
+    from story_lifecycle.orchestrator.quality import (
+        record_finding, propose_learned_pattern, approve_pattern,
+        activate_pattern, build_quality_packet,
+    )
+
+    # Record finding, mark learned
+    fid = record_finding("S1", "implement", {
+        "source": "code_review", "severity": "high", "category": "routing",
+        "description": "advance_node missing error path",
+        "recommendation": "route last_error to router",
+    })
+    db.update_finding(fid, status="learned")
+
+    # Propose pattern from finding
+    pid = propose_learned_pattern(
+        story_key="S1",
+        pattern="Graph routing changes require path-level assertions",
+        applies_to=["orchestrator.graph", "orchestrator.nodes"],
+        rule="Assert event_counts, last_error, or next_action — not just final status",
+        source_findings=[fid],
+        confidence="high",
+    )
+    assert pid is not None
+
+    # Approve + activate
+    approve_pattern(pid)
+    activate_pattern(pid)
+
+    # Packet for a different story with same tags should include pattern
+    packet = build_quality_packet("S2", "implement", relevant_tags=["orchestrator.nodes"])
+    assert "Graph routing changes require path-level assertions" in packet
+    assert "Assert event_counts" in packet
+
+    # Packet without tags should also show active patterns
+    packet2 = build_quality_packet("S3", "implement")
+    assert "Graph routing changes require path-level assertions" in packet2

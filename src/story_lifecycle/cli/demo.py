@@ -55,8 +55,8 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
     console.rule("[bold cyan]Story Lifecycle Demo[/]")
     console.print()
     console.print(f"  Story: [cyan]{_DEMO_KEY}[/]")
-    console.print(f"  Profile: [dim]minimal (design → implement → test)[/]")
-    console.print(f"  Mode: [dim]simulated (no real AI)[/]")
+    console.print("  Profile: [dim]minimal (design → implement → test)[/]")
+    console.print("  Mode: [dim]simulated (no real AI)[/]")
     console.print()
 
     demo_tool = DemoTool()
