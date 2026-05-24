@@ -107,17 +107,11 @@ def release_port(story_key: str):
 
 def create_session(name: str, workspace: str):
     """Create a detached/background session with the given CWD."""
+    if not _MPLEX:
+        return
     if _MPLEX == "zellij":
-        _run(
-            [
-                "zellij",
-                "attach",
-                "--create-background",
-                name,
-                "options",
-                "--default-cwd",
-                workspace,
-            ]
+        os.system(
+            f"zellij attach --create-background {name} options --default-cwd {workspace}"
         )
     elif _MPLEX == "tmux":
         _run(["tmux", "new-session", "-d", "-s", name, "-c", workspace])
