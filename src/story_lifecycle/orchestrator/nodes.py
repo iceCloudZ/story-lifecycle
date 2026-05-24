@@ -509,11 +509,21 @@ def review_stage_node(state: StoryState) -> StoryState:
 
     stage_output = state.get("context", {})
 
-    # Retry fatigue
+    # Retry fatigue — use adversarial max_rounds if configured, else global
     execution_count = state.get("execution_count", 0)
-    if execution_count >= MAX_REVIEW_RETRIES:
-        state["last_error"] = f"Review retry limit reached ({MAX_REVIEW_RETRIES} times)"
-        state["review_summary"] = f"达到重试上限 ({MAX_REVIEW_RETRIES} 次)"
+    try:
+        profile_cfg = load_profile(state.get("profile", "minimal"))
+        adv_cfg = AdversarialConfig.from_profile(profile_cfg)
+        retry_limit = (
+            adv_cfg.code_loop.max_rounds
+            if adv_cfg.code_loop_enabled(stage)
+            else MAX_REVIEW_RETRIES
+        )
+    except Exception:
+        retry_limit = MAX_REVIEW_RETRIES
+    if execution_count >= retry_limit:
+        state["last_error"] = f"Review retry limit reached ({retry_limit} times)"
+        state["review_summary"] = f"达到重试上限 ({retry_limit} 次)"
         db.log_event(
             state["story_key"],
             stage,
@@ -524,8 +534,6 @@ def review_stage_node(state: StoryState) -> StoryState:
 
     # --- Adversarial code review loop ---
     try:
-        profile_cfg = load_profile(state.get("profile", "minimal"))
-        adv_cfg = AdversarialConfig.from_profile(profile_cfg)
         if adv_cfg.code_loop_enabled(stage) and planner.is_available():
             from .evaluator_loop import run_code_review_loop
 
@@ -596,6 +604,33 @@ def review_stage_node(state: StoryState) -> StoryState:
                 )
             elif quality == "fail":
                 state["last_error"] = f"Review failed: {review.get('summary', '')}"
+
+            # Maintain knowledge base (same as normal path)
+            _update_knowledge(workspace, story_key, stage, review, stage_output)
+
+            # Check for learned pattern recurrence (same as normal path)
+            _check_pattern_recurrence(
+                workspace, story_key, stage, review.get("issues", [])
+            )
+
+            # context_updates — store index only (same as normal path)
+            if review.get("context_updates"):
+                for k, v in review["context_updates"].items():
+                    val = str(v)
+                    if len(val) > 200:
+                        detail_file = (
+                            Path(workspace)
+                            / ".story-context"
+                            / story_key
+                            / f"{stage}_{k}.md"
+                        )
+                        detail_file.write_text(val, encoding="utf-8")
+                        state["context"][k + "_path"] = str(
+                            detail_file.relative_to(workspace)
+                        )
+                        state["context"][k] = val[:100] + "..."
+                    else:
+                        state["context"][k] = val
 
             db.log_event(
                 story_key,
@@ -1092,7 +1127,18 @@ def router_node(state: StoryState) -> StoryState:
 
     if state.get("last_error") and state.get("review_summary"):
         count = state.get("execution_count", 0)
-        if count < MAX_REVIEW_RETRIES:
+        # Use adversarial max_rounds if configured, else global limit
+        try:
+            profile_cfg = load_profile(state.get("profile", "minimal"))
+            adv_cfg = AdversarialConfig.from_profile(profile_cfg)
+            retry_limit = (
+                adv_cfg.code_loop.max_rounds
+                if adv_cfg.code_loop_enabled(stage)
+                else MAX_REVIEW_RETRIES
+            )
+        except Exception:
+            retry_limit = MAX_REVIEW_RETRIES
+        if count < retry_limit:
             db.log_event(
                 key,
                 stage,
