@@ -232,6 +232,77 @@ def review_stage(state: dict, stage_config: dict, stage_output: dict) -> dict:
     )
 
 
+def review_plan(
+    state: dict,
+    plan: dict,
+    stage_config: dict,
+    reviewer_model: str = "",
+) -> dict:
+    """Plan Reviewer 角色：对执行计划进行对抗性审查。"""
+    api_key, base_url, model = _api_config()
+    if reviewer_model:
+        model = reviewer_model
+
+    workspace = state.get("workspace", "")
+    story_key = state.get("story_key", "")
+
+    story_knowledge = _load_story_knowledge(workspace, story_key)
+
+    prompt = f"""你是一个开发团队的技术评审员，专门负责审查执行计划的质量。你的职责是确保计划具备足够的范围覆盖、上下文完整性和可行性。
+
+一份执行计划刚刚生成，请进行质量审查。
+
+## Story 信息
+- Key: {state.get("story_key")}
+- 标题: {state.get("title")}
+- 当前阶段: {state.get("current_stage")}
+- 阶段描述: {stage_config.get("description", "")}
+
+## 执行计划
+{json.dumps(plan, ensure_ascii=False, indent=2)}
+
+## 已有上下文索引
+{json.dumps(state.get("context", {}), ensure_ascii=False, indent=2)}
+
+## Story 知识库
+{story_knowledge}
+
+请审查计划质量。返回 JSON：
+{{{{
+  "quality": "pass|revise",
+  "blockers": [
+    {{{{
+      "severity": "high|medium|low",
+      "category": "scope|context|feasibility",
+      "description": "问题描述"
+    }}}}
+  ],
+  "suggestions": ["具体改进建议，可操作"],
+  "reasoning": "判断理由"
+}}}}
+
+判断标准：
+- pass: 计划范围合理、指令具体明确、与知识库对齐，可以执行
+- revise: 计划存在严重问题（blockers 中至少一个 severity=high），需要重新生成
+  - scope 问题：计划范围过大或过小，遗漏关键步骤
+  - context 问题：计划缺少必要的前序上下文或团队规范
+  - feasibility 问题：计划中包含不可行的技术方案或不存在的工具/接口
+
+注意：
+- 只关注严重问题（severity=high），中等和低等问题记入 suggestions 即可
+- 不要因为风格偏好或非关键细节而触发 revise
+- 优先检查：adapter 是否有效、extra_instructions 是否具体可操作、是否遗漏 stage_config 要求的步骤"""
+
+    return _call_llm(
+        base_url,
+        api_key,
+        model,
+        prompt,
+        story_key=state.get("story_key", ""),
+        stage=state.get("current_stage", ""),
+    )
+
+
 def compress_context(workspace: str, story_key: str, current_stage: str) -> str | None:
     """Condenser：将历史 context 文件压缩为知识库摘要。
 
