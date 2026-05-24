@@ -126,7 +126,12 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "plan_stage",
         route_after_plan,
-        {"skip_stage": "skip_stage", "execute_stage": "execute_stage", "__end__": END},
+        {
+            "skip_stage": "skip_stage",
+            "execute_stage": "execute_stage",
+            "__end__": END,
+            "router": "router",
+        },
     )
 
     graph.add_edge("execute_stage", "poll_completion")

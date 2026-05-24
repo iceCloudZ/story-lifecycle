@@ -146,11 +146,14 @@ def robust_json_parse(filepath: Path) -> dict:
 
 
 def route_after_plan(state: StoryState) -> str:
-    """Conditional edge after plan_stage: skip, execute, or end."""
+    """Conditional edge after plan_stage: skip, blocked, execute, or end."""
     if state.get("status") == "skipping":
         return "skip_stage"
     if state.get("status") == "waiting_subtasks":
         return "__end__"
+    # Plan loop blocked (no_progress / max_rounds / fail) — route to router
+    if state.get("last_error"):
+        return "router"
     return "execute_stage"
 
 
@@ -530,6 +533,10 @@ def review_stage_node(state: StoryState) -> StoryState:
             "review",
             {"quality": "forced_fail", "retries": execution_count},
         )
+        # Design: exhausted retries route to wait_confirm for human intervention
+        if adv_cfg.code_loop_enabled(stage):
+            state["_next_action"] = "wait_confirm"
+            return state
         return state
 
     # --- Adversarial code review loop ---
@@ -1072,6 +1079,13 @@ def router_node(state: StoryState) -> StoryState:
     key = state["story_key"]
     stage = state["current_stage"]
     cfg = get_stage_config(state.get("profile", "minimal"), stage)
+
+    # Preserve pre-routed decision (e.g. adversarial code loop retry exhaustion)
+    if state.get("_next_action"):
+        log_route_decision(
+            state, state["_next_action"], "pre_routed", router_mode="adversarial"
+        )
+        return state
 
     # 1. Retry fatigue — review hit max retries
     if state.get("review_summary") and "达到重试上限" in (

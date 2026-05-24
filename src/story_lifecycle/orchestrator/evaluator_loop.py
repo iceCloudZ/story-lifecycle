@@ -425,6 +425,13 @@ def run_plan_loop(
                     "repeated": [],
                 },
                 verification={"status": "not_run", "commands": []},
+                prompt_tokens={
+                    "total": 0,
+                    "context": 0,
+                    "feedback": 0,
+                    "repeated_context": 0,
+                    "estimated": True,
+                },
                 no_progress=no_progress,
             )
 
@@ -495,6 +502,7 @@ def run_code_review_loop(
     The "loop" happens through the existing graph router retry mechanism.
     """
     import json as _json
+    from ..db import models as db
     from . import planner
     from .loop_events import log_loop_started, log_loop_round, log_loop_completed
     from .quality import record_finding
@@ -528,6 +536,12 @@ def run_code_review_loop(
         )
     except Exception as exc:
         log.warning("review_stage failed: %s", exc)
+        # Read previous findings for classification even on error
+        prev_high_err: list[dict] = []
+        try:
+            prev_high_err = db.get_open_findings(story_key, min_severity="high")
+        except Exception:
+            pass
         log_loop_round(
             story_key=story_key,
             stage=stage,
@@ -537,8 +551,23 @@ def run_code_review_loop(
             mode="short_lived",
             decision="fail",
             score=0.0,
-            findings={"open_before": [], "new": [], "resolved": [], "repeated": []},
+            findings={
+                "open_before": [
+                    f"{f.get('category', '')}:{f.get('description', '')}"
+                    for f in prev_high_err
+                ],
+                "new": [],
+                "resolved": [],
+                "repeated": [],
+            },
             verification={"status": "not_run", "commands": []},
+            prompt_tokens={
+                "total": 0,
+                "context": 0,
+                "feedback": 0,
+                "repeated_context": 0,
+                "estimated": True,
+            },
         )
         log_loop_completed(
             story_key=story_key,
@@ -558,8 +587,16 @@ def run_code_review_loop(
     issues = review.get("issues", [])
     score = review.get("trajectory_score", 0.0)
 
+    # --- Read previous open findings for cross-round classification ---
+    prev_high_findings: list[dict] = []
+    try:
+        prev_high_findings = db.get_open_findings(story_key, min_severity="high")
+    except Exception:
+        pass
+
     # --- Record findings to DB ---
     finding_descriptions: list[str] = []
+    current_high_issues: list[dict] = []
     for issue in issues:
         try:
             record_finding(
@@ -577,10 +614,42 @@ def run_code_review_loop(
             finding_descriptions.append(
                 f"{issue.get('severity', 'medium')}:{issue.get('description', '')}"
             )
+            if issue.get("severity") == "high":
+                current_high_issues.append(issue)
         except Exception:
             log.warning(
                 "Failed to record finding for issue: %s", issue.get("description", "")
             )
+
+    # --- Classify findings: new / resolved / repeated ---
+    prev_high_set = {
+        (f.get("category", ""), f.get("location", "")) for f in prev_high_findings
+    }
+    curr_high_set = {
+        (
+            issue.get("type", issue.get("category", "unknown")),
+            issue.get("location", ""),
+        )
+        for issue in current_high_issues
+    }
+    repeated_keys = prev_high_set & curr_high_set
+    new_keys = curr_high_set - prev_high_set
+    resolved_keys = prev_high_set - curr_high_set
+
+    findings_classified = {
+        "open_before": [
+            f"{f.get('category', '')}:{f.get('description', '')}"
+            for f in prev_high_findings
+        ],
+        "new": [f"{cat}:{loc}" for cat, loc in new_keys],
+        "resolved": [f"{cat}:{loc}" for cat, loc in resolved_keys],
+        "repeated": [f"{cat}:{loc}" for cat, loc in repeated_keys],
+    }
+
+    # --- No-progress detection ---
+    no_progress = False
+    if execution_count > 0 and current_high_issues:
+        no_progress = detect_no_progress(prev_high_findings, current_high_issues)
 
     # --- Build repair packet if revise ---
     repair_path: str | None = None
@@ -620,12 +689,7 @@ def run_code_review_loop(
                 mode="short_lived",
                 decision="fail",
                 score=float(score),
-                findings={
-                    "open_before": [],
-                    "new": finding_descriptions,
-                    "resolved": [],
-                    "repeated": [],
-                },
+                findings=findings_classified,
                 verification={"status": "not_run", "commands": []},
                 prompt_tokens={
                     "total": max(1, len(_json.dumps(stage_output)) // CHARS_PER_TOKEN),
@@ -675,14 +739,10 @@ def run_code_review_loop(
         mode="short_lived",
         decision=quality,
         score=float(score),
-        findings={
-            "open_before": [],
-            "new": finding_descriptions,
-            "resolved": [],
-            "repeated": [],
-        },
+        findings=findings_classified,
         verification={"status": "not_run", "commands": []},
         prompt_tokens=prompt_tokens,
+        no_progress=no_progress,
     )
 
     # --- Decision ---
