@@ -1,6 +1,11 @@
+import os
+
+import pytest
+
 from story_lifecycle.orchestrator.entry import StageEntryAction
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific")
 def test_zellij_create_session_uses_session_name_as_attach_argument(monkeypatch):
     from story_lifecycle.terminal import ttyd
 
@@ -52,6 +57,7 @@ def test_tui_debug_log_writes_to_story_home(monkeypatch, tmp_path):
     assert "session='s-WIN-ZELLIJ'" in log_text
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific")
 def test_tui_defers_attach_until_after_textual_exits_on_windows(
     monkeypatch,
 ):
@@ -111,6 +117,7 @@ def test_tui_defers_attach_until_after_textual_exits_on_windows(
     assert app._pending_attach_args == ["zellij", "attach", "s-WIN-ZELLIJ"]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific")
 def test_tui_shows_prompt_when_no_session_on_windows(monkeypatch):
     """When no session exists, e key shows prompt instead of creating a session."""
     from story_lifecycle.cli import tui
@@ -155,6 +162,7 @@ def test_tui_shows_prompt_when_no_session_on_windows(monkeypatch):
     # (We test the decision logic above, so the handler just renders a prompt.)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific")
 def test_run_tui_relaunches_after_deferred_attach_on_windows(monkeypatch):
     from story_lifecycle.cli import tui
 
