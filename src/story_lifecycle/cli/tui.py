@@ -647,6 +647,7 @@ class StoryBoardApp(App):
         yield Static(id="header-bar")
         yield Static(id="plan-panel")
         yield VerticalScroll(id="story-list")
+        yield Static(id="completed-section")
         yield Static(id="detail-panel")
         yield Static(id="footer-bar")
         yield Footer()
@@ -686,6 +687,9 @@ class StoryBoardApp(App):
         self.set_interval(3, self.watchdog_check)
         self.set_interval(0.08, self.tick_spinner)
 
+        # Startup sweep: advance all stories with existing done files
+        self._startup_sweep()
+
         # Source polling
         try:
             from ..cli.setup import get_config
@@ -711,6 +715,7 @@ class StoryBoardApp(App):
 
     def refresh_stories(self):
         self.stories = db.list_active_stories()
+        self._completed_stories = db.list_completed_stories()
         self._render()
 
     def _render(self, full: bool = True):
@@ -723,10 +728,13 @@ class StoryBoardApp(App):
         active = len([s for s in self.stories if s["status"] == "active"])
 
         header = self.query_one("#header-bar")
+        completed = getattr(self, "_completed_stories", [])
+        completed_count = len(completed)
         header.update(
             "\n"
             "  [bold cyan]◆[/] [bold white]Story[/][bold cyan]Lifecycle[/] "
             f" [dim]│[/] Router: {router_status} [dim]│[/] Stories: {active} active"
+            f"{f' [dim]│[/] {completed_count} completed' if completed_count else ''}"
         )
 
         if full:
@@ -759,6 +767,21 @@ class StoryBoardApp(App):
         else:
             for i, card in enumerate(self.query(StoryCard)):
                 card.set_selected(i == self.selected_index)
+
+        # Completed stories section
+        completed_section = self.query_one("#completed-section")
+        if completed:
+            lines = ["[dim]─── Completed ───[/]"]
+            for s in completed[-10:]:
+                key = s["story_key"]
+                title = (s.get("title") or "")[:40]
+                stage = s.get("current_stage", "")
+                lines.append(
+                    f"  [dim green]✓[/] [dim]{key}[/]  {title}  [dim]{stage}[/]"
+                )
+            completed_section.update("\n".join(lines))
+        else:
+            completed_section.update("")
 
         footer = self.query_one("#footer-bar")
         footer.update(
@@ -1107,11 +1130,27 @@ class StoryBoardApp(App):
     def action_refresh(self):
         self.refresh_stories()
 
+    def _startup_sweep(self):
+        """On startup, check all non-terminal stories for existing done files and resume."""
+        from ..orchestrator.graph import start_story_async, is_story_running
+
+        terminal = {"completed", "aborted"}
+        for s in self.stories:
+            if s["status"] in terminal:
+                continue
+            key = s["story_key"]
+            stage = s["current_stage"]
+            ws = s["workspace"]
+            done_file = Path(ws) / ".story-done" / key / f"{stage}.json"
+            if done_file.exists() and not is_story_running(key):
+                db.update_story(key, status="active", last_error=None)
+                start_story_async(key)
+
     async def watchdog_check(self):
         from ..orchestrator.graph import resume_story, is_story_running
         from ..db import models as db
 
-        active = [s for s in self.stories if s["status"] == "active"]
+        active = [s for s in self.stories if s["status"] in ("active", "paused")]
         for s in active:
             key = s["story_key"]
             stage = s["current_stage"]
@@ -1119,6 +1158,7 @@ class StoryBoardApp(App):
             done_file = Path(ws) / ".story-done" / key / f"{stage}.json"
 
             if done_file.exists() and not is_story_running(key):
+                db.update_story(key, status="active")
                 try:
                     resume_story(key)
                 except Exception:

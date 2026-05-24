@@ -24,12 +24,14 @@ stages:
     review: true
     max_retries: 3
     allowed_providers: [deepseek, zhipu, anthropic]
-    expected_outputs: []
-    next_default: [test]
+    expected_outputs:
+      - files_changed
+      - summary
+    next_default: [review]
 
-  test:
+  review:
     order: 3
-    description: "编译验证与冒烟测试"
+    description: "代码审查"
     confirm: false
     review: false
     max_retries: 2

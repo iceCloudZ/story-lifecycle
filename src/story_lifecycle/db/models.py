@@ -263,6 +263,15 @@ def list_active_stories() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def list_completed_stories(limit: int = 20) -> list[dict]:
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM story WHERE status = 'completed' ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_sub_stories(parent_key: str) -> list[dict]:
     with _db() as conn:
         rows = conn.execute(

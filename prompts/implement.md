@@ -8,9 +8,11 @@
 
 ## 步骤
 
-1. 如果存在设计文档，先阅读理解
-2. 按设计文档实现代码
-3. 完成后记录修改的文件列表
+1. 确保涉及的所有服务仓库都在 `feature/{story_key}` 分支上（如不在则切换）
+2. 如果存在设计文档，先阅读理解
+3. 按设计文档在对应仓库中实现代码
+4. 在每个仓库中提交改动（`git add` + `git commit`），提交信息用英文
+5. 完成后记录修改的文件列表
 
 ## 完成后
 
@@ -23,4 +25,4 @@
 }
 ```
 
-> CRITICAL: The file must contain ONLY raw JSON. No markdown code blocks.
+> CRITICAL: The file must contain ONLY raw JSON. No markdown code blocks。

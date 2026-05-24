@@ -416,10 +416,6 @@ def review_stage_node(state: StoryState) -> StoryState:
 
     stage_output = state.get("context", {})
 
-    # No expected_outputs → skip review
-    if not stage_output or not cfg.get("expected_outputs"):
-        return state
-
     # Retry fatigue
     execution_count = state.get("execution_count", 0)
     if execution_count >= MAX_REVIEW_RETRIES:
@@ -685,7 +681,24 @@ def execute_stage_node(state: StoryState) -> StoryState:
     """Dispatch stage execution via Tool abstraction."""
     stage = state["current_stage"]
     workspace = state["workspace"]
+    key = state["story_key"]
     profile = state.get("profile", "minimal")
+
+    # Fast path: if done file already exists, skip execution entirely
+    done_file = Path(workspace) / ".story-done" / key / f"{stage}.json"
+    if done_file.exists():
+        try:
+            data = robust_json_parse(done_file)
+            done_file.unlink(missing_ok=True)
+            state["context"].update(data)
+            cfg = get_stage_config(profile, stage)
+            for field in cfg.get("expected_outputs", []):
+                if field in data:
+                    db.update_context(key, field, str(data[field]))
+            log.info(f"Stage {stage} done file found, skipping execution")
+            return state
+        except Exception:
+            pass
 
     cfg = get_stage_config(profile, stage)
 

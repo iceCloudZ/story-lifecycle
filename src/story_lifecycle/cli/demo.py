@@ -109,7 +109,7 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
             if e["event_type"] == "execute":
                 stages_done[e["stage"]] = True
 
-        for s in ("design", "implement", "test"):
+        for s in ("design", "implement", "review"):
             mark = "[green]✓[/]" if s in stages_done else "[dim]○[/]"
             console.print(f"  {mark} {s}")
 

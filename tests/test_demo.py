@@ -62,7 +62,7 @@ class TestDemo:
 
         assert story is not None
         assert story["status"] == "completed"
-        assert story["current_stage"] == "test"
+        assert story["current_stage"] == "review"
 
     def test_demo_creates_execute_events(self, tmp_path):
         story, events = _run_demo_with_db(tmp_path)
@@ -71,7 +71,7 @@ class TestDemo:
         assert len(execute_events) == 3
 
         stages = [e["stage"] for e in execute_events]
-        assert stages == ["design", "implement", "test"]
+        assert stages == ["design", "implement", "review"]
 
     def test_demo_context_has_expected_fields(self, tmp_path):
         story, events = _run_demo_with_db(tmp_path)

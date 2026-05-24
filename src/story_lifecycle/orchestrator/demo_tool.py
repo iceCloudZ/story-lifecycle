@@ -16,7 +16,7 @@ _DEMO_PAYLOADS = {
         "summary": "Demo design completed",
     },
     "implement": {"implementation_summary": "Demo implementation completed"},
-    "test": {"tests_passed": True},
+    "review": {"quality": "pass", "summary": "Demo review completed"},
 }
 
 
