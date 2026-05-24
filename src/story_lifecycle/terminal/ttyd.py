@@ -118,12 +118,19 @@ def create_session(name: str, workspace: str):
     time.sleep(0.5)
 
 
+def _strip_ansi(text: str) -> str:
+    """Strip ANSI escape sequences from text."""
+    import re
+
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
 def session_alive(name: str) -> bool:
     """Check if a session exists and is alive."""
     if _MPLEX == "zellij":
         r = _run(["zellij", "list-sessions"], text=True, timeout=5)
         if r.returncode == 0:
-            return name in r.stdout.split()
+            return name in _strip_ansi(r.stdout).split()
         return False
     elif _MPLEX == "tmux":
         r = _run(["tmux", "has-session", "-t", name])
@@ -215,7 +222,9 @@ def list_sessions() -> list[str]:
         r = _run(["zellij", "list-sessions"], text=True, timeout=5)
         if r.returncode == 0:
             return [
-                line.strip() for line in r.stdout.strip().split("\n") if line.strip()
+                _strip_ansi(line.strip().split()[0])
+                for line in r.stdout.strip().split("\n")
+                if line.strip()
             ]
         return []
     elif _MPLEX == "tmux":
