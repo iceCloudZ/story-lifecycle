@@ -1,5 +1,7 @@
 """Tests for TUI entry decision logic — .done helpers, state resolver, action decider."""
 
+import time
+
 import pytest
 
 from story_lifecycle.orchestrator.entry import (
@@ -283,3 +285,118 @@ class TestDecideAction:
     def test_invalid_user_action_raises(self):
         with pytest.raises(ValueError):
             decide_action(StageEntryState.IDLE, "x")
+
+
+# ---------------------------------------------------------------------------
+# Regression: BaseTool._launch_in_session must not call create_session
+# ---------------------------------------------------------------------------
+
+
+class TestBaseToolLaunchConstraint:
+    """Lock down the constraint that _launch_in_session never calls
+    ttyd.create_session and always falls back to launch_cli when no
+    healthy session exists."""
+
+    def test_no_create_session_no_healthy_session(self, monkeypatch, tmp_path):
+        """When no session exists, must call launch_cli — never create_session."""
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.orchestrator.graph as graph_mod
+        import story_lifecycle.adapters as adapters_mod
+        from story_lifecycle.orchestrator.tools.base import BaseTool
+        from story_lifecycle.db import models as db_mod
+
+        create_calls = []
+        launch_cli_calls = []
+
+        monkeypatch.setattr(ttyd_mod, "session_alive", lambda n: False)
+        monkeypatch.setattr(
+            ttyd_mod, "create_session", lambda *a, **kw: create_calls.append(a)
+        )
+        monkeypatch.setattr(
+            ttyd_mod, "launch_cli", lambda *a, **kw: launch_cli_calls.append(a)
+        )
+        monkeypatch.setattr(ttyd_mod, "session_name", lambda k: f"s-{k}")
+        monkeypatch.setattr(ttyd_mod, "send_keys", lambda *a, **kw: None)
+        monkeypatch.setattr(ttyd_mod, "paste_text", lambda *a, **kw: None)
+        monkeypatch.setattr(ttyd_mod, "_mplex_launched", set())
+
+        class FakeAdapter:
+            def launch_cmd(self, model):
+                return "echo fake"
+
+            def switch_provider(self, p):
+                pass
+
+        monkeypatch.setattr(adapters_mod, "get_adapter", lambda n: FakeAdapter())
+
+        monkeypatch.setattr(graph_mod, "emit_terminal_opened", lambda k: None)
+        monkeypatch.setattr(db_mod, "log_event", lambda *a, **kw: None)
+        monkeypatch.setattr(db_mod, "update_story", lambda *a, **kw: None)
+
+        tool = BaseTool()
+        state = {
+            "story_key": "T-1",
+            "workspace": str(tmp_path),
+            "current_stage": "design",
+            "execution_count": 0,
+        }
+        tool._launch_in_session(
+            state, {"adapter": "claude", "model": "sonnet"}, "prompt"
+        )
+
+        assert create_calls == [], "create_session must NOT be called"
+        assert len(launch_cli_calls) == 1, "launch_cli must be called exactly once"
+
+    def test_injects_into_healthy_session(self, monkeypatch, tmp_path):
+        """When a healthy session exists, must inject via send_keys — no launch_cli."""
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.orchestrator.graph as graph_mod
+        import story_lifecycle.adapters as adapters_mod
+        from story_lifecycle.orchestrator.tools.base import BaseTool
+        from story_lifecycle.db import models as db_mod
+
+        send_keys_calls = []
+        launch_cli_calls = []
+
+        monkeypatch.setattr(ttyd_mod, "session_alive", lambda n: True)
+        monkeypatch.setattr(ttyd_mod, "create_session", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            ttyd_mod, "send_keys", lambda *a, **kw: send_keys_calls.append(a)
+        )
+        monkeypatch.setattr(ttyd_mod, "paste_text", lambda *a, **kw: None)
+        monkeypatch.setattr(ttyd_mod, "session_name", lambda k: f"s-{k}")
+        monkeypatch.setattr(
+            ttyd_mod, "launch_cli", lambda *a, **kw: launch_cli_calls.append(a)
+        )
+        monkeypatch.setattr(ttyd_mod, "_mplex_launched", set())
+
+        monkeypatch.setattr(time, "sleep", lambda s: None)
+
+        class FakeAdapter:
+            def launch_cmd(self, model):
+                return "echo fake"
+
+            def switch_provider(self, p):
+                pass
+
+        monkeypatch.setattr(adapters_mod, "get_adapter", lambda n: FakeAdapter())
+
+        monkeypatch.setattr(graph_mod, "emit_terminal_opened", lambda k: None)
+        monkeypatch.setattr(db_mod, "log_event", lambda *a, **kw: None)
+        monkeypatch.setattr(db_mod, "update_story", lambda *a, **kw: None)
+
+        tool = BaseTool()
+        state = {
+            "story_key": "T-2",
+            "workspace": str(tmp_path),
+            "current_stage": "design",
+            "execution_count": 0,
+        }
+        tool._launch_in_session(
+            state, {"adapter": "claude", "model": "sonnet"}, "prompt"
+        )
+
+        assert launch_cli_calls == [], (
+            "launch_cli must NOT be called when session is healthy"
+        )
+        assert len(send_keys_calls) >= 2, "send_keys must be called to inject prompt"
