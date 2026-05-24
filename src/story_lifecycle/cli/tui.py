@@ -262,6 +262,78 @@ def _render_detail(story: dict) -> str:
     except json.JSONDecodeError:
         pass
 
+    # Evaluator loop activity
+    try:
+        loop_events = [
+            e
+            for e in db.get_story_events(key)
+            if e.get("event_type", "").startswith("evaluator_loop_")
+        ]
+        if loop_events:
+            lines.append("  [bold cyan]Evaluator Loop:[/]")
+            for ev in loop_events[-5:]:
+                p = ev.get("payload", {})
+                if isinstance(p, str):
+                    try:
+                        p = json.loads(p)
+                    except (json.JSONDecodeError, TypeError):
+                        p = {}
+                etype = ev["event_type"]
+                if etype == "evaluator_loop_round":
+                    lt = p.get("loop_type", "?")
+                    stg = p.get("stage", "?")
+                    rnd = p.get("round_id", "?")
+                    dec = p.get("decision", "?")
+                    color = (
+                        "green"
+                        if dec == "pass"
+                        else "yellow"
+                        if dec == "revise"
+                        else "red"
+                    )
+                    extra = ""
+                    if p.get("no_progress"):
+                        extra = " [bold red]NO PROGRESS[/]"
+                    findings = p.get("findings", {})
+                    n_rep = len(findings.get("repeated", []))
+                    n_new = len(findings.get("new", []))
+                    n_res = len(findings.get("resolved", []))
+                    parts = []
+                    if n_rep:
+                        parts.append(f"repeated={n_rep}")
+                    if n_new:
+                        parts.append(f"new={n_new}")
+                    if n_res:
+                        parts.append(f"resolved={n_res}")
+                    detail = f", {', '.join(parts)}" if parts else ""
+                    lines.append(
+                        f"    {lt}/{stg} round {rnd}: [{color}]{dec}[/{color}]{detail}{extra}"
+                    )
+                elif etype == "evaluator_loop_completed":
+                    lt = p.get("loop_type", "?")
+                    dec = p.get("decision", "?")
+                    reason = p.get("reason", "")
+                    color = (
+                        "green"
+                        if dec == "pass"
+                        else "yellow"
+                        if dec == "revise"
+                        else "red"
+                    )
+                    lines.append(
+                        f"    {lt} completed: [{color}]{dec}[/{color}] ({reason})"
+                    )
+                elif etype == "evaluator_loop_started":
+                    lt = p.get("loop_type", "?")
+                    mx = p.get("max_rounds", "?")
+                    lines.append(f"    {lt} started (max {mx} rounds)")
+                elif etype == "evaluator_loop_fallback":
+                    lines.append(
+                        f"    [yellow]fallback: {p.get('from_mode', '')} → {p.get('to_mode', '')} ({p.get('reason', '')})[/]"
+                    )
+    except Exception:
+        pass
+
     # Quality findings panel
     try:
         from ..db import models as qdb
@@ -1641,6 +1713,14 @@ def run_tui():
                 stderr=sys.__stderr__,
             )
             _tui_debug("run_tui_attach_return", returncode=result.returncode)
+
+            # Signal that terminal was opened for foreground Zellij execution
+            if len(attach_args) >= 3 and "--session" in attach_args:
+                from ..orchestrator.graph import emit_terminal_opened
+
+                session_name = attach_args[attach_args.index("--session") + 1]
+                if session_name.startswith("s-"):
+                    emit_terminal_opened(session_name[2:])
         except Exception as exc:
             _tui_debug(
                 "run_tui_attach_exception",
