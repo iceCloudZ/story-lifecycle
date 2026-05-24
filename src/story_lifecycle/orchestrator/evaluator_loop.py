@@ -339,6 +339,9 @@ def run_plan_loop(
 
     result = LoopResult(decision="fail", rounds=0, reason="unknown")
 
+    # Work on a copy so we don't pollute caller state on non-pass exits
+    loop_state = dict(state)
+
     try:
         prev_blockers: list[dict] = []
 
@@ -347,7 +350,7 @@ def run_plan_loop(
 
             # --- Plan ---
             try:
-                plan = planner.plan_stage(state, cfg, adapters)
+                plan = planner.plan_stage(loop_state, cfg, adapters)
             except Exception as exc:
                 log.warning("plan_stage failed in round %d: %s", round_num, exc)
                 result.decision = "fail"
@@ -366,7 +369,7 @@ def run_plan_loop(
             # --- Review ---
             try:
                 review = planner.review_plan(
-                    state, plan, cfg, reviewer_model=reviewer_model
+                    loop_state, plan, cfg, reviewer_model=reviewer_model
                 )
             except Exception as exc:
                 log.warning(
@@ -452,7 +455,7 @@ def run_plan_loop(
             for s in review.get("suggestions", []):
                 blocker_summary_parts.append(f"Suggestion: {s}")
 
-            state["review_summary"] = (
+            loop_state["review_summary"] = (
                 f"Plan review round {round_num} — revise:\n"
                 + "\n".join(blocker_summary_parts)
             )
@@ -520,7 +523,9 @@ def run_code_review_loop(
 
     # --- Review ---
     try:
-        review = planner.review_stage(state, cfg, stage_output)
+        review = planner.review_stage(
+            state, cfg, stage_output, reviewer_model=reviewer_model
+        )
     except Exception as exc:
         log.warning("review_stage failed: %s", exc)
         log_loop_round(
@@ -581,29 +586,84 @@ def run_code_review_loop(
     repair_path: str | None = None
     if quality == "revise":
         round_num = execution_count + 1
-        repair_path = build_repair_packet(
-            story_key=story_key,
-            stage=stage,
-            workspace=workspace,
-            plan_summary=state.get("review_summary", ""),
-            stage_output_summary=_json.dumps(stage_output, ensure_ascii=False)[:500],
-            findings=[
-                {
-                    "severity": i.get("severity", "medium"),
-                    "category": i.get("type", i.get("category", "unknown")),
-                    "description": i.get("description", ""),
-                    "location": i.get("location", ""),
-                    "recommendation": i.get("recommendation", ""),
-                }
-                for i in issues
-            ],
-            verification={"status": "not_run", "commands": []},
-            round_num=round_num,
-            write_file=True,
-        )
+        try:
+            repair_path = build_repair_packet(
+                story_key=story_key,
+                stage=stage,
+                workspace=workspace,
+                plan_summary=state.get("review_summary", ""),
+                stage_output_summary=_json.dumps(stage_output, ensure_ascii=False)[
+                    :500
+                ],
+                findings=[
+                    {
+                        "severity": i.get("severity", "medium"),
+                        "category": i.get("type", i.get("category", "unknown")),
+                        "description": i.get("description", ""),
+                        "location": i.get("location", ""),
+                        "recommendation": i.get("recommendation", ""),
+                    }
+                    for i in issues
+                ],
+                verification={"status": "not_run", "commands": []},
+                round_num=round_num,
+                write_file=True,
+            )
+        except Exception as exc:
+            log.warning("repair packet write failed: %s", exc)
+            log_loop_round(
+                story_key=story_key,
+                stage=stage,
+                loop_id=loop_id,
+                round_id=execution_count + 1,
+                loop_type="code",
+                mode="short_lived",
+                decision="fail",
+                score=float(score),
+                findings={
+                    "open_before": [],
+                    "new": finding_descriptions,
+                    "resolved": [],
+                    "repeated": [],
+                },
+                verification={"status": "not_run", "commands": []},
+                prompt_tokens={
+                    "total": max(1, len(_json.dumps(stage_output)) // CHARS_PER_TOKEN),
+                    "context": max(
+                        1, len(_json.dumps(stage_output)) // CHARS_PER_TOKEN
+                    ),
+                    "feedback": 0,
+                    "repeated_context": 0,
+                    "estimated": True,
+                },
+            )
+            log_loop_completed(
+                story_key=story_key,
+                stage=stage,
+                loop_id=loop_id,
+                loop_type="code",
+                decision="fail",
+                rounds=1,
+                reason=f"repair_packet_error:{type(exc).__name__}",
+                remaining_findings=finding_descriptions,
+            )
+            return LoopResult(
+                decision="fail",
+                rounds=1,
+                final_review=review,
+                reason=f"repair_packet_error:{type(exc).__name__}",
+                remaining_findings=finding_descriptions,
+            )
 
-    # --- Estimate prompt tokens ---
-    prompt_tokens_est = len(_json.dumps(stage_output)) // CHARS_PER_TOKEN
+    # --- Estimate prompt tokens (design schema: total/context/feedback/repeated_context/estimated) ---
+    ctx_chars = len(_json.dumps(stage_output))
+    prompt_tokens = {
+        "total": max(1, ctx_chars // CHARS_PER_TOKEN),
+        "context": max(1, ctx_chars // CHARS_PER_TOKEN),
+        "feedback": 0,
+        "repeated_context": 0,
+        "estimated": True,
+    }
 
     # --- Log round event ---
     log_loop_round(
@@ -622,11 +682,21 @@ def run_code_review_loop(
             "repeated": [],
         },
         verification={"status": "not_run", "commands": []},
-        prompt_tokens={"estimated": True, "count": prompt_tokens_est},
+        prompt_tokens=prompt_tokens,
     )
 
     # --- Decision ---
     if quality == "pass":
+        log_loop_completed(
+            story_key=story_key,
+            stage=stage,
+            loop_id=loop_id,
+            loop_type="code",
+            decision="pass",
+            rounds=1,
+            reason="code_review_passed",
+            remaining_findings=[],
+        )
         return LoopResult(
             decision="pass", rounds=1, final_review=review, reason="code_review_passed"
         )

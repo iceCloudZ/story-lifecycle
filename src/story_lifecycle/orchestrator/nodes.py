@@ -195,7 +195,12 @@ def plan_stage_node(state: StoryState) -> StoryState:
             adapters = ["claude"]
             loop_result = run_plan_loop(state, adv_cfg, adapters)
 
-            if loop_result.final_plan and loop_result.final_plan.get("skip"):
+            # Skip path
+            if (
+                loop_result.decision == "pass"
+                and loop_result.final_plan
+                and loop_result.final_plan.get("skip")
+            ):
                 state["status"] = "skipping"
                 state["plan_summary"] = (
                     f"跳过: {loop_result.final_plan.get('reasoning', '')}"
@@ -203,9 +208,9 @@ def plan_stage_node(state: StoryState) -> StoryState:
                 emit_plan_done(story_key, state["plan_summary"])
                 return state
 
-            if loop_result.final_plan:
+            # Only accept plan on pass decision
+            if loop_result.decision == "pass" and loop_result.final_plan:
                 plan = loop_result.final_plan
-                # Write plan file (same format as existing code)
                 plan_file = (
                     Path(workspace) / ".story-context" / story_key / f"plan_{stage}.md"
                 )
@@ -258,16 +263,15 @@ def plan_stage_node(state: StoryState) -> StoryState:
                 emit_plan_done(story_key, plan_text)
                 return state
 
-            # Loop returned without plan (fail/no_progress) — fall through to normal planner
-            if loop_result.decision in ("fail", "no_progress"):
+            # Non-pass decisions: block and wait for human
+            if loop_result.decision in ("no_progress", "max_rounds", "fail"):
                 from ..orchestrator.graph import emit_plan_done
 
-                state["plan_summary"] = (
-                    f"Plan loop {loop_result.decision}: {loop_result.reason}"
-                )
-                emit_plan_done(
-                    story_key, f"⚠ Plan loop {loop_result.decision}", ok=False
-                )
+                reason = f"Plan loop {loop_result.decision}: {loop_result.reason}"
+                state["plan_summary"] = reason
+                state["last_error"] = reason
+                emit_plan_done(story_key, f"⚠ {reason}", ok=False)
+                return state
     except Exception as e:
         log.warning(f"Adversarial plan loop failed, falling back to normal: {e}")
     # --- End adversarial plan loop ---
@@ -526,6 +530,17 @@ def review_stage_node(state: StoryState) -> StoryState:
             from .evaluator_loop import run_code_review_loop
 
             loop_result = run_code_review_loop(state, adv_cfg, stage_output)
+
+            # Handle non-pass decisions from the loop itself
+            if loop_result.decision == "fail":
+                state["last_error"] = (
+                    loop_result.reason or "Adversarial code review failed"
+                )
+                state["review_summary"] = (
+                    f"Adversarial review failed: {loop_result.reason}"
+                )
+                return state
+
             review = loop_result.final_review or {}
             workspace = state["workspace"]
             story_key = state["story_key"]
@@ -1568,11 +1583,12 @@ Story: {state["story_key"]}
         "{quality_checklist}": checklist,
         "{repair_packet_section}": repair_section,
     }
+    _had_repair_placeholder = "{repair_packet_section}" in template
     for key, value in vars_map.items():
         template = template.replace(key, value)
 
     # Append repair packet directly if template had no placeholder
-    if repair_section and "{repair_packet_section}" not in template:
+    if repair_section and not _had_repair_placeholder:
         template = f"{template}\n\n{repair_section}"
 
     metadata = {

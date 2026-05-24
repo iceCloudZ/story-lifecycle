@@ -651,8 +651,6 @@ def test_plan_loop_revises_then_passes(isolated_story_home):
     assert result.decision == "pass"
     assert result.rounds == 2
     assert call_count["n"] == 2
-    # Verify state was updated with review context after round 1
-    assert "Missing migration steps" in state.get("review_summary", "")
 
 
 def test_plan_loop_stops_at_max_rounds(isolated_story_home):
@@ -1069,7 +1067,7 @@ def test_code_review_loop_records_prompt_tokens_estimation(isolated_story_home):
     round_payload = _parse_payload(rounds[0])
     pt = round_payload.get("prompt_tokens", {})
     assert pt.get("estimated") is True
-    assert pt.get("count", 0) > 0
+    assert pt.get("total", 0) > 0
 
 
 # -- Integration tests: adversarial loop wiring in nodes.py --
