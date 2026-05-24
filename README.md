@@ -99,7 +99,7 @@ The **router node** decides what happens after each stage:
 ### 6. One-Command Setup
 
 ```bash
-pip install -e .
+pip install story-lifecycle
 story              # First run: auto-check + offer to install missing tools
 story --fix        # Or run doctor fix directly: detects package managers, installs what's missing
 ```
@@ -110,7 +110,7 @@ Auto-detects your platform (brew / apt / npm / pip / winget) and installs missin
 
 ```bash
 # 1. Install
-pip install -e .
+pip install story-lifecycle
 
 # 2. First-run setup (LLM config + environment check)
 story setup
