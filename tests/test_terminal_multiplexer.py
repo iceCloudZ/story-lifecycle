@@ -20,7 +20,7 @@ def test_zellij_create_session_uses_session_name_as_attach_argument(monkeypatch)
     monkeypatch.setattr(ttyd, "_run", fake_run)
     monkeypatch.setattr(ttyd.time, "sleep", lambda _seconds: None)
 
-    ttyd.create_session("s-WIN-ZELLIJ", "D:/story-lifecycle")
+    ttyd.create_session("s-WIN-ZELLIJ", "/tmp/story-test")
 
     assert calls[0][0] == [
         "zellij",
@@ -29,7 +29,7 @@ def test_zellij_create_session_uses_session_name_as_attach_argument(monkeypatch)
         "s-WIN-ZELLIJ",
         "options",
         "--default-cwd",
-        "D:/story-lifecycle",
+        "/tmp/story-test",
         "--default-shell",
         "powershell.exe",
     ]
@@ -66,7 +66,7 @@ def test_tui_defers_attach_until_after_textual_exits_on_windows(
     app.stories = [
         {
             "story_key": "WIN-ZELLIJ",
-            "workspace": "D:/story-lifecycle",
+            "workspace": "/tmp/story-test",
             "status": "active",
             "current_stage": "implement",
         }
@@ -122,7 +122,7 @@ def test_tui_shows_prompt_when_no_session_on_windows(monkeypatch):
     app.stories = [
         {
             "story_key": "WIN-ZELLIJ",
-            "workspace": "D:/story-lifecycle",
+            "workspace": "/tmp/story-test",
             "status": "active",
             "current_stage": "implement",
         }
