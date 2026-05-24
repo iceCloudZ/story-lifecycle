@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
+from datetime import datetime
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -26,6 +29,86 @@ from ..orchestrator.service import (
 )
 from ..orchestrator.nodes import load_profile
 from ..terminal import ttyd
+from ..orchestrator.entry import (
+    StageEntryAction,
+    TtydSessionBackend,
+    resolve_stage_state,
+    decide_action,
+    has_stage_done,
+    validate_stage_done,
+    DoneStatus,
+)
+
+
+STORY_HOME = Path.home() / ".story-lifecycle"
+_FINISHED_STATUSES = frozenset({"completed", "failed", "aborted"})
+
+
+def _tui_debug(event: str, **fields):
+    """Append TUI diagnostics to ~/.story-lifecycle/tui.log."""
+    try:
+        STORY_HOME.mkdir(parents=True, exist_ok=True)
+        details = " ".join(f"{key}={value!r}" for key, value in fields.items())
+        line = f"{datetime.now().isoformat(timespec='seconds')} {event}"
+        if details:
+            line += f" {details}"
+        with (STORY_HOME / "tui.log").open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+
+def _prepare_terminal_for_child():
+    """Reset terminal state before handing control to an interactive child."""
+    try:
+        if os.name == "nt":
+            from textual.drivers import win32
+
+            input_mode_before = win32.get_console_mode(sys.__stdin__)
+            output_mode_before = win32.get_console_mode(sys.__stdout__)
+            win32.set_console_mode(
+                sys.__stdin__,
+                win32.ENABLE_PROCESSED_INPUT
+                | win32.ENABLE_LINE_INPUT
+                | win32.ENABLE_ECHO_INPUT
+                | win32.ENABLE_EXTENDED_FLAGS
+                | win32.ENABLE_INSERT_MODE,
+            )
+            win32.set_console_mode(
+                sys.__stdout__,
+                output_mode_before
+                | win32.ENABLE_PROCESSED_OUTPUT
+                | win32.ENABLE_WRAP_AT_EOL_OUTPUT
+                | win32.ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+            )
+            input_mode_after = win32.get_console_mode(sys.__stdin__)
+            output_mode_after = win32.get_console_mode(sys.__stdout__)
+            _tui_debug(
+                "prepare_terminal_windows_modes",
+                input_before=input_mode_before,
+                input_after=input_mode_after,
+                output_before=output_mode_before,
+                output_after=output_mode_after,
+            )
+        sys.__stdout__.write(
+            "\x1b[?1049l"
+            "\x1b[?25h"
+            "\x1b[0m"
+            "\x1b[?1000l"
+            "\x1b[?1003l"
+            "\x1b[?1015l"
+            "\x1b[?1006l"
+            "\x1b[?2004l"
+            "\033[?1004l"
+        )
+        sys.__stdout__.flush()
+        _tui_debug("prepare_terminal_done")
+    except Exception as exc:
+        _tui_debug(
+            "prepare_terminal_exception",
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
 
 
 class StoryCard(Static):
@@ -642,6 +725,8 @@ class StoryBoardApp(App):
         super().__init__()
         self._source_enabled = False
         self._pending_items: list = []
+        self._pending_attach_args: list[str] | None = None
+        self._session_backend = TtydSessionBackend()
 
     def compose(self) -> ComposeResult:
         yield Static(id="header-bar")
@@ -804,78 +889,65 @@ class StoryBoardApp(App):
 
     def action_enter_terminal(self):
         if not self.stories:
+            _tui_debug("enter_terminal_no_stories")
             return
         s = self.stories[self.selected_index]
-        session = ttyd.session_name(s["story_key"])
-        workspace = s.get("workspace", os.getcwd())
-
-        # No working multiplexer — launch CLI directly in a new window.
-        # Windows can use native Zellij, so do not special-case the platform.
-        if not ttyd._MPLEX:
-            self._launch_cli_direct(s, workspace)
-            return
-
-        # Try to create the session on-the-fly if it doesn't exist
-        if not ttyd.session_alive(session):
-            ttyd.create_session(session, workspace)
-
-        if not ttyd.session_alive(session):
-            # No multiplexer available — launch AI CLI directly
-            self._launch_cli_direct(s, workspace)
-            return
-
-        attach = ttyd.attach_cmd(session)
-        try:
-            with self.suspend():
-                os.system(attach)
-        except Exception:
-            self.exit()
-            os.system(attach)
-            os.system("story board")
-
-    def _launch_cli_direct(self, s: dict, workspace: str):
-        """Fallback: launch AI CLI independently when no multiplexer is available."""
-        import json
-
-        from ..adapters import get_adapter
-        from ..orchestrator.nodes import get_stage_config, _render_prompt
-
         story_key = s["story_key"]
-        stage = s["current_stage"]
-        profile = s.get("profile", "minimal")
+        session = ttyd.session_name(story_key)
 
-        try:
-            cfg = get_stage_config(profile, stage)
-            profile_data = load_profile(profile)
-            adapter_name = cfg.get("cli", profile_data.get("cli", "claude"))
-            model = cfg.get("model", "sonnet")
-            adapter = get_adapter(adapter_name)
+        from ..orchestrator.graph import is_story_running
 
+        is_running = is_story_running(story_key)
+        state = resolve_stage_state(s, self._session_backend, is_running)
+        action = decide_action(state, "e")
+        _tui_debug(
+            "enter_terminal_decision",
+            story_key=story_key,
+            state=state.value,
+            action=action.value,
+        )
+
+        if action == StageEntryAction.ATTACH:
+            attach_args = self._session_backend.attach_foreground(session)
+            if os.name == "nt":
+                self._pending_attach_args = attach_args
+                self.exit()
+                return
             try:
-                ctx = json.loads(s.get("context_json") or "{}")
-            except (json.JSONDecodeError, TypeError):
-                ctx = {}
+                with self.suspend():
+                    subprocess.run(attach_args, check=False)
+            except Exception:
+                self.exit()
+                subprocess.run(attach_args, check=False)
+                os.system("story board")
 
-            state = {
-                "story_key": story_key,
-                "title": s.get("title", ""),
-                "workspace": workspace,
-                "profile": profile,
-                "current_stage": stage,
-                "context": ctx,
-            }
-            prompt, _ = _render_prompt(stage, state)
-
-            tmp = Path(tempfile.gettempdir()) / f"story-prompt-{story_key}-{stage}.md"
-            tmp.write_text(prompt, encoding="utf-8")
-
-            launch = adapter.launch_cmd(model)
-            db.log_stage(story_key, stage, "execute", "Direct launch (no multiplexer)")
-
-            ttyd.launch_cli(story_key, workspace, launch, str(tmp))
-        except Exception as e:
+        elif action == StageEntryAction.PROMPT_DONE_PRESS_R:
             panel = self.query_one("#detail-panel")
-            panel.update(f"[red]Failed to launch CLI: {e}[/]")
+            panel.update(
+                f"[bold yellow]Stage {s.get('current_stage', '')} 已完成[/]\n\n"
+                f"  .done 文件已存在，按 [bold cyan]r[/] 继续推进。"
+            )
+            panel.set_class(True, "visible")
+            self._show_detail = True
+
+        elif action == StageEntryAction.PROMPT_PRESS_R:
+            panel = self.query_one("#detail-panel")
+            panel.update(
+                "[bold yellow]没有运行中的 session[/]\n\n"
+                "  按 [bold cyan]r[/] 启动或恢复执行。"
+            )
+            panel.set_class(True, "visible")
+            self._show_detail = True
+
+        elif action == StageEntryAction.PROMPT_FIX_DONE:
+            validation = validate_stage_done(s)
+            panel = self.query_one("#detail-panel")
+            panel.update(
+                f"[bold red].done 文件损坏[/]\n\n"
+                f"  {validation.error}\n\n"
+                f"  请修复或删除:\n"
+                f"  {s.get('workspace', '')}/.story-done/{story_key}/{s.get('current_stage', '')}.json"
+            )
             panel.set_class(True, "visible")
             self._show_detail = True
 
@@ -1059,12 +1131,37 @@ class StoryBoardApp(App):
             return
         s = self.stories[self.selected_index]
         key = s["story_key"]
-        db.update_story(key, status="active", last_error=None)
-        from ..orchestrator.graph import start_story_async, is_story_running
 
-        if not is_story_running(key):
-            start_story_async(key)
-        self.refresh_stories()
+        from ..orchestrator.graph import is_story_running
+
+        is_running = is_story_running(key)
+        state = resolve_stage_state(s, self._session_backend, is_running)
+        action = decide_action(state, "r")
+        _tui_debug(
+            "resume_story_decision",
+            story_key=key,
+            state=state.value,
+            action=action.value,
+        )
+
+        if action == StageEntryAction.START_OR_RESUME:
+            db.update_story(key, status="active", last_error=None)
+            from ..orchestrator.graph import start_story_async
+
+            if not is_story_running(key):
+                start_story_async(key)
+            self.refresh_stories()
+
+        elif action == StageEntryAction.PROMPT_FIX_DONE:
+            validation = validate_stage_done(s)
+            panel = self.query_one("#detail-panel")
+            panel.update(
+                f"[bold red].done 文件损坏，无法恢复[/]\n\n"
+                f"  {validation.error}\n\n"
+                f"  请修复或删除后重试。"
+            )
+            panel.set_class(True, "visible")
+            self._show_detail = True
 
     def action_new_sub_story(self):
         if not self.stories:
@@ -1135,17 +1232,15 @@ class StoryBoardApp(App):
         """On startup, check all non-terminal stories for existing done files and resume."""
         from ..orchestrator.graph import start_story_async, is_story_running
 
-        terminal = {"completed", "aborted"}
         for s in self.stories:
-            if s["status"] in terminal:
+            if s["status"] in _FINISHED_STATUSES:
                 continue
             key = s["story_key"]
-            stage = s["current_stage"]
-            ws = s["workspace"]
-            done_file = Path(ws) / ".story-done" / key / f"{stage}.json"
-            if done_file.exists() and not is_story_running(key):
-                db.update_story(key, status="active", last_error=None)
-                start_story_async(key)
+            if has_stage_done(s):
+                validation = validate_stage_done(s)
+                if validation.status == DoneStatus.OK and not is_story_running(key):
+                    db.update_story(key, status="active", last_error=None)
+                    start_story_async(key)
 
     async def watchdog_check(self):
         from ..orchestrator.graph import resume_story, is_story_running
@@ -1154,16 +1249,15 @@ class StoryBoardApp(App):
         active = [s for s in self.stories if s["status"] in ("active", "paused")]
         for s in active:
             key = s["story_key"]
-            stage = s["current_stage"]
-            ws = s["workspace"]
-            done_file = Path(ws) / ".story-done" / key / f"{stage}.json"
 
-            if done_file.exists() and not is_story_running(key):
-                db.update_story(key, status="active")
-                try:
-                    resume_story(key)
-                except Exception:
-                    pass
+            if has_stage_done(s) and not is_story_running(key):
+                validation = validate_stage_done(s)
+                if validation.status == DoneStatus.OK:
+                    db.update_story(key, status="active")
+                    try:
+                        resume_story(key)
+                    except Exception:
+                        pass
 
         # Unblock sub-stories whose dependencies are complete
         from ..orchestrator.graph import start_story_async
@@ -1459,5 +1553,41 @@ class StoryBoardApp(App):
 
 def run_tui():
     """Entry point for the TUI board."""
-    app = StoryBoardApp()
-    app.run()
+    _tui_debug("run_tui_start", os_name=os.name)
+    while True:
+        app = StoryBoardApp()
+        _tui_debug("run_tui_app_start")
+        app.run()
+        attach_args = app._pending_attach_args
+        _tui_debug("run_tui_app_return", attach_args=attach_args)
+        if os.name != "nt" or not attach_args:
+            _tui_debug("run_tui_exit", os_name=os.name, attach_args=attach_args)
+            break
+        try:
+            _tui_debug("run_tui_attach_start", args=attach_args)
+            _prepare_terminal_for_child()
+            _tui_debug(
+                "run_tui_attach_stdio",
+                stdin_isatty=sys.__stdin__.isatty(),
+                stdout_isatty=sys.__stdout__.isatty(),
+                stderr_isatty=sys.__stderr__.isatty(),
+                stdin_name=getattr(sys.__stdin__, "name", None),
+                stdout_name=getattr(sys.__stdout__, "name", None),
+                term=os.environ.get("TERM"),
+                wt_session=os.environ.get("WT_SESSION"),
+            )
+            result = subprocess.run(
+                attach_args,
+                check=False,
+                stdin=sys.__stdin__,
+                stdout=sys.__stdout__,
+                stderr=sys.__stderr__,
+            )
+            _tui_debug("run_tui_attach_return", returncode=result.returncode)
+        except Exception as exc:
+            _tui_debug(
+                "run_tui_attach_exception",
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
