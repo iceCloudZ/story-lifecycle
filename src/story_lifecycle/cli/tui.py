@@ -809,8 +809,9 @@ class StoryBoardApp(App):
         session = ttyd.session_name(s["story_key"])
         workspace = s.get("workspace", os.getcwd())
 
-        # Windows / no working multiplexer — launch CLI directly in new window
-        if os.name == "nt" or not ttyd._MPLEX:
+        # No working multiplexer — launch CLI directly in a new window.
+        # Windows can use native Zellij, so do not special-case the platform.
+        if not ttyd._MPLEX:
             self._launch_cli_direct(s, workspace)
             return
 

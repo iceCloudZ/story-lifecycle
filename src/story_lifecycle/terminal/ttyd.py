@@ -112,8 +112,7 @@ def create_session(name: str, workspace: str):
             [
                 "zellij",
                 "attach",
-                "-b",
-                "-c",
+                "--create-background",
                 name,
                 "options",
                 "--default-cwd",
@@ -212,7 +211,7 @@ def attach_cmd(name: str) -> str:
 def enter_session_cmd(name: str, workspace: str) -> str:
     """Return the command to create and enter a session."""
     if _MPLEX == "zellij":
-        return f"zellij attach -c {name} options --default-cwd {workspace}"
+        return f"zellij attach --create {name} options --default-cwd {workspace}"
     return f"tmux new-session -A -s {name} -c {workspace}"
 
 
