@@ -98,6 +98,23 @@ class TestValidateStageDone:
         result = validate_stage_done(story)
         assert result.status == DoneStatus.CORRUPTED
 
+    def test_empty_dict_rejected(self, tmp_path):
+        story = _make_story(str(tmp_path))
+        done = stage_done_file(story)
+        done.parent.mkdir(parents=True, exist_ok=True)
+        done.write_text("{}", encoding="utf-8")
+        result = validate_stage_done(story)
+        assert result.status == DoneStatus.CORRUPTED
+        assert "no data" in result.error.lower()
+
+    def test_non_dict_rejected(self, tmp_path):
+        story = _make_story(str(tmp_path))
+        done = stage_done_file(story)
+        done.parent.mkdir(parents=True, exist_ok=True)
+        done.write_text('"just a string"', encoding="utf-8")
+        result = validate_stage_done(story)
+        assert result.status == DoneStatus.CORRUPTED
+
 
 # ---------------------------------------------------------------------------
 # Layer 2 tests: TtydSessionBackend

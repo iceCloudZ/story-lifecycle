@@ -31,6 +31,7 @@ from ..orchestrator.nodes import load_profile
 from ..terminal import ttyd
 from ..orchestrator.entry import (
     StageEntryAction,
+    StageEntryState,
     TtydSessionBackend,
     resolve_stage_state,
     decide_action,
@@ -951,6 +952,17 @@ class StoryBoardApp(App):
             panel.set_class(True, "visible")
             self._show_detail = True
 
+        else:
+            # NOOP: story finished or already running — show status
+            panel = self.query_one("#detail-panel")
+            status = s.get("status", "")
+            panel.update(
+                f"[dim]{status.upper()}[/]  Story 不可操作。\n\n"
+                f"  状态: {status}  Stage: {s.get('current_stage', '')}"
+            )
+            panel.set_class(True, "visible")
+            self._show_detail = True
+
     def action_toggle_detail(self):
         self._show_detail = not self._show_detail
         panel = self.query_one("#detail-panel")
@@ -1160,6 +1172,23 @@ class StoryBoardApp(App):
                 f"  {validation.error}\n\n"
                 f"  请修复或删除后重试。"
             )
+            panel.set_class(True, "visible")
+            self._show_detail = True
+
+        else:
+            # NOOP: already running healthy or story finished
+            panel = self.query_one("#detail-panel")
+            status = s.get("status", "")
+            if state == StageEntryState.RUNNING_HEALTHY:
+                panel.update(
+                    "[bold green]Story 正在运行中[/]\n\n"
+                    "  AI session 健康，无需重复启动。"
+                )
+            else:
+                panel.update(
+                    f"[dim]{status.upper()}[/]  Story 不可恢复。\n\n"
+                    f"  状态: {status}  Stage: {s.get('current_stage', '')}"
+                )
             panel.set_class(True, "visible")
             self._show_detail = True
 

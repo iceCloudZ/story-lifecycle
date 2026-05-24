@@ -39,10 +39,11 @@ class BaseTool:
 
         launch = adapter.launch_cmd(model)
         session = ttyd.session_name(key)
-        launched = False
 
-        # Try multiplexer session
-        ttyd.create_session(session, workspace)
+        # Only inject into an already-existing healthy session.
+        # Never create_session + send_keys on Windows/Zellij — the background
+        # pane may be empty (no ConPTY), causing prompt to disappear.
+        injected = False
         if ttyd.session_alive(session):
             ttyd.send_keys(session, "C-c")
             time.sleep(0.5)
@@ -50,20 +51,19 @@ class BaseTool:
             time.sleep(8)
             ttyd.paste_text(session, prompt)
             ttyd.send_keys(session, "Enter")
-            launched = True
+            injected = True
             ttyd._mplex_launched.add(key)
 
-        # Notify TUI that CLI has been dispatched
-        from ..graph import emit_terminal_opened
-
-        if not launched:
-            # Fallback: launch in a new terminal window
+        if not injected:
+            # Reliable fallback: launch in a new terminal window
             tmp = (
                 Path(tempfile.gettempdir())
                 / f"story-prompt-{key}-{state['current_stage']}.md"
             )
             tmp.write_text(prompt, encoding="utf-8")
             ttyd.launch_cli(key, workspace, launch, str(tmp))
+
+        from ..graph import emit_terminal_opened
 
         emit_terminal_opened(key)
 

@@ -46,9 +46,16 @@ def validate_stage_done(story: dict) -> DoneValidationResult:
 
     try:
         data = robust_json_parse(done)
-        return DoneValidationResult(status=DoneStatus.OK, data=data)
     except Exception as exc:
         return DoneValidationResult(status=DoneStatus.CORRUPTED, error=str(exc))
+
+    if not isinstance(data, dict) or not data:
+        return DoneValidationResult(
+            status=DoneStatus.CORRUPTED,
+            error=f".done file parsed but contains no data: {done}",
+        )
+
+    return DoneValidationResult(status=DoneStatus.OK, data=data)
 
 
 # ---------------------------------------------------------------------------

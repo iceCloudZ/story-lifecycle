@@ -25,3 +25,8 @@ checkpoint.db
 # OS
 .DS_Store
 Thumbs.db
+
+# Stray output files
+Done
+Installing
+Stopping
