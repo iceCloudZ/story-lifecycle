@@ -287,3 +287,192 @@ def detect_no_progress(
 
     # All current high findings are repeats -> no progress
     return repeated == len(curr_high) and len(curr_high) > 0
+
+
+# -- In-Node Plan Loop --
+
+
+def _get_stage_config_from_state(state: dict) -> dict:
+    """Resolve stage config from state's profile and current_stage."""
+    from .nodes import get_stage_config
+
+    profile = state.get("profile", "minimal")
+    stage = state.get("current_stage", "")
+    return get_stage_config(profile, stage)
+
+
+def run_plan_loop(
+    state: dict,
+    adv_config: AdversarialConfig,
+    adapters: list[str],
+) -> LoopResult:
+    """In-node while loop that drives planner <-> reviewer convergence.
+
+    Called from plan_stage_node when adversarial.plan_loop is enabled.
+    Returns a LoopResult with the final decision, plan, and review.
+    """
+    from . import planner
+    from .loop_events import log_loop_started, log_loop_round, log_loop_completed
+
+    story_key = state.get("story_key", "")
+    stage = state.get("current_stage", "")
+    cfg = _get_stage_config_from_state(state)
+    max_rounds = adv_config.plan_loop.max_rounds
+    reviewer_model = adv_config.resolve_reviewer_model("plan")
+
+    loop_id = _make_loop_id("plan", stage)
+
+    # Resolve optimizer model from env for logging
+    optimizer_model = os.environ.get("STORY_LLM_MODEL", "")
+
+    log_loop_started(
+        story_key=story_key,
+        stage=stage,
+        loop_id=loop_id,
+        loop_type="plan",
+        mode="in_node",
+        max_rounds=max_rounds,
+        optimizer_model=optimizer_model,
+        reviewer_model=reviewer_model,
+        attempt_id=f"{stage}:plan_loop",
+    )
+
+    result = LoopResult(decision="fail", rounds=0, reason="unknown")
+
+    try:
+        prev_blockers: list[dict] = []
+
+        for round_num in range(1, max_rounds + 1):
+            result.rounds = round_num
+
+            # --- Plan ---
+            try:
+                plan = planner.plan_stage(state, cfg, adapters)
+            except Exception as exc:
+                log.warning("plan_stage failed in round %d: %s", round_num, exc)
+                result.decision = "fail"
+                result.reason = f"planner_error:round_{round_num}:{type(exc).__name__}"
+                return result
+
+            # Planner decided to skip
+            if plan.get("skip"):
+                result.decision = "pass"
+                result.final_plan = plan
+                result.reason = "planner_skip"
+                return result
+
+            result.final_plan = plan
+
+            # --- Review ---
+            try:
+                review = planner.review_plan(
+                    state, plan, cfg, reviewer_model=reviewer_model
+                )
+            except Exception as exc:
+                log.warning(
+                    "review_plan failed in round %d, accepting plan: %s",
+                    round_num,
+                    exc,
+                )
+                # Graceful degradation: accept the plan when reviewer fails
+                result.decision = "pass"
+                result.final_review = None
+                result.reason = f"reviewer_error:round_{round_num}:accepted"
+                return result
+
+            result.final_review = review
+
+            quality = review.get("quality", "revise")
+            blockers = review.get("blockers", [])
+            high_blockers = [b for b in blockers if b.get("severity") == "high"]
+
+            # No-progress detection (only after round 1)
+            no_progress = False
+            if round_num > 1 and high_blockers:
+                no_progress = detect_no_progress(prev_blockers, high_blockers)
+
+            # Determine decision
+            if quality == "pass" or not high_blockers:
+                decision = "pass"
+            elif no_progress:
+                decision = "no_progress"
+            else:
+                decision = "revise"
+
+            # Log round event
+            log_loop_round(
+                story_key=story_key,
+                stage=stage,
+                loop_id=loop_id,
+                round_id=round_num,
+                loop_type="plan",
+                mode="in_node",
+                decision=decision,
+                score=float(len(high_blockers) == 0),
+                findings={
+                    "open_before": [
+                        f"{b.get('category', '')}:{b.get('description', '')}"
+                        for b in prev_blockers
+                    ],
+                    "new": [
+                        f"{b.get('category', '')}:{b.get('description', '')}"
+                        for b in high_blockers
+                    ],
+                    "resolved": [],
+                    "repeated": [],
+                },
+                verification={"status": "not_run", "commands": []},
+                no_progress=no_progress,
+            )
+
+            if decision == "pass":
+                result.decision = "pass"
+                result.reason = "all_blockers_resolved"
+                result.remaining_findings = [
+                    b.get("description", "")
+                    for b in blockers
+                    if b.get("severity") != "high"
+                ]
+                return result
+
+            if decision == "no_progress":
+                result.decision = "no_progress"
+                result.reason = "no_progress_on_high_blockers"
+                result.remaining_findings = [
+                    b.get("description", "") for b in high_blockers
+                ]
+                return result
+
+            # Revise: feed blocker context back into state for next round
+            blocker_summary_parts = []
+            for b in high_blockers:
+                blocker_summary_parts.append(
+                    f"[{b.get('category', '')}] {b.get('description', '')}"
+                )
+            for s in review.get("suggestions", []):
+                blocker_summary_parts.append(f"Suggestion: {s}")
+
+            state["review_summary"] = (
+                f"Plan review round {round_num} — revise:\n"
+                + "\n".join(blocker_summary_parts)
+            )
+            prev_blockers = list(high_blockers)
+
+        # Exhausted all rounds
+        result.decision = "max_rounds"
+        result.reason = f"max_rounds_reached:{max_rounds}"
+        result.remaining_findings = [b.get("description", "") for b in prev_blockers]
+        return result
+
+    finally:
+        # Always log completion on exit
+        log_loop_completed(
+            story_key=story_key,
+            stage=stage,
+            loop_id=loop_id,
+            loop_type="plan",
+            decision=result.decision,
+            rounds=result.rounds,
+            reason=result.reason,
+            remaining_findings=result.remaining_findings,
+        )

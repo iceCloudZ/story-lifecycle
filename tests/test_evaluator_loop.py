@@ -436,3 +436,364 @@ def test_detect_no_progress_ignores_low_severity():
         },
     ]
     assert detect_no_progress(prev, curr) is False
+
+
+# -- review_plan tests --
+
+
+def test_review_plan_returns_structured_result(isolated_story_home):
+    from story_lifecycle.orchestrator.planner import review_plan
+    from unittest.mock import patch
+
+    mock_response = {
+        "quality": "revise",
+        "blockers": [
+            {
+                "severity": "high",
+                "category": "scope",
+                "description": "计划缺少数据库迁移步骤",
+            }
+        ],
+        "suggestions": ["增加 migration 脚本执行步骤"],
+        "reasoning": "计划中提到新增表但未包含迁移步骤",
+    }
+
+    with patch(
+        "story_lifecycle.orchestrator.planner._call_llm", return_value=mock_response
+    ):
+        state = _make_state(story_key="RP-REVISE")
+        plan = {"adapter": "claude", "extra_instructions": "Add new table users"}
+        stage_config = {"description": "实现数据库变更"}
+        result = review_plan(state, plan, stage_config)
+
+    assert result["quality"] == "revise"
+    assert len(result["blockers"]) == 1
+    assert result["blockers"][0]["severity"] == "high"
+    assert result["blockers"][0]["category"] == "scope"
+    assert len(result["suggestions"]) == 1
+    assert "reasoning" in result
+
+
+def test_review_plan_pass_with_no_blockers(isolated_story_home):
+    from story_lifecycle.orchestrator.planner import review_plan
+    from unittest.mock import patch
+
+    mock_response = {
+        "quality": "pass",
+        "blockers": [],
+        "suggestions": ["可以考虑添加更多单元测试"],
+        "reasoning": "计划范围合理，指令具体，与知识库对齐",
+    }
+
+    with patch(
+        "story_lifecycle.orchestrator.planner._call_llm", return_value=mock_response
+    ):
+        state = _make_state(story_key="RP-PASS")
+        plan = {"adapter": "claude", "extra_instructions": "Implement auth module"}
+        stage_config = {"description": "实现认证模块"}
+        result = review_plan(state, plan, stage_config)
+
+    assert result["quality"] == "pass"
+    assert result["blockers"] == []
+
+
+def test_review_plan_uses_reviewer_model(isolated_story_home):
+    from story_lifecycle.orchestrator.planner import review_plan
+    from unittest.mock import patch
+
+    mock_response = {
+        "quality": "pass",
+        "blockers": [],
+        "suggestions": [],
+        "reasoning": "OK",
+    }
+
+    with patch(
+        "story_lifecycle.orchestrator.planner._call_llm", return_value=mock_response
+    ) as mock_llm:
+        state = _make_state(story_key="RP-MODEL")
+        plan = {"adapter": "claude"}
+        stage_config = {"description": "test"}
+        review_plan(state, plan, stage_config, reviewer_model="gpt-4o")
+
+        # Verify the model parameter passed to _call_llm is the reviewer_model
+        call_args = mock_llm.call_args
+        assert call_args[0][2] == "gpt-4o"  # 3rd positional arg = model
+
+
+# -- run_plan_loop tests --
+
+
+def test_plan_loop_passes_on_first_round(isolated_story_home):
+    """Plan passes review immediately on round 1."""
+    from story_lifecycle.orchestrator.evaluator_loop import (
+        run_plan_loop,
+        AdversarialConfig,
+    )
+    from story_lifecycle.db import models as db
+    from unittest.mock import patch
+
+    profile = {
+        "adversarial": {
+            "enabled": True,
+            "plan_loop": {
+                "enabled": True,
+                "stages": ["implement"],
+                "max_rounds": 3,
+                "reviewer_model": "deepseek-chat",
+            },
+        }
+    }
+    adv_config = AdversarialConfig.from_profile(profile)
+    db.upsert_story("PL-PASS1", workspace=os.getcwd(), profile="minimal")
+
+    plan_result = {
+        "adapter": "claude",
+        "skip": False,
+        "summary": "Implement auth module",
+        "extra_instructions": "Do it",
+        "reasoning": "Straightforward",
+        "trajectory_score": 0.9,
+    }
+    review_result = {
+        "quality": "pass",
+        "blockers": [],
+        "suggestions": [],
+        "reasoning": "Plan looks good",
+    }
+
+    state = _make_state(story_key="PL-PASS1", stage="implement")
+
+    with patch(
+        "story_lifecycle.orchestrator.planner.plan_stage", return_value=plan_result
+    ):
+        with patch(
+            "story_lifecycle.orchestrator.planner.review_plan",
+            return_value=review_result,
+        ):
+            result = run_plan_loop(state, adv_config, adapters=["claude"])
+
+    assert result.decision == "pass"
+    assert result.rounds == 1
+    assert result.final_plan["adapter"] == "claude"
+    assert result.reason == "all_blockers_resolved"
+
+
+def test_plan_loop_revises_then_passes(isolated_story_home):
+    """Round 1 returns revise, round 2 passes (uses call counter)."""
+    from story_lifecycle.orchestrator.evaluator_loop import (
+        run_plan_loop,
+        AdversarialConfig,
+    )
+    from story_lifecycle.db import models as db
+    from unittest.mock import patch
+
+    profile = {
+        "adversarial": {
+            "enabled": True,
+            "plan_loop": {
+                "enabled": True,
+                "stages": ["implement"],
+                "max_rounds": 3,
+                "reviewer_model": "deepseek-chat",
+            },
+        }
+    }
+    adv_config = AdversarialConfig.from_profile(profile)
+    db.upsert_story("PL-REV1", workspace=os.getcwd(), profile="minimal")
+
+    plan_result = {
+        "adapter": "claude",
+        "skip": False,
+        "summary": "Implement auth",
+        "extra_instructions": "Do it",
+        "reasoning": "OK",
+        "trajectory_score": 0.8,
+    }
+
+    # Use a counter to return different reviews on each call
+    call_count = {"n": 0}
+
+    def _mock_review_plan(state, plan, cfg, reviewer_model=""):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return {
+                "quality": "revise",
+                "blockers": [
+                    {
+                        "severity": "high",
+                        "category": "scope",
+                        "description": "Missing migration steps",
+                    }
+                ],
+                "suggestions": ["Add migration"],
+                "reasoning": "Incomplete plan",
+            }
+        return {
+            "quality": "pass",
+            "blockers": [],
+            "suggestions": [],
+            "reasoning": "Plan is now complete",
+        }
+
+    state = _make_state(story_key="PL-REV1", stage="implement")
+
+    with patch(
+        "story_lifecycle.orchestrator.planner.plan_stage", return_value=plan_result
+    ):
+        with patch(
+            "story_lifecycle.orchestrator.planner.review_plan",
+            side_effect=_mock_review_plan,
+        ):
+            result = run_plan_loop(state, adv_config, adapters=["claude"])
+
+    assert result.decision == "pass"
+    assert result.rounds == 2
+    assert call_count["n"] == 2
+    # Verify state was updated with review context after round 1
+    assert "Missing migration steps" in state.get("review_summary", "")
+
+
+def test_plan_loop_stops_at_max_rounds(isolated_story_home):
+    """Always revise, hits max_rounds=2. Uses different blockers per round
+    to avoid triggering no-progress detection."""
+    from story_lifecycle.orchestrator.evaluator_loop import (
+        run_plan_loop,
+        AdversarialConfig,
+    )
+    from story_lifecycle.db import models as db
+    from unittest.mock import patch
+
+    profile = {
+        "adversarial": {
+            "enabled": True,
+            "plan_loop": {
+                "enabled": True,
+                "stages": ["implement"],
+                "max_rounds": 2,
+                "reviewer_model": "deepseek-chat",
+            },
+        }
+    }
+    adv_config = AdversarialConfig.from_profile(profile)
+    db.upsert_story("PL-MAX1", workspace=os.getcwd(), profile="minimal")
+
+    plan_result = {
+        "adapter": "claude",
+        "skip": False,
+        "summary": "Implement auth",
+        "extra_instructions": "Do it",
+        "reasoning": "OK",
+        "trajectory_score": 0.7,
+    }
+
+    call_count = {"n": 0}
+
+    def _mock_review_plan(state, plan, cfg, reviewer_model=""):
+        call_count["n"] += 1
+        # Different category per round so no-progress detection doesn't trigger
+        category = "scope" if call_count["n"] == 1 else "feasibility"
+        return {
+            "quality": "revise",
+            "blockers": [
+                {
+                    "severity": "high",
+                    "category": category,
+                    "description": f"Issue in round {call_count['n']}",
+                }
+            ],
+            "suggestions": ["Fix it"],
+            "reasoning": "Not good enough",
+        }
+
+    state = _make_state(story_key="PL-MAX1", stage="implement")
+
+    with patch(
+        "story_lifecycle.orchestrator.planner.plan_stage", return_value=plan_result
+    ):
+        with patch(
+            "story_lifecycle.orchestrator.planner.review_plan",
+            side_effect=_mock_review_plan,
+        ):
+            result = run_plan_loop(state, adv_config, adapters=["claude"])
+
+    assert result.decision == "max_rounds"
+    assert result.rounds == 2
+    assert "max_rounds_reached:2" in result.reason
+
+
+def test_plan_loop_logs_events(isolated_story_home):
+    """Verify started/round/completed events are written to DB."""
+    from story_lifecycle.orchestrator.evaluator_loop import (
+        run_plan_loop,
+        AdversarialConfig,
+    )
+    from story_lifecycle.db import models as db
+    from unittest.mock import patch
+
+    profile = {
+        "adversarial": {
+            "enabled": True,
+            "plan_loop": {
+                "enabled": True,
+                "stages": ["design"],
+                "max_rounds": 3,
+                "reviewer_model": "deepseek-chat",
+            },
+        }
+    }
+    adv_config = AdversarialConfig.from_profile(profile)
+    db.upsert_story("PL-EV1", workspace=os.getcwd(), profile="minimal")
+
+    plan_result = {
+        "adapter": "claude",
+        "skip": False,
+        "summary": "Design the system",
+        "extra_instructions": "Design it",
+        "reasoning": "OK",
+        "trajectory_score": 0.9,
+    }
+    review_result = {
+        "quality": "pass",
+        "blockers": [],
+        "suggestions": [],
+        "reasoning": "Good",
+    }
+
+    state = _make_state(story_key="PL-EV1", stage="design")
+
+    with patch(
+        "story_lifecycle.orchestrator.planner.plan_stage", return_value=plan_result
+    ):
+        with patch(
+            "story_lifecycle.orchestrator.planner.review_plan",
+            return_value=review_result,
+        ):
+            result = run_plan_loop(state, adv_config, adapters=["claude"])
+
+    assert result.decision == "pass"
+
+    # Check events in DB
+    events = db.get_story_events("PL-EV1")
+
+    started = [e for e in events if e.get("event_type") == "evaluator_loop_started"]
+    assert len(started) == 1
+    started_payload = _parse_payload(started[0])
+    assert started_payload["loop_type"] == "plan"
+    assert started_payload["mode"] == "in_node"
+    assert started_payload["max_rounds"] == 3
+    assert started_payload["reviewer_model"] == "deepseek-chat"
+
+    rounds = [e for e in events if e.get("event_type") == "evaluator_loop_round"]
+    assert len(rounds) == 1
+    round_payload = _parse_payload(rounds[0])
+    assert round_payload["round_id"] == 1
+    assert round_payload["decision"] == "pass"
+    assert round_payload["no_progress"] is False
+
+    completed = [e for e in events if e.get("event_type") == "evaluator_loop_completed"]
+    assert len(completed) == 1
+    completed_payload = _parse_payload(completed[0])
+    assert completed_payload["decision"] == "pass"
+    assert completed_payload["rounds"] == 1
+    assert completed_payload["reason"] == "all_blockers_resolved"
