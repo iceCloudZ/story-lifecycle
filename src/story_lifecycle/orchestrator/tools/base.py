@@ -54,6 +54,7 @@ class BaseTool:
             injected = True
             ttyd._mplex_launched.add(key)
 
+        foreground_zellij = False
         if not injected:
             # Try foreground Zellij execution (Windows + Zellij)
             tmp = (
@@ -68,13 +69,15 @@ class BaseTool:
                 from ..graph import emit_terminal_request
 
                 emit_terminal_request(key, zellij_args)
+                foreground_zellij = True
             else:
                 # Fallback: launch in a new terminal window
                 ttyd.launch_cli(key, workspace, launch, str(tmp))
 
         from ..graph import emit_terminal_opened
 
-        emit_terminal_opened(key)
+        if not foreground_zellij:
+            emit_terminal_opened(key)
 
         state["execution_count"] = state.get("execution_count", 0) + 1
         state["stage_start_time"] = time.time()

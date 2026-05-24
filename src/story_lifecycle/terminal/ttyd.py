@@ -420,6 +420,15 @@ def zellij_execution_args(
 
     from . import platform_ops
 
+    # On Windows, find Git Bash absolute path — Zellij may not have it in PATH
+    if os.name == "nt":
+        bash_path = platform_ops._find_git_bash()
+        if not bash_path:
+            return None
+        bash_posix = platform_ops.to_posix_path(bash_path)
+    else:
+        bash_posix = "bash"
+
     ws = platform_ops.to_posix_path(workspace)
     pf = platform_ops.to_posix_path(prompt_file)
 
@@ -436,12 +445,12 @@ def zellij_execution_args(
     )
     script_posix = platform_ops.to_posix_path(str(script))
 
-    # Generate Zellij layout KDL
+    # Generate Zellij layout KDL — use resolved bash path, not bare "bash"
     session = session_name(story_key)
     kdl = Path(tempfile.gettempdir()) / f"story-zellij-{story_key}.kdl"
     kdl.write_text(
         f"layout {{\n"
-        f'    pane command="bash" {{\n'
+        f'    pane command="{bash_posix}" {{\n'
         f'        args "{script_posix}"\n'
         f"    }}\n"
         f"}}\n",

@@ -1,5 +1,6 @@
 """Tests for TUI entry decision logic — .done helpers, state resolver, action decider."""
 
+import tempfile
 import time
 
 import pytest
@@ -475,3 +476,108 @@ class TestBaseToolLaunchConstraint:
             "launch_cli must NOT be called when session is healthy"
         )
         assert len(send_keys_calls) >= 2, "send_keys must be called to inject prompt"
+
+
+# ---------------------------------------------------------------------------
+# zellij_execution_args direct tests
+# ---------------------------------------------------------------------------
+
+
+class TestZellijExecutionArgs:
+    def test_returns_none_when_no_zellij(self, monkeypatch, tmp_path):
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", None)
+
+        result = ttyd_mod.zellij_execution_args("KEY", str(tmp_path), "claude", "/p.md")
+        assert result is None
+
+    def test_returns_none_when_no_git_bash_on_windows(self, monkeypatch, tmp_path):
+        import os
+
+        if os.name != "nt":
+            pytest.skip("Windows-only test")
+
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.terminal.platform_ops as po_mod
+
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
+        monkeypatch.setattr(po_mod, "_find_git_bash", lambda: None)
+
+        result = ttyd_mod.zellij_execution_args("KEY", str(tmp_path), "claude", "/p.md")
+        assert result is None
+
+    def test_generates_layout_and_argv(self, monkeypatch, tmp_path):
+        import os
+        import pathlib
+
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
+
+        # On Windows, ensure _find_git_bash returns a path
+        if os.name == "nt":
+            import story_lifecycle.terminal.platform_ops as po_mod
+
+            monkeypatch.setattr(
+                po_mod, "_find_git_bash", lambda: "C:/Program Files/Git/bin/bash.exe"
+            )
+
+        result = ttyd_mod.zellij_execution_args(
+            "1065520", str(tmp_path), "claude --model sonnet", "/tmp/prompt.md"
+        )
+        assert result is not None
+        assert result[0] == "zellij"
+        assert "--session" in result
+        assert "s-1065520" in result
+        assert "--new-session-with-layout" in result
+
+        # Verify KDL layout file
+        kdl_files = list(
+            pathlib.Path(tempfile.gettempdir()).glob("story-zellij-1065520.kdl")
+        )
+        assert len(kdl_files) == 1
+        kdl_content = kdl_files[0].read_text(encoding="utf-8")
+        assert "story-launch-1065520.sh" in kdl_content
+        if os.name == "nt":
+            assert "bash.exe" in kdl_content
+        else:
+            assert 'pane command="bash"' in kdl_content
+
+        # Verify launch script
+        script_files = list(
+            pathlib.Path(tempfile.gettempdir()).glob("story-launch-1065520.sh")
+        )
+        assert len(script_files) == 1
+        script_content = script_files[0].read_text(encoding="utf-8")
+        assert "claude --model sonnet" in script_content
+        assert "prompt.md" in script_content
+
+    def test_windows_uses_git_bash_path(self, monkeypatch, tmp_path):
+        import os
+
+        if os.name != "nt":
+            pytest.skip("Windows-only test")
+
+        import pathlib
+
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.terminal.platform_ops as po_mod
+
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
+        monkeypatch.setattr(
+            po_mod,
+            "_find_git_bash",
+            lambda: "C:/Program Files/Git/bin/bash.exe",
+        )
+
+        result = ttyd_mod.zellij_execution_args("KEY", str(tmp_path), "claude", "/p.md")
+        assert result is not None
+
+        kdl_files = list(
+            pathlib.Path(tempfile.gettempdir()).glob("story-zellij-KEY.kdl")
+        )
+        assert len(kdl_files) == 1
+        kdl_content = kdl_files[0].read_text(encoding="utf-8")
+        # Must use resolved Git Bash path, not bare "bash"
+        assert "bash.exe" in kdl_content
