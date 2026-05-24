@@ -110,8 +110,23 @@ def create_session(name: str, workspace: str):
     if not _MPLEX:
         return
     if _MPLEX == "zellij":
-        os.system(
-            f"zellij attach --create-background {name} options --default-cwd {workspace}"
+        cmd = [
+            "zellij",
+            "attach",
+            "--create-background",
+            name,
+            "options",
+            "--default-cwd",
+            workspace,
+        ]
+        if os.name == "nt":
+            cmd.extend(["--default-shell", "powershell.exe"])
+        _run(
+            cmd,
+            capture_output=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
     elif _MPLEX == "tmux":
         _run(["tmux", "new-session", "-d", "-s", name, "-c", workspace])
@@ -209,10 +224,38 @@ def attach_cmd(name: str) -> str:
     return f"tmux attach -t {name}"
 
 
+def attach_args(name: str) -> list[str]:
+    """Return argv to attach to a session without invoking a shell."""
+    if _MPLEX == "zellij":
+        return ["zellij", "attach", name]
+    return ["tmux", "attach", "-t", name]
+
+
+def enter_session_args(name: str, workspace: str) -> list[str]:
+    """Return argv to create and enter a session without invoking a shell."""
+    if _MPLEX == "zellij":
+        cmd = [
+            "zellij",
+            "attach",
+            "--create",
+            name,
+            "options",
+            "--default-cwd",
+            workspace,
+        ]
+        if os.name == "nt":
+            cmd.extend(["--default-shell", "powershell.exe"])
+        return cmd
+    return ["tmux", "new-session", "-A", "-s", name, "-c", workspace]
+
+
 def enter_session_cmd(name: str, workspace: str) -> str:
     """Return the command to create and enter a session."""
     if _MPLEX == "zellij":
-        return f"zellij attach --create {name} options --default-cwd {workspace}"
+        cmd = f"zellij attach --create {name} options --default-cwd {workspace}"
+        if os.name == "nt":
+            cmd += " --default-shell powershell.exe"
+        return cmd
     return f"tmux new-session -A -s {name} -c {workspace}"
 
 
