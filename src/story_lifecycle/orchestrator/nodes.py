@@ -22,6 +22,7 @@ from .observability import (
     log_prompt_context,
     log_dod_check,
 )
+from .evaluator_loop import AdversarialConfig
 
 log = logging.getLogger("story-lifecycle.nodes")
 
@@ -182,6 +183,94 @@ def plan_stage_node(state: StoryState) -> StoryState:
             db.log_event(story_key, stage, "condense", {"output": compressed_path})
     except Exception as e:
         log.warning(f"Condenser failed: {e}")
+
+    # --- Adversarial plan loop ---
+    try:
+        profile_cfg = load_profile(profile)
+        adv_cfg = AdversarialConfig.from_profile(profile_cfg)
+        if adv_cfg.plan_loop_enabled(stage) and planner.is_available():
+            from ..orchestrator.graph import emit_plan_done
+            from .evaluator_loop import run_plan_loop
+
+            adapters = ["claude"]
+            loop_result = run_plan_loop(state, adv_cfg, adapters)
+
+            if loop_result.final_plan and loop_result.final_plan.get("skip"):
+                state["status"] = "skipping"
+                state["plan_summary"] = (
+                    f"跳过: {loop_result.final_plan.get('reasoning', '')}"
+                )
+                emit_plan_done(story_key, state["plan_summary"])
+                return state
+
+            if loop_result.final_plan:
+                plan = loop_result.final_plan
+                # Write plan file (same format as existing code)
+                plan_file = (
+                    Path(workspace) / ".story-context" / story_key / f"plan_{stage}.md"
+                )
+                plan_file.parent.mkdir(parents=True, exist_ok=True)
+                review_path = state.get("context", {}).get("review_path")
+                review_section = ""
+                if review_path:
+                    rf = Path(workspace) / review_path
+                    if rf.exists():
+                        review_section = (
+                            f"\n## 前序 Review 建议\n"
+                            f"请先处理以下问题：\n{rf.read_text(encoding='utf-8')}"
+                        )
+                plan_file.write_text(
+                    f"# 任务书: {stage}\n\n"
+                    f"## 执行指令\n{plan.get('extra_instructions', '')}\n"
+                    f"{review_section}\n\n"
+                    f"## 配置\n"
+                    f"- Adapter: {plan.get('adapter', 'claude')}\n"
+                    f"- Provider: {plan.get('provider', 'deepseek')}\n"
+                    f"- Model: {plan.get('model', 'sonnet')}\n\n"
+                    f"## 决策理由\n{plan.get('reasoning', '')}\n\n"
+                    f"## 路径评分\n"
+                    f"当前路径评分: {plan.get('trajectory_score', 'N/A')}/1.0",
+                    encoding="utf-8",
+                )
+                state["plan_summary"] = plan.get("summary", "")
+                state["trajectory_score"] = plan.get("trajectory_score")
+                state["context"]["plan_path"] = str(plan_file.relative_to(workspace))
+                state["context"]["plan_summary"] = plan.get("summary", "")
+                state["plan"] = plan
+                db.log_event(
+                    story_key,
+                    stage,
+                    "plan",
+                    {
+                        "adapter": plan.get("adapter"),
+                        "summary": plan.get("summary", "")[:100],
+                        "trajectory_score": plan.get("trajectory_score"),
+                        "adversarial_loop": True,
+                        "loop_rounds": loop_result.rounds,
+                        "loop_decision": loop_result.decision,
+                    },
+                )
+                summary = plan.get("summary", "")
+                tool_info = (
+                    f"{plan.get('adapter', 'claude')} / {plan.get('model', 'sonnet')}"
+                )
+                plan_text = f"✓ {summary}  [dim]({tool_info})[/]"
+                emit_plan_done(story_key, plan_text)
+                return state
+
+            # Loop returned without plan (fail/no_progress) — fall through to normal planner
+            if loop_result.decision in ("fail", "no_progress"):
+                from ..orchestrator.graph import emit_plan_done
+
+                state["plan_summary"] = (
+                    f"Plan loop {loop_result.decision}: {loop_result.reason}"
+                )
+                emit_plan_done(
+                    story_key, f"⚠ Plan loop {loop_result.decision}", ok=False
+                )
+    except Exception as e:
+        log.warning(f"Adversarial plan loop failed, falling back to normal: {e}")
+    # --- End adversarial plan loop ---
 
     if planner.is_available():
         try:
@@ -428,6 +517,89 @@ def review_stage_node(state: StoryState) -> StoryState:
             {"quality": "forced_fail", "retries": execution_count},
         )
         return state
+
+    # --- Adversarial code review loop ---
+    try:
+        profile_cfg = load_profile(state.get("profile", "minimal"))
+        adv_cfg = AdversarialConfig.from_profile(profile_cfg)
+        if adv_cfg.code_loop_enabled(stage) and planner.is_available():
+            from .evaluator_loop import run_code_review_loop
+
+            loop_result = run_code_review_loop(state, adv_cfg, stage_output)
+            review = loop_result.final_review or {}
+            workspace = state["workspace"]
+            story_key = state["story_key"]
+
+            review_file = (
+                Path(workspace) / ".story-context" / story_key / f"review_{stage}.md"
+            )
+            review_file.parent.mkdir(parents=True, exist_ok=True)
+            issues_table = ""
+            for issue in review.get("issues", []):
+                issues_table += (
+                    f"| {issue.get('type', '')} | {issue.get('severity', '')} "
+                    f"| {issue.get('location', '')} | {issue.get('description', '')} |\n"
+                )
+            suggestions_list = "\n".join(
+                f"- {s}" for s in review.get("suggestions", [])
+            )
+            no_issues_row = "| （无） | | | |\n"
+            review_file.write_text(
+                f"# 评审: {stage} (adversarial)\n\n"
+                f"## 结论: {review.get('quality', 'pass')}\n\n"
+                f"## 摘要\n{review.get('summary', '')}\n\n"
+                f"## 问题列表\n"
+                f"| 类型 | 严重度 | 位置 | 描述 |\n"
+                f"|------|--------|------|------|\n"
+                f"{issues_table or no_issues_row}\n"
+                f"## 建议\n{suggestions_list or '（无）'}\n\n"
+                f"## 路径评分\n{review.get('trajectory_score', 'N/A')}/1.0\n\n"
+                f"## 详细理由\n{review.get('reasoning', '')}",
+                encoding="utf-8",
+            )
+            state["review_summary"] = review.get("summary", "")
+            state["trajectory_score"] = review.get("trajectory_score")
+            state["context"]["review_path"] = str(review_file.relative_to(workspace))
+            state["context"]["review_summary"] = review.get("summary", "")
+
+            repair_path = review.get("repair_packet_path")
+            if repair_path:
+                state["context"]["repair_packet_path"] = (
+                    str(Path(repair_path).relative_to(workspace))
+                    if not Path(repair_path).is_absolute()
+                    else repair_path
+                )
+
+            quality = review.get("quality", "pass")
+            if quality == "revise":
+                high_issues = [
+                    i for i in review.get("issues", []) if i.get("severity") == "high"
+                ]
+                state["last_error"] = (
+                    f"Review: {review.get('summary', 'needs revision')} "
+                    f"({len(high_issues)} high severity issues)"
+                )
+            elif quality == "fail":
+                state["last_error"] = f"Review failed: {review.get('summary', '')}"
+
+            db.log_event(
+                story_key,
+                stage,
+                "review",
+                {
+                    "quality": quality,
+                    "summary": review.get("summary", "")[:100],
+                    "issues_count": len(review.get("issues", [])),
+                    "trajectory_score": review.get("trajectory_score"),
+                    "adversarial_loop": True,
+                    "loop_rounds": loop_result.rounds,
+                    "loop_decision": loop_result.decision,
+                },
+            )
+            return state
+    except Exception as e:
+        log.warning(f"Adversarial code loop failed, falling back to normal review: {e}")
+    # --- End adversarial code review loop ---
 
     if planner.is_available():
         try:
@@ -1346,6 +1518,15 @@ Story: {state["story_key"]}
     except Exception:
         pass
 
+    # Repair packet injection
+    repair_section = ""
+    repair_packet_path = ctx.get("repair_packet_path")
+    if repair_packet_path:
+        rp_file = Path(state["workspace"]) / repair_packet_path
+        if rp_file.exists():
+            repair_content = rp_file.read_text(encoding="utf-8")
+            repair_section = f"## Repair Packet（修复上下文）\n\n{repair_content}"
+
     has_prd = bool(ctx.get("prd_path"))
 
     # Get stage skill from profile
@@ -1385,9 +1566,14 @@ Story: {state["story_key"]}
         ),
         "{quality_packet_section}": quality_section,
         "{quality_checklist}": checklist,
+        "{repair_packet_section}": repair_section,
     }
     for key, value in vars_map.items():
         template = template.replace(key, value)
+
+    # Append repair packet directly if template had no placeholder
+    if repair_section and "{repair_packet_section}" not in template:
+        template = f"{template}\n\n{repair_section}"
 
     metadata = {
         "quality_packet_injected": quality_packet_injected,

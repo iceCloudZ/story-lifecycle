@@ -1070,3 +1070,251 @@ def test_code_review_loop_records_prompt_tokens_estimation(isolated_story_home):
     pt = round_payload.get("prompt_tokens", {})
     assert pt.get("estimated") is True
     assert pt.get("count", 0) > 0
+
+
+# -- Integration tests: adversarial loop wiring in nodes.py --
+
+
+def _enabled_adversarial_profile():
+    """Profile with both adversarial loops enabled."""
+    return {
+        "adversarial": {
+            "enabled": True,
+            "plan_loop": {
+                "enabled": True,
+                "stages": ["implement"],
+                "max_rounds": 3,
+                "reviewer_model": "deepseek-chat",
+            },
+            "code_loop": {
+                "enabled": True,
+                "mode": "short_lived",
+                "max_rounds": 3,
+            },
+        }
+    }
+
+
+def test_plan_stage_node_uses_loop_when_enabled(isolated_story_home):
+    """When adversarial plan_loop is enabled, plan_stage_node calls run_plan_loop."""
+    from story_lifecycle.orchestrator.nodes import plan_stage_node
+    from story_lifecycle.db import models as db
+    from unittest.mock import patch
+    from story_lifecycle.orchestrator.evaluator_loop import LoopResult
+
+    db.upsert_story(
+        "INT-PLAN-ON", workspace=str(isolated_story_home), profile="minimal"
+    )
+
+    state = _make_state(
+        story_key="INT-PLAN-ON",
+        stage="implement",
+        workspace=str(isolated_story_home),
+    )
+
+    loop_result = LoopResult(
+        decision="pass",
+        rounds=1,
+        final_plan={
+            "adapter": "claude",
+            "summary": "Implement auth via adversarial loop",
+            "extra_instructions": "Do it",
+            "reasoning": "OK",
+            "trajectory_score": 0.9,
+        },
+        reason="all_blockers_resolved",
+    )
+
+    with patch(
+        "story_lifecycle.orchestrator.nodes.load_profile",
+        return_value=_enabled_adversarial_profile(),
+    ):
+        with patch(
+            "story_lifecycle.orchestrator.nodes.planner.is_available", return_value=True
+        ):
+            with patch(
+                "story_lifecycle.orchestrator.nodes.planner.compress_context",
+                return_value=None,
+            ):
+                with patch(
+                    "story_lifecycle.orchestrator.evaluator_loop.run_plan_loop",
+                    return_value=loop_result,
+                ) as mock_loop:
+                    result = plan_stage_node(state)
+
+    assert mock_loop.called
+    assert result["plan_summary"] == "Implement auth via adversarial loop"
+    assert result["trajectory_score"] == 0.9
+
+
+def test_plan_stage_node_skips_loop_when_disabled(isolated_story_home):
+    """When adversarial is disabled, run_plan_loop should NOT be called."""
+    from story_lifecycle.orchestrator.nodes import plan_stage_node
+    from story_lifecycle.db import models as db
+    from unittest.mock import patch
+
+    db.upsert_story(
+        "INT-PLAN-OFF", workspace=str(isolated_story_home), profile="minimal"
+    )
+
+    state = _make_state(
+        story_key="INT-PLAN-OFF",
+        stage="implement",
+        workspace=str(isolated_story_home),
+    )
+
+    plan_result = {
+        "adapter": "claude",
+        "skip": False,
+        "summary": "Normal plan",
+        "extra_instructions": "Do it",
+        "reasoning": "OK",
+        "trajectory_score": 0.8,
+    }
+
+    # load_profile returns profile with NO adversarial config (default minimal)
+    with patch("story_lifecycle.orchestrator.nodes.load_profile", return_value={}):
+        with patch(
+            "story_lifecycle.orchestrator.nodes.planner.is_available", return_value=True
+        ):
+            with patch(
+                "story_lifecycle.orchestrator.nodes.planner.compress_context",
+                return_value=None,
+            ):
+                with patch(
+                    "story_lifecycle.orchestrator.nodes.planner.plan_stage",
+                    return_value=plan_result,
+                ):
+                    with patch(
+                        "story_lifecycle.orchestrator.evaluator_loop.run_plan_loop"
+                    ) as mock_loop:
+                        result = plan_stage_node(state)
+
+    assert not mock_loop.called
+    assert result["plan_summary"] == "Normal plan"
+
+
+def test_review_stage_node_uses_loop_when_enabled(isolated_story_home):
+    """When adversarial code_loop is enabled, review_stage_node calls run_code_review_loop."""
+    from story_lifecycle.orchestrator.nodes import review_stage_node
+    from story_lifecycle.db import models as db
+    from unittest.mock import patch
+    from story_lifecycle.orchestrator.evaluator_loop import LoopResult
+
+    db.upsert_story("INT-REV-ON", workspace=str(isolated_story_home), profile="minimal")
+
+    state = _make_state(
+        story_key="INT-REV-ON",
+        stage="implement",
+        workspace=str(isolated_story_home),
+    )
+
+    loop_result = LoopResult(
+        decision="revise",
+        rounds=1,
+        final_review={
+            "quality": "revise",
+            "summary": "Security issues found",
+            "issues": [
+                {
+                    "type": "security",
+                    "severity": "high",
+                    "location": "auth.py:42",
+                    "description": "Missing CSRF token",
+                }
+            ],
+            "suggestions": ["Add CSRF middleware"],
+            "trajectory_score": 0.4,
+            "reasoning": "Security issue",
+        },
+        reason="code_review_revise",
+    )
+
+    with patch(
+        "story_lifecycle.orchestrator.nodes.load_profile",
+        return_value=_enabled_adversarial_profile(),
+    ):
+        with patch(
+            "story_lifecycle.orchestrator.nodes.planner.is_available", return_value=True
+        ):
+            with patch(
+                "story_lifecycle.orchestrator.evaluator_loop.run_code_review_loop",
+                return_value=loop_result,
+            ) as mock_loop:
+                result = review_stage_node(state)
+
+    assert mock_loop.called
+    assert result["last_error"] is not None
+    assert "high severity issues" in result["last_error"]
+    assert result["review_summary"] == "Security issues found"
+
+
+def test_review_stage_node_skips_loop_when_disabled(isolated_story_home):
+    """When adversarial is disabled, run_code_review_loop should NOT be called."""
+    from story_lifecycle.orchestrator.nodes import review_stage_node
+    from story_lifecycle.db import models as db
+    from unittest.mock import patch
+
+    db.upsert_story(
+        "INT-REV-OFF", workspace=str(isolated_story_home), profile="minimal"
+    )
+
+    state = _make_state(
+        story_key="INT-REV-OFF",
+        stage="implement",
+        workspace=str(isolated_story_home),
+    )
+
+    review_result = {
+        "quality": "pass",
+        "summary": "Looks good",
+        "issues": [],
+        "suggestions": [],
+        "trajectory_score": 0.9,
+        "reasoning": "All OK",
+    }
+
+    with patch("story_lifecycle.orchestrator.nodes.load_profile", return_value={}):
+        with patch(
+            "story_lifecycle.orchestrator.nodes.planner.is_available", return_value=True
+        ):
+            with patch(
+                "story_lifecycle.orchestrator.nodes.planner.review_stage",
+                return_value=review_result,
+            ):
+                with patch(
+                    "story_lifecycle.orchestrator.evaluator_loop.run_code_review_loop"
+                ) as mock_loop:
+                    result = review_stage_node(state)
+
+    assert not mock_loop.called
+    assert result["review_summary"] == "Looks good"
+
+
+def test_repair_packet_injected_on_retry(isolated_story_home):
+    """When repair_packet_path is in context, _render_prompt includes repair content."""
+    from story_lifecycle.orchestrator.nodes import _render_prompt
+    from pathlib import Path
+
+    workspace = str(isolated_story_home)
+    story_key = "INT-REPAIR"
+
+    # Create a repair packet file on disk
+    repair_dir = Path(workspace) / ".story-context" / story_key
+    repair_dir.mkdir(parents=True, exist_ok=True)
+    repair_file = repair_dir / "repair_implement_round1.md"
+    repair_file.write_text(
+        "# Repair Packet: implement Round 1\nMissing CSRF token",
+        encoding="utf-8",
+    )
+
+    state = _make_state(
+        story_key=story_key,
+        stage="implement",
+        workspace=workspace,
+    )
+    state["context"]["repair_packet_path"] = str(repair_file.relative_to(workspace))
+
+    prompt, meta = _render_prompt("implement", state)
+    assert "Missing CSRF token" in prompt
+    assert "Repair Packet" in prompt
