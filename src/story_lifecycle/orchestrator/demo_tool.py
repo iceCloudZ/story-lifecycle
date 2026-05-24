@@ -15,7 +15,11 @@ _DEMO_PAYLOADS = {
         "complexity": "S",
         "summary": "Demo design completed",
     },
-    "implement": {"implementation_summary": "Demo implementation completed"},
+    "implement": {
+        "files_changed": ["src/demo.py"],
+        "implementation_summary": "Demo implementation completed",
+        "summary": "Demo implementation completed",
+    },
     "review": {"quality": "pass", "summary": "Demo review completed"},
 }
 

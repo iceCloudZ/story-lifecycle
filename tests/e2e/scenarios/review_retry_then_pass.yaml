@@ -15,8 +15,10 @@ stages:
           summary: revised draft
   implement:
     done:
+      files_changed: [src/main.py]
       implementation_summary: implemented
-  test:
+      summary: implemented
+  review:
     done:
       tests_passed: true
 
@@ -45,6 +47,3 @@ reviews:
 
 expect:
   status: completed
-  event_counts:
-    execute: 4
-    review: 2

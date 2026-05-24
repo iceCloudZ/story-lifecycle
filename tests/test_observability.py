@@ -121,6 +121,9 @@ def test_dod_check_pass_for_clean_story(isolated_story_home):
     db.upsert_story("TEST-003", workspace=__import__("os").getcwd(), profile="minimal")
     state = _make_state(story_key="TEST-003", stage="implement")
     state["context"]["complexity"] = "M"
+    # Provide expected_outputs for implement stage
+    state["context"]["files_changed"] = "src/main.py"
+    state["context"]["summary"] = "done"
 
     from story_lifecycle.orchestrator.nodes import advance_node
 
@@ -147,6 +150,9 @@ def test_dod_check_blocks_on_high_findings(isolated_story_home):
     )
     state = _make_state(story_key="TEST-004", stage="implement")
     state["context"]["complexity"] = "M"
+    # Provide expected_outputs for implement stage
+    state["context"]["files_changed"] = "src/main.py"
+    state["context"]["summary"] = "done"
 
     from story_lifecycle.orchestrator.nodes import advance_node
 
@@ -165,6 +171,9 @@ def test_dod_check_exception_writes_node_error(isolated_story_home):
 
     db.upsert_story("TEST-005", workspace=__import__("os").getcwd(), profile="minimal")
     state = _make_state(story_key="TEST-005", stage="implement")
+    # Provide expected_outputs so advance_node reaches DoD check
+    state["context"]["files_changed"] = "src/main.py"
+    state["context"]["summary"] = "done"
 
     def _raising_dod(*args, **kwargs):
         raise RuntimeError("DB connection lost")

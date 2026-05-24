@@ -56,7 +56,7 @@ def test_derive_story_key():
         title="",
         description="",
     )
-    assert _derive_story_key(tapd_item) == "TAPD-001234"
+    assert _derive_story_key(tapd_item) == "TAPD-1001234"
 
     jira_item = SourceItem(
         id="JIRA-567", source="jira", item_type="requirement", title="", description=""

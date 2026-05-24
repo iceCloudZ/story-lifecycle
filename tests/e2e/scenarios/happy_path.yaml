@@ -10,14 +10,16 @@ stages:
       summary: design completed
   implement:
     done:
+      files_changed: [src/main.py]
       implementation_summary: implemented
-  test:
+      summary: implemented
+  review:
     done:
       tests_passed: true
 
 expect:
   status: completed
-  final_stage: test
+  final_stage: review
   context:
     spec_path: docs/spec.md
     complexity: "S"

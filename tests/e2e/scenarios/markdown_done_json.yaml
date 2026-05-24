@@ -15,8 +15,10 @@ stages:
       ```
   implement:
     done:
+      files_changed: [src/main.py]
       implementation_summary: implemented
-  test:
+      summary: implemented
+  review:
     done:
       tests_passed: true
 
