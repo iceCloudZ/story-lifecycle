@@ -1316,3 +1316,129 @@ def test_repair_packet_injected_on_retry(isolated_story_home):
     prompt, meta = _render_prompt("implement", state)
     assert "Missing CSRF token" in prompt
     assert "Repair Packet" in prompt
+
+
+# ── Code loop no_progress → wait_confirm integration ──
+
+
+def test_code_review_loop_no_progress_returns_wait_confirm(isolated_story_home):
+    """When current round repeats all previous high findings, return wait_confirm."""
+    from story_lifecycle.orchestrator.evaluator_loop import (
+        run_code_review_loop,
+        AdversarialConfig,
+    )
+    from story_lifecycle.db import models as db
+
+    profile = {
+        "adversarial": {
+            "enabled": True,
+            "code_loop": {"enabled": True, "mode": "short_lived", "max_rounds": 3},
+        }
+    }
+    adv_config = AdversarialConfig.from_profile(profile)
+    db.upsert_story("CR-NP1", workspace=os.getcwd(), profile="minimal")
+
+    # Seed a previous high finding in the SAME stage
+    db.create_finding(
+        story_key="CR-NP1",
+        stage="implement",
+        source="code_review",
+        severity="high",
+        category="null-safety",
+        description="NPE in handler",
+        location="src/handler.py:42",
+    )
+
+    state = _make_state(story_key="CR-NP1", stage="implement", execution_count=1)
+    stage_output = {"files_changed": ["src/handler.py"]}
+
+    review_return = {
+        "quality": "revise",
+        "issues": [
+            {
+                "type": "null-safety",
+                "severity": "high",
+                "description": "NPE in handler",
+                "location": "src/handler.py:42",
+            }
+        ],
+        "trajectory_score": 0.3,
+        "suggestions": [],
+        "context_updates": {},
+        "reasoning": "same issue",
+    }
+
+    with patch(
+        "story_lifecycle.orchestrator.planner.review_stage", return_value=review_return
+    ):
+        result = run_code_review_loop(state, adv_config, stage_output)
+
+    assert result.decision == "wait_confirm"
+    assert "no_progress" in result.reason
+
+    completed = _get_events_by_type("CR-NP1", "evaluator_loop_completed")
+    assert len(completed) == 1
+    assert _parse_payload(completed[0])["decision"] == "wait_confirm"
+
+
+def test_code_review_loop_cross_stage_findings_not_repeated(isolated_story_home):
+    """High finding in a different stage should NOT trigger no_progress."""
+    from story_lifecycle.orchestrator.evaluator_loop import (
+        run_code_review_loop,
+        AdversarialConfig,
+    )
+    from story_lifecycle.db import models as db
+
+    profile = {
+        "adversarial": {
+            "enabled": True,
+            "code_loop": {"enabled": True, "mode": "short_lived", "max_rounds": 3},
+        }
+    }
+    adv_config = AdversarialConfig.from_profile(profile)
+    db.upsert_story("CR-ISO1", workspace=os.getcwd(), profile="minimal")
+
+    # Seed a high finding in DESIGN stage (different from current stage)
+    db.create_finding(
+        story_key="CR-ISO1",
+        stage="design",
+        source="code_review",
+        severity="high",
+        category="null-safety",
+        description="NPE in handler",
+        location="src/handler.py:42",
+    )
+
+    state = _make_state(story_key="CR-ISO1", stage="implement", execution_count=1)
+    stage_output = {"files_changed": ["src/handler.py"]}
+
+    # Reviewer raises the SAME finding in implement stage
+    review_return = {
+        "quality": "revise",
+        "issues": [
+            {
+                "type": "null-safety",
+                "severity": "high",
+                "description": "NPE in handler",
+                "location": "src/handler.py:42",
+            }
+        ],
+        "trajectory_score": 0.3,
+        "suggestions": [],
+        "context_updates": {},
+        "reasoning": "same issue found",
+    }
+
+    with patch(
+        "story_lifecycle.orchestrator.planner.review_stage", return_value=review_return
+    ):
+        result = run_code_review_loop(state, adv_config, stage_output)
+
+    # Should NOT be wait_confirm because the previous finding is in a different stage
+    assert result.decision == "revise"
+
+    # Verify round event shows no no_progress
+    rounds = _get_events_by_type("CR-ISO1", "evaluator_loop_round")
+    assert len(rounds) == 1
+    round_payload = _parse_payload(rounds[0])
+    assert round_payload.get("no_progress") is False

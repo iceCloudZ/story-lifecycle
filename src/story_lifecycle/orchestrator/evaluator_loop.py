@@ -254,6 +254,11 @@ def _trim_packet(
 # -- No-Progress Detection --
 
 
+def _category_of(finding: dict) -> str:
+    """Extract category from a finding or issue dict (handles both schemas)."""
+    return finding.get("category", "") or finding.get("type", "")
+
+
 def detect_no_progress(
     previous_round_findings: list[dict],
     current_round_findings: list[dict],
@@ -265,7 +270,7 @@ def detect_no_progress(
     the implementer did not fix them.
     """
     prev_high = {
-        (f.get("category", ""), f.get("location", ""))
+        (_category_of(f), f.get("location", ""))
         for f in previous_round_findings
         if f.get("severity") == "high"
     }
@@ -273,7 +278,7 @@ def detect_no_progress(
         return False
 
     curr_high = [
-        (f.get("category", ""), f.get("location", ""), f.get("description", ""))
+        (_category_of(f), f.get("location", ""), f.get("description", ""))
         for f in current_round_findings
         if f.get("severity") == "high"
     ]
@@ -536,10 +541,11 @@ def run_code_review_loop(
         )
     except Exception as exc:
         log.warning("review_stage failed: %s", exc)
-        # Read previous findings for classification even on error
+        # Read previous findings for classification even on error (scoped to stage)
         prev_high_err: list[dict] = []
         try:
-            prev_high_err = db.get_open_findings(story_key, min_severity="high")
+            all_high_err = db.get_open_findings(story_key, min_severity="high")
+            prev_high_err = [f for f in all_high_err if f.get("stage") == stage]
         except Exception:
             pass
         log_loop_round(
@@ -590,9 +596,11 @@ def run_code_review_loop(
     # --- Read previous open findings for round-level classification ---
     # Note: "resolved" means "reviewer didn't re-raise this round", not DB finding
     # lifecycle status. This is round-level tracking for no-progress detection only.
+    # Scoped to current stage to avoid cross-stage false no_progress.
     prev_high_findings: list[dict] = []
     try:
-        prev_high_findings = db.get_open_findings(story_key, min_severity="high")
+        all_high = db.get_open_findings(story_key, min_severity="high")
+        prev_high_findings = [f for f in all_high if f.get("stage") == stage]
     except Exception:
         pass
 
@@ -625,13 +633,10 @@ def run_code_review_loop(
 
     # --- Classify findings: new / resolved / repeated ---
     prev_high_set = {
-        (f.get("category", ""), f.get("location", "")) for f in prev_high_findings
+        (_category_of(f), f.get("location", "")) for f in prev_high_findings
     }
     curr_high_set = {
-        (
-            issue.get("type", issue.get("category", "unknown")),
-            issue.get("location", ""),
-        )
+        (_category_of(issue), issue.get("location", ""))
         for issue in current_high_issues
     }
     repeated_keys = prev_high_set & curr_high_set
