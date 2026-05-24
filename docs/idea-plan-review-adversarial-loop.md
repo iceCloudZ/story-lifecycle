@@ -216,3 +216,34 @@ L5 human confirmation
 - reviewer pass 后的后续返工率
 - 平均 token 成本和耗时
 - 进入 `wait_confirm` 的原因分布
+
+### 10. 与现有 story 数据的复用
+
+当前系统已有以下基础设施，evaluator-optimizer 可直接复用：
+
+- **finding 表**：已有的 severity/status/evidence 结构可直接承载 findings
+- **learned_pattern 表**：reviewer 发现的 recurring issues 可自动沉淀为 patterns
+- **quality.py**：`build_quality_packet()` 已支持注入 findings 到后续 prompt
+- **trajectory_score**：已有路径评分，可复用为趋势信号
+- **.story-knowledge/**：reviewer 产出的知识可写入知识库，跨 story 复用
+
+P0 优先复用现有表，通过 `event_log` 承载 loop round、reviewer/optimizer 模型、diff 摘要、finding 继承关系等轮次信息。只有当查询、模型对比和收敛分析需求变强时，再考虑新增专门的 loop round 表。
+
+### 11. 与 LLM 模型对比的关联
+
+同一个 task 让不同模型跑 evaluator-optimizer 循环，可以对比：
+
+- 哪个 model 做 reviewer 时 findings 更精准（误报率/漏报率）
+- 哪个 model 做 optimizer 时修复更彻底（一轮通过率）
+- 哪个组合收敛最快（总轮数）
+
+这为后续 LLM 模型对比能力提供了天然的评测场景。
+
+### 12. 待讨论的开放问题
+
+- **reviewer 模型选择**：用同一个 LLM 还是不同 LLM 做 evaluator？可考虑用不同模型降低同源偏差，但会增加成本和不可比性
+- **findings 去重**：多轮 review 可能重复提出同类问题，需要 findings id + 去重逻辑
+- **implementer 拒绝权**：optimizer 能否 dispute 一个 finding？格式中已有 `disputed` 状态，但争议解决流程未定义
+- **context window 管理**：多轮循环后 context 膨胀，可能需要每轮压缩历史
+- **finding 状态机对齐**：现有系统已有 `open/accepted/verified` 等状态；code loop 设计中的 `disputed/accepted_risk/stale` 需要明确是新增状态，还是通过 reason/resolution 字段表达，避免破坏 DoD gate、approval queue 和 quality packet 查询
+- **loop round 记录方式**：P0 是否只写 `event_log`，还是新增 loop round 表？如果未来要做模型对比和收敛分析，round 级数据需要稳定 schema
