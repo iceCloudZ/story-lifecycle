@@ -53,6 +53,7 @@ class StoryState(TypedDict, total=False):
     _next_action: Optional[str]
     _pending_sub_keys: Optional[list]
     _router_decision: Optional[dict]
+    _pre_routed_action: Optional[str]
 
 
 # -------- stage config --------
@@ -151,8 +152,8 @@ def route_after_plan(state: StoryState) -> str:
         return "skip_stage"
     if state.get("status") == "waiting_subtasks":
         return "__end__"
-    # Plan loop blocked (no_progress / max_rounds / fail) — route to router
-    if state.get("last_error"):
+    # Plan loop blocked — route to router which reads _pre_routed_action
+    if state.get("_pre_routed_action") or state.get("last_error"):
         return "router"
     return "execute_stage"
 
@@ -177,6 +178,10 @@ def plan_stage_node(state: StoryState) -> StoryState:
     cfg = get_stage_config(profile, stage)
     workspace = state["workspace"]
     story_key = state["story_key"]
+
+    # Clear stale routing state from previous graph cycles
+    state.pop("_next_action", None)
+    state.pop("_pre_routed_action", None)
 
     # Trigger Condenser if needed
     try:
@@ -266,13 +271,14 @@ def plan_stage_node(state: StoryState) -> StoryState:
                 emit_plan_done(story_key, plan_text)
                 return state
 
-            # Non-pass decisions: block and wait for human
+            # Non-pass decisions: route to wait_confirm for human intervention
             if loop_result.decision in ("no_progress", "max_rounds", "fail"):
                 from ..orchestrator.graph import emit_plan_done
 
                 reason = f"Plan loop {loop_result.decision}: {loop_result.reason}"
                 state["plan_summary"] = reason
                 state["last_error"] = reason
+                state["_pre_routed_action"] = "wait_confirm"
                 emit_plan_done(story_key, f"⚠ {reason}", ok=False)
                 return state
     except Exception as e:
@@ -535,7 +541,7 @@ def review_stage_node(state: StoryState) -> StoryState:
         )
         # Design: exhausted retries route to wait_confirm for human intervention
         if adv_cfg.code_loop_enabled(stage):
-            state["_next_action"] = "wait_confirm"
+            state["_pre_routed_action"] = "wait_confirm"
             return state
         return state
 
@@ -554,6 +560,15 @@ def review_stage_node(state: StoryState) -> StoryState:
                 state["review_summary"] = (
                     f"Adversarial review failed: {loop_result.reason}"
                 )
+                return state
+
+            # No-progress detected — route to wait_confirm for human
+            if loop_result.decision == "wait_confirm":
+                state["last_error"] = (
+                    loop_result.reason or "No progress on high findings"
+                )
+                state["review_summary"] = f"Adversarial review: {loop_result.reason}"
+                state["_pre_routed_action"] = "wait_confirm"
                 return state
 
             review = loop_result.final_review or {}
@@ -1080,11 +1095,11 @@ def router_node(state: StoryState) -> StoryState:
     stage = state["current_stage"]
     cfg = get_stage_config(state.get("profile", "minimal"), stage)
 
-    # Preserve pre-routed decision (e.g. adversarial code loop retry exhaustion)
-    if state.get("_next_action"):
-        log_route_decision(
-            state, state["_next_action"], "pre_routed", router_mode="adversarial"
-        )
+    # Preserve pre-routed decision (e.g. adversarial retry exhaustion → wait_confirm)
+    pre_routed = state.pop("_pre_routed_action", None)
+    if pre_routed:
+        state["_next_action"] = pre_routed
+        log_route_decision(state, pre_routed, "pre_routed", router_mode="adversarial")
         return state
 
     # 1. Retry fatigue — review hit max retries
@@ -1312,6 +1327,8 @@ def advance_node(state: StoryState) -> StoryState:
     state["current_stage"] = next_stage
     state["status"] = "active"
     state["execution_count"] = 0
+    state.pop("_next_action", None)
+    state.pop("_pre_routed_action", None)
 
     # Clean up PRD task file after design stage completes
     if stage == "design":
@@ -1331,6 +1348,8 @@ def advance_node(state: StoryState) -> StoryState:
 def retry_node(state: StoryState) -> StoryState:
     """Prepare for retry. Clear error, keep count."""
     state["last_error"] = None
+    state.pop("_next_action", None)
+    state.pop("_pre_routed_action", None)
     db.log_stage(
         state["story_key"],
         state["current_stage"],

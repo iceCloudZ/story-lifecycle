@@ -587,7 +587,9 @@ def run_code_review_loop(
     issues = review.get("issues", [])
     score = review.get("trajectory_score", 0.0)
 
-    # --- Read previous open findings for cross-round classification ---
+    # --- Read previous open findings for round-level classification ---
+    # Note: "resolved" means "reviewer didn't re-raise this round", not DB finding
+    # lifecycle status. This is round-level tracking for no-progress detection only.
     prev_high_findings: list[dict] = []
     try:
         prev_high_findings = db.get_open_findings(story_key, min_severity="high")
@@ -746,6 +748,25 @@ def run_code_review_loop(
     )
 
     # --- Decision ---
+    if no_progress:
+        log_loop_completed(
+            story_key=story_key,
+            stage=stage,
+            loop_id=loop_id,
+            loop_type="code",
+            decision="wait_confirm",
+            rounds=1,
+            reason="no_progress_on_high_findings",
+            remaining_findings=finding_descriptions,
+        )
+        return LoopResult(
+            decision="wait_confirm",
+            rounds=1,
+            final_review=review,
+            reason="no_progress_on_high_findings",
+            remaining_findings=finding_descriptions,
+        )
+
     if quality == "pass":
         log_loop_completed(
             story_key=story_key,
