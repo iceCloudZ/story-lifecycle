@@ -399,3 +399,60 @@ def launch_cli(story_key: str, workspace: str, launch_cmd: str, prompt_file: str
         f"Story {story_key}",
         [script_posix],
     )
+
+
+def zellij_execution_args(
+    story_key: str, workspace: str, launch_cmd: str, prompt_file: str
+) -> list[str] | None:
+    """Generate foreground Zellij execution assets and return argv.
+
+    Creates:
+    - story-launch-{story_key}.sh (bash script that runs the CLI with prompt)
+    - story-zellij-{story_key}.kdl (Zellij layout pointing to the script)
+
+    Returns argv for ``zellij --session <name> --new-session-with-layout <kdl>``
+    or None if Zellij is not available.
+
+    Does NOT call subprocess.run or create any background session.
+    """
+    if _MPLEX != "zellij":
+        return None
+
+    from . import platform_ops
+
+    ws = platform_ops.to_posix_path(workspace)
+    pf = platform_ops.to_posix_path(prompt_file)
+
+    # Generate launch script (reuse the same pattern as launch_cli)
+    script = Path(tempfile.gettempdir()) / f"story-launch-{story_key}.sh"
+    script.write_text(
+        f"#!/bin/bash\n"
+        f'cd "{ws}" 2>/dev/null || {{ echo "ERROR: cannot cd to {ws}"; exit 1; }}\n'
+        f'echo "Starting: {launch_cmd}"\n'
+        f"{launch_cmd} \"$(cat '{pf}')\"\n"
+        f'echo ""\n'
+        f'echo "Story {story_key} done (exit code: $?). Press Ctrl+D or type exit to return to TUI."\n',
+        encoding="utf-8",
+    )
+    script_posix = platform_ops.to_posix_path(str(script))
+
+    # Generate Zellij layout KDL
+    session = session_name(story_key)
+    kdl = Path(tempfile.gettempdir()) / f"story-zellij-{story_key}.kdl"
+    kdl.write_text(
+        f"layout {{\n"
+        f'    pane command="bash" {{\n'
+        f'        args "{script_posix}"\n'
+        f"    }}\n"
+        f"}}\n",
+        encoding="utf-8",
+    )
+    kdl_posix = platform_ops.to_posix_path(str(kdl))
+
+    return [
+        "zellij",
+        "--session",
+        session,
+        "--new-session-with-layout",
+        kdl_posix,
+    ]

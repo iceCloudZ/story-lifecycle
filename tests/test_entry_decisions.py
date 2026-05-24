@@ -319,6 +319,9 @@ class TestBaseToolLaunchConstraint:
         monkeypatch.setattr(ttyd_mod, "send_keys", lambda *a, **kw: None)
         monkeypatch.setattr(ttyd_mod, "paste_text", lambda *a, **kw: None)
         monkeypatch.setattr(ttyd_mod, "_mplex_launched", set())
+        # No Zellij available → must fall back to launch_cli
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", None)
+        monkeypatch.setattr(ttyd_mod, "zellij_execution_args", lambda *a, **kw: None)
 
         class FakeAdapter:
             def launch_cmd(self, model):
@@ -330,6 +333,7 @@ class TestBaseToolLaunchConstraint:
         monkeypatch.setattr(adapters_mod, "get_adapter", lambda n: FakeAdapter())
 
         monkeypatch.setattr(graph_mod, "emit_terminal_opened", lambda k: None)
+        monkeypatch.setattr(graph_mod, "emit_terminal_request", lambda k, a: None)
         monkeypatch.setattr(db_mod, "log_event", lambda *a, **kw: None)
         monkeypatch.setattr(db_mod, "update_story", lambda *a, **kw: None)
 
@@ -346,6 +350,76 @@ class TestBaseToolLaunchConstraint:
 
         assert create_calls == [], "create_session must NOT be called"
         assert len(launch_cli_calls) == 1, "launch_cli must be called exactly once"
+
+    def test_zellij_foreground_request_when_available(self, monkeypatch, tmp_path):
+        """When Zellij available but no session, must emit terminal request."""
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.orchestrator.graph as graph_mod
+        import story_lifecycle.adapters as adapters_mod
+        from story_lifecycle.orchestrator.tools.base import BaseTool
+        from story_lifecycle.db import models as db_mod
+
+        create_calls = []
+        launch_cli_calls = []
+        request_calls = []
+
+        monkeypatch.setattr(ttyd_mod, "session_alive", lambda n: False)
+        monkeypatch.setattr(
+            ttyd_mod, "create_session", lambda *a, **kw: create_calls.append(a)
+        )
+        monkeypatch.setattr(
+            ttyd_mod, "launch_cli", lambda *a, **kw: launch_cli_calls.append(a)
+        )
+        monkeypatch.setattr(ttyd_mod, "session_name", lambda k: f"s-{k}")
+        monkeypatch.setattr(ttyd_mod, "send_keys", lambda *a, **kw: None)
+        monkeypatch.setattr(ttyd_mod, "paste_text", lambda *a, **kw: None)
+        monkeypatch.setattr(ttyd_mod, "_mplex_launched", set())
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
+        monkeypatch.setattr(
+            ttyd_mod,
+            "zellij_execution_args",
+            lambda *a, **kw: [
+                "zellij",
+                "--session",
+                "s-T-3",
+                "--new-session-with-layout",
+                "/tmp/x.kdl",
+            ],
+        )
+
+        class FakeAdapter:
+            def launch_cmd(self, model):
+                return "echo fake"
+
+            def switch_provider(self, p):
+                pass
+
+        monkeypatch.setattr(adapters_mod, "get_adapter", lambda n: FakeAdapter())
+
+        monkeypatch.setattr(graph_mod, "emit_terminal_opened", lambda k: None)
+        monkeypatch.setattr(
+            graph_mod,
+            "emit_terminal_request",
+            lambda k, a: request_calls.append((k, a)),
+        )
+        monkeypatch.setattr(db_mod, "log_event", lambda *a, **kw: None)
+        monkeypatch.setattr(db_mod, "update_story", lambda *a, **kw: None)
+
+        tool = BaseTool()
+        state = {
+            "story_key": "T-3",
+            "workspace": str(tmp_path),
+            "current_stage": "design",
+            "execution_count": 0,
+        }
+        tool._launch_in_session(
+            state, {"adapter": "claude", "model": "sonnet"}, "prompt"
+        )
+
+        assert create_calls == [], "create_session must NOT be called"
+        assert launch_cli_calls == [], "launch_cli must NOT be called with Zellij"
+        assert len(request_calls) == 1, "emit_terminal_request must be called"
+        assert request_calls[0][0] == "T-3"
 
     def test_injects_into_healthy_session(self, monkeypatch, tmp_path):
         """When a healthy session exists, must inject via send_keys — no launch_cli."""
@@ -382,6 +456,7 @@ class TestBaseToolLaunchConstraint:
         monkeypatch.setattr(adapters_mod, "get_adapter", lambda n: FakeAdapter())
 
         monkeypatch.setattr(graph_mod, "emit_terminal_opened", lambda k: None)
+        monkeypatch.setattr(graph_mod, "emit_terminal_request", lambda k, a: None)
         monkeypatch.setattr(db_mod, "log_event", lambda *a, **kw: None)
         monkeypatch.setattr(db_mod, "update_story", lambda *a, **kw: None)
 

@@ -1092,9 +1092,19 @@ class StoryBoardApp(App):
 
     async def tick_spinner(self) -> None:
         """Rotate spinner and poll in-memory status bus."""
-        if self._spinner_idx < 0:
-            return
         try:
+            # Check for foreground terminal requests (fast response)
+            from ..orchestrator.graph import take_terminal_request
+
+            for s in self.stories:
+                args = take_terminal_request(s["story_key"])
+                if args:
+                    self._pending_attach_args = args
+                    self.exit()
+                    return
+
+            if self._spinner_idx < 0:
+                return
             result = take_plan_done(self._plan_story_key)
             if result:
                 summary, ok = result
@@ -1272,8 +1282,26 @@ class StoryBoardApp(App):
                     start_story_async(key)
 
     async def watchdog_check(self):
-        from ..orchestrator.graph import resume_story, is_story_running
+        from ..orchestrator.graph import (
+            resume_story,
+            is_story_running,
+            take_terminal_request,
+        )
         from ..db import models as db
+
+        # Check for foreground terminal execution requests
+        for s in self.stories:
+            key = s["story_key"]
+            args = take_terminal_request(key)
+            if args:
+                _tui_debug(
+                    "watchdog_terminal_request",
+                    story_key=key,
+                    args=args,
+                )
+                self._pending_attach_args = args
+                self.exit()
+                return
 
         active = [s for s in self.stories if s["status"] in ("active", "paused")]
         for s in active:

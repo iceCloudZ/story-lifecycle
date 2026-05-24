@@ -55,13 +55,22 @@ class BaseTool:
             ttyd._mplex_launched.add(key)
 
         if not injected:
-            # Reliable fallback: launch in a new terminal window
+            # Try foreground Zellij execution (Windows + Zellij)
             tmp = (
                 Path(tempfile.gettempdir())
                 / f"story-prompt-{key}-{state['current_stage']}.md"
             )
             tmp.write_text(prompt, encoding="utf-8")
-            ttyd.launch_cli(key, workspace, launch, str(tmp))
+
+            zellij_args = ttyd.zellij_execution_args(key, workspace, launch, str(tmp))
+            if zellij_args is not None:
+                # Request TUI to hand over real terminal for foreground Zellij
+                from ..graph import emit_terminal_request
+
+                emit_terminal_request(key, zellij_args)
+            else:
+                # Fallback: launch in a new terminal window
+                ttyd.launch_cli(key, workspace, launch, str(tmp))
 
         from ..graph import emit_terminal_opened
 

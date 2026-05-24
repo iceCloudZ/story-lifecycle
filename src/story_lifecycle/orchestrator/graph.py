@@ -39,6 +39,7 @@ _tui_app: object | None = None
 _status_lock = threading.Lock()
 _plan_done: dict[str, tuple[str, bool]] = {}
 _terminal_opened: set[str] = set()
+_terminal_requests: dict[str, list[str]] = {}
 
 # Execution guard — prevent double submission
 _running_stories: set[str] = set()
@@ -77,6 +78,18 @@ def emit_terminal_opened(story_key: str) -> None:
     """Signal that the CLI terminal has been opened."""
     with _status_lock:
         _terminal_opened.add(story_key)
+
+
+def emit_terminal_request(story_key: str, args: list[str]) -> None:
+    """Request TUI to hand over the real terminal for foreground execution."""
+    with _status_lock:
+        _terminal_requests[story_key] = args
+
+
+def take_terminal_request(story_key: str) -> list[str] | None:
+    """Atomically read and clear a terminal execution request."""
+    with _status_lock:
+        return _terminal_requests.pop(story_key, None)
 
 
 def emit_plan_done(story_key: str, summary: str, ok: bool = True) -> None:
