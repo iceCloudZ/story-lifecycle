@@ -476,3 +476,174 @@ def run_plan_loop(
             reason=result.reason,
             remaining_findings=result.remaining_findings,
         )
+
+
+# -- Cross-Node Code Review Loop --
+
+
+def run_code_review_loop(
+    state: dict,
+    adv_config: AdversarialConfig,
+    stage_output: dict,
+) -> LoopResult:
+    """Single-round code review with finding recording and repair packet.
+
+    NOT a while loop — runs exactly ONE round of fresh reviewer per call.
+    The "loop" happens through the existing graph router retry mechanism.
+    """
+    import json as _json
+    from . import planner
+    from .loop_events import log_loop_started, log_loop_round, log_loop_completed
+    from .quality import record_finding
+
+    story_key = state.get("story_key", "")
+    stage = state.get("current_stage", "")
+    workspace = state.get("workspace", "")
+    cfg = _get_stage_config_from_state(state)
+    reviewer_model = adv_config.resolve_reviewer_model("code")
+    execution_count = state.get("execution_count", 0)
+    optimizer_model = os.environ.get("STORY_LLM_MODEL", "")
+
+    loop_id = _make_loop_id("code", stage)
+
+    log_loop_started(
+        story_key=story_key,
+        stage=stage,
+        loop_id=loop_id,
+        loop_type="code",
+        mode="short_lived",
+        max_rounds=adv_config.code_loop.max_rounds,
+        optimizer_model=optimizer_model,
+        reviewer_model=reviewer_model,
+        attempt_id=f"{stage}:code_review",
+    )
+
+    # --- Review ---
+    try:
+        review = planner.review_stage(state, cfg, stage_output)
+    except Exception as exc:
+        log.warning("review_stage failed: %s", exc)
+        log_loop_round(
+            story_key=story_key,
+            stage=stage,
+            loop_id=loop_id,
+            round_id=1,
+            loop_type="code",
+            mode="short_lived",
+            decision="fail",
+            score=0.0,
+            findings={"open_before": [], "new": [], "resolved": [], "repeated": []},
+            verification={"status": "not_run", "commands": []},
+        )
+        log_loop_completed(
+            story_key=story_key,
+            stage=stage,
+            loop_id=loop_id,
+            loop_type="code",
+            decision="fail",
+            rounds=1,
+            reason=f"reviewer_error:{type(exc).__name__}",
+            remaining_findings=[],
+        )
+        return LoopResult(
+            decision="fail", rounds=1, reason=f"reviewer_error:{type(exc).__name__}"
+        )
+
+    quality = review.get("quality", "revise")
+    issues = review.get("issues", [])
+    score = review.get("trajectory_score", 0.0)
+
+    # --- Record findings to DB ---
+    finding_descriptions: list[str] = []
+    for issue in issues:
+        try:
+            record_finding(
+                story_key,
+                stage,
+                {
+                    "source": "code_review",
+                    "severity": issue.get("severity", "medium"),
+                    "category": issue.get("type", issue.get("category", "unknown")),
+                    "description": issue.get("description", ""),
+                    "location": issue.get("location", ""),
+                    "recommendation": issue.get("recommendation", ""),
+                },
+            )
+            finding_descriptions.append(
+                f"{issue.get('severity', 'medium')}:{issue.get('description', '')}"
+            )
+        except Exception:
+            log.warning(
+                "Failed to record finding for issue: %s", issue.get("description", "")
+            )
+
+    # --- Build repair packet if revise ---
+    repair_path: str | None = None
+    if quality == "revise":
+        round_num = execution_count + 1
+        repair_path = build_repair_packet(
+            story_key=story_key,
+            stage=stage,
+            workspace=workspace,
+            plan_summary=state.get("review_summary", ""),
+            stage_output_summary=_json.dumps(stage_output, ensure_ascii=False)[:500],
+            findings=[
+                {
+                    "severity": i.get("severity", "medium"),
+                    "category": i.get("type", i.get("category", "unknown")),
+                    "description": i.get("description", ""),
+                    "location": i.get("location", ""),
+                    "recommendation": i.get("recommendation", ""),
+                }
+                for i in issues
+            ],
+            verification={"status": "not_run", "commands": []},
+            round_num=round_num,
+            write_file=True,
+        )
+
+    # --- Estimate prompt tokens ---
+    prompt_tokens_est = len(_json.dumps(stage_output)) // CHARS_PER_TOKEN
+
+    # --- Log round event ---
+    log_loop_round(
+        story_key=story_key,
+        stage=stage,
+        loop_id=loop_id,
+        round_id=execution_count + 1,
+        loop_type="code",
+        mode="short_lived",
+        decision=quality,
+        score=float(score),
+        findings={
+            "open_before": [],
+            "new": finding_descriptions,
+            "resolved": [],
+            "repeated": [],
+        },
+        verification={"status": "not_run", "commands": []},
+        prompt_tokens={"estimated": True, "count": prompt_tokens_est},
+    )
+
+    # --- Decision ---
+    if quality == "pass":
+        return LoopResult(
+            decision="pass", rounds=1, final_review=review, reason="code_review_passed"
+        )
+
+    # revise or fail
+    if repair_path:
+        review["repair_packet_path"] = repair_path
+    log_loop_completed(
+        story_key=story_key,
+        stage=stage,
+        loop_id=loop_id,
+        loop_type="code",
+        decision=quality,
+        rounds=1,
+        reason=f"code_review_{quality}",
+        remaining_findings=finding_descriptions,
+    )
+    return LoopResult(
+        decision=quality, rounds=1, final_review=review, reason=f"code_review_{quality}"
+    )

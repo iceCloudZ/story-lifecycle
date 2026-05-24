@@ -2,6 +2,7 @@
 
 import json
 import os
+from unittest.mock import patch
 
 
 def _make_state(story_key="LOOP-001", stage="implement", **overrides):
@@ -797,3 +798,275 @@ def test_plan_loop_logs_events(isolated_story_home):
     assert completed_payload["decision"] == "pass"
     assert completed_payload["rounds"] == 1
     assert completed_payload["reason"] == "all_blockers_resolved"
+
+
+# -- run_code_review_loop tests --
+
+
+def test_code_review_loop_pass_returns_pass(isolated_story_home):
+    """Code review returns pass, result.decision == "pass"."""
+    from story_lifecycle.orchestrator.evaluator_loop import (
+        run_code_review_loop,
+        AdversarialConfig,
+    )
+    from story_lifecycle.db import models as db
+
+    profile = {
+        "adversarial": {
+            "enabled": True,
+            "code_loop": {
+                "enabled": True,
+                "mode": "short_lived",
+                "max_rounds": 3,
+            },
+        }
+    }
+    adv_config = AdversarialConfig.from_profile(profile)
+    db.upsert_story("CR-PASS1", workspace=os.getcwd(), profile="minimal")
+
+    state = _make_state(story_key="CR-PASS1", stage="implement")
+    stage_output = {"files_changed": ["auth.py"], "summary": "Added auth"}
+
+    review_result = {
+        "quality": "pass",
+        "issues": [],
+        "suggestions": ["Consider adding more tests"],
+        "trajectory_score": 0.9,
+        "reasoning": "Looks good",
+    }
+
+    with patch(
+        "story_lifecycle.orchestrator.planner.review_stage", return_value=review_result
+    ):
+        result = run_code_review_loop(state, adv_config, stage_output)
+
+    assert result.decision == "pass"
+    assert result.rounds == 1
+    assert result.reason == "code_review_passed"
+    assert result.final_review is not None
+    assert result.final_review["quality"] == "pass"
+
+
+def test_code_review_loop_revise_records_findings(isolated_story_home):
+    """Revise quality records findings in DB and logs events."""
+    from story_lifecycle.orchestrator.evaluator_loop import (
+        run_code_review_loop,
+        AdversarialConfig,
+    )
+    from story_lifecycle.db import models as db
+
+    profile = {
+        "adversarial": {
+            "enabled": True,
+            "code_loop": {"enabled": True, "mode": "short_lived", "max_rounds": 3},
+        }
+    }
+    adv_config = AdversarialConfig.from_profile(profile)
+    db.upsert_story("CR-REV1", workspace=os.getcwd(), profile="minimal")
+
+    state = _make_state(story_key="CR-REV1", stage="implement")
+    stage_output = {"files_changed": ["auth.py"]}
+
+    review_result = {
+        "quality": "revise",
+        "issues": [
+            {
+                "type": "security",
+                "severity": "high",
+                "location": "auth.py:42",
+                "description": "Missing CSRF token",
+                "recommendation": "Add CSRF middleware",
+            },
+            {
+                "type": "testing",
+                "severity": "medium",
+                "location": "",
+                "description": "No unit tests",
+                "recommendation": "Add test_auth.py",
+            },
+        ],
+        "suggestions": [],
+        "trajectory_score": 0.4,
+        "reasoning": "Security issue found",
+    }
+
+    with patch(
+        "story_lifecycle.orchestrator.planner.review_stage", return_value=review_result
+    ):
+        result = run_code_review_loop(state, adv_config, stage_output)
+
+    assert result.decision == "revise"
+    assert result.rounds == 1
+
+    # Verify findings recorded in DB
+    findings = db.get_open_findings("CR-REV1", min_severity="low")
+    assert len(findings) == 2
+    severities = {f["severity"] for f in findings}
+    assert "high" in severities
+    assert "medium" in severities
+    descriptions = {f["description"] for f in findings}
+    assert "Missing CSRF token" in descriptions
+    assert "No unit tests" in descriptions
+
+    # Verify events logged
+    events = db.get_story_events("CR-REV1")
+    started = [e for e in events if e.get("event_type") == "evaluator_loop_started"]
+    assert len(started) == 1
+    rounds = [e for e in events if e.get("event_type") == "evaluator_loop_round"]
+    assert len(rounds) == 1
+    completed = [e for e in events if e.get("event_type") == "evaluator_loop_completed"]
+    assert len(completed) == 1
+    completed_payload = _parse_payload(completed[0])
+    assert completed_payload["decision"] == "revise"
+
+
+def test_code_review_loop_revise_builds_repair_packet(isolated_story_home):
+    """Revise quality builds repair packet file on disk."""
+    from story_lifecycle.orchestrator.evaluator_loop import (
+        run_code_review_loop,
+        AdversarialConfig,
+    )
+    from story_lifecycle.db import models as db
+    from pathlib import Path
+
+    workspace = str(isolated_story_home / "ws")
+    Path(workspace).mkdir(exist_ok=True)
+
+    profile = {
+        "adversarial": {
+            "enabled": True,
+            "code_loop": {"enabled": True, "mode": "short_lived", "max_rounds": 3},
+        }
+    }
+    adv_config = AdversarialConfig.from_profile(profile)
+    db.upsert_story("CR-RP1", workspace=workspace, profile="minimal")
+
+    state = _make_state(
+        story_key="CR-RP1", stage="implement", workspace=workspace, execution_count=1
+    )
+    stage_output = {"files_changed": ["auth.py"]}
+
+    review_result = {
+        "quality": "revise",
+        "issues": [
+            {
+                "type": "security",
+                "severity": "high",
+                "location": "auth.py:42",
+                "description": "Missing CSRF token",
+                "recommendation": "Add CSRF middleware",
+            }
+        ],
+        "suggestions": ["Fix security issue"],
+        "trajectory_score": 0.3,
+        "reasoning": "Needs fix",
+    }
+
+    with patch(
+        "story_lifecycle.orchestrator.planner.review_stage", return_value=review_result
+    ):
+        result = run_code_review_loop(state, adv_config, stage_output)
+
+    assert result.decision == "revise"
+    assert result.final_review is not None
+    repair_path = result.final_review.get("repair_packet_path")
+    assert repair_path is not None
+    assert "repair_implement_round2.md" in repair_path
+
+    # Verify file content
+    content = Path(repair_path).read_text(encoding="utf-8")
+    assert "Missing CSRF token" in content
+    assert "auth.py:42" in content
+
+
+def test_code_review_loop_handles_reviewer_json_failure(isolated_story_home):
+    """Reviewer raises exception -> result.decision == "fail", no findings created."""
+    from story_lifecycle.orchestrator.evaluator_loop import (
+        run_code_review_loop,
+        AdversarialConfig,
+    )
+    from story_lifecycle.db import models as db
+
+    profile = {
+        "adversarial": {
+            "enabled": True,
+            "code_loop": {"enabled": True, "mode": "short_lived", "max_rounds": 3},
+        }
+    }
+    adv_config = AdversarialConfig.from_profile(profile)
+    db.upsert_story("CR-FAIL1", workspace=os.getcwd(), profile="minimal")
+
+    state = _make_state(story_key="CR-FAIL1", stage="implement")
+    stage_output = {"files_changed": ["main.py"]}
+
+    with patch(
+        "story_lifecycle.orchestrator.planner.review_stage",
+        side_effect=RuntimeError("LLM connection refused"),
+    ):
+        result = run_code_review_loop(state, adv_config, stage_output)
+
+    assert result.decision == "fail"
+    assert "RuntimeError" in result.reason
+    assert result.rounds == 1
+
+    # No findings should have been created
+    findings = db.get_open_findings("CR-FAIL1", min_severity="low")
+    assert len(findings) == 0
+
+    # Events should still be logged (round + completed)
+    events = db.get_story_events("CR-FAIL1")
+    rounds = [e for e in events if e.get("event_type") == "evaluator_loop_round"]
+    assert len(rounds) == 1
+    completed = [e for e in events if e.get("event_type") == "evaluator_loop_completed"]
+    assert len(completed) == 1
+    completed_payload = _parse_payload(completed[0])
+    assert completed_payload["decision"] == "fail"
+
+
+def test_code_review_loop_records_prompt_tokens_estimation(isolated_story_home):
+    """Verify prompt_tokens.estimated == True in round event."""
+    from story_lifecycle.orchestrator.evaluator_loop import (
+        run_code_review_loop,
+        AdversarialConfig,
+    )
+    from story_lifecycle.db import models as db
+
+    profile = {
+        "adversarial": {
+            "enabled": True,
+            "code_loop": {"enabled": True, "mode": "short_lived", "max_rounds": 3},
+        }
+    }
+    adv_config = AdversarialConfig.from_profile(profile)
+    db.upsert_story("CR-TOK1", workspace=os.getcwd(), profile="minimal")
+
+    state = _make_state(story_key="CR-TOK1", stage="implement")
+    stage_output = {
+        "files_changed": ["a.py", "b.py"],
+        "diff": "X" * 400,
+        "summary": "Changes",
+    }
+
+    review_result = {
+        "quality": "pass",
+        "issues": [],
+        "suggestions": [],
+        "trajectory_score": 0.95,
+        "reasoning": "All good",
+    }
+
+    with patch(
+        "story_lifecycle.orchestrator.planner.review_stage", return_value=review_result
+    ):
+        result = run_code_review_loop(state, adv_config, stage_output)
+
+    assert result.decision == "pass"
+
+    # Check prompt_tokens in round event
+    events = db.get_story_events("CR-TOK1")
+    rounds = [e for e in events if e.get("event_type") == "evaluator_loop_round"]
+    assert len(rounds) == 1
+    round_payload = _parse_payload(rounds[0])
+    pt = round_payload.get("prompt_tokens", {})
+    assert pt.get("estimated") is True
+    assert pt.get("count", 0) > 0
