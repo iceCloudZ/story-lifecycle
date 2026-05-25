@@ -38,6 +38,7 @@ from ..orchestrator.entry import (
     has_stage_done,
     validate_stage_done,
     DoneStatus,
+    WorkspaceState,
     cli_exit_marker_path,
     resolve_cli_exit_state,
     CliExitState,
@@ -971,10 +972,18 @@ class StoryBoardApp(App):
         story_key = s["story_key"]
         session = ttyd.session_name(story_key)
 
-        from ..orchestrator.graph import is_story_running
+        from ..orchestrator.graph import is_story_running, is_workspace_locked
 
         is_running = is_story_running(story_key)
-        state = resolve_stage_state(s, self._session_backend, is_running)
+        ws = s.get("workspace", "")
+        ws_state = (
+            WorkspaceState.LOCKED_BY_OTHER
+            if ws and is_workspace_locked(ws)
+            else WorkspaceState.FREE
+        )
+        state = resolve_stage_state(
+            s, self._session_backend, is_running, workspace_state=ws_state
+        )
         action = decide_action(state, "e")
         _tui_debug(
             "enter_terminal_decision",
@@ -1224,6 +1233,10 @@ class StoryBoardApp(App):
             if not confirmed:
                 return
             _tui_debug("delete_story", story_key=key)
+            if is_running:
+                from ..orchestrator.graph import force_stop_story
+
+                force_stop_story(key)
             ttyd.kill_session(session)
             ttyd.stop_ttyd(key)
             delete_story(key)
@@ -1244,10 +1257,22 @@ class StoryBoardApp(App):
         key = s["story_key"]
         session = ttyd.session_name(key)
 
-        from ..orchestrator.graph import is_story_running, start_story_async
+        from ..orchestrator.graph import (
+            is_story_running,
+            start_story_async,
+            is_workspace_locked,
+        )
 
         is_running = is_story_running(key)
-        state = resolve_stage_state(s, self._session_backend, is_running)
+        ws = s.get("workspace", "")
+        ws_state = (
+            WorkspaceState.LOCKED_BY_OTHER
+            if ws and is_workspace_locked(ws)
+            else WorkspaceState.FREE
+        )
+        state = resolve_stage_state(
+            s, self._session_backend, is_running, workspace_state=ws_state
+        )
         action = decide_action(state, "r")
         _tui_debug(
             "resume_story_decision",
@@ -1258,10 +1283,8 @@ class StoryBoardApp(App):
 
         if action == StageEntryAction.START_OR_RESUME:
             if state == StageEntryState.IDLE_WITH_LIVE_SESSION:
-                self.notify(
-                    f"存在未管理的旧 session {session}，将启动新的执行。",
-                    severity="warning",
-                )
+                _tui_debug("cleanup_live_before_start", story_key=key)
+                ttyd.kill_session(session)
             db.update_story(key, status="active", last_error=None)
             if not is_story_running(key):
                 start_story_async(key)
@@ -1290,13 +1313,15 @@ class StoryBoardApp(App):
                 if not confirmed:
                     return
                 _tui_debug("cleanup_dead_and_restart", story_key=key)
+                from ..orchestrator.graph import force_stop_story
+
+                force_stop_story(key)
                 ttyd.delete_exited_session(session)
                 marker = cli_exit_marker_path(key)
                 if marker.exists():
                     marker.unlink()
                 db.update_story(key, status="active", last_error=None)
-                if not is_story_running(key):
-                    start_story_async(key)
+                start_story_async(key)
                 self.refresh_stories()
 
             self.push_screen(

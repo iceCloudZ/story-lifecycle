@@ -119,6 +119,37 @@ def is_story_running(story_key: str) -> bool:
         return story_key in _running_stories
 
 
+def force_stop_story(story_key: str) -> bool:
+    """Force-remove a story from the running guard and release its workspace lock.
+
+    Returns True if the story was running and was stopped.
+    WARNING: The background thread may still be executing — this only releases
+    the guard so a new execution can start. Use only for user-confirmed overrides.
+    """
+    import logging
+
+    log = logging.getLogger("story-lifecycle.graph")
+    with _running_lock:
+        was_running = story_key in _running_stories
+        if was_running:
+            _running_stories.discard(story_key)
+            log.warning(f"Force-stopped story {story_key} (guard released)")
+
+    # Also release workspace lock if held
+    story = db.get_story(story_key)
+    if story and story.get("workspace"):
+        release_workspace(story["workspace"])
+
+    return was_running
+
+
+def is_workspace_locked(workspace: str) -> bool:
+    """Check if a workspace lock is currently held."""
+    ws = str(workspace)
+    lock = _workspace_locks.get(ws)
+    return lock is not None and lock.locked()
+
+
 def build_graph() -> StateGraph:
     """Build and return the Story Lifecycle StateGraph."""
     graph = StateGraph(StoryState)
