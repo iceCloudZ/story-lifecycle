@@ -115,6 +115,8 @@ class RunStore:
         instances: list[SWEbenchInstance],
         agent: str = "claude",
         budget: str = "smoke",
+        mode: str = "benchmark",
+        gate_policy: str = "auto_fail",
     ) -> dict:
         run_dir = self.root / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -141,8 +143,8 @@ class RunStore:
             "agent": agent,
             "profile": "swebench",
             "budget": budget_cfg.to_dict(),
-            "mode": "benchmark",
-            "gate_policy": "auto_fail",
+            "mode": mode,
+            "gate_policy": gate_policy,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "instances": instance_entries,
         }
@@ -274,6 +276,15 @@ def checkout_instance(
                     "status": "checkout_failed",
                     "error": f"checkout failed: {r.stderr}",
                 }
+
+        # 验证 worktree clean
+        r = _run_git("status", "--porcelain", cwd=str(workspace))
+        if r.returncode == 0 and r.stdout.strip():
+            log.warning(
+                "Worktree not clean after checkout for %s: %s",
+                inst.instance_id,
+                r.stdout.strip()[:200],
+            )
 
         return {"status": "checked_out"}
 

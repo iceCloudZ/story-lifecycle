@@ -86,16 +86,47 @@ def swebench_group():
 @click.option(
     "--no-checkout", is_flag=True, help="跳过 git checkout（仅创建 manifest 和 Story）"
 )
+@click.option(
+    "--mode",
+    type=click.Choice(["benchmark", "development"]),
+    default="benchmark",
+    help="执行模式",
+)
+@click.option(
+    "--gate-policy",
+    type=click.Choice(["auto_fail", "auto_retry", "auto_accept_risk", "wait_confirm"]),
+    default=None,
+    help="Gate 策略（默认随 mode 自动选择）",
+)
 def prepare(
-    instances, run_id, workspace_root, agent, budget, limit, cache_root, no_checkout
+    instances,
+    run_id,
+    workspace_root,
+    agent,
+    budget,
+    limit,
+    cache_root,
+    no_checkout,
+    mode,
+    gate_policy,
 ):
     """准备 SWE-bench run：加载 instances、checkout repos、创建 Stories。"""
+    if gate_policy is None:
+        gate_policy = "wait_confirm" if mode == "development" else "auto_fail"
+
     console.print(f"[bold]加载 instances:[/] {instances}")
     inst_list = load_instances_jsonl(instances, limit=limit)
     console.print(f"  共 {len(inst_list)} 个 instances")
 
     store = RunStore(workspace_root)
-    store.create_run(run_id=run_id, instances=inst_list, agent=agent, budget=budget)
+    store.create_run(
+        run_id=run_id,
+        instances=inst_list,
+        agent=agent,
+        budget=budget,
+        mode=mode,
+        gate_policy=gate_policy,
+    )
     console.print(f"  Run 目录: [dim]{workspace_root / run_id}[/]")
 
     prepared = 0
@@ -266,6 +297,18 @@ def summarize_cmd(run_id, workspace_root):
 @click.option(
     "--evaluate", is_flag=True, default=False, help="调用官方 harness（P0 不支持）"
 )
+@click.option(
+    "--mode",
+    type=click.Choice(["benchmark", "development"]),
+    default="benchmark",
+    help="执行模式",
+)
+@click.option(
+    "--gate-policy",
+    type=click.Choice(["auto_fail", "auto_retry", "auto_accept_risk", "wait_confirm"]),
+    default=None,
+    help="Gate 策略（默认随 mode 自动选择）",
+)
 @click.pass_context
 def run(
     ctx,
@@ -278,6 +321,8 @@ def run(
     no_start,
     no_checkout,
     evaluate,
+    mode,
+    gate_policy,
 ):
     """完整 run：prepare -> solve -> export -> summarize。"""
     if evaluate:
@@ -296,6 +341,8 @@ def run(
         limit=limit,
         cache_root=Path.home() / ".cache" / "story-lifecycle" / "swebench" / "repos",
         no_checkout=no_checkout,
+        mode=mode,
+        gate_policy=gate_policy,
     )
 
     if not no_start:
