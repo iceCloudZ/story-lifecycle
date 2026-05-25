@@ -3,7 +3,14 @@
 import json
 from pathlib import Path
 
-from story_lifecycle.benchmarks.swebench import load_instances_jsonl
+import pytest
+
+from story_lifecycle.benchmarks.swebench import (
+    BudgetConfig,
+    RunStore,
+    SWEbenchInstance,
+    load_instances_jsonl,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -86,3 +93,78 @@ class TestLoadInstances:
         assert inst.version == ""
         assert inst.FAIL_TO_PASS is None
         assert inst.PASS_TO_PASS is None
+
+
+class TestRunStore:
+    def test_create_run_creates_manifest(self, tmp_path):
+        store = RunStore(tmp_path)
+        manifest = store.create_run(
+            run_id="smoke-001",
+            instances=[
+                SWEbenchInstance(
+                    "django__django-12345", "django/django", "abc123", "ps"
+                ),
+            ],
+            agent="claude",
+            budget="smoke",
+        )
+        assert manifest["run_id"] == "smoke-001"
+        assert manifest["agent"] == "claude"
+        assert manifest["budget"]["name"] == "smoke"
+        assert len(manifest["instances"]) == 1
+        assert manifest["instances"][0]["instance_id"] == "django__django-12345"
+        assert manifest["instances"][0]["status"] == "prepared"
+
+    def test_create_run_writes_manifest_file(self, tmp_path):
+        store = RunStore(tmp_path)
+        store.create_run(run_id="smoke-001", instances=[], agent="claude")
+        manifest_path = tmp_path / "smoke-001" / "manifest.json"
+        assert manifest_path.exists()
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert data["run_id"] == "smoke-001"
+
+    def test_create_run_creates_instance_workspaces(self, tmp_path):
+        store = RunStore(tmp_path)
+        store.create_run(
+            run_id="r1",
+            instances=[
+                SWEbenchInstance("django__django-12345", "django/django", "abc", "ps"),
+                SWEbenchInstance("flask__flask-99", "flask/flask", "def", "ps2"),
+            ],
+            agent="claude",
+        )
+        assert (tmp_path / "r1" / "django__django-12345").is_dir()
+        assert (tmp_path / "r1" / "flask__flask-99").is_dir()
+
+    def test_update_instance_status(self, tmp_path):
+        store = RunStore(tmp_path)
+        store.create_run(
+            run_id="r1",
+            instances=[SWEbenchInstance("inst-1", "a/b", "c", "ps")],
+            agent="claude",
+        )
+        store.update_instance(
+            "r1",
+            "inst-1",
+            status="checkout_failed",
+            failure_type="checkout_failure",
+            error="network",
+        )
+        manifest = store.load_manifest("r1")
+        assert manifest["instances"][0]["status"] == "checkout_failed"
+        assert manifest["instances"][0]["failure_type"] == "checkout_failure"
+
+    def test_load_manifest_not_found(self, tmp_path):
+        store = RunStore(tmp_path)
+        with pytest.raises(FileNotFoundError):
+            store.load_manifest("nonexistent")
+
+    def test_budget_smoke_defaults(self):
+        cfg = BudgetConfig(name="smoke")
+        assert cfg.max_rounds == 1
+        assert cfg.timeout_seconds == 1800
+
+    def test_budget_leaderboard(self):
+        cfg = BudgetConfig(name="leaderboard")
+        assert cfg.max_rounds == 5
+        assert cfg.timeout_seconds == 7200
