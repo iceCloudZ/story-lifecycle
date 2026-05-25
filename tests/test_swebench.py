@@ -121,6 +121,9 @@ class TestRunStore:
         assert manifest["budget"]["name"] == "smoke"
         assert len(manifest["instances"]) == 1
         assert manifest["instances"][0]["instance_id"] == "django__django-12345"
+        assert (
+            manifest["instances"][0]["story_key"] == "smoke-001__django__django-12345"
+        )
         assert manifest["instances"][0]["status"] == "prepared"
 
     def test_create_run_writes_manifest_file(self, tmp_path):
@@ -295,7 +298,8 @@ class TestPrepareInstance:
         result = prepare_instance(inst, workspace=ws, run_id="r1")
 
         assert result["status"] == "prepared"
-        story = db.get_story("inst-1")
+        assert result["story_key"] == "r1__inst-1"
+        story = db.get_story("r1__inst-1")
         assert story is not None
         assert story["profile"] == "swebench"
         assert story["workspace"] == str(ws)
@@ -317,7 +321,7 @@ class TestPrepareInstance:
 
         prepare_instance(inst, workspace=ws, run_id="r1")
 
-        story = db.get_story("inst-2")
+        story = db.get_story("r1__inst-2")
         ctx = json.loads(story["context_json"])
         assert ctx["benchmark"] == "swebench"
         assert ctx["run_id"] == "r1"
@@ -342,7 +346,7 @@ class TestPrepareInstance:
 
         prepare_instance(inst, workspace=ws, run_id="r1")
 
-        story = db.get_story("inst-3")
+        story = db.get_story("r1__inst-3")
         assert story["title"] == "This is a long problem"
 
 
@@ -353,7 +357,8 @@ class TestExportPredictions:
         run_dir = tmp_path / "r1"
         ws = run_dir / "inst-1"
         ws.mkdir(parents=True)
-        done_dir = ws / ".story-done" / "inst-1"
+        story_key = "r1__inst-1"
+        done_dir = ws / ".story-done" / story_key
         done_dir.mkdir(parents=True)
         done_dir.joinpath("finalize.json").write_text(
             json.dumps(
@@ -380,7 +385,8 @@ class TestExportPredictions:
         run_dir = tmp_path / "r1"
         ws = run_dir / "inst-1"
         ws.mkdir(parents=True)
-        done_dir = ws / ".story-done" / "inst-1"
+        story_key = "r1__inst-1"
+        done_dir = ws / ".story-done" / story_key
         done_dir.mkdir(parents=True)
         done_dir.joinpath("finalize.json").write_text(
             json.dumps(
@@ -540,9 +546,9 @@ class TestE2ESmoke:
         )
         assert len(manifest["instances"]) == 3
 
-        # 验证 Story 创建
+        # 验证 Story 创建（run-scoped key）
         for i in range(3):
-            story = db.get_story(f"test-{i}")
+            story = db.get_story(f"e2e-1__test-{i}")
             assert story is not None
             assert story["profile"] == "swebench"
 

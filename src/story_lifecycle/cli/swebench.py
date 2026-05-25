@@ -1,6 +1,7 @@
 """`story swebench` — SWE-bench benchmark runner 命令组。"""
 
 import json
+import time
 import click
 from pathlib import Path
 from rich.console import Console
@@ -15,6 +16,37 @@ from ..benchmarks.swebench import (
 from ..db.models import init_db
 
 console = Console()
+
+_TERMINAL_STATUSES = {"completed", "blocked", "aborted", "failed"}
+
+
+def _wait_for_completion(workspace_root: Path, run_id: str, poll_interval: int = 30):
+    """等待 run 中所有 story 到达终态。"""
+    from ..db import models as db
+
+    store = RunStore(workspace_root)
+    manifest = store.load_manifest(run_id)
+    story_keys = [e["story_key"] for e in manifest["instances"]]
+
+    console.print(
+        f"\n[dim]等待 {len(story_keys)} 个 story 完成（每 {poll_interval}s 检查）...[/]"
+    )
+    pending = set(story_keys)
+
+    while pending:
+        time.sleep(poll_interval)
+        still_pending = set()
+        for key in pending:
+            story = db.get_story(key)
+            if story and story.get("status") in _TERMINAL_STATUSES:
+                console.print(f"  [green]✓[/] {key}: {story['status']}")
+            else:
+                still_pending.add(key)
+        pending = still_pending
+        if pending:
+            console.print(f"  [dim]{len(pending)} 个仍在运行...[/]")
+
+    console.print("[bold]所有 story 已完成。[/]")
 
 
 @click.group(name="swebench")
@@ -248,6 +280,12 @@ def run(
     evaluate,
 ):
     """完整 run：prepare -> solve -> export -> summarize。"""
+    if evaluate:
+        console.print(
+            "[red]Error:[/] --evaluate requires official SWE-bench harness (P1). "
+            "Use `story swebench export` + `story swebench eval` manually."
+        )
+        raise SystemExit(1)
     ctx.invoke(
         prepare,
         instances=instances,
@@ -262,6 +300,7 @@ def run(
 
     if not no_start:
         ctx.invoke(solve, run_id=run_id, workspace_root=workspace_root)
+        _wait_for_completion(workspace_root, run_id)
 
     ctx.invoke(export, run_id=run_id, workspace_root=workspace_root, agent=agent)
 

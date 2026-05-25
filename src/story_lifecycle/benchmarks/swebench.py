@@ -124,10 +124,11 @@ class RunStore:
         for inst in instances:
             ws = run_dir / inst.instance_id
             ws.mkdir(exist_ok=True)
+            story_key = f"{run_id}__{inst.instance_id}"
             instance_entries.append(
                 {
                     "instance_id": inst.instance_id,
-                    "story_key": inst.instance_id,
+                    "story_key": story_key,
                     "repo": inst.repo,
                     "base_commit": inst.base_commit,
                     "workspace": str(ws),
@@ -280,6 +281,11 @@ def checkout_instance(
         return {"status": "checkout_failed", "error": str(e)}
 
 
+def _story_key_for(run_id: str, instance_id: str) -> str:
+    """生成 run-scoped story_key，避免跨 run 冲突。"""
+    return f"{run_id}__{instance_id}"
+
+
 def prepare_instance(
     inst: SWEbenchInstance,
     workspace: Path,
@@ -291,6 +297,7 @@ def prepare_instance(
     返回结果 dict，包含 status 和可选的 error。
     """
     workspace = Path(workspace)
+    story_key = _story_key_for(run_id, inst.instance_id)
 
     # 1. 写 PRD markdown
     prd_dir = workspace / "prd"
@@ -317,23 +324,19 @@ def prepare_instance(
         "prd_path": str(prd_path),
     }
 
-    # 4. 创建 Story
+    # 4. 创建 Story（使用 run-scoped key）
     db.upsert_story(
-        story_key=inst.instance_id,
+        story_key=story_key,
         title=title,
         workspace=str(workspace),
         profile="swebench",
         current_stage="design",
         status="active",
     )
-    db.update_story(
-        inst.instance_id, context_json=json.dumps(context, ensure_ascii=False)
-    )
-    db.update_story(
-        inst.instance_id, source_type="swebench", source_id=inst.instance_id
-    )
+    db.update_story(story_key, context_json=json.dumps(context, ensure_ascii=False))
+    db.update_story(story_key, source_type="swebench", source_id=inst.instance_id)
 
-    return {"status": "prepared", "story_key": inst.instance_id}
+    return {"status": "prepared", "story_key": story_key}
 
 
 def _render_prd(inst: SWEbenchInstance) -> str:
