@@ -320,6 +320,7 @@ def prepare_instance(
     workspace: Path,
     run_id: str,
     agent: str = "claude",
+    budget: str = "smoke",
 ) -> dict:
     """将 SWE-bench instance 映射为 Story：写 PRD、设 context_json、创建 DB 记录。
 
@@ -339,6 +340,7 @@ def prepare_instance(
     title = inst.problem_statement.split("\n")[0][:80]
 
     # 3. 构造 context_json
+    budget_cfg = BudgetConfig(name=budget)
     context = {
         "benchmark": "swebench",
         "run_id": run_id,
@@ -351,6 +353,7 @@ def prepare_instance(
         "fail_to_pass": inst.FAIL_TO_PASS or [],
         "pass_to_pass": inst.PASS_TO_PASS or [],
         "prd_path": str(prd_path),
+        "budget": budget_cfg.to_dict(),
     }
 
     # 4. 创建 Story（使用 run-scoped key）

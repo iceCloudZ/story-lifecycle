@@ -46,6 +46,12 @@ def swebench_group():
 )
 @click.option("--limit", type=int, default=None, help="最大 instance 数量")
 @click.option(
+    "--subset",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="固定 subset 文件（每行一个 instance_id）",
+)
+@click.option(
     "--cache-root",
     type=click.Path(path_type=Path),
     default=Path.home() / ".cache" / "story-lifecycle" / "swebench" / "repos",
@@ -79,6 +85,7 @@ def prepare(
     agent,
     budget,
     limit,
+    subset,
     cache_root,
     no_checkout,
     repo_url_template,
@@ -92,6 +99,16 @@ def prepare(
     console.print(f"[bold]加载 instances:[/] {instances}")
     inst_list = load_instances_jsonl(instances, limit=limit)
     console.print(f"  共 {len(inst_list)} 个 instances")
+
+    # Filter by subset file if provided
+    if subset:
+        subset_ids = {
+            line.strip()
+            for line in subset.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+        inst_list = [i for i in inst_list if i.instance_id in subset_ids]
+        console.print(f"  Subset 过滤后: {len(inst_list)} 个")
 
     store = RunStore(workspace_root)
     store.create_run(
@@ -127,7 +144,9 @@ def prepare(
                 failed += 1
                 continue
 
-        result = prepare_instance(inst, workspace=ws, run_id=run_id, agent=agent)
+        result = prepare_instance(
+            inst, workspace=ws, run_id=run_id, agent=agent, budget=budget
+        )
         console.print(f"  [green]✓[/] {inst.instance_id}")
         prepared += 1
 
@@ -218,6 +237,93 @@ def export(run_id, workspace_root, agent):
             console.print(f"  - {e['instance_id']}: {', '.join(e['noise_tags'])}")
 
 
+@swebench_group.command()
+@click.option("--run-id", required=True, help="Run ID")
+@click.option(
+    "--workspace-root",
+    type=click.Path(path_type=Path),
+    default=Path(".story-runs/swebench"),
+    help="Run 根目录",
+)
+@click.option("--extra-args", default="", help="传递给 swebench harness 的额外参数")
+def eval(run_id, workspace_root, extra_args):
+    """调用官方 SWE-bench harness 评估 predictions。"""
+    import subprocess
+    import shutil
+
+    pred_path = workspace_root / run_id / "predictions.jsonl"
+    if not pred_path.exists():
+        console.print(f"[red]Error:[/] predictions 文件不存在: {pred_path}")
+        console.print("请先运行 `story swebench export --run-id {run_id}`")
+        raise SystemExit(1)
+
+    # Check swebench package
+    try:
+        result = subprocess.run(
+            ["python", "-c", "import swebench; print(swebench.__version__)"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            raise FileNotFoundError
+        version = result.stdout.strip()
+        console.print(f"  swebench {version}")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        console.print("[red]Error:[/] swebench 未安装。安装: pip install swebench")
+        raise SystemExit(1)
+
+    # Check Docker
+    if not shutil.which("docker"):
+        console.print("[red]Error:[/] Docker 未找到。SWE-bench harness 需要 Docker。")
+        raise SystemExit(1)
+
+    # Run harness
+    cmd = [
+        "python",
+        "-m",
+        "swebench.harness.run_evaluation",
+        "--predictions_path",
+        str(pred_path),
+        "--run_id",
+        run_id,
+    ]
+    if extra_args:
+        cmd.extend(extra_args.split())
+
+    console.print("[bold]运行 SWE-bench harness...[/]")
+    console.print(f"  [dim]{' '.join(cmd)}[/]")
+
+    eval_output = workspace_root / run_id / "eval_output.log"
+    with open(eval_output, "w", encoding="utf-8") as log_file:
+        result = subprocess.run(
+            cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd=str(workspace_root / run_id),
+        )
+
+    if result.returncode != 0:
+        console.print(f"[red]✗[/] Harness 失败 (exit {result.returncode})")
+        console.print(f"  日志: [dim]{eval_output}[/]")
+    else:
+        console.print("[green]✓[/] Harness 完成")
+        console.print(f"  日志: [dim]{eval_output}[/]")
+
+    # Update summary with eval results
+    summary_path = workspace_root / run_id / "summary.json"
+    if summary_path.exists():
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    else:
+        summary = {"run_id": run_id}
+    summary["evaluated"] = True
+    summary["eval_returncode"] = result.returncode
+    summary_path.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 @swebench_group.command("summarize")
 @click.option("--run-id", required=True, help="Run ID")
 @click.option(
@@ -227,13 +333,17 @@ def export(run_id, workspace_root, agent):
     help="Run 根目录",
 )
 def summarize_cmd(run_id, workspace_root):
-    """生成 run summary。"""
+    """生成 run summary（含失败聚合、轮次/耗时汇总）。"""
+    from ..db import models as db
+
     store = RunStore(workspace_root)
     manifest = store.load_manifest(run_id)
 
     total = len(manifest["instances"])
     by_status: dict[str, int] = {}
     by_failure: dict[str, int] = {}
+    total_rounds = 0
+    instance_count = 0
 
     for entry in manifest["instances"]:
         status = entry.get("status", "unknown")
@@ -241,6 +351,11 @@ def summarize_cmd(run_id, workspace_root):
         ft = entry.get("failure_type")
         if ft:
             by_failure[ft] = by_failure.get(ft, 0) + 1
+        # Aggregate execution rounds from DB
+        story = db.get_story(entry["story_key"])
+        if story:
+            total_rounds += story.get("execution_count", 0)
+            instance_count += 1
 
     predictions_path = workspace_root / run_id / "predictions.jsonl"
     pred_count = 0
@@ -255,6 +370,7 @@ def summarize_cmd(run_id, workspace_root):
         **by_status,
         "predictions": pred_count,
         "failures": by_failure,
+        "avg_rounds": round(total_rounds / instance_count, 1) if instance_count else 0,
     }
 
     summary_path = workspace_root / run_id / "summary.json"
@@ -293,7 +409,7 @@ def summarize_cmd(run_id, workspace_root):
 @click.option("--no-start", is_flag=True, help="只 prepare 不 solve")
 @click.option("--no-checkout", is_flag=True, help="跳过 git checkout")
 @click.option(
-    "--evaluate", is_flag=True, default=False, help="调用官方 harness（P0 不支持）"
+    "--evaluate", is_flag=True, default=False, help="完成后调用官方 harness 评估"
 )
 @click.option(
     "--repo-url-template",
@@ -328,13 +444,7 @@ def run(
     mode,
     gate_policy,
 ):
-    """完整 run：prepare -> solve -> export -> summarize。"""
-    if evaluate:
-        console.print(
-            "[red]Error:[/] --evaluate requires official SWE-bench harness (P1). "
-            "Use `story swebench export` + `story swebench eval` manually."
-        )
-        raise SystemExit(1)
+    """完整 run：prepare -> solve -> export -> summarize -> eval。"""
     ctx.invoke(
         prepare,
         instances=instances,
@@ -356,3 +466,6 @@ def run(
     ctx.invoke(export, run_id=run_id, workspace_root=workspace_root, agent=agent)
 
     ctx.invoke(summarize_cmd, run_id=run_id, workspace_root=workspace_root)
+
+    if evaluate:
+        ctx.invoke(eval, run_id=run_id, workspace_root=workspace_root)

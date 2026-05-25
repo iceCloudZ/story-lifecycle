@@ -155,6 +155,13 @@ class BaseTool:
         state["stage_start_time"] = time.time()
         state["last_error"] = None
 
+        # Budget-aware timeout: read from context (swebench manifest stores it)
+        timeout = _HEADLESS_TIMEOUT
+        ctx = state.get("context") or {}
+        budget = ctx.get("budget")
+        if isinstance(budget, dict) and budget.get("timeout_seconds"):
+            timeout = budget["timeout_seconds"]
+
         db.log_event(
             key,
             state["current_stage"],
@@ -169,7 +176,9 @@ class BaseTool:
         )
         db.update_story(key, execution_count=state["execution_count"], last_error=None)
 
-        log.info("Headless mode: running %s for %s", adapter_name, key)
+        log.info(
+            "Headless mode: running %s for %s (timeout=%ds)", adapter_name, key, timeout
+        )
         try:
             result = subprocess.run(
                 cmd,
@@ -178,7 +187,7 @@ class BaseTool:
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=_HEADLESS_TIMEOUT,
+                timeout=timeout,
                 shell=subprocess_needs_shell(),
             )
             if result.returncode != 0:
