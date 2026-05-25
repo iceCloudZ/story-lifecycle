@@ -457,14 +457,25 @@ def start_story_async(story_key: str):
     _executor.submit(run_story, story_key, epoch)
 
 
+def resume_story_async(story_key: str):
+    """Async wrapper: submits resume_story to the executor thread pool.
+
+    Unlike resume_story() which blocks on compiled.invoke(), this returns
+    immediately. Use for startup recovery to avoid blocking server init.
+    """
+    _executor.submit(resume_story, story_key)
+
+
 def recover_orphan_stories():
-    """On startup, resume all active stories via resume_story.
+    """On startup, resume all active stories via resume_story_async.
 
     Uses resume_story (not start_story_async) because orphaned stories have
     an existing checkpoint with a stored _epoch. resume_story reads the
     checkpoint epoch and restores it, preventing self-cancellation.
+
+    Submits via executor so orphan recovery doesn't block server startup.
     """
     stories = db.list_active_stories()
     for s in stories:
-        resume_story(s["story_key"])
+        resume_story_async(s["story_key"])
     return len(stories)
