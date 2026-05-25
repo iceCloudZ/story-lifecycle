@@ -87,6 +87,12 @@ def swebench_group():
     "--no-checkout", is_flag=True, help="跳过 git checkout（仅创建 manifest 和 Story）"
 )
 @click.option(
+    "--repo-url-template",
+    default="https://github.com/{repo}.git",
+    help="Repo clone URL 模板，{repo} 替换为 owner/name。"
+    "Gitee 示例: https://gitee.com/mirrors/{name}.git",
+)
+@click.option(
     "--mode",
     type=click.Choice(["benchmark", "development"]),
     default="benchmark",
@@ -107,6 +113,7 @@ def prepare(
     limit,
     cache_root,
     no_checkout,
+    repo_url_template,
     mode,
     gate_policy,
 ):
@@ -135,7 +142,9 @@ def prepare(
         ws = workspace_root / run_id / inst.instance_id
 
         if not no_checkout:
-            result = checkout_instance(inst, ws, cache_root)
+            result = checkout_instance(
+                inst, ws, cache_root, repo_url_template=repo_url_template
+            )
             if result["status"] == "checkout_failed":
                 console.print(
                     f"  [red]✗[/] {inst.instance_id}: checkout 失败 — {result['error'][:60]}"
@@ -298,6 +307,11 @@ def summarize_cmd(run_id, workspace_root):
     "--evaluate", is_flag=True, default=False, help="调用官方 harness（P0 不支持）"
 )
 @click.option(
+    "--repo-url-template",
+    default="https://github.com/{repo}.git",
+    help="Repo clone URL 模板，同 prepare",
+)
+@click.option(
     "--mode",
     type=click.Choice(["benchmark", "development"]),
     default="benchmark",
@@ -321,6 +335,7 @@ def run(
     no_start,
     no_checkout,
     evaluate,
+    repo_url_template,
     mode,
     gate_policy,
 ):
@@ -341,6 +356,7 @@ def run(
         limit=limit,
         cache_root=Path.home() / ".cache" / "story-lifecycle" / "swebench" / "repos",
         no_checkout=no_checkout,
+        repo_url_template=repo_url_template,
         mode=mode,
         gate_policy=gate_policy,
     )

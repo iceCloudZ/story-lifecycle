@@ -187,7 +187,17 @@ def _run_git(
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
 
 
-def _ensure_cache(cache_root: Path, repo: str) -> Path:
+def _build_repo_url(repo: str, template: str) -> str:
+    """根据模板构建 repo clone URL。支持 {repo} 和 {name} 占位符。"""
+    owner, name = repo.split("/", 1) if "/" in repo else ("", repo)
+    return template.format(repo=repo, owner=owner, name=name)
+
+
+def _ensure_cache(
+    cache_root: Path,
+    repo: str,
+    repo_url_template: str = "https://github.com/{repo}.git",
+) -> Path:
     """确保 mirror cache 存在。返回 cache repo 路径。进程级文件锁保护。"""
     from filelock import FileLock
 
@@ -201,10 +211,12 @@ def _ensure_cache(cache_root: Path, repo: str) -> Path:
             log.info("Updating cache for %s", repo)
             r = _run_git("remote", "update", "--prune", cwd=str(cache_repo))
             if r.returncode != 0:
-                log.warning("Cache update failed for %s: %s", repo, r.stderr)
+                log.warning(
+                    "Cache update failed for %s (using stale cache): %s", repo, r.stderr
+                )
         else:
             log.info("Creating mirror cache for %s", repo)
-            repo_url = f"https://github.com/{repo}.git"
+            repo_url = _build_repo_url(repo, repo_url_template)
             r = _run_git("clone", "--mirror", repo_url, str(cache_repo))
             if r.returncode != 0:
                 raise RuntimeError(f"Mirror clone failed for {repo}: {r.stderr}")
@@ -216,17 +228,20 @@ def checkout_instance(
     inst: SWEbenchInstance,
     workspace: Path,
     cache_root: Path,
+    repo_url_template: str = "https://github.com/{repo}.git",
 ) -> dict:
     """将 SWE-bench instance 的 repo checkout 到 base_commit。
 
     返回结果 dict，包含 status 和可选的 error。
     """
     workspace = Path(workspace)
-    repo_url = f"https://github.com/{inst.repo}.git"
+    repo_url = _build_repo_url(inst.repo, repo_url_template)
 
     try:
         try:
-            cache_repo = _ensure_cache(cache_root, inst.repo)
+            cache_repo = _ensure_cache(
+                cache_root, inst.repo, repo_url_template=repo_url_template
+            )
             cache_available = True
         except RuntimeError as e:
             log.warning("Cache setup 失败，回退到直接 clone: %s", e)
@@ -264,11 +279,14 @@ def checkout_instance(
                     "error": f"clone failed: {r.stderr}",
                 }
 
-            r = _run_git("fetch", "origin", inst.base_commit, cwd=str(workspace))
+            r = _run_git("fetch", "--unshallow", "origin", cwd=str(workspace))
+            if r.returncode != 0:
+                log.warning("unshallow failed, trying full fetch: %s", r.stderr)
+                r = _run_git("fetch", "origin", cwd=str(workspace))
             if r.returncode != 0:
                 return {
                     "status": "checkout_failed",
-                    "error": f"fetch commit failed: {r.stderr}",
+                    "error": f"fetch failed: {r.stderr}",
                 }
             r = _run_git("checkout", inst.base_commit, cwd=str(workspace))
             if r.returncode != 0:
