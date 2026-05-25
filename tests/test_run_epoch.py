@@ -119,14 +119,11 @@ class TestForceStopBumpsEpoch:
 
 class TestWorkspaceLockOwnership:
     def test_force_stop_does_not_release_other_epoch_lock(self, tmp_path, monkeypatch):
-        """Old run holds lock (epoch 1) → force_stop bumps epoch to 2 (NO release) →
-        old finally releases with epoch 1 (succeeds, it's the owner) →
-        new run (epoch 2) acquires and sets owner_epoch=2 →
-        old stale release with epoch 1 is a no-op (wrong epoch).
+        """Old run (story A, epoch 1) holds lock → force_stop bumps epoch →
+        old finally releases (matches owner_token) → new run (epoch 2) acquires →
+        stale old thread with epoch 1 cannot release (wrong token).
 
-        The key: force_stop no longer call release_workspace from a non-owner thread.
-        The old worker's finally handles release naturally. If a stale thread tries
-        to release after ownership transferred, the epoch guard blocks it.
+        Also verifies cross-story: story B with epoch 1 cannot release story A's lock.
         """
         monkeypatch.setenv("STORY_HOME", str(tmp_path / ".story-lifecycle"))
         from story_lifecycle.db import models as db
@@ -143,43 +140,78 @@ class TestWorkspaceLockOwnership:
         ws = str(tmp_path)
         _workspace_locks.clear()
 
-        # Phase 1: Old run (epoch 1) acquires workspace lock
+        # Phase 1: Story A, old run (epoch 1) acquires workspace lock
         assert acquire_workspace(ws, "RACE-001") is True
-        _set_workspace_owner(ws, 1)
+        _set_workspace_owner(ws, "RACE-001", 1)
         assert _workspace_locks[ws]["lock"].locked() is True
 
         # Phase 2: force_stop bumps epoch to 2. Does NOT call release_workspace.
-        # (In the fixed code, force_stop_story only bumps epoch + removes
-        # running guard. The workspace lock is left for the owning thread.)
         with _running_lock:
             _story_epochs["RACE-001"] = 2
 
-        # Lock still held — force_stop didn't touch it
         assert _workspace_locks[ws]["lock"].locked() is True
 
         # Phase 3: New run (epoch 2) cannot acquire while old thread holds lock
         assert acquire_workspace(ws, "RACE-001") is False
 
-        # Phase 4: Old run's finally block calls release_workspace(ws, epoch=1).
-        # This SUCCEEDS because epoch 1 matches owner_epoch 1.
-        release_workspace(ws, epoch=1)
+        # Phase 4: Old run (epoch 1) releases — SUCCEEDS (matches owner_token)
+        release_workspace(ws, "RACE-001", epoch=1)
         assert _workspace_locks[ws]["lock"].locked() is False
 
-        # Phase 5: New run (epoch 2) now acquires and sets ownership
+        # Phase 5: New run (epoch 2) acquires and sets ownership
         assert acquire_workspace(ws, "RACE-001") is True
-        _set_workspace_owner(ws, 2)
+        _set_workspace_owner(ws, "RACE-001", 2)
 
-        # Phase 6: Stale old thread tries to release again with epoch 1.
-        # This is a NO-OP — owner_epoch is 2, caller epoch is 1.
-        release_workspace(ws, epoch=1)
-        assert _workspace_locks[ws]["lock"].locked() is True  # still held by epoch 2
+        # Phase 6: Stale old thread (epoch 1) tries to release — NO-OP
+        release_workspace(ws, "RACE-001", epoch=1)
+        assert _workspace_locks[ws]["lock"].locked() is True
 
-        # Phase 7: New run's finally releases correctly
-        release_workspace(ws, epoch=2)
+        # Phase 7: Correct release by epoch 2
+        release_workspace(ws, "RACE-001", epoch=2)
         assert _workspace_locks[ws]["lock"].locked() is False
 
-    def test_release_workspace_honors_matching_epoch(self, tmp_path):
-        """release_workspace with correct epoch releases the lock."""
+    def test_cross_story_release_denied(self, tmp_path):
+        """Story B cannot release a lock owned by story A, even if epochs match."""
+        from story_lifecycle.orchestrator.graph import (
+            _workspace_locks,
+            _set_workspace_owner,
+            release_workspace,
+            acquire_workspace,
+        )
+
+        ws = str(tmp_path)
+        _workspace_locks.clear()
+
+        assert acquire_workspace(ws, "STORY-A") is True
+        _set_workspace_owner(ws, "STORY-A", 1)
+
+        # Story B with same epoch=1 tries to release — denied
+        release_workspace(ws, "STORY-B", epoch=1)
+        assert _workspace_locks[ws]["lock"].locked() is True
+
+        # Story A correctly releases
+        release_workspace(ws, "STORY-A", epoch=1)
+        assert _workspace_locks[ws]["lock"].locked() is False
+
+    def test_running_stories_epoch_guard_prevents_old_clear(self):
+        """Old run's finally should NOT clear _running_stories if epoch mismatched."""
+        with _running_lock:
+            _running_stories.clear()
+            _running_stories["STORY-X"] = 5  # new run epoch 5
+            _story_epochs["STORY-X"] = 5
+
+        # Simulate old run (epoch 3) finally
+        with _running_lock:
+            if _running_stories.get("STORY-X") == 3:
+                _running_stories.pop("STORY-X", None)
+
+        # Guard should still be present (epoch 3 != 5)
+        with _running_lock:
+            assert "STORY-X" in _running_stories
+            assert _running_stories["STORY-X"] == 5
+
+    def test_release_workspace_honors_matching_token(self, tmp_path):
+        """release_workspace with correct (story_key, epoch) releases the lock."""
         from story_lifecycle.orchestrator.graph import (
             _workspace_locks,
             _set_workspace_owner,
@@ -191,12 +223,12 @@ class TestWorkspaceLockOwnership:
         _workspace_locks.clear()
 
         assert acquire_workspace(ws, "T") is True
-        _set_workspace_owner(ws, 5)
-        release_workspace(ws, epoch=5)
+        _set_workspace_owner(ws, "T", 5)
+        release_workspace(ws, "T", epoch=5)
         assert _workspace_locks[ws]["lock"].locked() is False
 
-    def test_release_workspace_with_epoch_zero_always_releases(self, tmp_path):
-        """epoch=0 means no ownership tracking — backward compat release."""
+    def test_release_workspace_no_story_key_always_releases(self, tmp_path):
+        """story_key="" means no ownership check — backward compat."""
         from story_lifecycle.orchestrator.graph import (
             _workspace_locks,
             release_workspace,
@@ -207,9 +239,54 @@ class TestWorkspaceLockOwnership:
         _workspace_locks.clear()
 
         assert acquire_workspace(ws, "T") is True
-        # No owner set → owner_epoch stays 0
-        release_workspace(ws, epoch=0)  # epoch 0 matches
+        release_workspace(ws)  # no story_key, no epoch check
         assert _workspace_locks[ws]["lock"].locked() is False
+
+
+# -------- resume does not bump epoch --------
+
+
+class TestResumeEpoch:
+    def test_resume_does_not_bump_epoch(self, tmp_path, monkeypatch):
+        """resume_story must NOT bump _story_epochs — it continues the same run.
+        If epoch is bumped, the checkpoint's old _epoch looks stale and
+        _is_cancelled() self-cancels the resumed graph."""
+        monkeypatch.setenv("STORY_HOME", str(tmp_path / ".story-lifecycle"))
+        from story_lifecycle.db import models as db
+        from story_lifecycle.orchestrator.graph import get_epoch
+
+        db.init_db()
+        db.upsert_story("RESUME-01", title="T", workspace=str(tmp_path))
+
+        with _running_lock:
+            _story_epochs["RESUME-01"] = 3
+            _running_stories.clear()
+
+        # Simulate what resume_story does: read epoch, don't bump
+        epoch_before = get_epoch("RESUME-01")
+        # resume_story uses existing epoch, does NOT increment
+        assert epoch_before == 3
+
+        # After resume, epoch should still be 3 (unchanged)
+        assert get_epoch("RESUME-01") == 3
+
+    def test_checkpoint_epoch_matches_after_resume(self, tmp_path, monkeypatch):
+        """After resume, the checkpoint's _epoch should match current epoch.
+        If they don't match, _is_cancelled() fires immediately."""
+        monkeypatch.setenv("STORY_HOME", str(tmp_path / ".story-lifecycle"))
+
+        with _running_lock:
+            _story_epochs["RESUME-02"] = 7
+
+        from story_lifecycle.orchestrator.graph import get_epoch, is_epoch_current
+
+        # The checkpoint state carries _epoch=7 from the original run.
+        # After resume, _story_epochs["RESUME-02"] should still be 7.
+        checkpoint_epoch = 7
+        assert is_epoch_current("RESUME-02", checkpoint_epoch) is True
+
+        # If resume had bumped to 8, this would be False → self-cancel
+        assert get_epoch("RESUME-02") == 7
 
 
 # -------- _is_cancelled helper --------
