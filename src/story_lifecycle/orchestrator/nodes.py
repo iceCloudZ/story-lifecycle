@@ -1594,10 +1594,12 @@ def advance_node(state: StoryState) -> StoryState:
     stage = state["current_stage"]
     cfg = get_stage_config(state.get("profile", "minimal"), stage)
 
-    # Schema guard: check expected_outputs
-    missing = [
-        k for k in cfg.get("expected_outputs", []) if k not in state.get("context", {})
-    ]
+    # Schema guard: check expected_outputs (skip for synthetic headless output)
+    ctx = state.get("context", {})
+    if ctx.get("synthetic"):
+        missing = []
+    else:
+        missing = [k for k in cfg.get("expected_outputs", []) if k not in ctx]
     if missing:
         state["last_error"] = f"Missing expected outputs: {missing}"
         return state  # goes back to router

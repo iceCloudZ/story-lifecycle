@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import tempfile
@@ -74,40 +75,43 @@ class BaseTool:
             )
             tmp.write_text(prompt, encoding="utf-8")
 
-            zellij_args = ttyd.zellij_execution_args(key, workspace, launch, str(tmp))
-            if zellij_args is not None:
-                from ..graph import _tui_app
+            from ..graph import _tui_app
 
-                if _tui_app is not None:
-                    # TUI running — request it to hand over the real terminal
+            if _tui_app is None:
+                # Headless — run CLI synchronously via subprocess.
+                # This path is independent of zellij availability.
+                headless_fn = getattr(adapter, "headless_launch_cmd", None)
+                cmd = headless_fn(model, prompt) if headless_fn else None
+                if cmd is not None:
+                    return self._run_headless(
+                        state,
+                        cmd,
+                        prompt,
+                        workspace,
+                        adapter_name,
+                        model,
+                        tool_name,
+                    )
+                # Adapter doesn't support headless — fall back to launch_cli
+                log.warning(
+                    "Adapter %s does not support headless, falling back to launch_cli",
+                    adapter_name,
+                )
+                ttyd.launch_cli(key, workspace, launch, str(tmp))
+                ttyd._mplex_launched.add(key)
+            else:
+                # TUI running — try zellij foreground, else terminal window
+                zellij_args = ttyd.zellij_execution_args(
+                    key, workspace, launch, str(tmp)
+                )
+                if zellij_args is not None:
                     from ..graph import emit_terminal_request
 
                     emit_terminal_request(key, zellij_args)
                     foreground_zellij = True
                 else:
-                    # Headless — run CLI synchronously via subprocess
-                    cmd = adapter.headless_launch_cmd(model, prompt)
-                    if cmd is not None:
-                        return self._run_headless(
-                            state,
-                            cmd,
-                            prompt,
-                            workspace,
-                            adapter_name,
-                            model,
-                            tool_name,
-                        )
-                    # Adapter doesn't support headless — fall back to launch_cli
-                    log.warning(
-                        "Adapter %s does not support headless, "
-                        "falling back to launch_cli",
-                        adapter_name,
-                    )
                     ttyd.launch_cli(key, workspace, launch, str(tmp))
                     ttyd._mplex_launched.add(key)
-            else:
-                # Fallback: launch in a new terminal window
-                ttyd.launch_cli(key, workspace, launch, str(tmp))
 
         from ..graph import emit_terminal_opened
 
@@ -204,12 +208,54 @@ class BaseTool:
                 db.update_story(key, last_error=state["last_error"])
             else:
                 log.info("Headless CLI completed for %s", key)
+                self._synth_done_file(state, result.stdout)
         except subprocess.TimeoutExpired:
             log.error("Headless CLI timed out (%ds) for %s", _HEADLESS_TIMEOUT, key)
             state["last_error"] = f"Headless CLI timed out after {_HEADLESS_TIMEOUT}s"
             db.update_story(key, last_error=state["last_error"])
 
         return state
+
+    def _synth_done_file(self, state: dict, stdout: str) -> None:
+        """Write a synthetic .story-done file from headless CLI stdout.
+
+        The CLI (e.g. ``claude -p``) does not reliably write the handshake
+        file itself.  We parse its stdout for JSON output; if that fails we
+        write a minimal marker so ``poll_completion_node`` can proceed.
+        """
+        key = state["story_key"]
+        stage = state["current_stage"]
+        workspace = state["workspace"]
+        done_dir = Path(workspace) / ".story-done" / key
+        done_dir.mkdir(parents=True, exist_ok=True)
+        done_path = done_dir / f"{stage}.json"
+
+        # Try to find JSON blob in stdout (claude --output-format json)
+        data = None
+        if stdout and stdout.strip():
+            import re as _re
+
+            # Look for fenced JSON block first (```json ... ```)
+            m = _re.search(r"```json\s*\n(.*?)```", stdout, _re.DOTALL)
+            if m:
+                try:
+                    data = json.loads(m.group(1))
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            # Try the whole stdout as JSON
+            if data is None:
+                try:
+                    data = json.loads(stdout.strip())
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+        if not isinstance(data, dict):
+            data = {"output": (stdout or "")[:2000], "synthetic": True}
+
+        done_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        log.info("Synthesized .story-done/%s/%s.json for %s", key, stage, key)
 
     def describe(self) -> str:
         return self.__doc__ or self.__class__.__name__

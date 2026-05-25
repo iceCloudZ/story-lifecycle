@@ -530,10 +530,10 @@ class TestBaseToolLaunchConstraint:
     healthy session exists."""
 
     def test_no_create_session_no_healthy_session(self, monkeypatch, tmp_path):
-        """When no session exists, must call launch_cli — never create_session."""
+        """When no session exists and TUI active, must call launch_cli — never create_session."""
         import story_lifecycle.terminal.ttyd as ttyd_mod
         import story_lifecycle.orchestrator.graph as graph_mod
-        import story_lifecycle.adapters as adapters_mod
+        import story_lifecycle.orchestrator.tools.base as base_mod
         from story_lifecycle.orchestrator.tools.base import BaseTool
         from story_lifecycle.db import models as db_mod
 
@@ -555,6 +555,9 @@ class TestBaseToolLaunchConstraint:
         monkeypatch.setattr(ttyd_mod, "_MPLEX", None)
         monkeypatch.setattr(ttyd_mod, "zellij_execution_args", lambda *a, **kw: None)
 
+        # Simulate TUI mode so headless path is not taken
+        monkeypatch.setattr(graph_mod, "_tui_app", object())
+
         class FakeAdapter:
             def launch_cmd(self, model):
                 return "echo fake"
@@ -562,7 +565,7 @@ class TestBaseToolLaunchConstraint:
             def switch_provider(self, p):
                 pass
 
-        monkeypatch.setattr(adapters_mod, "get_adapter", lambda n: FakeAdapter())
+        monkeypatch.setattr(base_mod, "get_adapter", lambda n: FakeAdapter())
 
         monkeypatch.setattr(graph_mod, "emit_terminal_opened", lambda k: None)
         monkeypatch.setattr(graph_mod, "emit_terminal_request", lambda k, a: None)
@@ -587,7 +590,7 @@ class TestBaseToolLaunchConstraint:
         """When Zellij available but no session, must emit terminal request."""
         import story_lifecycle.terminal.ttyd as ttyd_mod
         import story_lifecycle.orchestrator.graph as graph_mod
-        import story_lifecycle.adapters as adapters_mod
+        import story_lifecycle.orchestrator.tools.base as base_mod
         from story_lifecycle.orchestrator.tools.base import BaseTool
         from story_lifecycle.db import models as db_mod
 
@@ -626,7 +629,7 @@ class TestBaseToolLaunchConstraint:
             def switch_provider(self, p):
                 pass
 
-        monkeypatch.setattr(adapters_mod, "get_adapter", lambda n: FakeAdapter())
+        monkeypatch.setattr(base_mod, "get_adapter", lambda n: FakeAdapter())
 
         # Simulate TUI running — _tui_app must be non-None
         monkeypatch.setattr(graph_mod, "_tui_app", object())
@@ -660,7 +663,7 @@ class TestBaseToolLaunchConstraint:
         """When a healthy session exists, must inject via send_keys — no launch_cli."""
         import story_lifecycle.terminal.ttyd as ttyd_mod
         import story_lifecycle.orchestrator.graph as graph_mod
-        import story_lifecycle.adapters as adapters_mod
+        import story_lifecycle.orchestrator.tools.base as base_mod
         from story_lifecycle.orchestrator.tools.base import BaseTool
         from story_lifecycle.db import models as db_mod
 
@@ -688,7 +691,7 @@ class TestBaseToolLaunchConstraint:
             def switch_provider(self, p):
                 pass
 
-        monkeypatch.setattr(adapters_mod, "get_adapter", lambda n: FakeAdapter())
+        monkeypatch.setattr(base_mod, "get_adapter", lambda n: FakeAdapter())
 
         monkeypatch.setattr(graph_mod, "emit_terminal_opened", lambda k: None)
         monkeypatch.setattr(graph_mod, "emit_terminal_request", lambda k, a: None)
