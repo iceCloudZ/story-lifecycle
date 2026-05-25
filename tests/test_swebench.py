@@ -12,6 +12,7 @@ from story_lifecycle.benchmarks.swebench import (
     SWEbenchInstance,
     checkout_instance,
     load_instances_jsonl,
+    prepare_instance,
 )
 
 
@@ -254,3 +255,87 @@ class TestCheckout:
         cmd_strs = [" ".join(c) for c in calls]
         assert any("fetch" in c for c in cmd_strs)
         assert any("checkout" in c for c in cmd_strs)
+
+
+class TestPrepareInstance:
+    def test_prepare_creates_prd_file(self, tmp_path, isolated_story_home):
+        """prepare_instance 写 PRD markdown 到 workspace。"""
+        inst = SWEbenchInstance(
+            "django__django-12345",
+            "django/django",
+            "abc123",
+            "QuerySet.none() returns incorrect results",
+            hints_text="Check QuerySet.none()",
+        )
+        ws = tmp_path / "workspace" / inst.instance_id
+        ws.mkdir(parents=True)
+
+        prepare_instance(inst, workspace=ws, run_id="r1")
+
+        prd_path = ws / "prd" / f"{inst.instance_id}.md"
+        assert prd_path.exists()
+        content = prd_path.read_text(encoding="utf-8")
+        assert "django/django" in content
+        assert "QuerySet.none()" in content
+        assert "abc123" in content
+
+    def test_prepare_creates_story_in_db(self, tmp_path, isolated_story_home):
+        """prepare_instance 在 DB 中创建 Story。"""
+        from story_lifecycle.db import models as db
+
+        inst = SWEbenchInstance("inst-1", "a/b", "c1", "fix the bug")
+        ws = tmp_path / "ws" / "inst-1"
+        ws.mkdir(parents=True)
+
+        result = prepare_instance(inst, workspace=ws, run_id="r1")
+
+        assert result["status"] == "prepared"
+        story = db.get_story("inst-1")
+        assert story is not None
+        assert story["profile"] == "swebench"
+        assert story["workspace"] == str(ws)
+
+    def test_prepare_sets_context_json(self, tmp_path, isolated_story_home):
+        """prepare_instance 在 context_json 中写入 SWE-bench context。"""
+        from story_lifecycle.db import models as db
+
+        inst = SWEbenchInstance(
+            "inst-2",
+            "a/b",
+            "c1",
+            "fix it",
+            hints_text="hint1",
+            FAIL_TO_PASS=["test_a"],
+        )
+        ws = tmp_path / "ws" / "inst-2"
+        ws.mkdir(parents=True)
+
+        prepare_instance(inst, workspace=ws, run_id="r1")
+
+        story = db.get_story("inst-2")
+        ctx = json.loads(story["context_json"])
+        assert ctx["benchmark"] == "swebench"
+        assert ctx["run_id"] == "r1"
+        assert ctx["instance_id"] == "inst-2"
+        assert ctx["repo"] == "a/b"
+        assert ctx["base_commit"] == "c1"
+        assert ctx["problem_statement"] == "fix it"
+        assert ctx["hints_text"] == "hint1"
+        assert ctx["fail_to_pass"] == ["test_a"]
+
+    def test_prepare_derives_title_from_problem_statement(
+        self, tmp_path, isolated_story_home
+    ):
+        """title 从 problem_statement 第一行截取。"""
+        from story_lifecycle.db import models as db
+
+        inst = SWEbenchInstance(
+            "inst-3", "a/b", "c1", "This is a long problem\nwith multiple lines"
+        )
+        ws = tmp_path / "ws" / "inst-3"
+        ws.mkdir(parents=True)
+
+        prepare_instance(inst, workspace=ws, run_id="r1")
+
+        story = db.get_story("inst-3")
+        assert story["title"] == "This is a long problem"

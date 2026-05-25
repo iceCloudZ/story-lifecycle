@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..db import models as db
+
 
 log = logging.getLogger("story-lifecycle.swebench")
 
@@ -272,3 +274,85 @@ def checkout_instance(
 
     except Exception as e:
         return {"status": "checkout_failed", "error": str(e)}
+
+
+def prepare_instance(
+    inst: SWEbenchInstance,
+    workspace: Path,
+    run_id: str,
+    agent: str = "claude",
+) -> dict:
+    """将 SWE-bench instance 映射为 Story：写 PRD、设 context_json、创建 DB 记录。
+
+    返回结果 dict，包含 status 和可选的 error。
+    """
+    workspace = Path(workspace)
+
+    # 1. 写 PRD markdown
+    prd_dir = workspace / "prd"
+    prd_dir.mkdir(parents=True, exist_ok=True)
+    prd_path = prd_dir / f"{inst.instance_id}.md"
+    prd_content = _render_prd(inst)
+    prd_path.write_text(prd_content, encoding="utf-8")
+
+    # 2. 构造 title（取 problem_statement 第一行，最多 80 字符）
+    title = inst.problem_statement.split("\n")[0][:80]
+
+    # 3. 构造 context_json
+    context = {
+        "benchmark": "swebench",
+        "run_id": run_id,
+        "instance_id": inst.instance_id,
+        "repo": inst.repo,
+        "base_commit": inst.base_commit,
+        "problem_statement": inst.problem_statement,
+        "hints_text": inst.hints_text,
+        "test_patch": inst.test_patch,
+        "fail_to_pass": inst.FAIL_TO_PASS or [],
+        "pass_to_pass": inst.PASS_TO_PASS or [],
+        "prd_path": str(prd_path),
+    }
+
+    # 4. 创建 Story
+    db.upsert_story(
+        story_key=inst.instance_id,
+        title=title,
+        workspace=str(workspace),
+        profile="swebench",
+        current_stage="design",
+        status="active",
+    )
+    db.update_story(
+        inst.instance_id, context_json=json.dumps(context, ensure_ascii=False)
+    )
+    db.update_story(
+        inst.instance_id, source_type="swebench", source_id=inst.instance_id
+    )
+
+    return {"status": "prepared", "story_key": inst.instance_id}
+
+
+def _render_prd(inst: SWEbenchInstance) -> str:
+    """渲染 SWE-bench instance 为 PRD markdown。"""
+    sections = [
+        f"# SWE-bench Instance: {inst.instance_id}",
+        "",
+        "## Repository",
+        "",
+        inst.repo,
+        "",
+        "## Base Commit",
+        "",
+        inst.base_commit,
+        "",
+        "## Problem Statement",
+        "",
+        inst.problem_statement,
+    ]
+    if inst.hints_text:
+        sections += ["", "## Hints", "", inst.hints_text]
+    if inst.test_patch:
+        sections += ["", "## Test Patch", "", inst.test_patch]
+    if inst.FAIL_TO_PASS:
+        sections += ["", "## Failing Tests", ""] + [f"- {t}" for t in inst.FAIL_TO_PASS]
+    return "\n".join(sections) + "\n"
