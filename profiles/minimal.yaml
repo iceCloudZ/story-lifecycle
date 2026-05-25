@@ -66,3 +66,14 @@ adversarial:
   observability:
     log_round_events: true
     estimate_prompt_segments: true
+
+# Reviewer configuration (P0: documents current behavior; P1: enables CLI reviewers)
+reviewers:
+  design:
+    mode: api
+    visible: false
+    max_rounds: 3
+  implement:
+    mode: api
+    visible: false
+    max_rounds: 3

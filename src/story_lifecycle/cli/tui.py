@@ -177,6 +177,17 @@ class StoryCard(Static):
             "waiting_subtasks": "[bold magenta]≡ waiting subs[/]",
         }.get(status, status)
 
+        # Gate-paused stories get a distinct badge
+        if status == "paused":
+            try:
+                import json as _json
+
+                ctx = _json.loads(s.get("context_json") or "{}")
+            except Exception:
+                ctx = {}
+            if ctx.get("last_gate_decision_id"):
+                badge = "[bold yellow]|| review gate[/]"
+
         try:
             profile = load_profile(profile_name)
             stages = list(profile.get("stages", {}).keys())
@@ -265,6 +276,48 @@ def _render_detail(story: dict) -> str:
                 lines.append(f"    {k}: {val}")
     except json.JSONDecodeError:
         pass
+
+    # Gate status (P0 — review gate visibility)
+    try:
+        ctx = json.loads(s.get("context_json") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        ctx = {}
+    if ctx.get("last_gate_decision_id") and s.get("status") == "paused":
+        lines.append("  [bold yellow]Review Gate:[/]")
+        lines.append(f"    Decision: {ctx.get('last_gate_decision', 'wait_confirm')}")
+        lines.append(f"    Reason: {ctx.get('last_gate_reason_code', 'unknown')}")
+        if s.get("last_error"):
+            lines.append(f"    Message: {s['last_error']}")
+        report = ctx.get("last_gate_report_path", "")
+        if report:
+            lines.append(f"    Report: {report}")
+        gate_events = [
+            e
+            for e in db.get_story_events(key)
+            if e.get("event_type") == "gate_decision"
+        ]
+        if gate_events:
+            latest = gate_events[-1]
+            p = latest.get("payload", {})
+            if isinstance(p, str):
+                try:
+                    p = json.loads(p)
+                except (json.JSONDecodeError, TypeError):
+                    p = {}
+            if isinstance(p, dict):
+                reviewer = p.get("reviewer", {})
+                if reviewer:
+                    reviewer_line = reviewer.get("kind", "?")
+                    if reviewer.get("model"):
+                        reviewer_line += f" / {reviewer['model']}"
+                    lines.append(f"    Reviewer: {reviewer_line}")
+                lines.append(
+                    f"    Executor attempts: {p.get('executor_attempt_count', '?')}"
+                )
+                lines.append(f"    Review rounds: {p.get('review_round_count', '?')}")
+                allowed = p.get("allowed_actions", [])
+                if allowed:
+                    lines.append(f"    [bold green]Actions: {', '.join(allowed)}[/]")
 
     # Evaluator loop activity
     try:
@@ -787,6 +840,7 @@ class StoryBoardApp(App):
         Binding("x", "delete_story", "Delete"),
         Binding("shift+n", "new_sub_story", "Sub", key_display="N"),
         Binding("a", "abort_story", "Abort"),
+        Binding("shift+a", "accept_risk_advance", "Accept Risk", key_display="A"),
         Binding("c", "toggle_collapse", "Fold"),
         Binding("shift+d", "run_doctor", "Doctor", key_display="D"),
         Binding("shift+s", "run_setup", "Setup", key_display="S"),
@@ -1215,6 +1269,49 @@ class StoryBoardApp(App):
         fail_story(key)
         self.refresh_stories()
 
+    def action_accept_risk_advance(self):
+        if not self.stories:
+            return
+        s = self.stories[self.selected_index]
+        key = s["story_key"]
+
+        from ..orchestrator.graph import is_story_running
+
+        if is_story_running(key):
+            self.notify(
+                f"Story {key} 的 graph 正在运行。请等待完成。",
+                severity="warning",
+            )
+            return
+
+        def on_confirm(confirmed):
+            if not confirmed:
+                return
+            db.log_event(
+                key,
+                s.get("current_stage", ""),
+                "human_gate_action",
+                {
+                    "action": "accept_risk_advance",
+                    "actor": "local_user",
+                    "reason": "Manually accepted risk via TUI",
+                },
+            )
+            db.update_story(key, status="active", last_error=None)
+            from ..orchestrator.graph import start_story_async
+
+            start_story_async(key)
+            self.refresh_stories()
+
+        self.push_screen(
+            ConfirmDialog(
+                f"Accept risk and advance {key}?\n\n"
+                f"This will skip the review gate and proceed to the next stage.\n"
+                f"The action is audited but cannot guarantee quality."
+            ),
+            on_confirm,
+        )
+
     def action_delete_story(self):
         if not self.stories:
             return
@@ -1280,6 +1377,21 @@ class StoryBoardApp(App):
             state=state.value,
             action=action.value,
         )
+
+        # Gate-specific resume: retry review only, skip executor
+        if state == StageEntryState.GATE_WAIT_CONFIRM:
+            if action == StageEntryAction.RETRY_REVIEW:
+                db.update_story(key, status="active", last_error=None)
+                db.update_context(key, "last_gate_decision_id", "")
+                db.update_context(key, "last_gate_decision", "")
+                if not is_story_running(key):
+                    start_story_async(key)
+                self.refresh_stories()
+                self.notify(f"Retrying review for {key}...")
+                return
+            elif action == StageEntryAction.SHOW_GATE_STATUS:
+                self.action_toggle_detail()
+                return
 
         if action == StageEntryAction.START_OR_RESUME:
             if state == StageEntryState.IDLE_WITH_LIVE_SESSION:

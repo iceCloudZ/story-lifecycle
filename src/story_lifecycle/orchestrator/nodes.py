@@ -55,6 +55,25 @@ class StoryState(TypedDict, total=False):
     _router_decision: Optional[dict]
     _pre_routed_action: Optional[str]
 
+    # Run epoch — for stale-thread cancellation
+    _epoch: int
+    _cancelled: bool
+
+
+def _is_cancelled(state: StoryState) -> bool:
+    """Check if this run has been superseded by a newer epoch."""
+    if state.get("_cancelled"):
+        return True
+    epoch = state.get("_epoch", 0)
+    if not epoch:
+        return False
+    from .graph import is_epoch_current
+
+    if not is_epoch_current(state["story_key"], epoch):
+        state["_cancelled"] = True
+        return True
+    return False
+
 
 # -------- stage config --------
 
@@ -148,6 +167,8 @@ def robust_json_parse(filepath: Path) -> dict:
 
 def route_after_plan(state: StoryState) -> str:
     """Conditional edge after plan_stage: skip, blocked, execute, or end."""
+    if state.get("_cancelled"):
+        return "__end__"
     if state.get("status") == "skipping":
         return "skip_stage"
     if state.get("status") == "waiting_subtasks":
@@ -160,6 +181,8 @@ def route_after_plan(state: StoryState) -> str:
 
 def route_after_poll(state: StoryState) -> str:
     """Conditional edge after poll_completion: review or router (if error)."""
+    if state.get("_cancelled"):
+        return "router"
     if state.get("last_error"):
         return "router"
     return "review_stage"
@@ -518,8 +541,17 @@ def review_stage_node(state: StoryState) -> StoryState:
 
     stage_output = state.get("context", {})
 
-    # Retry fatigue — use adversarial max_rounds if configured, else global
+    # --- Review round tracking (replaces execution_count-based fatigue) ---
+    from .gate import (
+        get_review_round_count,
+        increment_review_round_count,
+        GateDecision,
+        write_gate_report,
+    )
+
+    review_round_count = get_review_round_count(state.get("context", {}), stage)
     execution_count = state.get("execution_count", 0)
+
     try:
         profile_cfg = load_profile(state.get("profile", "minimal"))
         adv_cfg = AdversarialConfig.from_profile(profile_cfg)
@@ -529,20 +561,69 @@ def review_stage_node(state: StoryState) -> StoryState:
             else MAX_REVIEW_RETRIES
         )
     except Exception:
+        adv_cfg = AdversarialConfig()
         retry_limit = MAX_REVIEW_RETRIES
-    if execution_count >= retry_limit:
-        state["last_error"] = f"Review retry limit reached ({retry_limit} times)"
-        state["review_summary"] = f"达到重试上限 ({retry_limit} 次)"
-        db.log_event(
-            state["story_key"],
-            stage,
-            "review",
-            {"quality": "forced_fail", "retries": execution_count},
+
+    # Gate 1: review_round_count fatigue — review actually ran retry_limit times
+    if review_round_count >= retry_limit:
+        gd = GateDecision(
+            story_key=state["story_key"],
+            stage=stage,
+            gate_name="adversarial_review",
+            decision="wait_confirm",
+            reason_code="review_retry_limit",
+            human_message=(
+                f"Review retry limit reached ({retry_limit} rounds). "
+                f"Manual decision required."
+            ),
+            executor_attempt_count=execution_count,
+            review_round_count=review_round_count,
+            retry_limit=retry_limit,
+            evidence={"done_consumed": True},
         )
-        # Design: exhausted retries route to wait_confirm for human intervention
+        state["last_error"] = gd.human_message
+        state["review_summary"] = f"达到 review 重试上限 ({retry_limit} 轮)"
+        state["_gate_decision"] = gd.to_dict()
+        db.log_event(state["story_key"], stage, "gate_decision", gd.to_dict())
+        db.update_story(state["story_key"], last_error=gd.human_message)
+        try:
+            write_gate_report(gd, state["workspace"])
+        except Exception:
+            pass
         if adv_cfg.code_loop_enabled(stage):
             state["_pre_routed_action"] = "wait_confirm"
-            return state
+        return state
+
+    # Gate 2: review never ran but stale executor attempts exceed threshold
+    if review_round_count == 0 and execution_count >= retry_limit:
+        gd = GateDecision(
+            story_key=state["story_key"],
+            stage=stage,
+            gate_name="adversarial_review",
+            decision="wait_confirm",
+            reason_code="review_not_run_due_to_stale_executor_attempt_count",
+            human_message=(
+                f"Review did not run because executor attempts ({execution_count}) "
+                f"exceeded guard threshold ({retry_limit}). Manual decision required."
+            ),
+            executor_attempt_count=execution_count,
+            review_round_count=0,
+            retry_limit=retry_limit,
+            evidence={"done_consumed": True},
+        )
+        state["last_error"] = gd.human_message
+        state["review_summary"] = (
+            f"执行次数 ({execution_count}) 超过守护阈值但 review 尚未运行"
+        )
+        state["_gate_decision"] = gd.to_dict()
+        db.log_event(state["story_key"], stage, "gate_decision", gd.to_dict())
+        db.update_story(state["story_key"], last_error=gd.human_message)
+        try:
+            write_gate_report(gd, state["workspace"])
+        except Exception:
+            pass
+        if adv_cfg.code_loop_enabled(stage):
+            state["_pre_routed_action"] = "wait_confirm"
         return state
 
     # --- Adversarial code review loop ---
@@ -550,25 +631,73 @@ def review_stage_node(state: StoryState) -> StoryState:
         if adv_cfg.code_loop_enabled(stage) and planner.is_available():
             from .evaluator_loop import run_code_review_loop
 
+            # Increment review_round_count BEFORE running the review loop
+            new_round = increment_review_round_count(state["context"], stage)
+            db.update_context(
+                state["story_key"], f"review_round_count_{stage}", str(new_round)
+            )
+
             loop_result = run_code_review_loop(state, adv_cfg, stage_output)
 
             # Handle non-pass decisions from the loop itself
             if loop_result.decision == "fail":
-                state["last_error"] = (
-                    loop_result.reason or "Adversarial code review failed"
+                gd = GateDecision(
+                    story_key=state["story_key"],
+                    stage=stage,
+                    gate_name="adversarial_review",
+                    decision="wait_confirm",
+                    reason_code="review_unavailable",
+                    human_message=(
+                        loop_result.reason or "Adversarial code review failed"
+                    ),
+                    executor_attempt_count=execution_count,
+                    review_round_count=new_round,
+                    retry_limit=retry_limit,
+                    reviewer={
+                        "kind": "llm_api",
+                        "adapter": "",
+                        "model": adv_cfg.resolve_reviewer_model("code"),
+                    },
                 )
+                state["last_error"] = gd.human_message
                 state["review_summary"] = (
                     f"Adversarial review failed: {loop_result.reason}"
                 )
+                state["_gate_decision"] = gd.to_dict()
+                db.log_event(state["story_key"], stage, "gate_decision", gd.to_dict())
+                db.update_story(state["story_key"], last_error=gd.human_message)
                 return state
 
             # No-progress detected — route to wait_confirm for human
             if loop_result.decision == "wait_confirm":
-                state["last_error"] = (
-                    loop_result.reason or "No progress on high findings"
+                gd = GateDecision(
+                    story_key=state["story_key"],
+                    stage=stage,
+                    gate_name="adversarial_review",
+                    decision="wait_confirm",
+                    reason_code="no_progress",
+                    human_message=(
+                        loop_result.reason or "No progress on high findings"
+                    ),
+                    executor_attempt_count=execution_count,
+                    review_round_count=new_round,
+                    retry_limit=retry_limit,
+                    reviewer={
+                        "kind": "llm_api",
+                        "adapter": "",
+                        "model": adv_cfg.resolve_reviewer_model("code"),
+                    },
                 )
+                state["last_error"] = gd.human_message
                 state["review_summary"] = f"Adversarial review: {loop_result.reason}"
+                state["_gate_decision"] = gd.to_dict()
                 state["_pre_routed_action"] = "wait_confirm"
+                db.log_event(state["story_key"], stage, "gate_decision", gd.to_dict())
+                db.update_story(state["story_key"], last_error=gd.human_message)
+                try:
+                    write_gate_report(gd, state["workspace"])
+                except Exception:
+                    pass
                 return state
 
             review = loop_result.final_review or {}
@@ -675,6 +804,12 @@ def review_stage_node(state: StoryState) -> StoryState:
 
     if planner.is_available():
         try:
+            # Increment review_round_count for non-adversarial review path
+            new_round = increment_review_round_count(state["context"], stage)
+            db.update_context(
+                state["story_key"], f"review_round_count_{stage}", str(new_round)
+            )
+
             review = planner.review_stage(state, cfg, stage_output)
             workspace = state["workspace"]
             story_key = state["story_key"]
@@ -937,18 +1072,11 @@ def execute_stage_node(state: StoryState) -> dict:
     # Fast path: if done file already exists, skip execution entirely
     done_file = Path(workspace) / ".story-done" / key / f"{stage}.json"
     if done_file.exists():
-        try:
-            data = robust_json_parse(done_file)
-            done_file.unlink(missing_ok=True)
-            state["context"].update(data)
-            cfg = get_stage_config(profile, stage)
-            for field in cfg.get("expected_outputs", []):
-                if field in data:
-                    db.update_context(key, field, str(data[field]))
-            log.info(f"Stage {stage} done file found, skipping execution")
-            return state
-        except Exception:
-            pass
+        # poll_completion_node is the single consumer of .story-done files.
+        # Leaving the file in place lets the graph continue to poll_completion
+        # and advance the stage instead of waiting for a file we already deleted.
+        log.info(f"Stage {stage} done file found, skipping execution")
+        return state
 
     cfg = get_stage_config(profile, stage)
 
@@ -1026,6 +1154,9 @@ def poll_completion_node(state: StoryState) -> StoryState:
     Uses interrupt() to yield the worker thread when file not ready.
     Watchdog resumes via graph.invoke(None, config).
     """
+    if _is_cancelled(state):
+        return state
+
     import time as _time
 
     key = state["story_key"]
@@ -1184,7 +1315,9 @@ def router_node(state: StoryState) -> StoryState:
         return state
 
     if state.get("last_error") and state.get("review_summary"):
-        count = state.get("execution_count", 0)
+        from .gate import get_review_round_count
+
+        count = get_review_round_count(state.get("context", {}), stage)
         # Use adversarial max_rounds if configured, else global limit
         try:
             profile_cfg = load_profile(state.get("profile", "minimal"))
@@ -1263,11 +1396,15 @@ def router_node(state: StoryState) -> StoryState:
 
 def route_from_router(state: StoryState) -> str:
     """Pure routing function: read _next_action from state, return edge name."""
+    if state.get("_cancelled"):
+        return "fail"
     return state.get("_next_action", "fail")
 
 
 def route_after_advance(state: StoryState) -> str:
     """After advance: route errors back through router, complete to END, otherwise continue."""
+    if state.get("_cancelled"):
+        return "__end__"
     if state.get("last_error"):
         return "router"
     if state.get("status") == "completed":
@@ -1280,6 +1417,9 @@ def route_after_advance(state: StoryState) -> str:
 
 def advance_node(state: StoryState) -> StoryState:
     """Validate expected_outputs, then advance to next stage."""
+    if _is_cancelled(state):
+        return state
+
     key = state["story_key"]
     stage = state["current_stage"]
     cfg = get_stage_config(state.get("profile", "minimal"), stage)
@@ -1411,6 +1551,9 @@ def skip_node(state: StoryState) -> StoryState:
 
 def fail_node(state: StoryState) -> StoryState:
     """Mark story as blocked."""
+    if _is_cancelled(state):
+        return state
+
     key = state["story_key"]
     stage = state["current_stage"]
     error = state.get("last_error") or "Unknown error"
@@ -1425,16 +1568,63 @@ def fail_node(state: StoryState) -> StoryState:
 
 
 def wait_confirm_node(state: StoryState) -> StoryState:
-    """Pause for human confirmation. Yields thread via interrupt."""
+    """Pause for human confirmation. Writes gate report and persists GateDecision."""
     key = state["story_key"]
-    db.update_story(key, status="paused")
-    db.log_stage(
-        key, state["current_stage"], "pause", "Waiting for manual confirmation"
-    )
+    stage = state["current_stage"]
+
+    from .gate import GateDecision, write_gate_report, gate_decision_from_state
+
+    # Retrieve or build gate decision
+    gd_dict = state.pop("_gate_decision", None)
+    if gd_dict:
+        gd = GateDecision.from_dict(gd_dict)
+    else:
+        gd = gate_decision_from_state(state)
+
+    # Persist gate decision
+    db.update_story(key, status="paused", last_error=gd.human_message)
+    db.log_event(key, stage, "gate_decision", gd.to_dict())
+
+    # Compact gate_result table entry
+    try:
+        db.record_gate_result(
+            key,
+            stage,
+            gd.gate_name,
+            gd.decision,
+            json.dumps({"reason_code": gd.reason_code, "decision_id": gd.decision_id}),
+        )
+    except Exception:
+        pass
+
+    db.log_stage(key, stage, "pause", gd.human_message)
+
+    # Write gate report
+    report_rel = ""
+    try:
+        rp = write_gate_report(gd, state["workspace"])
+        report_rel = str(Path(rp).relative_to(Path(state["workspace"])))
+    except Exception:
+        pass
+
+    # Update context_json for TUI visibility
+    db.update_context(key, "last_gate_decision_id", gd.decision_id)
+    db.update_context(key, "last_gate_decision", gd.decision)
+    db.update_context(key, "last_gate_reason_code", gd.reason_code)
+    if report_rel:
+        db.update_context(key, "last_gate_report_path", report_rel)
+
+    # Sync in-memory context
+    state["context"]["last_gate_decision_id"] = gd.decision_id
+    state["context"]["last_gate_decision"] = gd.decision
+    state["context"]["last_gate_reason_code"] = gd.reason_code
+    state["context"]["last_gate_report_path"] = report_rel
+
     state["status"] = "paused"
+    state["last_error"] = gd.human_message
 
     # Yield thread — Watchdog or user action will resume
-    interrupt({"reason": "waiting_for_confirmation", "stage": state["current_stage"]})
+    interrupt({"reason": "waiting_for_confirmation", "stage": stage})
 
     # Resumed — check if user set status back to active
     s = db.get_story(key)

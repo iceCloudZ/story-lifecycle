@@ -359,6 +359,23 @@ def log_event(story_key: str, stage: str, event_type: str, payload: dict | None 
         )
 
 
+def record_gate_result(
+    story_key: str, stage: str, gate_name: str, result: str, detail: str = ""
+):
+    """Record a compact gate result in the existing gate_result table."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT id FROM story WHERE story_key = ?", (story_key,)
+        ).fetchone()
+        if not row:
+            return
+        conn.execute(
+            "INSERT INTO gate_result (story_id, stage, gate_name, result, detail) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (row["id"], stage, gate_name, result, detail),
+        )
+
+
 def log_llm_trace(
     *,
     story_key: str = "",

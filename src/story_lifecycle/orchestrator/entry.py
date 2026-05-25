@@ -149,6 +149,7 @@ class StageEntryState(Enum):
     IDLE_WITH_LIVE_SESSION = "idle_with_live_session"
     IDLE_WITH_DEAD_SESSION = "idle_with_dead_session"
     IDLE = "idle"
+    GATE_WAIT_CONFIRM = "gate_wait_confirm"
     UNKNOWN = "unknown"
 
 
@@ -167,6 +168,8 @@ class StageEntryAction(Enum):
     SHOW_WORKSPACE_BUSY = "show_workspace_busy"
     SHOW_SESSION_UNKNOWN = "show_session_unknown"
     SHOW_CLI_EXIT_ERROR = "show_cli_exit_error"
+    SHOW_GATE_STATUS = "show_gate_status"
+    RETRY_REVIEW = "retry_review"
     NOOP = "noop"
 
 
@@ -187,6 +190,10 @@ def resolve_stage_state(
     validation = validate_stage_done(story)
     if validation.status == DoneStatus.CORRUPTED:
         return StageEntryState.DONE_CORRUPTED
+
+    # Priority 2.5: Gate wait state (paused + has gate decision)
+    if _is_in_gate_wait(story):
+        return StageEntryState.GATE_WAIT_CONFIRM
 
     # Priority 3: .done ok
     if validation.status == DoneStatus.OK:
@@ -226,6 +233,19 @@ def resolve_stage_state(
         return StageEntryState.IDLE
 
     return StageEntryState.UNKNOWN
+
+
+def _is_in_gate_wait(story: dict) -> bool:
+    """Check if a story is in gate-wait state based on context_json markers."""
+    if story.get("status") != "paused":
+        return False
+    try:
+        import json
+
+        ctx = json.loads(story.get("context_json") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return bool(ctx.get("last_gate_decision_id"))
 
 
 def _session_id_for_story(story: dict) -> str:
@@ -283,6 +303,9 @@ _ACTION_TABLE: dict[tuple[StageEntryState, str], StageEntryAction] = {
     # IDLE
     (StageEntryState.IDLE, "e"): StageEntryAction.PROMPT_PRESS_R,
     (StageEntryState.IDLE, "r"): StageEntryAction.START_OR_RESUME,
+    # GATE_WAIT_CONFIRM
+    (StageEntryState.GATE_WAIT_CONFIRM, "e"): StageEntryAction.SHOW_GATE_STATUS,
+    (StageEntryState.GATE_WAIT_CONFIRM, "r"): StageEntryAction.RETRY_REVIEW,
     # UNKNOWN
     (StageEntryState.UNKNOWN, "e"): StageEntryAction.SHOW_SESSION_UNKNOWN,
     (StageEntryState.UNKNOWN, "r"): StageEntryAction.SHOW_SESSION_UNKNOWN,
@@ -314,6 +337,11 @@ def entry_action_notice(action: StageEntryAction, story: dict) -> str | None:
         StageEntryAction.SHOW_WORKSPACE_BUSY: "Workspace 被其他 story 占用，请等待完成后再试。",
         StageEntryAction.SHOW_SESSION_UNKNOWN: "无法确定 session 状态，请检查 Zellij/tmux 是否正常。",
         StageEntryAction.SHOW_CLI_EXIT_ERROR: f"CLI 进程异常退出（stage: {stage}），按 r 重新启动。",
+        StageEntryAction.SHOW_GATE_STATUS: (
+            f"Story {key} 被 review gate 阻塞（{story.get('last_error', '')}）。"
+            f"按 r 重试 review，R 重试 stage，A 接受风险推进。"
+        ),
+        StageEntryAction.RETRY_REVIEW: f"重试 review for {key}...",
         StageEntryAction.PROMPT_KEY_EXISTS: f"Story key {key} 已存在，请使用现有 story 或换 key。",
         StageEntryAction.NOOP: "当前状态无需操作。",
     }.get(action)
