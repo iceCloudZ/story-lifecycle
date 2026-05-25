@@ -434,8 +434,14 @@ def start_story_async(story_key: str):
         _running_stories[story_key] = epoch
 
     log = logging.getLogger("story-lifecycle.graph")
-    err_file = STORY_HOME / "graph_error.log"
-    err_file.write_text(f"start_story_async called for {story_key}\n", encoding="utf-8")
+    try:
+        STORY_HOME.mkdir(parents=True, exist_ok=True)
+        err_file = STORY_HOME / "graph_error.log"
+        err_file.write_text(
+            f"start_story_async called for {story_key}\n", encoding="utf-8"
+        )
+    except Exception:
+        pass
     log.info(f"Submitting story {story_key} to executor (epoch={epoch})")
     _executor.submit(run_story, story_key, epoch)
 
