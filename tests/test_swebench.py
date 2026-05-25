@@ -486,3 +486,75 @@ class TestCLI:
         assert result.exit_code == 0
         assert "test-inst-1" in result.output
         assert (ws_root / "test-r1" / "manifest.json").exists()
+
+
+class TestE2ESmoke:
+    def test_full_run_no_checkout(self, tmp_path, isolated_story_home):
+        """完整流程: prepare(--no-checkout) → export → summarize，不启动 solve。"""
+        from story_lifecycle.db import models as db
+
+        # 创建 test JSONL
+        instances = tmp_path / "test.jsonl"
+        instances.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "instance_id": f"test-{i}",
+                            "repo": "a/b",
+                            "base_commit": f"c{i}",
+                            "problem_statement": f"problem {i}",
+                        }
+                    )
+                    for i in range(3)
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        ws_root = tmp_path / "runs"
+        runner = CliRunner()
+
+        # Run
+        result = runner.invoke(
+            cli,
+            [
+                "swebench",
+                "run",
+                "--instances",
+                str(instances),
+                "--run-id",
+                "e2e-1",
+                "--workspace-root",
+                str(ws_root),
+                "--no-start",
+                "--no-checkout",
+            ],
+        )
+        assert result.exit_code == 0, f"CLI failed: {result.output}"
+
+        # 验证 manifest
+        manifest = json.loads(
+            (ws_root / "e2e-1" / "manifest.json").read_text(encoding="utf-8")
+        )
+        assert len(manifest["instances"]) == 3
+
+        # 验证 Story 创建
+        for i in range(3):
+            story = db.get_story(f"test-{i}")
+            assert story is not None
+            assert story["profile"] == "swebench"
+
+        # 验证 predictions.jsonl
+        pred_path = ws_root / "e2e-1" / "predictions.jsonl"
+        assert pred_path.exists()
+        lines = pred_path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) == 3
+
+        # 验证 summary.json
+        summary = json.loads(
+            (ws_root / "e2e-1" / "summary.json").read_text(encoding="utf-8")
+        )
+        assert summary["total"] == 3
+        assert summary["predictions"] == 3
