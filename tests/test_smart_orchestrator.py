@@ -31,9 +31,41 @@ from story_lifecycle.orchestrator.nodes import (
 
 
 @pytest.fixture(autouse=True)
-def _init_db():
+def _init_db(tmp_path, monkeypatch):
+    monkeypatch.setenv("STORY_HOME", str(tmp_path / ".story-lifecycle"))
     db.init_db()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _disable_adversarial_for_legacy_node_tests():
+    """These tests exercise the pre-adversarial planner/reviewer node paths."""
+    profile = {
+        "cli": "claude",
+        "stages": {
+            "design": {
+                "description": "Design",
+                "review": True,
+                "expected_outputs": ["spec_path", "complexity"],
+                "next_default": ["implement"],
+            },
+            "implement": {
+                "description": "Implement",
+                "review": True,
+                "expected_outputs": ["files_changed", "summary"],
+                "next_default": ["review"],
+            },
+            "review": {
+                "description": "Review",
+                "review": False,
+                "expected_outputs": [],
+                "next_default": [],
+            },
+        },
+        "adversarial": {"enabled": False},
+    }
+    with patch("story_lifecycle.orchestrator.nodes.load_profile", return_value=profile):
+        yield
 
 
 def _make_state(**overrides) -> StoryState:
