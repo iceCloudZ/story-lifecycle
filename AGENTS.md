@@ -52,3 +52,30 @@ The orchestration engine is a `StateGraph` in `src/story_lifecycle/orchestrator/
 - The `StoryState` TypedDict in `nodes.py` is the shared state object passed between all graph nodes.
 - `db.log_stage()` records every action for auditability.
 - Stories are recovered on server restart via `recover_orphan_stories()`.
+
+## Architecture Review Triggers
+
+Use `docs/engineering-architecture-review-triggers.md` as the project rule for deciding when a bugfix should stop being a local patch and become an architecture review.
+
+Hard rules:
+
+- If the same functional area has a third related bug, stop patching and write an architecture review or state-machine/protocol design first.
+- If a cross-system state needs explanation beyond true/false, model it as an enum/tagged state instead of a boolean.
+- TUI, CLI, workflow, and background orchestration changes must define `state x user_action -> action` before handler side effects are implemented.
+- Resolver code must only read facts. Decider code must be pure. Handlers are the only layer allowed to update DB, start threads, open terminals, delete sessions, or show UI feedback.
+- Every non-executable branch must produce visible user feedback and diagnostic logs.
+- Every historical bug fixed in these areas must have a regression test.
+
+Trigger checklist:
+
+```text
+1. Do these bugs share the same boundary?
+2. Are multiple real states represented by one boolean?
+3. Do multiple entry points make similar but inconsistent decisions?
+4. Are side effects mixed into state checks?
+5. Is a decision table, state machine, or protocol missing?
+6. Is the fix spreading across multiple files?
+7. Does the user need manual explanation for which action to take next?
+```
+
+If three or more answers are yes, pause implementation and design the state model first.

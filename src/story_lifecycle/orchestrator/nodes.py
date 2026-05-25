@@ -921,12 +921,18 @@ def _update_knowledge(
 # -------- node: execute_stage --------
 
 
-def execute_stage_node(state: StoryState) -> StoryState:
+def execute_stage_node(state: StoryState) -> dict:
     """Dispatch stage execution via Tool abstraction."""
+    import tempfile as _tf
+
     stage = state["current_stage"]
     workspace = state["workspace"]
     key = state["story_key"]
     profile = state.get("profile", "minimal")
+
+    # Clear stale CLI exit marker from previous attempts
+    _exit_marker = Path(_tf.gettempdir()) / f"story-exit-{key}"
+    _exit_marker.unlink(missing_ok=True)
 
     # Fast path: if done file already exists, skip execution entirely
     done_file = Path(workspace) / ".story-done" / key / f"{stage}.json"
@@ -1075,6 +1081,29 @@ def poll_completion_node(state: StoryState) -> StoryState:
             "poll_completion_node",
             "SessionDead",
             f"CC session {session} is dead, no done file found",
+            execution_count=state.get("execution_count", 0),
+            recoverable=True,
+            action="set_last_error",
+        )
+        return state
+
+    # Check CLI exit marker (foreground Zellij writes this when CLI process exits)
+    import tempfile as _tf
+
+    exit_marker = Path(_tf.gettempdir()) / f"story-exit-{key}"
+    if exit_marker.exists():
+        try:
+            ec = exit_marker.read_text().strip()
+            exit_marker.unlink(missing_ok=True)
+        except Exception:
+            ec = "?"
+        state["last_error"] = f"CLI exited (code: {ec}) without producing .done file"
+        log_node_error(
+            key,
+            stage,
+            "poll_completion_node",
+            "CLIExited",
+            f"CLI exited (code: {ec}) without .done file for stage {stage}",
             execution_count=state.get("execution_count", 0),
             recoverable=True,
             action="set_last_error",

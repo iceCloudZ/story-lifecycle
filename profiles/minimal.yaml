@@ -48,23 +48,21 @@ quality:
     - pytest
     - ruff check src tests
 
-# Adversarial evaluator-optimizer loops (P0 — default disabled)
-# Enable to activate plan review and code review loops.
-# adversarial:
-#   enabled: true
-#   plan_loop:
-#     enabled: true
-#     stages: [design, implement]
-#     max_rounds: 3
-#     reviewer_model: deepseek-chat
-#     pass_condition: no_open_blocker_or_major
-#   code_loop:
-#     enabled: true
-#     mode: short_lived
-#     max_rounds: 3
-#     reviewer_model: deepseek-chat
-#     pass_condition: no_open_blocker
-#     fallback: repair_packet
-#   observability:
-#     log_round_events: true
-#     estimate_prompt_segments: true
+adversarial:
+  enabled: true
+  plan_loop:
+    enabled: true
+    stages: [design, implement]
+    max_rounds: 3
+    reviewer_model: deepseek-chat
+    pass_condition: no_open_blocker_or_major
+  code_loop:
+    enabled: true
+    mode: short_lived
+    max_rounds: 3
+    reviewer_model: deepseek-chat
+    pass_condition: no_open_blocker
+    fallback: repair_packet
+  observability:
+    log_round_events: true
+    estimate_prompt_segments: true

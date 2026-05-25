@@ -11,6 +11,33 @@ from .scenario import Scenario
 from .fake_tool import FakeStageTool
 
 
+def _profile_without_adversarial() -> dict:
+    return {
+        "cli": "claude",
+        "stages": {
+            "design": {
+                "description": "Design",
+                "review": True,
+                "expected_outputs": ["spec_path", "complexity"],
+                "next_default": ["implement"],
+            },
+            "implement": {
+                "description": "Implement",
+                "review": True,
+                "expected_outputs": ["files_changed", "summary"],
+                "next_default": ["review"],
+            },
+            "review": {
+                "description": "Review",
+                "review": False,
+                "expected_outputs": [],
+                "next_default": [],
+            },
+        },
+        "adversarial": {"enabled": False},
+    }
+
+
 class E2EResult:
     """Holds the result of a headless E2E run."""
 
@@ -65,6 +92,10 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
         patch("story_lifecycle.orchestrator.tools.get_tool") as mock_get_tool,
         patch("story_lifecycle.orchestrator.nodes.ttyd") as mock_ttyd,
         patch("story_lifecycle.orchestrator.nodes.notify"),
+        patch(
+            "story_lifecycle.orchestrator.nodes.load_profile",
+            return_value=_profile_without_adversarial(),
+        ),
         patch("story_lifecycle.orchestrator.graph.emit_plan_done"),
         patch("story_lifecycle.orchestrator.graph.emit_terminal_opened"),
         patch(
