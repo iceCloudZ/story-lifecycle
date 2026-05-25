@@ -355,6 +355,24 @@ def _run_story_impl(story_key: str, epoch: int = 0):
                 start_story_async(sub_key)
 
 
+def _restore_epoch_from_checkpoint(story_key: str) -> int:
+    """Read _epoch from the LangGraph checkpoint for story_key.
+
+    Returns the checkpoint epoch, or 0 if unavailable (no checkpoint, error).
+    This survives process restart — _story_epochs is memory-only but the
+    checkpoint persists in SQLite.
+    """
+    try:
+        config = {"configurable": {"thread_id": story_key}}
+        compiled = get_compiled_graph()
+        snapshot = compiled.get_state(config)
+        if snapshot and snapshot.values:
+            return snapshot.values.get("_epoch", 0) or 0
+    except Exception:
+        pass
+    return 0
+
+
 def resume_story(story_key: str):
     """Resume a story from interrupt. Non-blocking in TUI (called by Watchdog).
 
@@ -370,17 +388,8 @@ def resume_story(story_key: str):
 
     log = logging.getLogger("story-lifecycle.graph")
 
-    config = {"configurable": {"thread_id": story_key}}
-    compiled = get_compiled_graph()
-
     # Recover epoch from checkpoint (survives process restart)
-    try:
-        snapshot = compiled.get_state(config)
-        checkpoint_epoch = 0
-        if snapshot and snapshot.values:
-            checkpoint_epoch = snapshot.values.get("_epoch", 0) or 0
-    except Exception:
-        checkpoint_epoch = 0
+    checkpoint_epoch = _restore_epoch_from_checkpoint(story_key)
 
     with _running_lock:
         if story_key in _running_stories:
@@ -411,6 +420,8 @@ def resume_story(story_key: str):
             entry["owner_token"] = (story_key, epoch)
             acquired = True
 
+        config = {"configurable": {"thread_id": story_key}}
+        compiled = get_compiled_graph()
         compiled.invoke(None, config)
     except Exception:
         log.exception(f"resume_story failed for {story_key}")
@@ -447,8 +458,13 @@ def start_story_async(story_key: str):
 
 
 def recover_orphan_stories():
-    """On startup, re-submit all active stories that lost their thread."""
+    """On startup, resume all active stories via resume_story.
+
+    Uses resume_story (not start_story_async) because orphaned stories have
+    an existing checkpoint with a stored _epoch. resume_story reads the
+    checkpoint epoch and restores it, preventing self-cancellation.
+    """
     stories = db.list_active_stories()
     for s in stories:
-        start_story_async(s["story_key"])
+        resume_story(s["story_key"])
     return len(stories)

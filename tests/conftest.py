@@ -16,11 +16,14 @@ def _reset_graph_globals():
     graph._terminal_opened.clear()
     with graph._running_lock:
         graph._running_stories.clear()
+        graph._story_epochs.clear()
     yield
     graph._running_stories.clear()
     graph._workspace_locks.clear()
     graph._plan_done.clear()
     graph._terminal_opened.clear()
+    with graph._running_lock:
+        graph._story_epochs.clear()
 
 
 @pytest.fixture

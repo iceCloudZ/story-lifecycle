@@ -296,26 +296,69 @@ class TestResumeEpoch:
         otherwise _is_cancelled() fires on state._epoch=3 vs current epoch=1."""
         monkeypatch.setenv("STORY_HOME", str(tmp_path / ".story-lifecycle"))
         from story_lifecycle.db import models as db
-        from story_lifecycle.orchestrator.graph import get_epoch
+        from story_lifecycle.orchestrator.graph import (
+            get_epoch,
+            _restore_epoch_from_checkpoint,
+        )
 
         db.init_db()
         db.upsert_story("RESTART-01", title="T", workspace=str(tmp_path))
 
-        # Simulate process restart: _story_epochs is empty
         with _running_lock:
             _story_epochs.clear()
             _running_stories.clear()
 
-        # Simulate checkpoint recovery: checkpoint says _epoch=3
-        checkpoint_epoch = 3
-        mem_epoch = get_epoch("RESTART-01")  # 0 after restart
+        # _restore_epoch_from_checkpoint reads the real checkpoint.
+        # No checkpoint exists yet → returns 0.
+        cp_epoch = _restore_epoch_from_checkpoint("RESTART-01")
+        assert cp_epoch == 0
 
-        # resume_story logic: checkpoint epoch wins if higher
-        if checkpoint_epoch and checkpoint_epoch > mem_epoch:
-            with _running_lock:
-                _story_epochs["RESTART-01"] = checkpoint_epoch
+        # When no checkpoint epoch, resume_story defaults to 1
+        mem_epoch = get_epoch("RESTART-01")
+        if cp_epoch and cp_epoch > mem_epoch:
+            epoch = cp_epoch
+        elif mem_epoch > 0:
+            epoch = mem_epoch
+        else:
+            epoch = 1
+        assert epoch == 1
 
-        assert get_epoch("RESTART-01") == 3
+    def test_resume_story_does_not_bump_when_checkpoint_has_epoch(
+        self, tmp_path, monkeypatch
+    ):
+        """Call resume_story() with mocked checkpoint returning _epoch=3.
+        Verify _story_epochs is set to 3, not bumped to a new value."""
+        monkeypatch.setenv("STORY_HOME", str(tmp_path / ".story-lifecycle"))
+        from unittest.mock import patch, MagicMock
+        from story_lifecycle.db import models as db
+        from story_lifecycle.orchestrator.graph import (
+            get_epoch,
+            resume_story,
+        )
+
+        db.init_db()
+        db.upsert_story("RESTART-02", title="T", workspace=str(tmp_path))
+
+        with _running_lock:
+            _story_epochs.clear()
+            _running_stories.clear()
+
+        # Mock compiled.get_state() to return _epoch=3
+        mock_snapshot = MagicMock()
+        mock_snapshot.values = {"_epoch": 3}
+
+        mock_compiled = MagicMock()
+        mock_compiled.get_state.return_value = mock_snapshot
+        mock_compiled.invoke = MagicMock()  # no-op
+
+        with patch(
+            "story_lifecycle.orchestrator.graph.get_compiled_graph",
+            return_value=mock_compiled,
+        ):
+            resume_story("RESTART-02")
+
+        # After resume, epoch should be 3 (from checkpoint), NOT bumped to 4 or 1
+        assert get_epoch("RESTART-02") == 3
 
 
 # -------- _is_cancelled helper --------
