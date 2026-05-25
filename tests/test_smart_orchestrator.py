@@ -201,11 +201,15 @@ class TestReviewStageNode:
 
     @patch("story_lifecycle.orchestrator.nodes.planner")
     def test_retry_fatigue_forces_fail(self, mock_planner):
+        """When review_round_count >= retry_limit, gate blocks with GateDecision."""
         mock_planner.is_available.return_value = True
 
         state = _make_state(
-            execution_count=MAX_REVIEW_RETRIES,
-            context={"output": "some data"},
+            execution_count=5,
+            context={
+                "output": "some data",
+                "review_round_count_design": MAX_REVIEW_RETRIES,
+            },
         )
         # Need stage config with expected_outputs
         with patch(
@@ -215,7 +219,30 @@ class TestReviewStageNode:
             result = review_stage_node(state)
 
         assert result["last_error"] is not None
-        assert "重试上限" in result["review_summary"]
+        assert "review" in result["last_error"].lower()
+        assert result["_gate_decision"]["reason_code"] == "review_retry_limit"
+
+    def test_stale_executor_no_review_fatigue(self, mock_planner):
+        """When review_round_count==0 but execution_count>=retry_limit, gate blocks
+        with stale executor reason — review never actually ran."""
+        mock_planner.is_available.return_value = True
+
+        state = _make_state(
+            execution_count=MAX_REVIEW_RETRIES,
+            context={"output": "some data"},
+        )
+        with patch(
+            "story_lifecycle.orchestrator.nodes.get_stage_config",
+            return_value={"expected_outputs": ["output"]},
+        ):
+            result = review_stage_node(state)
+
+        assert result["last_error"] is not None
+        assert "review did not run" in result["last_error"].lower()
+        assert (
+            result["_gate_decision"]["reason_code"]
+            == "review_not_run_due_to_stale_executor_attempt_count"
+        )
 
     @patch("story_lifecycle.orchestrator.nodes.planner")
     def test_review_pass(self, mock_planner):
@@ -358,13 +385,26 @@ class TestRouterNode:
         assert route_from_router(result_state) == "retry"
 
     def test_review_driven_exhausted_fail(self):
+        """Router should fail when review_round_count >= retry_limit."""
         state = _make_state(
             last_error="Review: still broken",
             review_summary="Still failing",
             execution_count=MAX_REVIEW_RETRIES,
+            context={"review_round_count_design": MAX_REVIEW_RETRIES},
         )
         result_state = router_node(state)
         assert route_from_router(result_state) == "fail"
+
+    def test_review_driven_retry_below_limit(self):
+        """Router should retry when review_round_count < retry_limit."""
+        state = _make_state(
+            last_error="Review: fixable issue",
+            review_summary="Minor issues found",
+            execution_count=5,
+            context={"review_round_count_design": 1},
+        )
+        result_state = router_node(state)
+        assert route_from_router(result_state) == "retry"
 
     def test_llm_router_fallback_on_error(self):
         state = _make_state(
@@ -453,6 +493,30 @@ class TestExecuteStageNode:
         execute_stage_node(state)
 
         mock_get_tool.assert_called_with("skill_tool")
+
+    @patch("story_lifecycle.orchestrator.tools.get_tool")
+    def test_existing_done_file_is_left_for_poll_completion(self, mock_get_tool):
+        with tempfile.TemporaryDirectory() as tmp:
+            done_dir = Path(tmp) / ".story-done" / "TEST-001"
+            done_dir.mkdir(parents=True)
+            done_file = done_dir / "design.json"
+            done_file.write_text(
+                json.dumps(
+                    {
+                        "spec_path": "docs/design.md",
+                        "complexity": "M",
+                        "summary": "done",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = _make_state(workspace=tmp)
+            result = execute_stage_node(state)
+
+            assert done_file.exists()
+            assert result["context"] == {}
+            mock_get_tool.assert_not_called()
 
 
 # -------- action nodes --------
