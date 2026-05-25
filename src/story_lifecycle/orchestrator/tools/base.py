@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -9,6 +11,11 @@ from pathlib import Path
 from ...adapters import get_adapter
 from ...db import models as db
 from ...terminal import ttyd
+from ...terminal.platform_ops import subprocess_needs_shell
+
+log = logging.getLogger("story-lifecycle.base-tool")
+
+_HEADLESS_TIMEOUT = 3600
 
 
 class BaseTool:
@@ -20,10 +27,13 @@ class BaseTool:
         Tries multiplexer session first; falls back to launching in a new
         terminal window (reliable on all platforms including Windows).
 
+        In headless mode (_tui_app is None), runs the CLI via subprocess.run
+        with the adapter's headless_launch_cmd — no terminal window needed.
+
         Returns updated state with execution_count, stage_start_time, etc.
         """
         key = state["story_key"]
-        workspace = state["workspace"]
+        workspace = str(Path(state["workspace"]).resolve())
         adapter_name = args.get("adapter", "claude")
         model = args.get("model", "sonnet")
         tool_name = getattr(self, "_tool_name", self.__class__.__name__)
@@ -56,7 +66,8 @@ class BaseTool:
 
         foreground_zellij = False
         if not injected:
-            # Try foreground Zellij execution (Windows + Zellij)
+            # Write prompt to temp file (used by TUI paths; headless uses
+            # prompt string directly via adapter.headless_launch_cmd)
             tmp = (
                 Path(tempfile.gettempdir())
                 / f"story-prompt-{key}-{state['current_stage']}.md"
@@ -65,11 +76,35 @@ class BaseTool:
 
             zellij_args = ttyd.zellij_execution_args(key, workspace, launch, str(tmp))
             if zellij_args is not None:
-                # Request TUI to hand over real terminal for foreground Zellij
-                from ..graph import emit_terminal_request
+                from ..graph import _tui_app
 
-                emit_terminal_request(key, zellij_args)
-                foreground_zellij = True
+                if _tui_app is not None:
+                    # TUI running — request it to hand over the real terminal
+                    from ..graph import emit_terminal_request
+
+                    emit_terminal_request(key, zellij_args)
+                    foreground_zellij = True
+                else:
+                    # Headless — run CLI synchronously via subprocess
+                    cmd = adapter.headless_launch_cmd(model, prompt)
+                    if cmd is not None:
+                        return self._run_headless(
+                            state,
+                            cmd,
+                            prompt,
+                            workspace,
+                            adapter_name,
+                            model,
+                            tool_name,
+                        )
+                    # Adapter doesn't support headless — fall back to launch_cli
+                    log.warning(
+                        "Adapter %s does not support headless, "
+                        "falling back to launch_cli",
+                        adapter_name,
+                    )
+                    ttyd.launch_cli(key, workspace, launch, str(tmp))
+                    ttyd._mplex_launched.add(key)
             else:
                 # Fallback: launch in a new terminal window
                 ttyd.launch_cli(key, workspace, launch, str(tmp))
@@ -96,6 +131,75 @@ class BaseTool:
             },
         )
         db.update_story(key, execution_count=state["execution_count"], last_error=None)
+        return state
+
+    def _run_headless(
+        self,
+        state: dict,
+        cmd: list[str],
+        prompt: str,
+        workspace: str,
+        adapter_name: str,
+        model: str,
+        tool_name: str,
+    ) -> dict:
+        """Run CLI synchronously via subprocess in headless mode.
+
+        Pipes *prompt* via stdin (avoids OS command-line length limits).
+        Blocks until the CLI exits.  Updates state with execution metadata
+        and returns.  The caller should return this state immediately
+        (early return from _launch_in_session).
+        """
+        key = state["story_key"]
+        state["execution_count"] = state.get("execution_count", 0) + 1
+        state["stage_start_time"] = time.time()
+        state["last_error"] = None
+
+        db.log_event(
+            key,
+            state["current_stage"],
+            "execute",
+            {
+                "attempt": state["execution_count"],
+                "tool": tool_name,
+                "adapter": adapter_name,
+                "model": model,
+                "headless": True,
+            },
+        )
+        db.update_story(key, execution_count=state["execution_count"], last_error=None)
+
+        log.info("Headless mode: running %s for %s", adapter_name, key)
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=workspace,
+                input=prompt,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=_HEADLESS_TIMEOUT,
+                shell=subprocess_needs_shell(),
+            )
+            if result.returncode != 0:
+                stderr_snippet = (result.stderr or "")[:500]
+                log.warning(
+                    "Headless CLI exited %d for %s: %s",
+                    result.returncode,
+                    key,
+                    stderr_snippet,
+                )
+                state["last_error"] = (
+                    f"Headless CLI exited {result.returncode}: {stderr_snippet}"
+                )
+                db.update_story(key, last_error=state["last_error"])
+            else:
+                log.info("Headless CLI completed for %s", key)
+        except subprocess.TimeoutExpired:
+            log.error("Headless CLI timed out (%ds) for %s", _HEADLESS_TIMEOUT, key)
+            state["last_error"] = f"Headless CLI timed out after {_HEADLESS_TIMEOUT}s"
+            db.update_story(key, last_error=state["last_error"])
+
         return state
 
     def describe(self) -> str:

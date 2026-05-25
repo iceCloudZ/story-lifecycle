@@ -22,6 +22,18 @@ class BaseAdapter(ABC):
         or None if prompt injection is handled by ttyd.paste_text()."""
         ...
 
+    def headless_launch_cmd(self, model: str, prompt: str) -> list[str] | None:
+        """Return command args for non-interactive headless execution.
+
+        The prompt is piped via stdin, NOT passed as a CLI argument —
+        avoids OS command-line length limits on long prompts.
+
+        Returns None if the adapter does not support headless mode.
+        Subclasses should override when their CLI has a native
+        non-interactive execution flag (e.g. claude -p, codex -q).
+        """
+        return None
+
     def cleanup(self, story_key: str, stage: str):
         """Clean up temp files after stage completion. Override if needed."""
         pass

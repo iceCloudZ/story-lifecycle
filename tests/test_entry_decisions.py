@@ -628,6 +628,9 @@ class TestBaseToolLaunchConstraint:
 
         monkeypatch.setattr(adapters_mod, "get_adapter", lambda n: FakeAdapter())
 
+        # Simulate TUI running — _tui_app must be non-None
+        monkeypatch.setattr(graph_mod, "_tui_app", object())
+
         monkeypatch.setattr(graph_mod, "emit_terminal_opened", lambda k: None)
         monkeypatch.setattr(
             graph_mod,

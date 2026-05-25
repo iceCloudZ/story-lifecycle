@@ -1,7 +1,6 @@
 """`story swebench` — SWE-bench benchmark runner 命令组。"""
 
 import json
-import time
 import click
 from pathlib import Path
 from rich.console import Console
@@ -16,37 +15,6 @@ from ..benchmarks.swebench import (
 from ..db.models import init_db
 
 console = Console()
-
-_TERMINAL_STATUSES = {"completed", "blocked", "aborted", "failed"}
-
-
-def _wait_for_completion(workspace_root: Path, run_id: str, poll_interval: int = 30):
-    """等待 run 中所有 story 到达终态。"""
-    from ..db import models as db
-
-    store = RunStore(workspace_root)
-    manifest = store.load_manifest(run_id)
-    story_keys = [e["story_key"] for e in manifest["instances"]]
-
-    console.print(
-        f"\n[dim]等待 {len(story_keys)} 个 story 完成（每 {poll_interval}s 检查）...[/]"
-    )
-    pending = set(story_keys)
-
-    while pending:
-        time.sleep(poll_interval)
-        still_pending = set()
-        for key in pending:
-            story = db.get_story(key)
-            if story and story.get("status") in _TERMINAL_STATUSES:
-                console.print(f"  [green]✓[/] {key}: {story['status']}")
-            else:
-                still_pending.add(key)
-        pending = still_pending
-        if pending:
-            console.print(f"  [dim]{len(pending)} 个仍在运行...[/]")
-
-    console.print("[bold]所有 story 已完成。[/]")
 
 
 @click.group(name="swebench")
@@ -177,7 +145,7 @@ def prepare(
 )
 def solve(run_id, workspace_root):
     """启动所有 prepared instances 的 Story 执行。"""
-    from ..orchestrator.graph import start_story_async
+    from ..orchestrator.graph import run_story
 
     store = RunStore(workspace_root)
     manifest = store.load_manifest(run_id)
@@ -186,22 +154,43 @@ def solve(run_id, workspace_root):
     for entry in manifest["instances"]:
         if entry["status"] != "prepared":
             continue
+        instance_id = entry["instance_id"]
         try:
-            start_story_async(entry["story_key"])
-            store.update_instance(run_id, entry["instance_id"], status="running")
-            console.print(f"  [green]→[/] {entry['instance_id']} 已启动")
-            started += 1
+            store.update_instance(run_id, instance_id, status="running")
+            console.print(f"  [green]→[/] {instance_id} 执行中...")
+            run_story(entry["story_key"])
+            # Check actual result from DB
+            from ..db import models as db
+
+            story = db.get_story(entry["story_key"])
+            final_status = (story or {}).get("status", "unknown")
+            last_error = (story or {}).get("last_error")
+            if final_status == "completed":
+                console.print(f"  [green]✓[/] {instance_id}: completed")
+                store.update_instance(run_id, instance_id, status="completed")
+                started += 1
+            else:
+                label = f"{final_status}"
+                if last_error:
+                    label += f" — {last_error[:80]}"
+                console.print(f"  [yellow]![/] {instance_id}: {label}")
+                store.update_instance(
+                    run_id,
+                    instance_id,
+                    status=final_status,
+                    error=last_error,
+                )
         except Exception as e:
-            console.print(f"  [red]✗[/] {entry['instance_id']}: {e}")
+            console.print(f"  [red]✗[/] {instance_id}: {e}")
             store.update_instance(
                 run_id,
-                entry["instance_id"],
+                instance_id,
                 status="failed",
-                failure_type="start_failure",
+                failure_type="execution_failure",
                 error=str(e),
             )
 
-    console.print(f"\n[bold]已启动 {started} 个 instances[/]")
+    console.print(f"\n[bold]已完成 {started} 个 instances[/]")
 
 
 @swebench_group.command()
@@ -363,7 +352,6 @@ def run(
 
     if not no_start:
         ctx.invoke(solve, run_id=run_id, workspace_root=workspace_root)
-        _wait_for_completion(workspace_root, run_id)
 
     ctx.invoke(export, run_id=run_id, workspace_root=workspace_root, agent=agent)
 

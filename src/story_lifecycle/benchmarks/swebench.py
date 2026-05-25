@@ -325,7 +325,7 @@ def prepare_instance(
 
     返回结果 dict，包含 status 和可选的 error。
     """
-    workspace = Path(workspace)
+    workspace = Path(workspace).resolve()
     story_key = _story_key_for(run_id, inst.instance_id)
 
     # 1. 写 PRD markdown

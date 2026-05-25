@@ -92,6 +92,34 @@ is_windows = os.name == "nt"
 CREATE_NEW_CONSOLE = 0x00000010 if is_windows else 0
 
 
+def resolve_executable(name: str) -> str:
+    """Resolve a CLI tool name to its full path.
+
+    On Windows, npm-installed tools ship as ``<name>.cmd`` wrappers.
+    ``shutil.which("claude")`` won't find them via ``subprocess.run``
+    without ``shell=True``, but ``shutil.which("claude.cmd")`` will.
+
+    Returns the resolved path, or *name* unchanged as fallback.
+    """
+    if is_windows:
+        resolved = shutil.which(f"{name}.cmd") or shutil.which(name)
+        if resolved:
+            return resolved
+    else:
+        resolved = shutil.which(name)
+        if resolved:
+            return resolved
+    return name
+
+
+def subprocess_needs_shell() -> bool:
+    """Whether ``subprocess.run`` needs ``shell=True`` for CLI commands.
+
+    True on Windows (``.cmd`` wrappers require it), False elsewhere.
+    """
+    return is_windows
+
+
 def to_posix_path(path: str) -> str:
     """Convert Windows backslashes to forward slashes for bash compatibility."""
     return path.replace("\\", "/")

@@ -97,6 +97,31 @@ def get_stage_config(profile_name: str, stage_name: str) -> dict:
     return stages.get(stage_name, {})
 
 
+def _planner_policy(profile_name: str) -> dict:
+    profile = load_profile(profile_name)
+    cfg = profile.get("planner", {})
+    return {
+        "required": bool(cfg.get("required", False)),
+        "static_fallback": bool(cfg.get("static_fallback", True)),
+    }
+
+
+def _block_for_planner(state: StoryState, reason: str) -> StoryState:
+    state["last_error"] = reason
+    state["_pre_routed_action"] = "wait_confirm"
+    state["plan_summary"] = reason
+    try:
+        db.log_event(
+            state["story_key"],
+            state["current_stage"],
+            "planner_blocked",
+            {"reason": reason},
+        )
+    except Exception:
+        pass
+    return state
+
+
 def resolve_next_stage(state: StoryState) -> Optional[str]:
     """Determine next stage from profile config + complexity."""
     cfg = get_stage_config(state.get("profile", "minimal"), state["current_stage"])
@@ -202,6 +227,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
     stage = state["current_stage"]
     profile = state.get("profile", "minimal")
     cfg = get_stage_config(profile, stage)
+    policy = _planner_policy(profile)
     workspace = state["workspace"]
     story_key = state["story_key"]
 
@@ -218,11 +244,19 @@ def plan_stage_node(state: StoryState) -> StoryState:
     except Exception as e:
         log.warning(f"Condenser failed: {e}")
 
+    planner_available = planner.is_available()
+    if policy["required"] and not planner_available:
+        return _block_for_planner(
+            state,
+            "Planner LLM unavailable. Configure STORY_LLM_API_KEY or use a profile "
+            "with planner.static_fallback=true for demo/debug runs.",
+        )
+
     # --- Adversarial plan loop ---
     try:
         profile_cfg = load_profile(profile)
         adv_cfg = AdversarialConfig.from_profile(profile_cfg)
-        if adv_cfg.plan_loop_enabled(stage) and planner.is_available():
+        if adv_cfg.plan_loop_enabled(stage) and planner_available:
             from ..orchestrator.graph import emit_plan_done
             from .evaluator_loop import run_plan_loop
 
@@ -311,7 +345,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
         log.warning(f"Adversarial plan loop failed, falling back to normal: {e}")
     # --- End adversarial plan loop ---
 
-    if planner.is_available():
+    if planner_available:
         try:
             from ..orchestrator.graph import emit_plan_done
 
@@ -416,6 +450,18 @@ def plan_stage_node(state: StoryState) -> StoryState:
                 f"⚠ 规划降级 [{type(e).__name__}] 使用默认配置",
                 ok=False,
             )
+
+            if policy["required"] and not policy["static_fallback"]:
+                return _block_for_planner(
+                    state,
+                    f"Planner failed and static fallback is disabled: {type(e).__name__}: {e}",
+                )
+
+    if not policy["static_fallback"]:
+        return _block_for_planner(
+            state,
+            "Planner did not produce an executable plan and static fallback is disabled.",
+        )
 
     # Fallback: generate plan from profile config
     profile_cfg = load_profile(profile)
@@ -1062,6 +1108,95 @@ def _update_knowledge(
 # -------- node: execute_stage --------
 
 
+def _strip_planner_contract_duplicates(plan_content: str) -> str:
+    """Keep planner guidance, remove fixed stage-contract sections.
+
+    Planner output is allowed to describe what to do. The stage template owns
+    done-file schema, completion contract, adapter config, and lifecycle bounds.
+    """
+    blocked = {
+        "完成后",
+        "边界",
+        "配置",
+        "决策理由",
+        "路径评分",
+        "完成标准",
+        "输出要求",
+    }
+    lines = plan_content.splitlines()
+    kept: list[str] = []
+    skipping = False
+    for line in lines:
+        if re.match(r"^#\s+.*任务书.*", line):
+            continue
+        heading = re.match(r"^(#{2,6})\s+(.+?)\s*$", line)
+        if heading:
+            title = heading.group(2).strip()
+            if "执行指令" in title:
+                skipping = False
+                continue
+            skipping = any(key in title for key in blocked)
+            if skipping:
+                continue
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept).strip()
+
+
+def _build_stage_contract(stage: str, state: StoryState) -> str:
+    key = state["story_key"]
+    cfg = get_stage_config(state.get("profile", "minimal"), stage)
+    expected = cfg.get("expected_outputs", [])
+    expected_lines = "\n".join(f"- {name}" for name in expected) or "- none"
+    done_path = f".story-done/{key}/{stage}.json"
+
+    return (
+        "## Stage Contract\n\n"
+        f"- Story Key: {key}\n"
+        f"- Stage: {stage}\n"
+        f"- Done file: `{done_path}`\n"
+        "- The done file must contain raw JSON only. Do not wrap it in markdown.\n"
+        "- Do not continue into later stages after writing the done file.\n\n"
+        "### Required output fields\n\n"
+        f"{expected_lines}\n"
+    )
+
+
+def _build_plan_executor_prompt(
+    stage: str, state: StoryState, plan_content: str
+) -> tuple[str, dict]:
+    """Build executor prompt when planner produced a task packet.
+
+    In this mode the static stage prompt is not injected. It is a fallback only.
+    """
+    _, metadata = _render_prompt(stage, state)
+    planner_packet = _strip_planner_contract_duplicates(plan_content)
+    contract = _build_stage_contract(stage, state)
+
+    support_sections: list[str] = []
+    if metadata.get("quality_packet_text"):
+        support_sections.append(metadata["quality_packet_text"])
+    if metadata.get("checklist_text"):
+        support_sections.append(
+            f"## Executor Checklist\n\n{metadata['checklist_text']}"
+        )
+
+    ctx = state.get("context", {})
+    repair_packet_path = ctx.get("repair_packet_path")
+    if repair_packet_path:
+        rp_file = Path(state["workspace"]) / repair_packet_path
+        if rp_file.exists():
+            support_sections.append(
+                f"## Repair Packet\n\n{rp_file.read_text(encoding='utf-8')}"
+            )
+
+    prompt = f"{planner_packet}\n\n---\n\n{contract}"
+    if support_sections:
+        prompt = f"{prompt}\n\n---\n\n" + "\n\n".join(support_sections)
+    metadata["has_plan_file"] = True
+    return prompt, metadata
+
+
 def execute_stage_node(state: StoryState) -> dict:
     """Dispatch stage execution via Tool abstraction."""
     if _is_cancelled(state):
@@ -1099,15 +1234,20 @@ def execute_stage_node(state: StoryState) -> dict:
     )
     model = plan.get("model") or cfg.get("model", "sonnet")
 
-    # Render prompt + prepend plan file if available
-    prompt, prompt_meta = _render_prompt(stage, state)
+    # Render prompt. With planner task packet, static stage prompt is fallback only:
+    # inject planner packet + fixed stage contract, not two full task documents.
+    prompt = ""
+    prompt_meta = {}
     plan_path = state.get("context", {}).get("plan_path")
     if plan_path:
         plan_file = Path(workspace) / plan_path
         if plan_file.exists():
             plan_content = plan_file.read_text(encoding="utf-8")
-            prompt = f"{plan_content}\n\n---\n\n{prompt}"
-            prompt_meta["has_plan_file"] = True
+            prompt, prompt_meta = _build_plan_executor_prompt(
+                stage, state, plan_content
+            )
+    if not prompt:
+        prompt, prompt_meta = _render_prompt(stage, state)
 
     # Build tool args
     stage_cfg = get_stage_config(profile, stage)
@@ -1251,6 +1391,24 @@ def poll_completion_node(state: StoryState) -> StoryState:
         return state
 
     # Session alive but no done file — yield and wait
+    from ..orchestrator.graph import _tui_app
+
+    if _tui_app is None:
+        # Headless mode — subprocess already completed in _launch_in_session.
+        # If done_file still missing, the CLI failed to produce it.
+        state["last_error"] = "Headless CLI completed without producing .done file"
+        log_node_error(
+            key,
+            stage,
+            "poll_completion_node",
+            "HeadlessNoDoneFile",
+            f"Headless CLI finished but no .story-done for stage {stage}",
+            execution_count=state.get("execution_count", 0),
+            recoverable=True,
+            action="set_last_error",
+        )
+        return state
+
     interrupt({"reason": "waiting_for_done_file", "stage": stage})
     return state
 
