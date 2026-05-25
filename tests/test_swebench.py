@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -9,6 +10,7 @@ from story_lifecycle.benchmarks.swebench import (
     BudgetConfig,
     RunStore,
     SWEbenchInstance,
+    checkout_instance,
     load_instances_jsonl,
 )
 
@@ -168,3 +170,87 @@ class TestRunStore:
         cfg = BudgetConfig(name="leaderboard")
         assert cfg.max_rounds == 5
         assert cfg.timeout_seconds == 7200
+
+
+class TestCheckout:
+    def test_checkout_creates_workspace_from_cache(self, tmp_path):
+        """cache 存在时，用 clone --reference + checkout base_commit。"""
+        cache_root = tmp_path / "cache"
+        cache_root.mkdir()
+        workspace_root = tmp_path / "runs"
+
+        inst = SWEbenchInstance("django__django-12345", "django/django", "abc123", "ps")
+        run_dir = workspace_root / "r1"
+        run_dir.mkdir(parents=True)
+        ws = run_dir / inst.instance_id
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            r = MagicMock()
+            r.returncode = 0
+            r.stdout = ""
+            r.stderr = ""
+            return r
+
+        with patch(
+            "story_lifecycle.benchmarks.swebench.subprocess.run", side_effect=fake_run
+        ):
+            result = checkout_instance(inst, ws, cache_root)
+
+        assert result["status"] == "checked_out"
+        assert len(calls) >= 2
+        clone_cmd = calls[0]
+        assert "clone" in clone_cmd and "--mirror" in clone_cmd
+
+    def test_checkout_fails_on_nonzero_exit(self, tmp_path):
+        """git checkout 返回非零时，返回 checkout_failed。"""
+        cache_root = tmp_path / "cache"
+        inst = SWEbenchInstance("inst-1", "a/b", "badcommit", "ps")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        def fake_run(cmd, **kwargs):
+            r = MagicMock()
+            r.returncode = 1
+            r.stdout = ""
+            r.stderr = "fatal: bad revision"
+            return r
+
+        with patch(
+            "story_lifecycle.benchmarks.swebench.subprocess.run", side_effect=fake_run
+        ):
+            result = checkout_instance(inst, ws, cache_root)
+
+        assert result["status"] == "checkout_failed"
+        assert "bad revision" in result["error"]
+
+    def test_existing_workspace_fetches_and_resets(self, tmp_path):
+        """已有 workspace 时 fetch + checkout + clean。"""
+        cache_root = tmp_path / "cache"
+        cache_root.mkdir()
+        inst = SWEbenchInstance("inst-1", "a/b", "c1", "ps")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / ".git").mkdir()
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            r = MagicMock()
+            r.returncode = 0
+            r.stdout = ""
+            r.stderr = ""
+            return r
+
+        with patch(
+            "story_lifecycle.benchmarks.swebench.subprocess.run", side_effect=fake_run
+        ):
+            result = checkout_instance(inst, ws, cache_root)
+
+        assert result["status"] == "checked_out"
+        cmd_strs = [" ".join(c) for c in calls]
+        assert any("fetch" in c for c in cmd_strs)
+        assert any("checkout" in c for c in cmd_strs)

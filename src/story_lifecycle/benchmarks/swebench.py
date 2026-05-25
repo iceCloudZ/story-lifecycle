@@ -2,6 +2,7 @@
 
 import json
 import logging
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -167,3 +168,107 @@ class RunStore:
         path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+
+
+def _repo_slug(repo: str) -> str:
+    """'owner/name' -> 'owner__name'，用于文件系统路径。"""
+    return repo.replace("/", "__")
+
+
+def _run_git(
+    *args: str, cwd: str | None = None, timeout: int = 300
+) -> subprocess.CompletedProcess:
+    cmd = ["git"] + list(args)
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+
+
+def _ensure_cache(cache_root: Path, repo: str) -> Path:
+    """确保 mirror cache 存在。返回 cache repo 路径。"""
+    slug = _repo_slug(repo)
+    cache_repo = cache_root / slug
+    cache_repo.parent.mkdir(parents=True, exist_ok=True)
+
+    if cache_repo.exists():
+        log.info("Updating cache for %s", repo)
+        r = _run_git("remote", "update", "--prune", cwd=str(cache_repo))
+        if r.returncode != 0:
+            log.warning("Cache update failed for %s: %s", repo, r.stderr)
+    else:
+        log.info("Creating mirror cache for %s", repo)
+        repo_url = f"https://github.com/{repo}.git"
+        r = _run_git("clone", "--mirror", repo_url, str(cache_repo))
+        if r.returncode != 0:
+            raise RuntimeError(f"Mirror clone failed for {repo}: {r.stderr}")
+
+    return cache_repo
+
+
+def checkout_instance(
+    inst: SWEbenchInstance,
+    workspace: Path,
+    cache_root: Path,
+) -> dict:
+    """将 SWE-bench instance 的 repo checkout 到 base_commit。
+
+    返回结果 dict，包含 status 和可选的 error。
+    """
+    workspace = Path(workspace)
+    repo_url = f"https://github.com/{inst.repo}.git"
+
+    try:
+        try:
+            cache_repo = _ensure_cache(cache_root, inst.repo)
+            cache_available = True
+        except RuntimeError as e:
+            log.warning("Cache setup 失败，回退到直接 clone: %s", e)
+            cache_available = False
+
+        if workspace.exists() and (workspace / ".git").exists():
+            r = _run_git("fetch", "origin", cwd=str(workspace))
+            if r.returncode != 0:
+                return {
+                    "status": "checkout_failed",
+                    "error": f"fetch failed: {r.stderr}",
+                }
+            r = _run_git("checkout", inst.base_commit, cwd=str(workspace))
+            if r.returncode != 0:
+                return {
+                    "status": "checkout_failed",
+                    "error": f"checkout failed: {r.stderr}",
+                }
+            _run_git("clean", "-fdx", cwd=str(workspace))
+        else:
+            workspace.parent.mkdir(parents=True, exist_ok=True)
+            if cache_available:
+                r = _run_git(
+                    "clone",
+                    "--reference",
+                    str(cache_repo),
+                    repo_url,
+                    str(workspace),
+                )
+            else:
+                r = _run_git("clone", repo_url, str(workspace))
+            if r.returncode != 0:
+                return {
+                    "status": "checkout_failed",
+                    "error": f"clone failed: {r.stderr}",
+                }
+
+            r = _run_git("fetch", "origin", inst.base_commit, cwd=str(workspace))
+            if r.returncode != 0:
+                return {
+                    "status": "checkout_failed",
+                    "error": f"fetch commit failed: {r.stderr}",
+                }
+            r = _run_git("checkout", inst.base_commit, cwd=str(workspace))
+            if r.returncode != 0:
+                return {
+                    "status": "checkout_failed",
+                    "error": f"checkout failed: {r.stderr}",
+                }
+
+        return {"status": "checked_out"}
+
+    except Exception as e:
+        return {"status": "checkout_failed", "error": str(e)}
