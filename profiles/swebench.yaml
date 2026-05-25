@@ -1,0 +1,53 @@
+# SWE-bench benchmark profile — design → implement → test → finalize
+version: 2
+cli: claude
+
+stages:
+  design:
+    order: 1
+    description: "问题定位与方案设计"
+    confirm: false
+    review: true
+    max_retries: 1
+    expected_outputs:
+      - root_cause
+      - target_files
+      - test_strategy
+    next_default: [implement]
+
+  implement:
+    order: 2
+    description: "编码实现"
+    confirm: false
+    review: true
+    max_retries: 2
+    expected_outputs:
+      - patch_summary
+    next_default: [test]
+
+  test:
+    order: 3
+    description: "验证测试"
+    confirm: false
+    review: false
+    max_retries: 1
+    expected_outputs:
+      - test_command
+      - test_result
+    next_default: [finalize]
+
+  finalize:
+    order: 4
+    description: "生成最终 patch"
+    confirm: false
+    review: false
+    max_retries: 1
+    expected_outputs:
+      - model_patch
+    next_default: []
+
+quality:
+  enabled: false
+
+adversarial:
+  enabled: false
