@@ -182,7 +182,7 @@ def route_after_plan(state: StoryState) -> str:
 def route_after_poll(state: StoryState) -> str:
     """Conditional edge after poll_completion: review or router (if error)."""
     if state.get("_cancelled"):
-        return "router"
+        return "__end__"
     if state.get("last_error"):
         return "router"
     return "review_stage"
@@ -196,6 +196,9 @@ def plan_stage_node(state: StoryState) -> StoryState:
 
     不调用其他节点。skip 通过 conditional edge 路由。
     """
+    if _is_cancelled(state):
+        return state
+
     stage = state["current_stage"]
     profile = state.get("profile", "minimal")
     cfg = get_stage_config(profile, stage)
@@ -528,6 +531,9 @@ def review_stage_node(state: StoryState) -> StoryState:
     断路器：有 last_error 时直接跳过。
     重试疲劳：超过 MAX_REVIEW_RETRIES 次直接 fail。
     """
+    if _is_cancelled(state):
+        return state
+
     # Circuit breaker
     if state.get("last_error"):
         return state
@@ -1058,6 +1064,9 @@ def _update_knowledge(
 
 def execute_stage_node(state: StoryState) -> dict:
     """Dispatch stage execution via Tool abstraction."""
+    if _is_cancelled(state):
+        return state
+
     import tempfile as _tf
 
     stage = state["current_stage"]
@@ -1251,6 +1260,9 @@ def poll_completion_node(state: StoryState) -> StoryState:
 
 def router_node(state: StoryState) -> StoryState:
     """Compute routing decision and store in state. Does NOT return a string."""
+    if _is_cancelled(state):
+        return state
+
     key = state["story_key"]
     stage = state["current_stage"]
     cfg = get_stage_config(state.get("profile", "minimal"), stage)
@@ -1397,7 +1409,7 @@ def router_node(state: StoryState) -> StoryState:
 def route_from_router(state: StoryState) -> str:
     """Pure routing function: read _next_action from state, return edge name."""
     if state.get("_cancelled"):
-        return "fail"
+        return "__end__"
     return state.get("_next_action", "fail")
 
 
@@ -1516,6 +1528,9 @@ def advance_node(state: StoryState) -> StoryState:
 
 def retry_node(state: StoryState) -> StoryState:
     """Prepare for retry. Clear error, keep count."""
+    if _is_cancelled(state):
+        return state
+
     state["last_error"] = None
     state.pop("_next_action", None)
     state.pop("_pre_routed_action", None)
@@ -1533,6 +1548,9 @@ def retry_node(state: StoryState) -> StoryState:
 
 def skip_node(state: StoryState) -> StoryState:
     """Skip current stage. Auto-fill expected_outputs with SKIPPED."""
+    if _is_cancelled(state):
+        return state
+
     cfg = get_stage_config(state.get("profile", "minimal"), state["current_stage"])
     for field in cfg.get("expected_outputs", []):
         if field not in state.get("context", {}):
@@ -1569,6 +1587,9 @@ def fail_node(state: StoryState) -> StoryState:
 
 def wait_confirm_node(state: StoryState) -> StoryState:
     """Pause for human confirmation. Writes gate report and persists GateDecision."""
+    if _is_cancelled(state):
+        return state
+
     key = state["story_key"]
     stage = state["current_stage"]
 

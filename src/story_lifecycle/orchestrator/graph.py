@@ -45,24 +45,41 @@ _terminal_requests: dict[str, list[str]] = {}
 _running_stories: set[str] = set()
 _running_lock = threading.Lock()
 
-# Workspace mutex — same workspace can only have one executing story
-_workspace_locks: dict[str, threading.Lock] = {}
+# Workspace mutex — same workspace can only have one executing story.
+# Each entry is {"lock": threading.Lock, "owner_epoch": int}.
+# release_workspace is only honored when the caller's epoch matches owner_epoch.
+_workspace_locks: dict[str, dict] = {}
+
+# Run epoch — bumped on start/force-stop so stale threads detect cancellation
+_story_epochs: dict[str, int] = {}
 
 
 def acquire_workspace(workspace: str, story_key: str) -> bool:
     """Try to acquire workspace execution lock. Returns True if acquired."""
     ws = str(workspace)
     if ws not in _workspace_locks:
-        _workspace_locks[ws] = threading.Lock()
-    return _workspace_locks[ws].acquire(blocking=False)
+        _workspace_locks[ws] = {"lock": threading.Lock(), "owner_epoch": 0}
+    return _workspace_locks[ws]["lock"].acquire(blocking=False)
 
 
-def release_workspace(workspace: str):
-    """Release workspace execution lock."""
+def _set_workspace_owner(workspace: str, epoch: int):
+    """Record which epoch owns the workspace lock."""
     ws = str(workspace)
-    lock = _workspace_locks.get(ws)
-    if lock and lock.locked():
-        lock.release()
+    if ws in _workspace_locks:
+        _workspace_locks[ws]["owner_epoch"] = epoch
+
+
+def release_workspace(workspace: str, epoch: int = 0):
+    """Release workspace execution lock. Only honored if epoch matches owner."""
+    ws = str(workspace)
+    entry = _workspace_locks.get(ws)
+    if not entry:
+        return
+    if epoch and entry["owner_epoch"] and epoch != entry["owner_epoch"]:
+        # Stale thread — another epoch now owns this lock
+        return
+    if entry["lock"].locked():
+        entry["lock"].release()
 
 
 def set_tui_app(app: object) -> None:
@@ -120,11 +137,11 @@ def is_story_running(story_key: str) -> bool:
 
 
 def force_stop_story(story_key: str) -> bool:
-    """Force-remove a story from the running guard and release its workspace lock.
+    """Force-remove a story from the running guard.
 
     Returns True if the story was running and was stopped.
-    WARNING: The background thread may still be executing — this only releases
-    the guard so a new execution can start. Use only for user-confirmed overrides.
+    Bumps the run epoch so any stale thread detects the cancellation.
+    Does NOT release the workspace lock — the owning worker's finally block handles that.
     """
     import logging
 
@@ -133,12 +150,10 @@ def force_stop_story(story_key: str) -> bool:
         was_running = story_key in _running_stories
         if was_running:
             _running_stories.discard(story_key)
-            log.warning(f"Force-stopped story {story_key} (guard released)")
-
-    # Also release workspace lock if held
-    story = db.get_story(story_key)
-    if story and story.get("workspace"):
-        release_workspace(story["workspace"])
+        _story_epochs[story_key] = _story_epochs.get(story_key, 0) + 1
+        log.warning(
+            f"Force-stopped story {story_key} (guard released, epoch={_story_epochs[story_key]})"
+        )
 
     return was_running
 
@@ -146,8 +161,22 @@ def force_stop_story(story_key: str) -> bool:
 def is_workspace_locked(workspace: str) -> bool:
     """Check if a workspace lock is currently held."""
     ws = str(workspace)
-    lock = _workspace_locks.get(ws)
-    return lock is not None and lock.locked()
+    entry = _workspace_locks.get(ws)
+    return entry is not None and entry["lock"].locked()
+
+
+def get_epoch(story_key: str) -> int:
+    """Get current epoch for a story. Returns 0 if never tracked."""
+    with _running_lock:
+        return _story_epochs.get(story_key, 0)
+
+
+def is_epoch_current(story_key: str, epoch: int) -> bool:
+    """Check if the given epoch is still the current one."""
+    if not epoch:
+        return True
+    with _running_lock:
+        return _story_epochs.get(story_key, 0) == epoch
 
 
 def build_graph() -> StateGraph:
@@ -183,7 +212,7 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "poll_completion",
         route_after_poll,
-        {"review_stage": "review_stage", "router": "router"},
+        {"review_stage": "review_stage", "router": "router", "__end__": END},
     )
 
     graph.add_edge("review_stage", "router")
@@ -197,6 +226,7 @@ def build_graph() -> StateGraph:
             "skip": "skip_stage",
             "fail": "fail_stage",
             "wait_confirm": "wait_confirm",
+            "__end__": END,
         },
     )
 
@@ -223,7 +253,7 @@ def get_compiled_graph():
     return build_graph().compile(checkpointer=saver)
 
 
-def run_story(story_key: str):
+def run_story(story_key: str, epoch: int = 0):
     """Run a story's lifecycle. Blocks until interrupt or END."""
     import traceback
     import logging
@@ -236,11 +266,14 @@ def run_story(story_key: str):
     try:
         # Workspace mutex: block until workspace is free
         if workspace:
-            ws_lock = _workspace_locks.setdefault(workspace, threading.Lock())
-            ws_lock.acquire()
+            entry = _workspace_locks.setdefault(
+                workspace, {"lock": threading.Lock(), "owner_epoch": 0}
+            )
+            entry["lock"].acquire()
+            entry["owner_epoch"] = epoch
             acquired = True
 
-        _run_story_impl(story_key)
+        _run_story_impl(story_key, epoch)
     except Exception:
         log.error(f"run_story failed for {story_key}:\n{traceback.format_exc()}")
         err_file = STORY_HOME / "graph_error.log"
@@ -250,16 +283,24 @@ def run_story(story_key: str):
         )
     finally:
         if acquired and workspace:
-            ws_lock = _workspace_locks.get(workspace)
-            if ws_lock:
-                ws_lock.release()
+            # Only release if this epoch still owns the lock
+            release_workspace(workspace, epoch)
         with _running_lock:
             _running_stories.discard(story_key)
 
 
-def _run_story_impl(story_key: str):
+def _run_story_impl(story_key: str, epoch: int = 0):
     story = db.get_story(story_key)
     if not story:
+        return
+
+    # Stale-epoch guard: if force_stop_story bumped epoch, abort early.
+    if epoch and not is_epoch_current(story_key, epoch):
+        import logging
+
+        logging.getLogger("story-lifecycle.graph").warning(
+            f"Story {story_key} epoch {epoch} is stale (current {get_epoch(story_key)}), aborting"
+        )
         return
 
     import json
@@ -289,6 +330,7 @@ def _run_story_impl(story_key: str):
         "_next_action": None,
         "_pending_sub_keys": None,
         "_router_decision": None,
+        "_epoch": epoch,
     }
 
     config = {"configurable": {"thread_id": story_key}}
@@ -297,15 +339,53 @@ def _run_story_impl(story_key: str):
 
     # Launch sub-stories if plan_stage delegated (no circular import)
     if result and result.get("_pending_sub_keys"):
-        for sub_key in result["_pending_sub_keys"]:
-            _executor.submit(run_story, sub_key)
+        if is_epoch_current(story_key, epoch):
+            for sub_key in result["_pending_sub_keys"]:
+                _executor.submit(run_story, sub_key)
 
 
 def resume_story(story_key: str):
-    """Resume a story from interrupt. Non-blocking in TUI (called by Watchdog)."""
-    config = {"configurable": {"thread_id": story_key}}
-    compiled = get_compiled_graph()
-    compiled.invoke(None, config)
+    """Resume a story from interrupt. Non-blocking in TUI (called by Watchdog).
+
+    Guards: skips if already running or workspace is locked by another story.
+    Bumps epoch and acquires workspace lock before invoking the graph.
+    """
+    import logging
+
+    log = logging.getLogger("story-lifecycle.graph")
+
+    # Running guard: skip if already running
+    with _running_lock:
+        if story_key in _running_stories:
+            log.info(f"resume_story: {story_key} already running, skipping")
+            return
+        _running_stories.add(story_key)
+        _story_epochs[story_key] = _story_epochs.get(story_key, 0) + 1
+        epoch = _story_epochs[story_key]
+
+    story = db.get_story(story_key)
+    workspace = story["workspace"] if story else ""
+
+    acquired = False
+    try:
+        if workspace:
+            entry = _workspace_locks.setdefault(
+                workspace, {"lock": threading.Lock(), "owner_epoch": 0}
+            )
+            entry["lock"].acquire()
+            entry["owner_epoch"] = epoch
+            acquired = True
+
+        config = {"configurable": {"thread_id": story_key}}
+        compiled = get_compiled_graph()
+        compiled.invoke(None, config)
+    except Exception:
+        log.exception(f"resume_story failed for {story_key}")
+    finally:
+        if acquired and workspace:
+            release_workspace(workspace, epoch)
+        with _running_lock:
+            _running_stories.discard(story_key)
 
 
 def start_story_async(story_key: str):
@@ -316,12 +396,14 @@ def start_story_async(story_key: str):
         if story_key in _running_stories:
             return
         _running_stories.add(story_key)
+        _story_epochs[story_key] = _story_epochs.get(story_key, 0) + 1
+        epoch = _story_epochs[story_key]
 
     log = logging.getLogger("story-lifecycle.graph")
     err_file = STORY_HOME / "graph_error.log"
     err_file.write_text(f"start_story_async called for {story_key}\n", encoding="utf-8")
-    log.info(f"Submitting story {story_key} to executor")
-    _executor.submit(run_story, story_key)
+    log.info(f"Submitting story {story_key} to executor (epoch={epoch})")
+    _executor.submit(run_story, story_key, epoch)
 
 
 def recover_orphan_stories():
