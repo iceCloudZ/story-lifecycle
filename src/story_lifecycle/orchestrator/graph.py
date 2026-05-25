@@ -347,11 +347,12 @@ def _run_story_impl(story_key: str, epoch: int = 0):
     compiled = get_compiled_graph()
     result = compiled.invoke(initial_state, config)
 
-    # Launch sub-stories if plan_stage delegated (no circular import)
+    # Launch sub-stories if plan_stage delegated
+    # Use start_story_async so every story goes through running guard + epoch
     if result and result.get("_pending_sub_keys"):
         if is_epoch_current(story_key, epoch):
             for sub_key in result["_pending_sub_keys"]:
-                _executor.submit(run_story, sub_key)
+                start_story_async(sub_key)
 
 
 def resume_story(story_key: str):
@@ -361,19 +362,38 @@ def resume_story(story_key: str):
     state holds the original _epoch; bumping _story_epochs would make
     _is_cancelled() fire on the very next node, causing self-cancellation.
 
-    Only start_story_async / force_stop_story bump the epoch.
+    On process restart, _story_epochs is empty but the LangGraph checkpoint
+    still holds the original _epoch. We read the checkpoint first and restore
+    the in-memory epoch to prevent self-cancellation.
     """
     import logging
 
     log = logging.getLogger("story-lifecycle.graph")
 
+    config = {"configurable": {"thread_id": story_key}}
+    compiled = get_compiled_graph()
+
+    # Recover epoch from checkpoint (survives process restart)
+    try:
+        snapshot = compiled.get_state(config)
+        checkpoint_epoch = 0
+        if snapshot and snapshot.values:
+            checkpoint_epoch = snapshot.values.get("_epoch", 0) or 0
+    except Exception:
+        checkpoint_epoch = 0
+
     with _running_lock:
         if story_key in _running_stories:
             log.info(f"resume_story: {story_key} already running, skipping")
             return
-        # Reuse existing epoch — resume is a continuation, not a restart
-        epoch = _story_epochs.get(story_key, 0)
-        if epoch == 0:
+        # Restore epoch from checkpoint if it's higher than memory
+        mem_epoch = _story_epochs.get(story_key, 0)
+        if checkpoint_epoch and checkpoint_epoch > mem_epoch:
+            _story_epochs[story_key] = checkpoint_epoch
+            epoch = checkpoint_epoch
+        elif mem_epoch > 0:
+            epoch = mem_epoch
+        else:
             epoch = 1
             _story_epochs[story_key] = 1
         _running_stories[story_key] = epoch
@@ -391,8 +411,6 @@ def resume_story(story_key: str):
             entry["owner_token"] = (story_key, epoch)
             acquired = True
 
-        config = {"configurable": {"thread_id": story_key}}
-        compiled = get_compiled_graph()
         compiled.invoke(None, config)
     except Exception:
         log.exception(f"resume_story failed for {story_key}")

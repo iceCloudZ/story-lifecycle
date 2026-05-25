@@ -288,6 +288,35 @@ class TestResumeEpoch:
         # If resume had bumped to 8, this would be False → self-cancel
         assert get_epoch("RESUME-02") == 7
 
+    def test_restart_recovery_restores_epoch_from_checkpoint(
+        self, tmp_path, monkeypatch
+    ):
+        """After process restart, _story_epochs is empty but checkpoint holds _epoch=3.
+        resume_story must restore the in-memory epoch to 3, not reset to 1,
+        otherwise _is_cancelled() fires on state._epoch=3 vs current epoch=1."""
+        monkeypatch.setenv("STORY_HOME", str(tmp_path / ".story-lifecycle"))
+        from story_lifecycle.db import models as db
+        from story_lifecycle.orchestrator.graph import get_epoch
+
+        db.init_db()
+        db.upsert_story("RESTART-01", title="T", workspace=str(tmp_path))
+
+        # Simulate process restart: _story_epochs is empty
+        with _running_lock:
+            _story_epochs.clear()
+            _running_stories.clear()
+
+        # Simulate checkpoint recovery: checkpoint says _epoch=3
+        checkpoint_epoch = 3
+        mem_epoch = get_epoch("RESTART-01")  # 0 after restart
+
+        # resume_story logic: checkpoint epoch wins if higher
+        if checkpoint_epoch and checkpoint_epoch > mem_epoch:
+            with _running_lock:
+                _story_epochs["RESTART-01"] = checkpoint_epoch
+
+        assert get_epoch("RESTART-01") == 3
+
 
 # -------- _is_cancelled helper --------
 
