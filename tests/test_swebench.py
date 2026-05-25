@@ -6,6 +6,8 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from click.testing import CliRunner
+
 from story_lifecycle.benchmarks.swebench import (
     BudgetConfig,
     RunStore,
@@ -16,6 +18,7 @@ from story_lifecycle.benchmarks.swebench import (
     load_instances_jsonl,
     prepare_instance,
 )
+from story_lifecycle.cli.main import cli
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -436,3 +439,50 @@ class TestPatchNoiseInspection:
         result = inspect_patch_noise(big_patch)
         assert "patch_too_noisy" in result.get("tags", [])
         assert result["diff_size_bytes"] > 1_000_000
+
+
+class TestCLI:
+    def test_swebench_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["swebench", "--help"])
+        assert result.exit_code == 0
+        assert "prepare" in result.output
+        assert "solve" in result.output
+        assert "export" in result.output
+        assert "run" in result.output
+
+    def test_prepare_no_checkout(self, tmp_path, isolated_story_home):
+        """prepare --no-checkout 跳过 git 操作，只创建 manifest 和 Story。"""
+        instances = tmp_path / "test.jsonl"
+        instances.write_text(
+            json.dumps(
+                {
+                    "instance_id": "test-inst-1",
+                    "repo": "a/b",
+                    "base_commit": "c1",
+                    "problem_statement": "fix bug",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        ws_root = tmp_path / "runs"
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "swebench",
+                "prepare",
+                "--instances",
+                str(instances),
+                "--run-id",
+                "test-r1",
+                "--workspace-root",
+                str(ws_root),
+                "--no-checkout",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "test-inst-1" in result.output
+        assert (ws_root / "test-r1" / "manifest.json").exists()

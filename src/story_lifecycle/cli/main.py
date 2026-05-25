@@ -243,5 +243,10 @@ def _run_server(host, port):
     )
 
 
+from .swebench import swebench_group  # noqa: E402
+
+cli.add_command(swebench_group)
+
+
 if __name__ == "__main__":
     cli()
