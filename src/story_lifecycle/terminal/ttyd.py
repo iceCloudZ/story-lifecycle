@@ -145,11 +145,69 @@ def session_alive(name: str) -> bool:
     if _MPLEX == "zellij":
         r = _run(["zellij", "list-sessions"], text=True, timeout=5)
         if r.returncode == 0:
-            return name in _strip_ansi(r.stdout).split()
+            for line in _strip_ansi(r.stdout).splitlines():
+                parts = line.strip().split()
+                if not parts:
+                    continue
+                if parts[0] == name and "EXITED" not in line:
+                    return True
         return False
     elif _MPLEX == "tmux":
         r = _run(["tmux", "has-session", "-t", name])
         return r.returncode == 0
+    return False
+
+
+class SessionState:
+    """Granular session state for TUI entry decisions."""
+
+    LIVE = "live"
+    EXITED = "exited"
+    MISSING = "missing"
+    UNKNOWN = "unknown"
+
+
+def resolve_session_state(name: str) -> str:
+    """Resolve the detailed state of a session: live/exited/missing/unknown."""
+    if not _MPLEX:
+        return SessionState.UNKNOWN
+
+    if _MPLEX == "zellij":
+        r = _run(["zellij", "list-sessions"], text=True, timeout=5)
+        if r.returncode != 0:
+            # Zellij returns 1 when no sessions exist (legitimate MISSING)
+            # vs actual errors like permission/crash (UNKNOWN)
+            err = (r.stderr or "").lower()
+            if "no session" in err or "not found" in err or r.returncode == 1:
+                return SessionState.MISSING
+            return SessionState.UNKNOWN
+        for line in _strip_ansi(r.stdout).splitlines():
+            parts = line.strip().split()
+            if not parts:
+                continue
+            if parts[0] == name:
+                return SessionState.EXITED if "EXITED" in line else SessionState.LIVE
+        return SessionState.MISSING
+
+    if _MPLEX == "tmux":
+        r = _run(["tmux", "has-session", "-t", name])
+        return SessionState.LIVE if r.returncode == 0 else SessionState.MISSING
+
+    return SessionState.UNKNOWN
+
+
+def delete_exited_session(name: str) -> bool:
+    """Delete a dead Zellij session so a foreground layout can reuse the name."""
+    if _MPLEX != "zellij":
+        return False
+    r = _run(["zellij", "list-sessions"], text=True, timeout=5)
+    if r.returncode != 0:
+        return False
+    for line in _strip_ansi(r.stdout).splitlines():
+        parts = line.strip().split()
+        if parts and parts[0] == name and "EXITED" in line:
+            deleted = _run(["zellij", "delete-session", name], text=True, timeout=5)
+            return deleted.returncode == 0
     return False
 
 
@@ -267,7 +325,7 @@ def list_sessions() -> list[str]:
             return [
                 _strip_ansi(line.strip().split()[0])
                 for line in r.stdout.strip().split("\n")
-                if line.strip()
+                if line.strip() and "EXITED" not in _strip_ansi(line)
             ]
         return []
     elif _MPLEX == "tmux":
@@ -433,14 +491,24 @@ def zellij_execution_args(
     pf = platform_ops.to_posix_path(prompt_file)
 
     # Generate launch script (reuse the same pattern as launch_cli)
+    # Write an exit marker so poll_completion can detect CLI process exit.
+    exit_marker = Path(tempfile.gettempdir()) / f"story-exit-{story_key}"
+    exit_marker_posix = platform_ops.to_posix_path(str(exit_marker))
     script = Path(tempfile.gettempdir()) / f"story-launch-{story_key}.sh"
     script.write_text(
         f"#!/bin/bash\n"
         f'cd "{ws}" 2>/dev/null || {{ echo "ERROR: cannot cd to {ws}"; exit 1; }}\n'
         f'echo "Starting: {launch_cmd}"\n'
         f"{launch_cmd} \"$(cat '{pf}')\"\n"
+        f"_ec=$?\n"
         f'echo ""\n'
-        f'echo "Story {story_key} done (exit code: $?). Press Ctrl+D or type exit to return to TUI."\n',
+        f'echo $_ec > "{exit_marker_posix}"\n'
+        f"if [ $_ec -eq 0 ]; then\n"
+        f'    echo "CLI exited (code: 0). If the task completed, .done file was written."\n'
+        f"else\n"
+        f'    echo "CLI exited with error (code: $_ec)."\n'
+        f"fi\n"
+        f'echo "Press Ctrl+D or type exit to return to TUI."\n',
         encoding="utf-8",
     )
     script_posix = platform_ops.to_posix_path(str(script))

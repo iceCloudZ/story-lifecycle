@@ -13,9 +13,13 @@ from story_lifecycle.orchestrator.entry import (
     TtydSessionBackend,
     StageEntryState,
     StageEntryAction,
+    WorkspaceState,
+    cli_exit_marker_path,
     resolve_stage_state,
     decide_action,
+    entry_action_notice,
 )
+from story_lifecycle.terminal.ttyd import SessionState, resolve_session_state
 
 
 def _make_story(
@@ -148,6 +152,76 @@ class TestTtydSessionBackend:
         backend = TtydSessionBackend()
         assert backend.is_healthy("s-TEST-001") is False
 
+    def test_zellij_exited_session_is_not_healthy(self, monkeypatch):
+        import subprocess
+
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
+        monkeypatch.setattr(
+            ttyd_mod,
+            "_run",
+            lambda *a, **kw: subprocess.CompletedProcess(
+                a[0],
+                0,
+                "\x1b[32;1ms-TEST-001\x1b[m [Created 1m ago] "
+                "(\x1b[31;1mEXITED\x1b[m - attach to resurrect)\n",
+                "",
+            ),
+        )
+
+        assert ttyd_mod.session_alive("s-TEST-001") is False
+
+    def test_delete_exited_session_removes_only_dead_zellij_session(self, monkeypatch):
+        import subprocess
+
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            if cmd == ["zellij", "list-sessions"]:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    "s-TEST-001 [Created 1m ago] (EXITED - attach to resurrect)\n",
+                    "",
+                )
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
+        monkeypatch.setattr(ttyd_mod, "_run", fake_run)
+
+        assert ttyd_mod.delete_exited_session("s-TEST-001") is True
+        assert ["zellij", "delete-session", "s-TEST-001"] in calls
+
+    def test_delete_exited_session_does_not_remove_live_zellij_session(
+        self, monkeypatch
+    ):
+        import subprocess
+
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            if cmd == ["zellij", "list-sessions"]:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    "s-TEST-001 [Created 1m ago]\n",
+                    "",
+                )
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
+        monkeypatch.setattr(ttyd_mod, "_run", fake_run)
+
+        assert ttyd_mod.delete_exited_session("s-TEST-001") is False
+        assert ["zellij", "delete-session", "s-TEST-001"] not in calls
+
     def test_launch_independent_terminal_delegates(self, monkeypatch):
         calls = []
 
@@ -171,11 +245,14 @@ class TestTtydSessionBackend:
 class FakeBackend:
     """Mock SessionBackend for testing."""
 
-    def __init__(self, healthy: bool = False):
-        self._healthy = healthy
+    def __init__(self, session_state: str = SessionState.MISSING):
+        self._session_state = session_state
 
     def is_healthy(self, session_id: str) -> bool:
-        return self._healthy
+        return self._session_state == SessionState.LIVE
+
+    def resolve_session_state(self, session_id: str) -> str:
+        return self._session_state
 
     def attach_foreground(self, session_id: str) -> list[str]:
         return ["echo", "attach", session_id]
@@ -201,23 +278,6 @@ class TestResolveStageState:
             == StageEntryState.STORY_FINISHED
         )
 
-    def test_story_finished_aborted(self, tmp_path):
-        story = _make_story(str(tmp_path), status="aborted")
-        assert (
-            resolve_stage_state(story, FakeBackend(), is_running=False)
-            == StageEntryState.STORY_FINISHED
-        )
-
-    def test_done_valid(self, tmp_path):
-        story = _make_story(str(tmp_path), status="active")
-        done = stage_done_file(story)
-        done.parent.mkdir(parents=True, exist_ok=True)
-        done.write_text('{"summary": "ok"}', encoding="utf-8")
-        assert (
-            resolve_stage_state(story, FakeBackend(), is_running=True)
-            == StageEntryState.DONE
-        )
-
     def test_done_corrupted(self, tmp_path):
         story = _make_story(str(tmp_path), status="active")
         done = stage_done_file(story)
@@ -228,53 +288,172 @@ class TestResolveStageState:
             == StageEntryState.DONE_CORRUPTED
         )
 
-    def test_running_healthy(self, tmp_path):
-        story = _make_story(str(tmp_path), status="active")
-        assert (
-            resolve_stage_state(story, FakeBackend(healthy=True), is_running=True)
-            == StageEntryState.RUNNING_HEALTHY
-        )
-
-    def test_running_dead(self, tmp_path):
-        story = _make_story(str(tmp_path), status="active")
-        assert (
-            resolve_stage_state(story, FakeBackend(healthy=False), is_running=True)
-            == StageEntryState.RUNNING_DEAD
-        )
-
-    def test_idle(self, tmp_path):
-        story = _make_story(str(tmp_path), status="active")
-        assert (
-            resolve_stage_state(story, FakeBackend(healthy=False), is_running=False)
-            == StageEntryState.IDLE
-        )
-
-    def test_done_takes_priority_over_running_dead(self, tmp_path):
-        """Even if session is dead, valid .done means DONE state."""
+    def test_done_ok(self, tmp_path):
         story = _make_story(str(tmp_path), status="active")
         done = stage_done_file(story)
         done.parent.mkdir(parents=True, exist_ok=True)
         done.write_text('{"summary": "ok"}', encoding="utf-8")
         assert (
-            resolve_stage_state(story, FakeBackend(healthy=False), is_running=True)
-            == StageEntryState.DONE
+            resolve_stage_state(story, FakeBackend(), is_running=True)
+            == StageEntryState.DONE_OK
         )
 
+    def test_cli_exited_without_done(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        marker = cli_exit_marker_path(story["story_key"])
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("1", encoding="utf-8")
+        assert (
+            resolve_stage_state(story, FakeBackend(), is_running=False)
+            == StageEntryState.CLI_EXITED_WITHOUT_DONE
+        )
+        marker.unlink()
 
-# Decision table: (state, user_action) -> expected action
+    def test_blocked_by_workspace(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            resolve_stage_state(
+                story,
+                FakeBackend(),
+                is_running=False,
+                workspace_state=WorkspaceState.LOCKED_BY_OTHER,
+            )
+            == StageEntryState.BLOCKED_BY_WORKSPACE
+        )
+
+    def test_running_with_live_session(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            resolve_stage_state(story, FakeBackend(SessionState.LIVE), is_running=True)
+            == StageEntryState.RUNNING_WITH_LIVE_SESSION
+        )
+
+    def test_running_with_dead_session(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            resolve_stage_state(
+                story, FakeBackend(SessionState.EXITED), is_running=True
+            )
+            == StageEntryState.RUNNING_WITH_DEAD_SESSION
+        )
+
+    def test_running_with_missing_session(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            resolve_stage_state(
+                story, FakeBackend(SessionState.MISSING), is_running=True
+            )
+            == StageEntryState.RUNNING_WITH_DEAD_SESSION
+        )
+
+    def test_running_with_unknown_session(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            resolve_stage_state(
+                story, FakeBackend(SessionState.UNKNOWN), is_running=True
+            )
+            == StageEntryState.RUNNING_WITH_UNKNOWN_SESSION
+        )
+
+    def test_idle_with_live_session(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            resolve_stage_state(story, FakeBackend(SessionState.LIVE), is_running=False)
+            == StageEntryState.IDLE_WITH_LIVE_SESSION
+        )
+
+    def test_idle_with_dead_session(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            resolve_stage_state(
+                story, FakeBackend(SessionState.EXITED), is_running=False
+            )
+            == StageEntryState.IDLE_WITH_DEAD_SESSION
+        )
+
+    def test_idle(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            resolve_stage_state(
+                story, FakeBackend(SessionState.MISSING), is_running=False
+            )
+            == StageEntryState.IDLE
+        )
+
+    def test_done_ok_takes_priority_over_running_dead(self, tmp_path):
+        """Even if session is dead, valid .done means DONE_OK state."""
+        story = _make_story(str(tmp_path), status="active")
+        done = stage_done_file(story)
+        done.parent.mkdir(parents=True, exist_ok=True)
+        done.write_text('{"summary": "ok"}', encoding="utf-8")
+        assert (
+            resolve_stage_state(
+                story, FakeBackend(SessionState.EXITED), is_running=True
+            )
+            == StageEntryState.DONE_OK
+        )
+
+    def test_cli_exit_ignored_when_done_ok(self, tmp_path):
+        """If .done exists and is valid, CLI exit marker is irrelevant."""
+        story = _make_story(str(tmp_path), status="active")
+        done = stage_done_file(story)
+        done.parent.mkdir(parents=True, exist_ok=True)
+        done.write_text('{"summary": "ok"}', encoding="utf-8")
+        marker = cli_exit_marker_path(story["story_key"])
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("1", encoding="utf-8")
+        assert (
+            resolve_stage_state(story, FakeBackend(), is_running=False)
+            == StageEntryState.DONE_OK
+        )
+        marker.unlink()
+
+
 DECISION_TABLE = [
-    (StageEntryState.DONE, "e", StageEntryAction.PROMPT_DONE_PRESS_R),
-    (StageEntryState.DONE, "r", StageEntryAction.START_OR_RESUME),
+    (StageEntryState.STORY_FINISHED, "e", StageEntryAction.SHOW_STATUS),
+    (StageEntryState.STORY_FINISHED, "r", StageEntryAction.SHOW_STATUS),
     (StageEntryState.DONE_CORRUPTED, "e", StageEntryAction.PROMPT_FIX_DONE),
     (StageEntryState.DONE_CORRUPTED, "r", StageEntryAction.PROMPT_FIX_DONE),
-    (StageEntryState.RUNNING_HEALTHY, "e", StageEntryAction.ATTACH),
-    (StageEntryState.RUNNING_HEALTHY, "r", StageEntryAction.NOOP),
-    (StageEntryState.RUNNING_DEAD, "e", StageEntryAction.PROMPT_PRESS_R),
-    (StageEntryState.RUNNING_DEAD, "r", StageEntryAction.START_OR_RESUME),
+    (StageEntryState.DONE_OK, "e", StageEntryAction.PROMPT_PRESS_R),
+    (StageEntryState.DONE_OK, "r", StageEntryAction.CONSUME_DONE_RESUME),
+    (
+        StageEntryState.CLI_EXITED_WITHOUT_DONE,
+        "e",
+        StageEntryAction.SHOW_CLI_EXIT_ERROR,
+    ),
+    (StageEntryState.CLI_EXITED_WITHOUT_DONE, "r", StageEntryAction.START_OR_RESUME),
+    (StageEntryState.BLOCKED_BY_WORKSPACE, "e", StageEntryAction.SHOW_WORKSPACE_BUSY),
+    (StageEntryState.BLOCKED_BY_WORKSPACE, "r", StageEntryAction.SHOW_WORKSPACE_BUSY),
+    (StageEntryState.RUNNING_WITH_LIVE_SESSION, "e", StageEntryAction.ATTACH),
+    (StageEntryState.RUNNING_WITH_LIVE_SESSION, "r", StageEntryAction.SHOW_RUNNING),
+    (StageEntryState.RUNNING_WITH_DEAD_SESSION, "e", StageEntryAction.PROMPT_PRESS_R),
+    (
+        StageEntryState.RUNNING_WITH_DEAD_SESSION,
+        "r",
+        StageEntryAction.CLEANUP_DEAD_AND_RESTART,
+    ),
+    (
+        StageEntryState.RUNNING_WITH_UNKNOWN_SESSION,
+        "e",
+        StageEntryAction.SHOW_SESSION_UNKNOWN,
+    ),
+    (
+        StageEntryState.RUNNING_WITH_UNKNOWN_SESSION,
+        "r",
+        StageEntryAction.SHOW_SESSION_UNKNOWN,
+    ),
+    (StageEntryState.IDLE_WITH_LIVE_SESSION, "e", StageEntryAction.ATTACH),
+    (StageEntryState.IDLE_WITH_LIVE_SESSION, "r", StageEntryAction.START_OR_RESUME),
+    (StageEntryState.IDLE_WITH_DEAD_SESSION, "e", StageEntryAction.PROMPT_PRESS_R),
+    (
+        StageEntryState.IDLE_WITH_DEAD_SESSION,
+        "r",
+        StageEntryAction.CLEANUP_DEAD_AND_START,
+    ),
     (StageEntryState.IDLE, "e", StageEntryAction.PROMPT_PRESS_R),
     (StageEntryState.IDLE, "r", StageEntryAction.START_OR_RESUME),
-    (StageEntryState.STORY_FINISHED, "e", StageEntryAction.NOOP),
-    (StageEntryState.STORY_FINISHED, "r", StageEntryAction.NOOP),
+    (StageEntryState.UNKNOWN, "e", StageEntryAction.SHOW_SESSION_UNKNOWN),
+    (StageEntryState.UNKNOWN, "r", StageEntryAction.SHOW_SESSION_UNKNOWN),
 ]
 
 
@@ -286,6 +465,58 @@ class TestDecideAction:
     def test_invalid_user_action_raises(self):
         with pytest.raises(ValueError):
             decide_action(StageEntryState.IDLE, "x")
+
+
+class TestEntryActionNotice:
+    def test_all_non_executable_actions_have_notice(self, tmp_path):
+        """Every action that is NOT ATTACH/START_OR_RESUME/CONSUME_DONE_RESUME must have a non-empty notice."""
+        executable_actions = {
+            StageEntryAction.ATTACH,
+            StageEntryAction.START_OR_RESUME,
+            StageEntryAction.CONSUME_DONE_RESUME,
+            StageEntryAction.CLEANUP_DEAD_AND_START,
+            StageEntryAction.CLEANUP_DEAD_AND_RESTART,
+            StageEntryAction.CONFIRM_AND_DESTROY,
+        }
+        story = _make_story(str(tmp_path), "TEST-001", "design")
+        for action in StageEntryAction:
+            if action in executable_actions:
+                continue
+            notice = entry_action_notice(action, story)
+            assert notice is not None and len(notice) > 0, (
+                f"Action {action.value!r} must have a non-empty notice"
+            )
+
+    def test_prompt_press_r_notice(self, tmp_path):
+        story = _make_story(str(tmp_path), "TEST-001", "design")
+        notice = entry_action_notice(StageEntryAction.PROMPT_PRESS_R, story)
+        assert "没有运行中的 session" in notice
+        assert "按 r" in notice
+
+    def test_prompt_fix_done_notice(self, tmp_path):
+        story = _make_story(str(tmp_path), "TEST-001", "design")
+        notice = entry_action_notice(StageEntryAction.PROMPT_FIX_DONE, story)
+        assert ".done" in notice
+
+    def test_show_cli_exit_error_notice(self, tmp_path):
+        story = _make_story(str(tmp_path), "TEST-001", "design")
+        notice = entry_action_notice(StageEntryAction.SHOW_CLI_EXIT_ERROR, story)
+        assert "退出" in notice
+
+    def test_show_workspace_busy_notice(self, tmp_path):
+        story = _make_story(str(tmp_path), "TEST-001", "design")
+        notice = entry_action_notice(StageEntryAction.SHOW_WORKSPACE_BUSY, story)
+        assert "workspace" in notice.lower() or "Workspace" in notice
+
+    def test_show_running_notice(self, tmp_path):
+        story = _make_story(str(tmp_path), "TEST-001", "design")
+        notice = entry_action_notice(StageEntryAction.SHOW_RUNNING, story)
+        assert "运行" in notice
+
+    def test_show_status_notice(self, tmp_path):
+        story = _make_story(str(tmp_path), "TEST-001", "design")
+        notice = entry_action_notice(StageEntryAction.SHOW_STATUS, story)
+        assert notice is not None
 
 
 # ---------------------------------------------------------------------------
@@ -581,3 +812,68 @@ class TestZellijExecutionArgs:
         kdl_content = kdl_files[0].read_text(encoding="utf-8")
         # Must use resolved Git Bash path, not bare "bash"
         assert "bash.exe" in kdl_content
+
+
+class TestResolveSessionState:
+    def test_live_session(self, monkeypatch):
+        import subprocess
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
+        monkeypatch.setattr(
+            ttyd_mod,
+            "_run",
+            lambda *a, **kw: subprocess.CompletedProcess(
+                a[0], 0, "s-TEST-001 [Created 1m ago]\n", ""
+            ),
+        )
+        assert resolve_session_state("s-TEST-001") == SessionState.LIVE
+
+    def test_exited_session(self, monkeypatch):
+        import subprocess
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
+        monkeypatch.setattr(
+            ttyd_mod,
+            "_run",
+            lambda *a, **kw: subprocess.CompletedProcess(
+                a[0],
+                0,
+                "s-TEST-001 [Created 1m ago] (EXITED - attach to resurrect)\n",
+                "",
+            ),
+        )
+        assert resolve_session_state("s-TEST-001") == SessionState.EXITED
+
+    def test_missing_session(self, monkeypatch):
+        import subprocess
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
+        monkeypatch.setattr(
+            ttyd_mod,
+            "_run",
+            lambda *a, **kw: subprocess.CompletedProcess(
+                a[0], 1, "No sessions found.\n", ""
+            ),
+        )
+        assert resolve_session_state("s-TEST-001") == SessionState.MISSING
+
+    def test_unknown_when_no_mplex(self, monkeypatch):
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", None)
+        assert resolve_session_state("s-TEST-001") == SessionState.UNKNOWN
+
+    def test_tmux_live(self, monkeypatch):
+        import subprocess
+        import story_lifecycle.terminal.ttyd as ttyd_mod
+
+        monkeypatch.setattr(ttyd_mod, "_MPLEX", "tmux")
+        monkeypatch.setattr(
+            ttyd_mod,
+            "_run",
+            lambda *a, **kw: subprocess.CompletedProcess(a[0], 0, "", ""),
+        )
+        assert resolve_session_state("s-TEST-001") == SessionState.LIVE

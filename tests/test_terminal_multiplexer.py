@@ -84,6 +84,11 @@ def test_tui_defers_attach_until_after_textual_exits_on_windows(
     monkeypatch.setattr(tui.ttyd, "session_alive", lambda _session: True)
     monkeypatch.setattr(
         tui.ttyd,
+        "resolve_session_state",
+        lambda name: tui.ttyd.SessionState.LIVE,
+    )
+    monkeypatch.setattr(
+        tui.ttyd,
         "create_session",
         lambda session, workspace: create_calls.append((session, workspace)),
     )

@@ -21,7 +21,6 @@ from ..db import models as db
 from ..orchestrator.graph import set_tui_app, take_plan_done, take_terminal_opened
 from ..orchestrator.service import (
     get_story_cli_model,
-    pause_story,
     fail_story,
     skip_stage,
     create_and_start_story,
@@ -35,9 +34,13 @@ from ..orchestrator.entry import (
     TtydSessionBackend,
     resolve_stage_state,
     decide_action,
+    entry_action_notice,
     has_stage_done,
     validate_stage_done,
     DoneStatus,
+    cli_exit_marker_path,
+    resolve_cli_exit_state,
+    CliExitState,
 )
 
 
@@ -993,45 +996,22 @@ class StoryBoardApp(App):
                 self.exit()
                 subprocess.run(attach_args, check=False)
                 os.system("story board")
-
-        elif action == StageEntryAction.PROMPT_DONE_PRESS_R:
-            panel = self.query_one("#detail-panel")
-            panel.update(
-                f"[bold yellow]Stage {s.get('current_stage', '')} 已完成[/]\n\n"
-                f"  .done 文件已存在，按 [bold cyan]r[/] 继续推进。"
-            )
-            panel.set_class(True, "visible")
-            self._show_detail = True
-
-        elif action == StageEntryAction.PROMPT_PRESS_R:
-            panel = self.query_one("#detail-panel")
-            panel.update(
-                "[bold yellow]没有运行中的 session[/]\n\n"
-                "  按 [bold cyan]r[/] 启动或恢复执行。"
-            )
-            panel.set_class(True, "visible")
-            self._show_detail = True
-
-        elif action == StageEntryAction.PROMPT_FIX_DONE:
-            validation = validate_stage_done(s)
-            panel = self.query_one("#detail-panel")
-            panel.update(
-                f"[bold red].done 文件损坏[/]\n\n"
-                f"  {validation.error}\n\n"
-                f"  请修复或删除:\n"
-                f"  {s.get('workspace', '')}/.story-done/{story_key}/{s.get('current_stage', '')}.json"
-            )
-            panel.set_class(True, "visible")
-            self._show_detail = True
-
         else:
-            # NOOP: story finished or already running — show status
+            notice = entry_action_notice(action, s)
+            if notice:
+                severity = (
+                    "error"
+                    if action
+                    in (
+                        StageEntryAction.PROMPT_FIX_DONE,
+                        StageEntryAction.SHOW_CLI_EXIT_ERROR,
+                        StageEntryAction.SHOW_SESSION_UNKNOWN,
+                    )
+                    else "warning"
+                )
+                self.notify(notice, severity=severity)
             panel = self.query_one("#detail-panel")
-            status = s.get("status", "")
-            panel.update(
-                f"[dim]{status.upper()}[/]  Story 不可操作。\n\n"
-                f"  状态: {status}  Stage: {s.get('current_stage', '')}"
-            )
+            panel.update(f"[bold yellow]{notice or '不可操作'}[/]")
             panel.set_class(True, "visible")
             self._show_detail = True
 
@@ -1194,14 +1174,36 @@ class StoryBoardApp(App):
         if not self.stories:
             return
         s = self.stories[self.selected_index]
-        skip_stage(s["story_key"], s["current_stage"])
+        key = s["story_key"]
+
+        from ..orchestrator.graph import is_story_running
+
+        if is_story_running(key):
+            self.notify(
+                f"Story {key} 的 graph 正在运行，不能跳过。请先等待完成或 abort。",
+                severity="warning",
+            )
+            return
+
+        skip_stage(key, s["current_stage"])
         self.refresh_stories()
 
     def action_fail_story(self):
         if not self.stories:
             return
         s = self.stories[self.selected_index]
-        fail_story(s["story_key"])
+        key = s["story_key"]
+
+        from ..orchestrator.graph import is_story_running
+
+        if is_story_running(key):
+            self.notify(
+                f"Story {key} 的 graph 正在运行。如需标记失败，请先按 [a] abort。",
+                severity="warning",
+            )
+            return
+
+        fail_story(key)
         self.refresh_stories()
 
     def action_delete_story(self):
@@ -1209,14 +1211,29 @@ class StoryBoardApp(App):
             return
         s = self.stories[self.selected_index]
         key = s["story_key"]
+        session = ttyd.session_name(key)
+
+        from ..orchestrator.graph import is_story_running
+
+        is_running = is_story_running(key)
+        warning = ""
+        if is_running:
+            warning = "\n\n[bold red]Story graph 正在运行，删除将中止执行。[/]"
 
         def on_confirm(confirmed):
-            if confirmed:
-                delete_story(key)
-                self.refresh_stories()
+            if not confirmed:
+                return
+            _tui_debug("delete_story", story_key=key)
+            ttyd.kill_session(session)
+            ttyd.stop_ttyd(key)
+            delete_story(key)
+            marker = cli_exit_marker_path(key)
+            if marker.exists():
+                marker.unlink()
+            self.refresh_stories()
 
         self.push_screen(
-            ConfirmDialog(f"Delete story {key}?"),
+            ConfirmDialog(f"Delete story {key}?{warning}"),
             on_confirm,
         )
 
@@ -1225,8 +1242,9 @@ class StoryBoardApp(App):
             return
         s = self.stories[self.selected_index]
         key = s["story_key"]
+        session = ttyd.session_name(key)
 
-        from ..orchestrator.graph import is_story_running
+        from ..orchestrator.graph import is_story_running, start_story_async
 
         is_running = is_story_running(key)
         state = resolve_stage_state(s, self._session_backend, is_running)
@@ -1239,38 +1257,65 @@ class StoryBoardApp(App):
         )
 
         if action == StageEntryAction.START_OR_RESUME:
+            if state == StageEntryState.IDLE_WITH_LIVE_SESSION:
+                self.notify(
+                    f"存在未管理的旧 session {session}，将启动新的执行。",
+                    severity="warning",
+                )
             db.update_story(key, status="active", last_error=None)
-            from ..orchestrator.graph import start_story_async
-
             if not is_story_running(key):
                 start_story_async(key)
             self.refresh_stories()
 
-        elif action == StageEntryAction.PROMPT_FIX_DONE:
-            validation = validate_stage_done(s)
-            panel = self.query_one("#detail-panel")
-            panel.update(
-                f"[bold red].done 文件损坏，无法恢复[/]\n\n"
-                f"  {validation.error}\n\n"
-                f"  请修复或删除后重试。"
+        elif action == StageEntryAction.CONSUME_DONE_RESUME:
+            db.update_story(key, status="active", last_error=None)
+            if not is_story_running(key):
+                start_story_async(key)
+            self.refresh_stories()
+
+        elif action == StageEntryAction.CLEANUP_DEAD_AND_START:
+            _tui_debug("cleanup_dead_and_start", story_key=key)
+            ttyd.delete_exited_session(session)
+            marker = cli_exit_marker_path(key)
+            if marker.exists():
+                marker.unlink()
+            db.update_story(key, status="active", last_error=None)
+            if not is_story_running(key):
+                start_story_async(key)
+            self.refresh_stories()
+
+        elif action == StageEntryAction.CLEANUP_DEAD_AND_RESTART:
+
+            def on_restart_confirm(confirmed):
+                if not confirmed:
+                    return
+                _tui_debug("cleanup_dead_and_restart", story_key=key)
+                ttyd.delete_exited_session(session)
+                marker = cli_exit_marker_path(key)
+                if marker.exists():
+                    marker.unlink()
+                db.update_story(key, status="active", last_error=None)
+                if not is_story_running(key):
+                    start_story_async(key)
+                self.refresh_stories()
+
+            self.push_screen(
+                ConfirmDialog(
+                    f"Story {key} 的 graph 仍在运行但 session 已退出。\n"
+                    f"强制重启将中止当前后台执行。是否继续？"
+                ),
+                on_restart_confirm,
             )
-            panel.set_class(True, "visible")
-            self._show_detail = True
 
         else:
-            # NOOP: already running healthy or story finished
+            notice = entry_action_notice(action, s)
+            if notice:
+                severity = (
+                    "error" if action == StageEntryAction.PROMPT_FIX_DONE else "warning"
+                )
+                self.notify(notice, severity=severity)
             panel = self.query_one("#detail-panel")
-            status = s.get("status", "")
-            if state == StageEntryState.RUNNING_HEALTHY:
-                panel.update(
-                    "[bold green]Story 正在运行中[/]\n\n"
-                    "  AI session 健康，无需重复启动。"
-                )
-            else:
-                panel.update(
-                    f"[dim]{status.upper()}[/]  Story 不可恢复。\n\n"
-                    f"  状态: {status}  Stage: {s.get('current_stage', '')}"
-                )
+            panel.update(f"[bold yellow]{notice or '不可操作'}[/]")
             panel.set_class(True, "visible")
             self._show_detail = True
 
@@ -1309,10 +1354,16 @@ class StoryBoardApp(App):
         if not self.stories:
             return
         s = self.stories[self.selected_index]
+        key = s["story_key"]
+        session = ttyd.session_name(key)
+
         from ..orchestrator.service import abort_story
 
         try:
-            abort_story(s["story_key"])
+            abort_story(key)
+            if ttyd.session_alive(session):
+                ttyd.kill_session(session)
+            ttyd.stop_ttyd(key)
         except ValueError as e:
             panel = self.query_one("#detail-panel")
             panel.update(f"[red]{e}[/]")
@@ -1387,6 +1438,13 @@ class StoryBoardApp(App):
                         resume_story(key)
                     except Exception:
                         pass
+            elif not has_stage_done(s) and not is_story_running(key):
+                cli_state = resolve_cli_exit_state(s)
+                if cli_state == CliExitState.EXITED_WITHOUT_DONE:
+                    _tui_debug(
+                        "watchdog_cli_exit_detected",
+                        story_key=key,
+                    )
 
         # Unblock sub-stories whose dependencies are complete
         from ..orchestrator.graph import start_story_async
@@ -1457,12 +1515,7 @@ class StoryBoardApp(App):
             self._watchdog_interval = new_interval
 
     def action_quit(self):
-        active = [s for s in self.stories if s["status"] == "active"]
-        for s in active:
-            try:
-                pause_story(s["story_key"])
-            except Exception:
-                pass
+        _tui_debug("quit_tui")
         self.exit()
 
     def action_run_doctor(self):
@@ -1694,6 +1747,19 @@ def run_tui():
             break
         try:
             _tui_debug("run_tui_attach_start", args=attach_args)
+            if (
+                len(attach_args) >= 4
+                and attach_args[0] == "zellij"
+                and "--session" in attach_args
+                and "--new-session-with-layout" in attach_args
+            ):
+                session_name = attach_args[attach_args.index("--session") + 1]
+                deleted = ttyd.delete_exited_session(session_name)
+                _tui_debug(
+                    "run_tui_zellij_delete_exited",
+                    session_name=session_name,
+                    deleted=deleted,
+                )
             _prepare_terminal_for_child()
             _tui_debug(
                 "run_tui_attach_stdio",
@@ -1714,7 +1780,18 @@ def run_tui():
             )
             _tui_debug("run_tui_attach_return", returncode=result.returncode)
 
-            # Signal that terminal was opened for foreground Zellij execution
+            if result.returncode != 0:
+                sys.__stdout__.write(
+                    f"\n\x1b[31mZellij/terminal command failed (exit code: {result.returncode})\x1b[0m\n"
+                    f"Command: {' '.join(attach_args)}\n"
+                    f"Press Enter to return to TUI...\n"
+                )
+                sys.__stdout__.flush()
+                try:
+                    input()
+                except EOFError:
+                    pass
+
             if len(attach_args) >= 3 and "--session" in attach_args:
                 from ..orchestrator.graph import emit_terminal_opened
 
