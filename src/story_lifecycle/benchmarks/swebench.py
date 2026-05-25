@@ -356,3 +356,92 @@ def _render_prd(inst: SWEbenchInstance) -> str:
     if inst.FAIL_TO_PASS:
         sections += ["", "## Failing Tests", ""] + [f"- {t}" for t in inst.FAIL_TO_PASS]
     return "\n".join(sections) + "\n"
+
+
+def inspect_patch_noise(patch: str) -> dict:
+    """检查 patch 是否过脏。
+
+    返回 dict:
+    - tags: list[str] — 包含 'patch_too_noisy' 如果触发噪音规则
+    - modified_file_count, added_file_count, deleted_file_count, binary_file_count, diff_size_bytes
+    """
+    if not patch:
+        return {"tags": [], "modified_file_count": 0, "diff_size_bytes": 0}
+
+    diff_size = len(patch.encode("utf-8"))
+    modified = patch.count("diff --git a/")
+    added = patch.count("new file mode")
+    deleted = patch.count("deleted file mode")
+    binary = patch.count("Binary files")
+
+    tags: list[str] = []
+    if modified > 20:
+        tags.append("patch_too_noisy")
+    if diff_size > 1_000_000:
+        tags.append("patch_too_noisy")
+    if binary > 0:
+        tags.append("patch_too_noisy")
+
+    return {
+        "tags": tags,
+        "modified_file_count": modified,
+        "added_file_count": added,
+        "deleted_file_count": deleted,
+        "binary_file_count": binary,
+        "diff_size_bytes": diff_size,
+    }
+
+
+def _read_model_patch(workspace: Path, story_key: str) -> str:
+    """从 workspace 中提取 model_patch。
+
+    优先级:
+    1. .story-done/{story_key}/finalize.json 中的 model_patch
+    2. workspace/final.patch
+    3. 空字符串
+    """
+    done_file = workspace / ".story-done" / story_key / "finalize.json"
+    if done_file.exists():
+        try:
+            data = json.loads(done_file.read_text(encoding="utf-8"))
+            return data.get("model_patch", "")
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    final_patch = workspace / "final.patch"
+    if final_patch.exists():
+        return final_patch.read_text(encoding="utf-8")
+
+    return ""
+
+
+def export_predictions(
+    store: RunStore, run_id: str, agent: str = "claude"
+) -> list[dict]:
+    """导出 predictions.jsonl。返回 rows 列表并写入文件。"""
+    manifest = store.load_manifest(run_id)
+    rows = []
+    for entry in manifest["instances"]:
+        workspace = Path(entry["workspace"])
+        instance_id = entry["instance_id"]
+        story_key = entry["story_key"]
+
+        patch = _read_model_patch(workspace, story_key)
+        noise = inspect_patch_noise(patch)
+
+        row = {
+            "instance_id": instance_id,
+            "model_name_or_path": f"story-lifecycle-{agent}",
+            "model_patch": patch,
+        }
+        rows.append(row)
+
+        if noise.get("tags"):
+            store.update_instance(run_id, instance_id, noise_tags=noise["tags"])
+
+    pred_path = store.root / run_id / "predictions.jsonl"
+    with open(pred_path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    return rows

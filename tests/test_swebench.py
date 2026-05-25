@@ -11,6 +11,8 @@ from story_lifecycle.benchmarks.swebench import (
     RunStore,
     SWEbenchInstance,
     checkout_instance,
+    export_predictions,
+    inspect_patch_noise,
     load_instances_jsonl,
     prepare_instance,
 )
@@ -339,3 +341,98 @@ class TestPrepareInstance:
 
         story = db.get_story("inst-3")
         assert story["title"] == "This is a long problem"
+
+
+class TestExportPredictions:
+    def test_export_from_finalize_json(self, tmp_path):
+        """从 .story-done finalize.json 读取 model_patch。"""
+        inst = SWEbenchInstance("inst-1", "a/b", "c1", "ps")
+        run_dir = tmp_path / "r1"
+        ws = run_dir / "inst-1"
+        ws.mkdir(parents=True)
+        done_dir = ws / ".story-done" / "inst-1"
+        done_dir.mkdir(parents=True)
+        done_dir.joinpath("finalize.json").write_text(
+            json.dumps(
+                {
+                    "model_patch": "diff --git a/file.py b/file.py\n+fix",
+                    "patch_summary": "fixed the bug",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        store = RunStore(tmp_path)
+        store.create_run(run_id="r1", instances=[inst], agent="claude")
+
+        rows = export_predictions(store, "r1")
+
+        assert len(rows) == 1
+        assert rows[0]["instance_id"] == "inst-1"
+        assert "diff --git" in rows[0]["model_patch"]
+
+    def test_export_writes_predictions_jsonl(self, tmp_path):
+        """导出写入 predictions.jsonl 文件。"""
+        inst = SWEbenchInstance("inst-1", "a/b", "c1", "ps")
+        run_dir = tmp_path / "r1"
+        ws = run_dir / "inst-1"
+        ws.mkdir(parents=True)
+        done_dir = ws / ".story-done" / "inst-1"
+        done_dir.mkdir(parents=True)
+        done_dir.joinpath("finalize.json").write_text(
+            json.dumps(
+                {
+                    "model_patch": "diff content",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        store = RunStore(tmp_path)
+        store.create_run(run_id="r1", instances=[inst], agent="claude")
+
+        export_predictions(store, "r1")
+
+        pred_path = run_dir / "predictions.jsonl"
+        assert pred_path.exists()
+        lines = pred_path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) == 1
+        row = json.loads(lines[0])
+        assert row["instance_id"] == "inst-1"
+        assert row["model_name_or_path"] == "story-lifecycle-claude"
+
+    def test_export_empty_patch_for_missing_done(self, tmp_path):
+        """没有 finalize.json 时导出空 patch。"""
+        inst = SWEbenchInstance("inst-1", "a/b", "c1", "ps")
+        run_dir = tmp_path / "r1"
+        ws = run_dir / "inst-1"
+        ws.mkdir(parents=True)
+
+        store = RunStore(tmp_path)
+        store.create_run(run_id="r1", instances=[inst], agent="claude")
+
+        rows = export_predictions(store, "r1")
+        assert rows[0]["model_patch"] == ""
+
+
+class TestPatchNoiseInspection:
+    def test_clean_patch_passes(self):
+        result = inspect_patch_noise("diff --git a/file.py\n+fix\n")
+        assert "patch_too_noisy" not in result.get("tags", [])
+
+    def test_too_many_files_flagged(self):
+        patch = "\n".join(
+            f"diff --git a/file{i}.py b/file{i}.py\n+change" for i in range(25)
+        )
+        result = inspect_patch_noise(patch)
+        assert "patch_too_noisy" in result.get("tags", [])
+
+    def test_empty_patch_not_noisy(self):
+        result = inspect_patch_noise("")
+        assert "patch_too_noisy" not in result.get("tags", [])
+
+    def test_diff_size_over_1mb_flagged(self):
+        big_patch = "diff --git a/big.py\n" + "+x" * 1_100_000 + "\n"
+        result = inspect_patch_noise(big_patch)
+        assert "patch_too_noisy" in result.get("tags", [])
+        assert result["diff_size_bytes"] > 1_000_000
