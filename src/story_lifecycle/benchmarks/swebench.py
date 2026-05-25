@@ -185,22 +185,26 @@ def _run_git(
 
 
 def _ensure_cache(cache_root: Path, repo: str) -> Path:
-    """确保 mirror cache 存在。返回 cache repo 路径。"""
+    """确保 mirror cache 存在。返回 cache repo 路径。进程级文件锁保护。"""
+    from filelock import FileLock
+
     slug = _repo_slug(repo)
     cache_repo = cache_root / slug
     cache_repo.parent.mkdir(parents=True, exist_ok=True)
 
-    if cache_repo.exists():
-        log.info("Updating cache for %s", repo)
-        r = _run_git("remote", "update", "--prune", cwd=str(cache_repo))
-        if r.returncode != 0:
-            log.warning("Cache update failed for %s: %s", repo, r.stderr)
-    else:
-        log.info("Creating mirror cache for %s", repo)
-        repo_url = f"https://github.com/{repo}.git"
-        r = _run_git("clone", "--mirror", repo_url, str(cache_repo))
-        if r.returncode != 0:
-            raise RuntimeError(f"Mirror clone failed for {repo}: {r.stderr}")
+    lock_path = str(cache_repo) + ".lock"
+    with FileLock(lock_path, timeout=300):
+        if cache_repo.exists():
+            log.info("Updating cache for %s", repo)
+            r = _run_git("remote", "update", "--prune", cwd=str(cache_repo))
+            if r.returncode != 0:
+                log.warning("Cache update failed for %s: %s", repo, r.stderr)
+        else:
+            log.info("Creating mirror cache for %s", repo)
+            repo_url = f"https://github.com/{repo}.git"
+            r = _run_git("clone", "--mirror", repo_url, str(cache_repo))
+            if r.returncode != 0:
+                raise RuntimeError(f"Mirror clone failed for {repo}: {r.stderr}")
 
     return cache_repo
 
