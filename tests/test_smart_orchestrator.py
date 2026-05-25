@@ -222,6 +222,7 @@ class TestReviewStageNode:
         assert "review" in result["last_error"].lower()
         assert result["_gate_decision"]["reason_code"] == "review_retry_limit"
 
+    @patch("story_lifecycle.orchestrator.nodes.planner")
     def test_stale_executor_no_review_fatigue(self, mock_planner):
         """When review_round_count==0 but execution_count>=retry_limit, gate blocks
         with stale executor reason — review never actually ran."""
