@@ -352,13 +352,13 @@ class TestPrepareInstance:
 
 class TestExportPredictions:
     def test_export_from_finalize_json(self, tmp_path):
-        """从 .story-done finalize.json 读取 model_patch。"""
+        """从 .story/done finalize.json 读取 model_patch。"""
         inst = SWEbenchInstance("inst-1", "a/b", "c1", "ps")
         run_dir = tmp_path / "r1"
         ws = run_dir / "inst-1"
         ws.mkdir(parents=True)
         story_key = "r1__inst-1"
-        done_dir = ws / ".story-done" / story_key
+        done_dir = ws / ".story" / "done" / story_key
         done_dir.mkdir(parents=True)
         done_dir.joinpath("finalize.json").write_text(
             json.dumps(
@@ -386,7 +386,7 @@ class TestExportPredictions:
         ws = run_dir / "inst-1"
         ws.mkdir(parents=True)
         story_key = "r1__inst-1"
-        done_dir = ws / ".story-done" / story_key
+        done_dir = ws / ".story" / "done" / story_key
         done_dir.mkdir(parents=True)
         done_dir.joinpath("finalize.json").write_text(
             json.dumps(
@@ -569,3 +569,93 @@ class TestE2ESmoke:
         )
         assert summary["total"] == 3
         assert summary["predictions"] == 3
+
+
+class TestRegressionValidation:
+    """4 required regression tests from design doc."""
+
+    def test_stage_scoped_synthetic_isolation(self):
+        """synthetic flag from design stage must not affect implement validation."""
+        from story_lifecycle.orchestrator.validation import validate_stage_outputs
+
+        # design had synthetic output
+        state = {
+            "story_key": "test-1",
+            "current_stage": "implement",
+            "profile": "swebench",
+            "workspace": "/tmp",
+            "context": {
+                "_synthetic_design": True,
+                # implement expects patch_summary but it's missing
+            },
+        }
+        result = validate_stage_outputs(state)
+        # Should fail: implement's expected_outputs missing even though design was synthetic
+        assert not result.ok
+        assert "patch_summary" in result.reason
+
+    def test_finalize_hard_gate_blocks_empty_patch(self, tmp_path):
+        """SWE-bench finalize must block when no model_patch and no git diff."""
+        from story_lifecycle.orchestrator.validation import validate_stage_outputs
+
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        state = {
+            "story_key": "test-1",
+            "current_stage": "finalize",
+            "profile": "swebench",
+            "workspace": str(ws),
+            "context": {
+                "_synthetic_finalize": True,
+                # No model_patch, no git
+            },
+        }
+        result = validate_stage_outputs(state)
+        assert not result.ok
+        assert "no model_patch" in result.reason
+
+    def test_patch_extractor_consistency(self, tmp_path):
+        """extract_model_patch must agree between advance gate and export."""
+        from story_lifecycle.benchmarks.artifacts import extract_model_patch
+
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+
+        # No patch at all
+        result = extract_model_patch(workspace=ws, story_key="test-1")
+        assert result.patch == ""
+        assert result.source == ""
+
+        # Write done file with model_patch
+        done_dir = ws / ".story" / "done" / "test-1"
+        done_dir.mkdir(parents=True)
+        done_dir.joinpath("finalize.json").write_text(
+            json.dumps({"model_patch": "diff --git a/f.py\n+fix"}), encoding="utf-8"
+        )
+        result = extract_model_patch(workspace=ws, story_key="test-1")
+        assert result.patch == "diff --git a/f.py\n+fix"
+        assert result.source == "done_json"
+
+    def test_paths_registry_produces_correct_paths(self, tmp_path):
+        """Workspace path registry produces expected .story/ layout."""
+        from story_lifecycle.orchestrator.paths import (
+            stage_done_file,
+            context_dir,
+            plan_file,
+            done_snapshot_file,
+        )
+
+        ws = tmp_path / "project"
+        assert (
+            stage_done_file(ws, "KEY-1", "design")
+            == ws / ".story" / "done" / "KEY-1" / "design.json"
+        )
+        assert context_dir(ws, "KEY-1") == ws / ".story" / "context" / "KEY-1"
+        assert (
+            plan_file(ws, "KEY-1", "design")
+            == ws / ".story" / "context" / "KEY-1" / "plan_design.md"
+        )
+        assert (
+            done_snapshot_file(ws, "KEY-1", "design")
+            == ws / ".story" / "context" / "KEY-1" / "done" / "design.json"
+        )

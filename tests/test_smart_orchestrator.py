@@ -469,14 +469,14 @@ class TestExecuteStageNode:
         mock_get_tool.return_value = mock_tool
 
         with tempfile.TemporaryDirectory() as tmp:
-            plan_dir = Path(tmp) / ".story-context" / "TEST-001"
+            plan_dir = Path(tmp) / ".story" / "context" / "TEST-001"
             plan_dir.mkdir(parents=True)
             plan_file = plan_dir / "plan_design.md"
             plan_file.write_text("# Task: Build API", encoding="utf-8")
 
             state = _make_state(
                 workspace=tmp,
-                context={"plan_path": ".story-context/TEST-001/plan_design.md"},
+                context={"plan_path": ".story/context/TEST-001/plan_design.md"},
             )
             execute_stage_node(state)
 
@@ -498,7 +498,7 @@ class TestExecuteStageNode:
     @patch("story_lifecycle.orchestrator.tools.get_tool")
     def test_existing_done_file_is_left_for_poll_completion(self, mock_get_tool):
         with tempfile.TemporaryDirectory() as tmp:
-            done_dir = Path(tmp) / ".story-done" / "TEST-001"
+            done_dir = Path(tmp) / ".story" / "done" / "TEST-001"
             done_dir.mkdir(parents=True)
             done_file = done_dir / "design.json"
             done_file.write_text(
@@ -538,6 +538,14 @@ class TestAdvanceNode:
             patch(
                 "story_lifecycle.orchestrator.nodes.get_stage_config",
                 return_value={"expected_outputs": ["prd_path"]},
+            ),
+            patch(
+                "story_lifecycle.orchestrator.validation.get_stage_config",
+                return_value={"expected_outputs": ["prd_path"]},
+            ),
+            patch(
+                "story_lifecycle.orchestrator.nodes.load_profile",
+                return_value={"stages": {"design": {"expected_outputs": ["prd_path"]}}},
             ),
         ):
             result = advance_node(state)

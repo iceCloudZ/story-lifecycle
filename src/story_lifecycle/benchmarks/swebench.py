@@ -432,53 +432,11 @@ def inspect_patch_noise(patch: str) -> dict:
 
 
 def _read_model_patch(workspace: Path, story_key: str) -> str:
-    """从 workspace 中提取 model_patch。
+    """从 workspace 中提取 model_patch，委托给共享 artifacts 模块。"""
+    from .artifacts import extract_model_patch
 
-    优先级:
-    1. .story-done/{story_key}/finalize.json 中的 model_patch
-    2. workspace/final.patch
-    3. git diff (headless 模式下 Claude 直接修改代码)
-    4. 空字符串
-    """
-    done_file = workspace / ".story-done" / story_key / "finalize.json"
-    if done_file.exists():
-        try:
-            data = json.loads(done_file.read_text(encoding="utf-8"))
-            patch = data.get("model_patch", "")
-            if patch:
-                return patch
-        except (json.JSONDecodeError, KeyError):
-            pass
-
-    final_patch = workspace / "final.patch"
-    if final_patch.exists():
-        return final_patch.read_text(encoding="utf-8")
-
-    # Fallback: generate patch from git diff (headless mode edits in-place)
-    if (workspace / ".git").exists():
-        try:
-            r = _run_git("diff", cwd=str(workspace))
-            if r.returncode == 0 and r.stdout.strip():
-                return r.stdout
-        except Exception:
-            pass
-
-        # Claude may have committed changes — diff against base_commit from DB
-        try:
-            from ..db import models as _db
-
-            story = _db.get_story(story_key)
-            if story and story.get("context_json"):
-                ctx = json.loads(story["context_json"])
-                base = ctx.get("base_commit")
-                if base:
-                    r = _run_git("diff", base, cwd=str(workspace))
-                    if r.returncode == 0 and r.stdout.strip():
-                        return r.stdout
-        except Exception:
-            pass
-
-    return ""
+    result = extract_model_patch(workspace=workspace, story_key=story_key)
+    return result.patch
 
 
 def export_predictions(

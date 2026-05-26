@@ -23,6 +23,14 @@ from .observability import (
     log_dod_check,
 )
 from .evaluator_loop import AdversarialConfig
+from .paths import (
+    stage_done_file,
+    context_dir,
+    plan_file,
+    review_file,
+    done_snapshot_file,
+    malformed_done_file,
+)
 
 log = logging.getLogger("story-lifecycle.nodes")
 
@@ -279,10 +287,8 @@ def plan_stage_node(state: StoryState) -> StoryState:
             # Only accept plan on pass decision
             if loop_result.decision == "pass" and loop_result.final_plan:
                 plan = loop_result.final_plan
-                plan_file = (
-                    Path(workspace) / ".story-context" / story_key / f"plan_{stage}.md"
-                )
-                plan_file.parent.mkdir(parents=True, exist_ok=True)
+                pf = plan_file(workspace, story_key, stage)
+                pf.parent.mkdir(parents=True, exist_ok=True)
                 review_path = state.get("context", {}).get("review_path")
                 review_section = ""
                 if review_path:
@@ -292,7 +298,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
                             f"\n## 前序 Review 建议\n"
                             f"请先处理以下问题：\n{rf.read_text(encoding='utf-8')}"
                         )
-                plan_file.write_text(
+                pf.write_text(
                     f"# 任务书: {stage}\n\n"
                     f"## 执行指令\n{plan.get('extra_instructions', '')}\n"
                     f"{review_section}\n\n"
@@ -307,7 +313,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
                 )
                 state["plan_summary"] = plan.get("summary", "")
                 state["trajectory_score"] = plan.get("trajectory_score")
-                state["context"]["plan_path"] = str(plan_file.relative_to(workspace))
+                state["context"]["plan_path"] = str(pf.relative_to(workspace))
                 state["context"]["plan_summary"] = plan.get("summary", "")
                 state["plan"] = plan
                 db.log_event(
@@ -368,10 +374,8 @@ def plan_stage_node(state: StoryState) -> StoryState:
                 return _delegate_subtasks(state, plan)
 
             # Write plan task file
-            plan_file = (
-                Path(workspace) / ".story-context" / story_key / f"plan_{stage}.md"
-            )
-            plan_file.parent.mkdir(parents=True, exist_ok=True)
+            pf = plan_file(workspace, story_key, stage)
+            pf.parent.mkdir(parents=True, exist_ok=True)
 
             # Append previous review suggestions if present
             review_path = state.get("context", {}).get("review_path")
@@ -384,7 +388,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
                         f"请先处理以下问题：\n{rf.read_text(encoding='utf-8')}"
                     )
 
-            plan_file.write_text(
+            pf.write_text(
                 f"# 任务书: {stage}\n\n"
                 f"## 执行指令\n{plan.get('extra_instructions', '')}\n"
                 f"{review_section}\n\n"
@@ -401,7 +405,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
             # State stores index only
             state["plan_summary"] = plan.get("summary", "")
             state["trajectory_score"] = plan.get("trajectory_score")
-            state["context"]["plan_path"] = str(plan_file.relative_to(workspace))
+            state["context"]["plan_path"] = str(pf.relative_to(workspace))
             state["context"]["plan_summary"] = plan.get("summary", "")
             state["plan"] = plan
 
@@ -522,7 +526,7 @@ def _delegate_subtasks(state: StoryState, plan: dict) -> StoryState:
                 shutil.copy2(str(f), str(sub_knowledge / f.name))
 
         # Write per-subtask plan file
-        plan_dir = Path(workspace) / ".story-context" / sub_key
+        plan_dir = context_dir(workspace, sub_key)
         plan_dir.mkdir(parents=True, exist_ok=True)
         plan_file = plan_dir / f"plan_{stage}.md"
         plan_file.write_text(
@@ -756,10 +760,8 @@ def review_stage_node(state: StoryState) -> StoryState:
             workspace = state["workspace"]
             story_key = state["story_key"]
 
-            review_file = (
-                Path(workspace) / ".story-context" / story_key / f"review_{stage}.md"
-            )
-            review_file.parent.mkdir(parents=True, exist_ok=True)
+            rf = review_file(workspace, story_key, stage)
+            rf.parent.mkdir(parents=True, exist_ok=True)
             issues_table = ""
             for issue in review.get("issues", []):
                 issues_table += (
@@ -770,7 +772,7 @@ def review_stage_node(state: StoryState) -> StoryState:
                 f"- {s}" for s in review.get("suggestions", [])
             )
             no_issues_row = "| （无） | | | |\n"
-            review_file.write_text(
+            rf.write_text(
                 f"# 评审: {stage} (adversarial)\n\n"
                 f"## 结论: {review.get('quality', 'pass')}\n\n"
                 f"## 摘要\n{review.get('summary', '')}\n\n"
@@ -785,7 +787,7 @@ def review_stage_node(state: StoryState) -> StoryState:
             )
             state["review_summary"] = review.get("summary", "")
             state["trajectory_score"] = review.get("trajectory_score")
-            state["context"]["review_path"] = str(review_file.relative_to(workspace))
+            state["context"]["review_path"] = str(rf.relative_to(workspace))
             state["context"]["review_summary"] = review.get("summary", "")
 
             repair_path = review.get("repair_packet_path")
@@ -822,10 +824,7 @@ def review_stage_node(state: StoryState) -> StoryState:
                     val = str(v)
                     if len(val) > 200:
                         detail_file = (
-                            Path(workspace)
-                            / ".story-context"
-                            / story_key
-                            / f"{stage}_{k}.md"
+                            context_dir(workspace, story_key) / f"{stage}_{k}.md"
                         )
                         detail_file.write_text(val, encoding="utf-8")
                         state["context"][k + "_path"] = str(
@@ -867,10 +866,8 @@ def review_stage_node(state: StoryState) -> StoryState:
             story_key = state["story_key"]
 
             # Write review file
-            review_file = (
-                Path(workspace) / ".story-context" / story_key / f"review_{stage}.md"
-            )
-            review_file.parent.mkdir(parents=True, exist_ok=True)
+            rf = review_file(workspace, story_key, stage)
+            rf.parent.mkdir(parents=True, exist_ok=True)
 
             issues_table = ""
             for issue in review.get("issues", []):
@@ -884,7 +881,7 @@ def review_stage_node(state: StoryState) -> StoryState:
             )
 
             no_issues_row = "| （无） | | | |\n"
-            review_file.write_text(
+            rf.write_text(
                 f"# 评审: {stage}\n\n"
                 f"## 结论: {review.get('quality', 'pass')}\n\n"
                 f"## 摘要\n{review.get('summary', '')}\n\n"
@@ -901,7 +898,7 @@ def review_stage_node(state: StoryState) -> StoryState:
             # State stores index only
             state["review_summary"] = review.get("summary", "")
             state["trajectory_score"] = review.get("trajectory_score")
-            state["context"]["review_path"] = str(review_file.relative_to(workspace))
+            state["context"]["review_path"] = str(rf.relative_to(workspace))
             state["context"]["review_summary"] = review.get("summary", "")
 
             # Maintain knowledge base
@@ -918,10 +915,7 @@ def review_stage_node(state: StoryState) -> StoryState:
                     val = str(v)
                     if len(val) > 200:
                         detail_file = (
-                            Path(workspace)
-                            / ".story-context"
-                            / story_key
-                            / f"{stage}_{k}.md"
+                            context_dir(workspace, story_key) / f"{stage}_{k}.md"
                         )
                         detail_file.write_text(val, encoding="utf-8")
                         state["context"][k + "_path"] = str(
@@ -1148,7 +1142,7 @@ def _build_stage_contract(stage: str, state: StoryState) -> str:
     cfg = get_stage_config(state.get("profile", "minimal"), stage)
     expected = cfg.get("expected_outputs", [])
     expected_lines = "\n".join(f"- {name}" for name in expected) or "- none"
-    done_path = f".story-done/{key}/{stage}.json"
+    done_path = f".story/done/{key}/{stage}.json"
 
     return (
         "## Stage Contract\n\n"
@@ -1214,9 +1208,9 @@ def execute_stage_node(state: StoryState) -> dict:
     _exit_marker.unlink(missing_ok=True)
 
     # Fast path: if done file already exists, skip execution entirely
-    done_file = Path(workspace) / ".story-done" / key / f"{stage}.json"
+    done_file = stage_done_file(workspace, key, stage)
     if done_file.exists():
-        # poll_completion_node is the single consumer of .story-done files.
+        # poll_completion_node is the single consumer of .story/done files.
         # Leaving the file in place lets the graph continue to poll_completion
         # and advance the stage instead of waiting for a file we already deleted.
         log.info(f"Stage {stage} done file found, skipping execution")
@@ -1298,7 +1292,7 @@ def execute_stage_node(state: StoryState) -> dict:
 
 
 def poll_completion_node(state: StoryState) -> StoryState:
-    """Wait for CC to write .story-done/{story_key}/{stage}.json.
+    """Wait for CC to write .story/done/{story_key}/{stage}.json.
 
     Uses interrupt() to yield the worker thread when file not ready.
     Watchdog resumes via graph.invoke(None, config).
@@ -1311,34 +1305,52 @@ def poll_completion_node(state: StoryState) -> StoryState:
     key = state["story_key"]
     stage = state["current_stage"]
     workspace = state["workspace"]
-    done_file = Path(workspace) / ".story-done" / key / f"{stage}.json"
+    done_file = stage_done_file(workspace, key, stage)
 
     # Check for done file first — if output exists, the stage succeeded
     # regardless of whether the session is still alive.
     if done_file.exists():
         data = None
+        parse_exc = None
         for attempt in range(5):
             try:
                 data = robust_json_parse(done_file)
                 break
             except PermissionError:
                 _time.sleep(0.5)
-            except Exception:
+            except Exception as exc:
+                parse_exc = exc
                 break
         if data is None:
-            state["last_error"] = "Failed to read .done file after retries"
+            # Snapshot malformed file before reporting error
+            malformed = malformed_done_file(workspace, key, stage)
+            malformed.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                import shutil as _shutil
+
+                _shutil.move(str(done_file), str(malformed))
+            except Exception:
+                pass
+            state["last_error"] = f"Failed to parse done file: {parse_exc}"
             log_node_error(
                 key,
                 stage,
                 "poll_completion_node",
                 "JSONParseError",
-                f"Failed to parse {done_file}",
+                f"Failed to parse {done_file}: {parse_exc}",
                 execution_count=state.get("execution_count", 0),
                 recoverable=True,
                 action="set_last_error",
                 file_hint=str(done_file),
             )
             return state
+        # Snapshot successfully parsed done before consuming
+        snapshot = done_snapshot_file(workspace, key, stage)
+        snapshot.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            snapshot.write_text(done_file.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception:
+            pass
         try:
             done_file.unlink()
         except PermissionError:
@@ -1406,7 +1418,7 @@ def poll_completion_node(state: StoryState) -> StoryState:
             stage,
             "poll_completion_node",
             "HeadlessNoDoneFile",
-            f"Headless CLI finished but no .story-done for stage {stage}",
+            f"Headless CLI finished but no .story/done for stage {stage}",
             execution_count=state.get("execution_count", 0),
             recoverable=True,
             action="set_last_error",
@@ -1596,46 +1608,37 @@ def advance_node(state: StoryState) -> StoryState:
 
     key = state["story_key"]
     stage = state["current_stage"]
-    cfg = get_stage_config(state.get("profile", "minimal"), stage)
 
-    # Schema guard: check expected_outputs (skip for synthetic headless output)
-    ctx = state.get("context", {})
-    stage_synthetic = ctx.get(f"_synthetic_{stage}")
-    if stage_synthetic:
-        missing = []
-    else:
-        missing = [k for k in cfg.get("expected_outputs", []) if k not in ctx]
-    if missing:
-        state["last_error"] = f"Missing expected outputs: {missing}"
-        return state  # goes back to router
+    # Shared validation: expected_outputs + artifact gates (swebench finalize, etc.)
+    from .validation import validate_stage_outputs
 
-    # Hard gate for benchmark finalize: must have actual patch output
-    if stage == "finalize" and state.get("profile") == "swebench":
-        from pathlib import Path as _P
-
-        workspace = state["workspace"]
-        has_patch = bool(ctx.get("model_patch"))
-        if not has_patch:
-            # Check git diff against base_commit
-            try:
-                import subprocess as _sp
-
-                base = ctx.get("base_commit")
-                if base and _P(workspace).exists():
-                    r = _sp.run(
-                        ["git", "diff", base],
-                        cwd=workspace,
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
-                    if r.returncode == 0 and r.stdout.strip():
-                        has_patch = True
-            except Exception:
-                pass
-        if not has_patch:
-            state["last_error"] = "finalize has no model_patch and no git diff"
-            return state
+    profile_data = load_profile(state.get("profile", "minimal"))
+    result = validate_stage_outputs(state, profile_config=profile_data)
+    if not result.ok:
+        state["last_error"] = result.reason
+        # Structured validation failure event for observability
+        db.log_event(
+            key,
+            stage,
+            "validation_failure",
+            {
+                "validator": result.details.get("validator", "unknown"),
+                "reason": result.reason,
+                "details": result.details,
+                "execution_count": state.get("execution_count", 0),
+            },
+        )
+        log_node_error(
+            key,
+            stage,
+            "advance_node",
+            "ValidationFailed",
+            result.reason,
+            execution_count=state.get("execution_count", 0),
+            recoverable=True,
+            action="set_last_error",
+        )
+        return state
 
     # DoD gate: block on open high findings
     try:
@@ -1918,7 +1921,7 @@ def _build_prd_task_section(state: StoryState, stage: str, has_prd: bool) -> str
             "请执行以下步骤:\n"
             "1. 使用 `prd-generator` skill 生成结构化 PRD\n"
             "2. 将生成的 PRD 保存到合适位置（如 `prd/` 目录）\n"
-            "3. 在 `.story-done/` 目录写入完成标记\n"
+            "3. 在 `.story/done/` 目录写入完成标记\n"
         )
         return section
     except Exception:
@@ -1946,7 +1949,7 @@ def _render_prompt(stage: str, state: StoryState) -> tuple[str, dict]:
 Story: {state["story_key"]}
 标题: {state["title"]}
 
-完成后将结果写入项目根目录下的 `.story-done/{state["story_key"]}/{stage}.json`。
+完成后将结果写入项目根目录下的 `.story/done/{state["story_key"]}/{stage}.json`。
 文件必须只包含纯 JSON，不要用 markdown 代码块包裹。"""
 
     # Variable substitution

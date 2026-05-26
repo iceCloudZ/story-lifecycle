@@ -34,7 +34,7 @@ def swebench_group():
 @click.option(
     "--workspace-root",
     type=click.Path(path_type=Path),
-    default=Path(".story-runs/swebench"),
+    default=Path(".story/runs/swebench"),
     help="Run 根目录",
 )
 @click.option("--agent", default="claude", help="Agent 名称")
@@ -159,7 +159,7 @@ def prepare(
 @click.option(
     "--workspace-root",
     type=click.Path(path_type=Path),
-    default=Path(".story-runs/swebench"),
+    default=Path(".story/runs/swebench"),
     help="Run 根目录",
 )
 def solve(run_id, workspace_root):
@@ -217,7 +217,7 @@ def solve(run_id, workspace_root):
 @click.option(
     "--workspace-root",
     type=click.Path(path_type=Path),
-    default=Path(".story-runs/swebench"),
+    default=Path(".story/runs/swebench"),
     help="Run 根目录",
 )
 @click.option("--agent", default="claude", help="Agent 名称")
@@ -242,7 +242,7 @@ def export(run_id, workspace_root, agent):
 @click.option(
     "--workspace-root",
     type=click.Path(path_type=Path),
-    default=Path(".story-runs/swebench"),
+    default=Path(".story/runs/swebench"),
     help="Run 根目录",
 )
 @click.option("--extra-args", default="", help="传递给 swebench harness 的额外参数")
@@ -329,7 +329,7 @@ def eval(run_id, workspace_root, extra_args):
 @click.option(
     "--workspace-root",
     type=click.Path(path_type=Path),
-    default=Path(".story-runs/swebench"),
+    default=Path(".story/runs/swebench"),
     help="Run 根目录",
 )
 def summarize_cmd(run_id, workspace_root):
@@ -398,7 +398,7 @@ def summarize_cmd(run_id, workspace_root):
 @click.option(
     "--workspace-root",
     type=click.Path(path_type=Path),
-    default=Path(".story-runs/swebench"),
+    default=Path(".story/runs/swebench"),
     help="Run 根目录",
 )
 @click.option("--agent", default="claude")

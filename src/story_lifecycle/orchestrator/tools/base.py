@@ -211,7 +211,7 @@ class BaseTool:
         return state
 
     def _synth_done_file(self, state: dict, stdout: str) -> None:
-        """Write a synthetic .story-done file from headless CLI stdout.
+        """Write a synthetic .story/done file from headless CLI stdout.
 
         The CLI (e.g. ``claude -p``) does not reliably write the handshake
         file itself.  We parse its stdout for JSON output; if that fails we
@@ -220,7 +220,7 @@ class BaseTool:
         key = state["story_key"]
         stage = state["current_stage"]
         workspace = state["workspace"]
-        done_dir = Path(workspace) / ".story-done" / key
+        done_dir = Path(workspace) / ".story" / "done" / key
         done_dir.mkdir(parents=True, exist_ok=True)
         done_path = done_dir / f"{stage}.json"
 
@@ -258,7 +258,7 @@ class BaseTool:
         done_path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        log.info("Synthesized .story-done/%s/%s.json for %s", key, stage, key)
+        log.info("Synthesized .story/done/%s/%s.json for %s", key, stage, key)
 
     def describe(self) -> str:
         return self.__doc__ or self.__class__.__name__

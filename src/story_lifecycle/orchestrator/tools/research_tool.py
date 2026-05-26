@@ -23,10 +23,10 @@ class ResearchTool(BaseTool):
             "1. 搜索项目文档（docs/、README 等）\n"
             "2. 分析相关代码结构和依赖关系\n"
             "3. 总结技术方案和潜在风险\n"
-            f"4. 将报告写入 .story-context/{key}/research_{stage}.md\n"
-            f"5. 完成后写入 .story-done/{key}/{stage}.json\n"
+            f"4. 将报告写入 .story/context/{key}/research_{stage}.md\n"
+            f"5. 完成后写入 .story/done/{key}/{stage}.json\n"
         )
 
         state = self._launch_in_session(state, args, prompt)
-        state["context"]["research_path"] = f".story-context/{key}/research_{stage}.md"
+        state["context"]["research_path"] = f".story/context/{key}/research_{stage}.md"
         return state

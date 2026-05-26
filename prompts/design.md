@@ -20,7 +20,7 @@
 
 ## 完成后
 
-将结果写入项目根目录下的 `.story-done/{story_key}/design.json`：
+将结果写入项目根目录下的 `.story/done/{story_key}/design.json`：
 
 ```json
 {
@@ -34,5 +34,5 @@
 
 ## 边界
 
-- 只做分析和文档，写完 `.story-done/design.json` 就停止
+- 只做分析和文档，写完 `.story/done/design.json` 就停止
 - 不要安装依赖、不要修改代码、不要执行后续阶段

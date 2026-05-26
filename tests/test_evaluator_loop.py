@@ -142,7 +142,7 @@ def test_log_loop_fallback_writes_event(isolated_story_home):
         from_mode="persistent",
         to_mode="short_lived",
         reason="session_dead",
-        repair_packet_path=".story-context/LOOP-EV4/repair_implement_round2.md",
+        repair_packet_path=".story/context/LOOP-EV4/repair_implement_round2.md",
     )
     events = _get_events_by_type("LOOP-EV4", "evaluator_loop_fallback")
     assert len(events) == 1
@@ -1298,7 +1298,7 @@ def test_repair_packet_injected_on_retry(isolated_story_home):
     story_key = "INT-REPAIR"
 
     # Create a repair packet file on disk
-    repair_dir = Path(workspace) / ".story-context" / story_key
+    repair_dir = Path(workspace) / ".story" / "context" / story_key
     repair_dir.mkdir(parents=True, exist_ok=True)
     repair_file = repair_dir / "repair_implement_round1.md"
     repair_file.write_text(

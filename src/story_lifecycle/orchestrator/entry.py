@@ -14,10 +14,12 @@ from typing import Literal, Protocol
 
 
 def stage_done_file(story: dict) -> Path:
+    from .paths import stage_done_file as _stage_done_file
+
     ws = story.get("workspace", "")
     key = story.get("story_key", "")
     stage = story.get("current_stage", "")
-    return Path(ws) / ".story-done" / key / f"{stage}.json"
+    return _stage_done_file(ws, key, stage)
 
 
 def has_stage_done(story: dict) -> bool:

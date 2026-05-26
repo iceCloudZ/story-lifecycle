@@ -22,12 +22,12 @@ class BenchmarkTool(BaseTool):
             "## 要求\n"
             "1. 运行项目的性能测试\n"
             "2. 记录关键指标（延迟、吞吐量、内存占用等）\n"
-            f"3. 将报告写入 .story-context/{key}/benchmark_{stage}.md\n"
-            f"4. 完成后写入 .story-done/{key}/{stage}.json\n"
+            f"3. 将报告写入 .story/context/{key}/benchmark_{stage}.md\n"
+            f"4. 完成后写入 .story/done/{key}/{stage}.json\n"
         )
 
         state = self._launch_in_session(state, args, prompt)
         state["context"]["benchmark_path"] = (
-            f".story-context/{key}/benchmark_{stage}.md"
+            f".story/context/{key}/benchmark_{stage}.md"
         )
         return state

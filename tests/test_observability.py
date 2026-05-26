@@ -207,7 +207,7 @@ def test_poll_completion_json_parse_error(isolated_story_home):
     state = _make_state(story_key="TEST-006", stage="design")
 
     ws = __import__("os").getcwd()
-    done_dir = Path(ws) / ".story-done" / "TEST-006"
+    done_dir = Path(ws) / ".story" / "done" / "TEST-006"
     done_dir.mkdir(parents=True, exist_ok=True)
     done_file = done_dir / "design.json"
     done_file.write_text("not json {{{", encoding="utf-8")

@@ -16,7 +16,7 @@
 
 ## 完成后
 
-将结果写入项目根目录下的 `.story-done/{story_key}/implement.json`：
+将结果写入项目根目录下的 `.story/done/{story_key}/implement.json`：
 
 ```json
 {

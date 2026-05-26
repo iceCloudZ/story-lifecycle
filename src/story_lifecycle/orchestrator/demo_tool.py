@@ -1,6 +1,6 @@
 """DemoTool — simulates stage execution for `story demo`.
 
-Writes .story-done files with predefined payloads, no real AI needed.
+Writes .story/done files with predefined payloads, no real AI needed.
 """
 
 import json
@@ -27,7 +27,7 @@ _DEMO_PAYLOADS = {
 class DemoTool:
     """Simulates stage execution for demo mode.
 
-    Writes .story-done/{key}/{stage}.json with predefined payloads.
+    Writes .story/done/{key}/{stage}.json with predefined payloads.
     """
 
     def __init__(self, payloads: dict | None = None):
@@ -39,7 +39,7 @@ class DemoTool:
         workspace = state["workspace"]
         next_count = state.get("execution_count", 0) + 1
 
-        done_dir = Path(workspace) / ".story-done" / key
+        done_dir = Path(workspace) / ".story" / "done" / key
         done_dir.mkdir(parents=True, exist_ok=True)
         done_file = done_dir / f"{stage}.json"
 

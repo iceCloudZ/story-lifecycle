@@ -1,4 +1,4 @@
-"""FakeStageTool — writes .story-done without real AI, for headless E2E."""
+"""FakeStageTool — writes .story/done without real AI, for headless E2E."""
 
 from story_lifecycle.orchestrator.demo_tool import DemoTool
 
@@ -18,7 +18,7 @@ class FakeStageTool(DemoTool):
 
         from pathlib import Path
 
-        done_dir = Path(workspace) / ".story-done" / key
+        done_dir = Path(workspace) / ".story" / "done" / key
         done_dir.mkdir(parents=True, exist_ok=True)
         done_file = done_dir / f"{stage}.json"
 

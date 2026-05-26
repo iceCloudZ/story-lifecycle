@@ -27,12 +27,12 @@ class ReviewTool(BaseTool):
             "2. 检查安全性（注入、权限、敏感数据）\n"
             "3. 检查测试覆盖\n"
             "4. 检查性能和可维护性\n"
-            f"5. 将审查报告写入 .story-context/{key}/code_review_{stage}.md\n"
-            f"6. 完成后写入 .story-done/{key}/{stage}.json\n"
+            f"5. 将审查报告写入 .story/context/{key}/code_review_{stage}.md\n"
+            f"6. 完成后写入 .story/done/{key}/{stage}.json\n"
         )
 
         state = self._launch_in_session(state, args, prompt)
         state["context"]["code_review_path"] = (
-            f".story-context/{key}/code_review_{stage}.md"
+            f".story/context/{key}/code_review_{stage}.md"
         )
         return state

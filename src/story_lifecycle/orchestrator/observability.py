@@ -247,8 +247,8 @@ def build_debug_response(
         return {"error": "Story not found"}
 
     workspace = s.get("workspace", "") or str(Path.cwd())
-    story_context = Path(workspace) / ".story-context" / story_key
-    done_dir = Path(workspace) / ".story-done" / story_key
+    story_context = Path(workspace) / ".story" / "context" / story_key
+    done_dir = Path(workspace) / ".story" / "done" / story_key
     story_home = Path.home() / ".story-lifecycle"
 
     route_decisions = _load_events_by_type(story_key, ["route_decision"], limit=20)

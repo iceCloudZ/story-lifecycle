@@ -133,7 +133,7 @@ class GateDecision:
 
 def write_gate_report(gd: GateDecision, workspace: str) -> Path:
     """Write a markdown gate report. Returns the absolute Path to the report."""
-    report_dir = Path(workspace) / ".story-context" / gd.story_key / "gates"
+    report_dir = Path(workspace) / ".story" / "context" / gd.story_key / "gates"
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"{gd.stage}-review-gate.md"
 

@@ -377,7 +377,7 @@ class TestWaitConfirmNode:
         assert result["context"].get("last_gate_decision_id")
 
     def test_writes_gate_report(self, isolated_story_home, tmp_path, monkeypatch):
-        """Gate report should be written to .story-context/{key}/gates/."""
+        """Gate report should be written to .story/context/{key}/gages/."""
         from story_lifecycle.orchestrator import nodes
         from story_lifecycle.orchestrator.gate import GateDecision
         from story_lifecycle.db import models as db

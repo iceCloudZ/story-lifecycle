@@ -55,7 +55,7 @@ def create_and_start_story(
     first_stage = next(iter(stages)) if stages else "design"
 
     # Clean stale done files from previous runs
-    done_dir = Path(ws) / ".story-done" / story_key
+    done_dir = Path(ws) / ".story" / "done" / story_key
     if done_dir.exists():
         shutil.rmtree(done_dir, ignore_errors=True)
 

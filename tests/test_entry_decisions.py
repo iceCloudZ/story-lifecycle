@@ -45,7 +45,7 @@ class TestStageDoneFile:
     def test_returns_correct_path(self, tmp_path):
         story = _make_story(str(tmp_path), "FEAT-42", "implement")
         result = stage_done_file(story)
-        assert result == tmp_path / ".story-done" / "FEAT-42" / "implement.json"
+        assert result == tmp_path / ".story" / "done" / "FEAT-42" / "implement.json"
 
 
 class TestHasStageDone:

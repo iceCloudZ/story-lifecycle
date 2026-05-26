@@ -56,7 +56,7 @@ def test_create_sub_story(tmp_path):
             workspace=str(tmp_path),
         )
         m.update_context("FEAT-001", "prd_path", "prd/FEAT-001.md")
-        m.update_context("FEAT-001", "spec_path", ".story-context/FEAT-001/spec.md")
+        m.update_context("FEAT-001", "spec_path", ".story/context/FEAT-001/spec.md")
 
         from story_lifecycle.orchestrator.service import create_sub_story
 
@@ -81,7 +81,7 @@ def test_create_sub_story(tmp_path):
         # Context inherited
         ctx = json.loads(child["context_json"])
         assert ctx["prd_path"] == "prd/FEAT-001.md"
-        assert ctx["spec_path"] == ".story-context/FEAT-001/spec.md"
+        assert ctx["spec_path"] == ".story/context/FEAT-001/spec.md"
         assert ctx["sub_description"] == "Fix login blank page"
 
         # Parent moved to waiting_subtasks

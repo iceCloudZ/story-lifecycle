@@ -212,7 +212,7 @@ def build_repair_packet(
         return packet
 
     # Write to disk
-    repair_dir = Path(workspace) / ".story-context" / story_key
+    repair_dir = Path(workspace) / ".story" / "context" / story_key
     repair_dir.mkdir(parents=True, exist_ok=True)
     repair_file = repair_dir / f"repair_{stage}_round{round_num}.md"
     repair_file.write_text(packet, encoding="utf-8")

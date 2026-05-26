@@ -310,9 +310,9 @@ def review_plan(
 def compress_context(workspace: str, story_key: str, current_stage: str) -> str | None:
     """Condenser：将历史 context 文件压缩为知识库摘要。
 
-    触发条件：.story-context/ 下超过 4 个文件。
+    触发条件：.story/context/ 下超过 4 个文件。
     """
-    context_dir = Path(workspace) / ".story-context" / story_key
+    context_dir = Path(workspace) / ".story" / "context" / story_key
     if not context_dir.exists():
         return None
 

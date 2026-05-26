@@ -191,6 +191,23 @@ cli.add_command(review_feedback_group)
 cli.add_command(approvals_group)
 cli.add_command(findings_cmd)
 
+from .swebench import swebench_group  # noqa: E402
+
+cli.add_command(swebench_group)
+
+
+@cli.group()
+def doctor():
+    """System diagnostics and maintenance."""
+
+
+@doctor.command()
+def paths():
+    """Scan for legacy .story-done, .story-context, .story-runs directories."""
+    from ..orchestrator.doctor_paths import run_doctor_paths
+
+    run_doctor_paths()
+
 
 def _run_board():
     """Launch the interactive TUI board."""
@@ -241,11 +258,6 @@ def _run_server(host, port):
     uvicorn.run(
         "story_lifecycle.orchestrator.api:app", host=host, port=port, reload=False
     )
-
-
-from .swebench import swebench_group  # noqa: E402
-
-cli.add_command(swebench_group)
 
 
 if __name__ == "__main__":

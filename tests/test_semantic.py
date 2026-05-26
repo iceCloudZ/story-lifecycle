@@ -459,7 +459,7 @@ def test_recommend_recovery_llm():
 
     llm_output = {
         "failure_type": "done_file_parse_error",
-        "likely_cause": "AI 输出格式不符合 .story-done schema",
+        "likely_cause": "AI 输出格式不符合 .story/done schema",
         "recommended_action": "retry_with_prompt",
         "safe_to_retry": True,
         "confidence": "high",

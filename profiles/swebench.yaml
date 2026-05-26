@@ -46,6 +46,11 @@ stages:
       - model_patch
     next_default: []
 
+artifact_gates:
+  finalize:
+    require_model_patch: true
+    allow_git_diff_fallback: true
+
 quality:
   enabled: false
 
