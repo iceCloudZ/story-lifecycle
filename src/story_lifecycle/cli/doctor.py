@@ -60,6 +60,16 @@ CLI_TOOLS = {
 }
 
 INFRA_TOOLS = {
+    "textual": {
+        "name": "Textual (TUI)",
+        "check": lambda: _check_module("textual"),
+        "install_hint": "pip install textual",
+        "install_cmds": {
+            "pip": ["pip", "install", "textual"],
+            "pip3": ["pip3", "install", "textual"],
+        },
+        "required": False,
+    },
     "zellij": {
         "name": "Zellij",
         "check": lambda: _which("zellij"),
@@ -103,6 +113,14 @@ INFRA_TOOLS = {
 
 def _which(cmd: str) -> bool:
     return shutil.which(cmd) is not None
+
+
+def _check_module(name: str) -> bool:
+    try:
+        __import__(name)
+        return True
+    except ImportError:
+        return False
 
 
 def _check_python() -> bool:
@@ -208,6 +226,22 @@ def run_doctor():
                 f"Default CLI: [bold]{available[0]}[/]\n"
                 f"Change with: [bold]story setup[/] or edit [bold]~/.story-lifecycle/config.yaml[/]",
                 border_style="green",
+            )
+        )
+
+    # Textual check
+    has_textual = INFRA_TOOLS["textual"]["check"]()
+    if not has_textual:
+        console.print()
+        console.print(
+            Panel(
+                "[yellow]Textual (TUI) not installed.[/]\n\n"
+                "Install Textual:\n"
+                "  pip install textual\n\n"
+                "Without Textual, the TUI board won't start.\n"
+                "Run [bold]story --fix[/] to auto-install.",
+                title="Warning",
+                border_style="yellow",
             )
         )
 
