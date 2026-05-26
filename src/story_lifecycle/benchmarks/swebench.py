@@ -435,7 +435,19 @@ def _read_model_patch(workspace: Path, story_key: str) -> str:
     """从 workspace 中提取 model_patch，委托给共享 artifacts 模块。"""
     from .artifacts import extract_model_patch
 
-    result = extract_model_patch(workspace=workspace, story_key=story_key)
+    context = {}
+    try:
+        from ..db import models as _db
+
+        story = _db.get_story(story_key)
+        if story and story.get("context_json"):
+            context = json.loads(story["context_json"])
+    except Exception:
+        pass
+
+    result = extract_model_patch(
+        workspace=workspace, story_key=story_key, context=context
+    )
     return result.patch
 
 
