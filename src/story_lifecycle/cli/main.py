@@ -73,7 +73,7 @@ def cli(ctx, serve, host, port, fix_deps):
     load_config_to_env()
 
     if ctx.invoked_subcommand is not None:
-        if ctx.invoked_subcommand not in ("doctor", "demo", "upgrade"):
+        if ctx.invoked_subcommand not in ("doctor", "demo", "upgrade", "swebench"):
             if not is_configured():
                 console.print(
                     "[yellow]LLM API key not configured — launching setup wizard.[/]\n"
