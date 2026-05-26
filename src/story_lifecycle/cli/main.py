@@ -73,7 +73,7 @@ def cli(ctx, serve, host, port, fix_deps):
     load_config_to_env()
 
     if ctx.invoked_subcommand is not None:
-        if ctx.invoked_subcommand not in ("doctor", "demo"):
+        if ctx.invoked_subcommand not in ("doctor", "demo", "upgrade"):
             if not is_configured():
                 console.print(
                     "[yellow]LLM API key not configured — launching setup wizard.[/]\n"
@@ -191,6 +191,30 @@ def demo():
     from .demo import run_demo
 
     run_demo()
+
+
+@cli.command()
+def upgrade():
+    """Upgrade story-lifecycle to the latest version."""
+    import subprocess
+
+    from importlib.metadata import version as _pkg_version
+
+    current = _pkg_version("story-lifecycle")
+    console.print(f"  Current version: [cyan]{current}[/]")
+    console.print("  Upgrading...")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "story-lifecycle"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        new = _pkg_version("story-lifecycle")
+        console.print(f"  [green]Upgraded to {new}[/]")
+    else:
+        console.print(f"  [red]Upgrade failed:[/]\n{result.stderr[:500]}")
+        raise SystemExit(1)
 
 
 from .seed_quality import seed_quality_group  # noqa: E402
