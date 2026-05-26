@@ -135,6 +135,17 @@ v0.6.0            v0.7.0            v0.8.0            v0.9.0            v1.0.0
 | 数据集导出 | 标准格式，可复用于 router 训练 |
 | 回归套件 | 固定实例集，每次改动必跑 |
 
+### 对抗审查 CLI 化
+
+| 模块 | 内容 |
+|------|------|
+| `mode: cli` 执行路径 | `evaluator_loop.py` 调用 adapter 启动独立 CLI session 做审查 |
+| Plan Review CLI | Reviewer 用 Claude Code 独立 session 审计划 |
+| Code Review CLI | Reviewer 用 Codex CLI 独立 session 审代码 |
+| 混合策略 | 默认 `mode: api`（快），高复杂度/安全敏感 story 自动 `mode: cli` |
+
+> 设计依据：`docs/design-review-gate-observability-and-control.md` §reviewers 配置。当前 `mode: api` 已实现（同源 LLM 换角色），`mode: cli` 框架（YAML + adapter）就位但执行路径未接入。
+
 ---
 
 ## v0.8.0 — Domain 输入层 & 开放生态
