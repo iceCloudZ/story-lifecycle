@@ -260,7 +260,7 @@ def eval(run_id, workspace_root, extra_args):
     # Check swebench package
     try:
         result = subprocess.run(
-            ["python", "-c", "import swebench; print(swebench.__version__)"],
+            ["python3", "-c", "import swebench; print(swebench.__version__)"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -280,11 +280,11 @@ def eval(run_id, workspace_root, extra_args):
 
     # Run harness
     cmd = [
-        "python",
+        "python3",
         "-m",
         "swebench.harness.run_evaluation",
         "--predictions_path",
-        str(pred_path),
+        str(pred_path.resolve()),
         "--run_id",
         run_id,
     ]
