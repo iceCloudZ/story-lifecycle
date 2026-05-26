@@ -16,7 +16,7 @@ PRESET_PROVIDERS = {
     "1": {
         "name": "deepseek",
         "base_url": "https://api.deepseek.com",
-        "models": ["deepseek-chat", "deepseek-reasoner"],
+        "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
     },
     "2": {
         "name": "anthropic",

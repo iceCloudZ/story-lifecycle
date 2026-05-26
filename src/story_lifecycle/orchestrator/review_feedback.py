@@ -250,7 +250,7 @@ def _llm_extract(content: str) -> list[dict] | None:
     """Call LLM to extract candidate findings. Returns list or None on failure."""
     api_key = os.environ.get("STORY_LLM_API_KEY", "")
     base_url = os.environ.get("STORY_LLM_BASE_URL", "https://api.deepseek.com")
-    model = os.environ.get("STORY_LLM_MODEL", "deepseek-chat")
+    model = os.environ.get("STORY_LLM_MODEL", "deepseek-v4-pro")
 
     prompt = _EXTRACTION_PROMPT.format(
         review_content=content[:6000],

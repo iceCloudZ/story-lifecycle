@@ -37,7 +37,7 @@ def _get_base_url() -> str:
 
 
 def _get_model() -> str:
-    return os.environ.get("STORY_LLM_MODEL", "deepseek-chat")
+    return os.environ.get("STORY_LLM_MODEL", "deepseek-v4-pro")
 
 
 def _ok_result(data: dict, confidence: str = "high") -> SemanticResult:

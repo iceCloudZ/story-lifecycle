@@ -17,7 +17,7 @@ def _get_base_url():
 
 
 def _get_model():
-    return os.environ.get("STORY_LLM_MODEL", "deepseek-chat")
+    return os.environ.get("STORY_LLM_MODEL", "deepseek-v4-pro")
 
 
 def route(state: dict, stage_config: dict) -> dict:

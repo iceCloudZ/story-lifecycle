@@ -25,7 +25,7 @@ def _api_config() -> tuple[str, str, str]:
     return (
         os.environ.get("STORY_LLM_API_KEY", ""),
         os.environ.get("STORY_LLM_BASE_URL", "https://api.deepseek.com"),
-        os.environ.get("STORY_LLM_MODEL", "deepseek-chat"),
+        os.environ.get("STORY_LLM_MODEL", "deepseek-v4-pro"),
     )
 
 
