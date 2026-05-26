@@ -29,7 +29,6 @@ def _run_demo_with_db(tmp_path: Path):
         from story_lifecycle.orchestrator.demo_tool import DemoTool
         from story_lifecycle.orchestrator import nodes as nodes_mod
 
-        mock_planner.is_available.return_value = False
         mock_planner.compress_context.return_value = None
         mock_get_tool.return_value = DemoTool()
         mock_ttyd.session_name.return_value = "story-demo-hello"

@@ -105,15 +105,6 @@ def get_stage_config(profile_name: str, stage_name: str) -> dict:
     return stages.get(stage_name, {})
 
 
-def _planner_policy(profile_name: str) -> dict:
-    profile = load_profile(profile_name)
-    cfg = profile.get("planner", {})
-    return {
-        "required": bool(cfg.get("required", False)),
-        "static_fallback": bool(cfg.get("static_fallback", True)),
-    }
-
-
 def _block_for_planner(state: StoryState, reason: str) -> StoryState:
     state["last_error"] = reason
     state["_pre_routed_action"] = "wait_confirm"
@@ -225,7 +216,7 @@ def route_after_poll(state: StoryState) -> str:
 
 
 def plan_stage_node(state: StoryState) -> StoryState:
-    """架构师/PM 角色：规划当前阶段。无 LLM 时退化为默认 plan。
+    """架构师/PM 角色：规划当前阶段。
 
     不调用其他节点。skip 通过 conditional edge 路由。
     """
@@ -235,7 +226,6 @@ def plan_stage_node(state: StoryState) -> StoryState:
     stage = state["current_stage"]
     profile = state.get("profile", "minimal")
     cfg = get_stage_config(profile, stage)
-    policy = _planner_policy(profile)
     workspace = state["workspace"]
     story_key = state["story_key"]
 
@@ -252,19 +242,11 @@ def plan_stage_node(state: StoryState) -> StoryState:
     except Exception as e:
         log.warning(f"Condenser failed: {e}")
 
-    planner_available = planner.is_available()
-    if policy["required"] and not planner_available:
-        return _block_for_planner(
-            state,
-            "Planner LLM unavailable. Configure STORY_LLM_API_KEY or use a profile "
-            "with planner.static_fallback=true for demo/debug runs.",
-        )
-
     # --- Adversarial plan loop ---
     try:
         profile_cfg = load_profile(profile)
         adv_cfg = AdversarialConfig.from_profile(profile_cfg)
-        if adv_cfg.plan_loop_enabled(stage) and planner_available:
+        if adv_cfg.plan_loop_enabled(stage):
             from ..orchestrator.graph import emit_plan_done
             from .evaluator_loop import run_plan_loop
 
@@ -351,141 +333,110 @@ def plan_stage_node(state: StoryState) -> StoryState:
         log.warning(f"Adversarial plan loop failed, falling back to normal: {e}")
     # --- End adversarial plan loop ---
 
-    if planner_available:
-        try:
-            from ..orchestrator.graph import emit_plan_done
+    try:
+        from ..orchestrator.graph import emit_plan_done
 
-            adapters = ["claude"]
-            plan = planner.plan_stage(state, cfg, adapters)
+        adapters = ["claude"]
+        plan = planner.plan_stage(state, cfg, adapters)
 
-            if plan.get("skip"):
-                state["status"] = "skipping"
-                state["plan_summary"] = f"跳过: {plan.get('reasoning', '')}"
-                db.log_event(
-                    story_key,
-                    stage,
-                    "plan",
-                    {"action": "skip", "reasoning": plan.get("reasoning", "")},
-                )
-                return state
-
-            # Planner decided to split into sub-stories
-            if plan.get("split") and plan.get("subtasks"):
-                return _delegate_subtasks(state, plan)
-
-            # Write plan task file
-            pf = plan_file(workspace, story_key, stage)
-            pf.parent.mkdir(parents=True, exist_ok=True)
-
-            # Append previous review suggestions if present
-            review_path = state.get("context", {}).get("review_path")
-            review_section = ""
-            if review_path:
-                rf = Path(workspace) / review_path
-                if rf.exists():
-                    review_section = (
-                        f"\n## 前序 Review 建议\n"
-                        f"请先处理以下问题：\n{rf.read_text(encoding='utf-8')}"
-                    )
-
-            pf.write_text(
-                f"# 任务书: {stage}\n\n"
-                f"## 执行指令\n{plan.get('extra_instructions', '')}\n"
-                f"{review_section}\n\n"
-                f"## 配置\n"
-                f"- Adapter: {plan.get('adapter', 'claude')}\n"
-                f"- Provider: {plan.get('provider', 'deepseek')}\n"
-                f"- Model: {plan.get('model', 'sonnet')}\n\n"
-                f"## 决策理由\n{plan.get('reasoning', '')}\n\n"
-                f"## 路径评分\n"
-                f"当前路径评分: {plan.get('trajectory_score', 'N/A')}/1.0",
-                encoding="utf-8",
-            )
-
-            # State stores index only
-            state["plan_summary"] = plan.get("summary", "")
-            state["trajectory_score"] = plan.get("trajectory_score")
-            state["context"]["plan_path"] = str(pf.relative_to(workspace))
-            state["context"]["plan_summary"] = plan.get("summary", "")
-            state["plan"] = plan
-
+        if plan.get("skip"):
+            state["status"] = "skipping"
+            state["plan_summary"] = f"跳过: {plan.get('reasoning', '')}"
             db.log_event(
                 story_key,
                 stage,
                 "plan",
-                {
-                    "adapter": plan.get("adapter"),
-                    "summary": plan.get("summary", "")[:100],
-                    "trajectory_score": plan.get("trajectory_score"),
-                },
+                {"action": "skip", "reasoning": plan.get("reasoning", "")},
             )
-            summary = plan.get("summary", "")
-            # Build human-readable plan result
-            tool_info = (
-                f"{plan.get('adapter', 'claude')} / {plan.get('model', 'sonnet')}"
-            )
-            plan_text = f"✓ {summary}  [dim]({tool_info})[/]"
-            emit_plan_done(story_key, plan_text)
             return state
-        except GraphInterrupt:
-            return state
-        except Exception as e:
-            log.warning(f"Planner failed, falling back: {e}")
-            import traceback
 
-            STORY_HOME.mkdir(parents=True, exist_ok=True)
-            (STORY_HOME / "planner_error.log").write_text(
-                f"Planner error for {story_key}:\n{traceback.format_exc()}",
-                encoding="utf-8",
-            )
-            log_node_error(
-                story_key,
-                stage,
-                "plan_stage_node",
-                type(e).__name__,
-                str(e)[:200],
-                execution_count=state.get("execution_count", 0),
-                recoverable=True,
-                action="fallback_to_default_plan",
-                file_hint=str(STORY_HOME / "planner_error.log"),
-            )
-            emit_plan_done(
-                story_key,
-                f"⚠ 规划降级 [{type(e).__name__}] 使用默认配置",
-                ok=False,
-            )
+        # Planner decided to split into sub-stories
+        if plan.get("split") and plan.get("subtasks"):
+            return _delegate_subtasks(state, plan)
 
-            if policy["required"] and not policy["static_fallback"]:
-                return _block_for_planner(
-                    state,
-                    f"Planner failed and static fallback is disabled: {type(e).__name__}: {e}",
+        # Write plan task file
+        pf = plan_file(workspace, story_key, stage)
+        pf.parent.mkdir(parents=True, exist_ok=True)
+
+        # Append previous review suggestions if present
+        review_path = state.get("context", {}).get("review_path")
+        review_section = ""
+        if review_path:
+            rf = Path(workspace) / review_path
+            if rf.exists():
+                review_section = (
+                    f"\n## 前序 Review 建议\n"
+                    f"请先处理以下问题：\n{rf.read_text(encoding='utf-8')}"
                 )
 
-    if not policy["static_fallback"]:
-        return _block_for_planner(
-            state,
-            "Planner did not produce an executable plan and static fallback is disabled.",
+        pf.write_text(
+            f"# 任务书: {stage}\n\n"
+            f"## 执行指令\n{plan.get('extra_instructions', '')}\n"
+            f"{review_section}\n\n"
+            f"## 配置\n"
+            f"- Adapter: {plan.get('adapter', 'claude')}\n"
+            f"- Provider: {plan.get('provider', 'deepseek')}\n"
+            f"- Model: {plan.get('model', 'sonnet')}\n\n"
+            f"## 决策理由\n{plan.get('reasoning', '')}\n\n"
+            f"## 路径评分\n"
+            f"当前路径评分: {plan.get('trajectory_score', 'N/A')}/1.0",
+            encoding="utf-8",
         )
 
-    # Fallback: generate plan from profile config
-    profile_cfg = load_profile(profile)
-    state["plan"] = {
-        "adapter": cfg.get("cli", profile_cfg.get("cli", "claude")),
-        "provider": state.get("context", {}).get(
-            "_provider", cfg.get("provider", "deepseek")
-        ),
-        "model": cfg.get("model", "sonnet"),
-        "skip": False,
-        "extra_instructions": "",
-        "summary": "Fallback: using profile config",
-        "reasoning": "Fallback: using profile config",
-        "trajectory_score": None,
-    }
-    state["plan_summary"] = "Fallback: using profile config"
-    from ..orchestrator.graph import emit_plan_done
+        state["plan_summary"] = plan.get("summary", "")
+        state["trajectory_score"] = plan.get("trajectory_score")
+        state["context"]["plan_path"] = str(pf.relative_to(workspace))
+        state["context"]["plan_summary"] = plan.get("summary", "")
+        state["plan"] = plan
 
-    emit_plan_done(story_key, "使用默认配置启动", ok=True)
-    return state
+        db.log_event(
+            story_key,
+            stage,
+            "plan",
+            {
+                "adapter": plan.get("adapter"),
+                "summary": plan.get("summary", "")[:100],
+                "trajectory_score": plan.get("trajectory_score"),
+            },
+        )
+        summary = plan.get("summary", "")
+        tool_info = f"{plan.get('adapter', 'claude')} / {plan.get('model', 'sonnet')}"
+        plan_text = f"✓ {summary}  [dim]({tool_info})[/]"
+        emit_plan_done(story_key, plan_text)
+        return state
+    except GraphInterrupt:
+        return state
+    except Exception as e:
+        log.warning(f"Planner failed: {e}")
+        import traceback
+
+        STORY_HOME.mkdir(parents=True, exist_ok=True)
+        (STORY_HOME / "planner_error.log").write_text(
+            f"Planner error for {story_key}:\n{traceback.format_exc()}",
+            encoding="utf-8",
+        )
+        log_node_error(
+            story_key,
+            stage,
+            "plan_stage_node",
+            type(e).__name__,
+            str(e)[:200],
+            execution_count=state.get("execution_count", 0),
+            recoverable=True,
+            action="block_for_planner",
+            file_hint=str(STORY_HOME / "planner_error.log"),
+        )
+        from ..orchestrator.graph import emit_plan_done
+
+        emit_plan_done(
+            story_key,
+            f"⚠ 规划失败 [{type(e).__name__}]",
+            ok=False,
+        )
+        return _block_for_planner(
+            state,
+            f"Planner failed: {type(e).__name__}: {e}",
+        )
 
 
 def _delegate_subtasks(state: StoryState, plan: dict) -> StoryState:
@@ -684,7 +635,7 @@ def review_stage_node(state: StoryState) -> StoryState:
 
     # --- Adversarial code review loop ---
     try:
-        if adv_cfg.code_loop_enabled(stage) and planner.is_available():
+        if adv_cfg.code_loop_enabled(stage):
             from .evaluator_loop import run_code_review_loop
 
             # Increment review_round_count BEFORE running the review loop
@@ -853,114 +804,107 @@ def review_stage_node(state: StoryState) -> StoryState:
         log.warning(f"Adversarial code loop failed, falling back to normal review: {e}")
     # --- End adversarial code review loop ---
 
-    if planner.is_available():
-        try:
-            # Increment review_round_count for non-adversarial review path
-            new_round = increment_review_round_count(state["context"], stage)
-            db.update_context(
-                state["story_key"], f"review_round_count_{stage}", str(new_round)
+    try:
+        # Increment review_round_count for non-adversarial review path
+        new_round = increment_review_round_count(state["context"], stage)
+        db.update_context(
+            state["story_key"], f"review_round_count_{stage}", str(new_round)
+        )
+
+        review = planner.review_stage(state, cfg, stage_output)
+        workspace = state["workspace"]
+        story_key = state["story_key"]
+
+        # Write review file
+        rf = review_file(workspace, story_key, stage)
+        rf.parent.mkdir(parents=True, exist_ok=True)
+
+        issues_table = ""
+        for issue in review.get("issues", []):
+            issues_table += (
+                f"| {issue.get('type', '')} | {issue.get('severity', '')} "
+                f"| {issue.get('location', '')} | {issue.get('description', '')} |\n"
             )
 
-            review = planner.review_stage(state, cfg, stage_output)
-            workspace = state["workspace"]
-            story_key = state["story_key"]
+        suggestions_list = "\n".join(f"- {s}" for s in review.get("suggestions", []))
 
-            # Write review file
-            rf = review_file(workspace, story_key, stage)
-            rf.parent.mkdir(parents=True, exist_ok=True)
+        no_issues_row = "| （无） | | | |\n"
+        rf.write_text(
+            f"# 评审: {stage}\n\n"
+            f"## 结论: {review.get('quality', 'pass')}\n\n"
+            f"## 摘要\n{review.get('summary', '')}\n\n"
+            f"## 问题列表\n"
+            f"| 类型 | 严重度 | 位置 | 描述 |\n"
+            f"|------|--------|------|------|\n"
+            f"{issues_table or no_issues_row}\n"
+            f"## 建议\n{suggestions_list or '（无）'}\n\n"
+            f"## 路径评分\n{review.get('trajectory_score', 'N/A')}/1.0\n\n"
+            f"## 详细理由\n{review.get('reasoning', '')}",
+            encoding="utf-8",
+        )
 
-            issues_table = ""
-            for issue in review.get("issues", []):
-                issues_table += (
-                    f"| {issue.get('type', '')} | {issue.get('severity', '')} "
-                    f"| {issue.get('location', '')} | {issue.get('description', '')} |\n"
-                )
+        # State stores index only
+        state["review_summary"] = review.get("summary", "")
+        state["trajectory_score"] = review.get("trajectory_score")
+        state["context"]["review_path"] = str(rf.relative_to(workspace))
+        state["context"]["review_summary"] = review.get("summary", "")
 
-            suggestions_list = "\n".join(
-                f"- {s}" for s in review.get("suggestions", [])
+        # Maintain knowledge base
+        _update_knowledge(workspace, story_key, stage, review, stage_output)
+
+        # Check for learned pattern recurrence
+        _check_pattern_recurrence(workspace, story_key, stage, review.get("issues", []))
+
+        # context_updates — store index only
+        if review.get("context_updates"):
+            for k, v in review["context_updates"].items():
+                val = str(v)
+                if len(val) > 200:
+                    detail_file = context_dir(workspace, story_key) / f"{stage}_{k}.md"
+                    detail_file.write_text(val, encoding="utf-8")
+                    state["context"][k + "_path"] = str(
+                        detail_file.relative_to(workspace)
+                    )
+                    state["context"][k] = val[:100] + "..."
+                else:
+                    state["context"][k] = val
+
+        quality = review.get("quality", "pass")
+        if quality == "revise":
+            high_issues = [
+                i for i in review.get("issues", []) if i.get("severity") == "high"
+            ]
+            state["last_error"] = (
+                f"Review: {review.get('summary', 'needs revision')} "
+                f"({len(high_issues)} high severity issues)"
             )
+        elif quality == "fail":
+            state["last_error"] = f"Review failed: {review.get('summary', '')}"
 
-            no_issues_row = "| （无） | | | |\n"
-            rf.write_text(
-                f"# 评审: {stage}\n\n"
-                f"## 结论: {review.get('quality', 'pass')}\n\n"
-                f"## 摘要\n{review.get('summary', '')}\n\n"
-                f"## 问题列表\n"
-                f"| 类型 | 严重度 | 位置 | 描述 |\n"
-                f"|------|--------|------|------|\n"
-                f"{issues_table or no_issues_row}\n"
-                f"## 建议\n{suggestions_list or '（无）'}\n\n"
-                f"## 路径评分\n{review.get('trajectory_score', 'N/A')}/1.0\n\n"
-                f"## 详细理由\n{review.get('reasoning', '')}",
-                encoding="utf-8",
-            )
-
-            # State stores index only
-            state["review_summary"] = review.get("summary", "")
-            state["trajectory_score"] = review.get("trajectory_score")
-            state["context"]["review_path"] = str(rf.relative_to(workspace))
-            state["context"]["review_summary"] = review.get("summary", "")
-
-            # Maintain knowledge base
-            _update_knowledge(workspace, story_key, stage, review, stage_output)
-
-            # Check for learned pattern recurrence
-            _check_pattern_recurrence(
-                workspace, story_key, stage, review.get("issues", [])
-            )
-
-            # context_updates — store index only
-            if review.get("context_updates"):
-                for k, v in review["context_updates"].items():
-                    val = str(v)
-                    if len(val) > 200:
-                        detail_file = (
-                            context_dir(workspace, story_key) / f"{stage}_{k}.md"
-                        )
-                        detail_file.write_text(val, encoding="utf-8")
-                        state["context"][k + "_path"] = str(
-                            detail_file.relative_to(workspace)
-                        )
-                        state["context"][k] = val[:100] + "..."
-                    else:
-                        state["context"][k] = val
-
-            quality = review.get("quality", "pass")
-            if quality == "revise":
-                high_issues = [
-                    i for i in review.get("issues", []) if i.get("severity") == "high"
-                ]
-                state["last_error"] = (
-                    f"Review: {review.get('summary', 'needs revision')} "
-                    f"({len(high_issues)} high severity issues)"
-                )
-            elif quality == "fail":
-                state["last_error"] = f"Review failed: {review.get('summary', '')}"
-
-            db.log_event(
-                story_key,
-                stage,
-                "review",
-                {
-                    "quality": quality,
-                    "summary": review.get("summary", "")[:100],
-                    "issues_count": len(review.get("issues", [])),
-                    "trajectory_score": review.get("trajectory_score"),
-                },
-            )
-            return state
-        except Exception as e:
-            log.warning(f"Reviewer failed, skipping review: {e}")
-            log_node_error(
-                state["story_key"],
-                stage,
-                "review_stage_node",
-                type(e).__name__,
-                str(e)[:200],
-                execution_count=state.get("execution_count", 0),
-                recoverable=True,
-                action="skip_review",
-            )
+        db.log_event(
+            story_key,
+            stage,
+            "review",
+            {
+                "quality": quality,
+                "summary": review.get("summary", "")[:100],
+                "issues_count": len(review.get("issues", [])),
+                "trajectory_score": review.get("trajectory_score"),
+            },
+        )
+        return state
+    except Exception as e:
+        log.warning(f"Reviewer failed, skipping review: {e}")
+        log_node_error(
+            state["story_key"],
+            stage,
+            "review_stage_node",
+            type(e).__name__,
+            str(e)[:200],
+            execution_count=state.get("execution_count", 0),
+            recoverable=True,
+            action="skip_review",
+        )
 
     return state
 
@@ -981,14 +925,12 @@ def _check_pattern_recurrence(
         return
 
     recurrences = []
-    mode = "rule_fallback"
 
     try:
         from .semantic import match_pattern_recurrence
 
         for issue in issues:
             result = match_pattern_recurrence(issue, patterns)
-            mode = result.get("mode", "rule_fallback")
             for m in result["data"].get("matches", []):
                 pid = m["pattern_id"]
                 pattern_obj = next((p for p in patterns if p["id"] == pid), None)
@@ -1013,23 +955,8 @@ def _check_pattern_recurrence(
                         }
                     )
     except Exception:
-        # Fallback to original keyword matching
-        for issue in issues:
-            desc = issue.get("description", "")
-            cat = issue.get("category", "")
-            issue_text = f"{cat} {desc}".lower()
-            for p in patterns:
-                if _match_pattern(issue_text, p.get("pattern", ""), p.get("rule", "")):
-                    recurrences.append(
-                        {
-                            "pattern_id": p["id"],
-                            "pattern": p.get("pattern", ""),
-                            "confidence": "low",
-                            "reasoning": "keyword fallback",
-                            "issue": issue,
-                        }
-                    )
-                    break
+        log.warning("Pattern recurrence check failed, skipping")
+        return
 
     if recurrences:
         db.log_event(
@@ -1037,19 +964,10 @@ def _check_pattern_recurrence(
             stage,
             "pattern_recurrence",
             {
-                "mode": mode,
                 "recurrences": recurrences,
                 "count": len(recurrences),
             },
         )
-
-
-def _match_pattern(issue_text: str, pattern_name: str, rule: str) -> bool:
-    """Simple keyword/substring matching against pattern name and rule."""
-    keywords = (pattern_name + " " + rule).lower().split()
-    # Require at least 2 keyword matches to avoid false positives
-    matches = sum(1 for kw in keywords if len(kw) >= 2 and kw in issue_text)
-    return matches >= 2
 
 
 def _update_knowledge(

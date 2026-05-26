@@ -53,15 +53,7 @@ def analyze(manifest, dry_run, workspace):
         write_proposal,
     )
 
-    # 1. Check LLM availability
-    if not planner.is_available():
-        console.print(
-            "[red]Error: LLM API key not configured.[/]\n"
-            "Set STORY_LLM_API_KEY environment variable or run [bold]story setup[/]."
-        )
-        sys.exit(1)
-
-    # 2. Load and validate manifest
+    # 1. Load and validate manifest
     raw = yaml.safe_load(manifest.read_text(encoding="utf-8"))
     if raw is None:
         console.print(f"[red]Error: Empty or invalid YAML in {manifest}[/]")

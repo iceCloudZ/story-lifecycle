@@ -19,7 +19,7 @@ log = logging.getLogger("story-lifecycle.semantic")
 
 class SemanticResult(TypedDict):
     ok: bool
-    mode: Literal["llm", "rule_fallback", "unavailable", "error"]
+    mode: Literal["llm", "error"]
     confidence: Literal["high", "medium", "low"]
     data: dict
     warnings: list[str]
@@ -50,16 +50,6 @@ def _ok_result(data: dict, confidence: str = "high") -> SemanticResult:
     )
 
 
-def _fallback_result(data: dict, warnings: list[str] | None = None) -> SemanticResult:
-    return SemanticResult(
-        ok=True,
-        mode="rule_fallback",
-        confidence="low",  # type: ignore[arg-type]
-        data=data,
-        warnings=warnings or ["LLM unavailable, using rule fallback"],
-    )
-
-
 def _error_result(error: str) -> SemanticResult:
     return SemanticResult(
         ok=False,
@@ -67,16 +57,6 @@ def _error_result(error: str) -> SemanticResult:
         confidence="low",  # type: ignore[arg-type]
         data={},
         warnings=[error],
-    )
-
-
-def _unavailable_result(reason: str = "LLM not configured") -> SemanticResult:
-    return SemanticResult(
-        ok=False,
-        mode="unavailable",  # type: ignore[arg-type]
-        confidence="low",  # type: ignore[arg-type]
-        data={},
-        warnings=[reason],
     )
 
 
@@ -166,9 +146,6 @@ def _validate_schema(data: dict, schema: dict) -> tuple[dict, list[str]]:
 
 def _call_semantic_llm(prompt: str, schema: dict) -> SemanticResult:
     """Call LLM with prompt, parse JSON response, validate against schema."""
-    if not _get_api_key():
-        return _unavailable_result()
-
     try:
         resp = httpx.post(
             f"{_get_base_url()}/v1/chat/completions",
@@ -225,41 +202,9 @@ BUG_CONTEXT_SCHEMA = {
     "required": ["description", "confidence"],
 }
 
-# Regex fallback patterns (same logic as existing bug_providers.py)
-
-_SECTION_PATTERNS = {
-    "steps_to_reproduce": "复现步骤|步骤|重现",
-    "expected_behavior": "预期|期望|期望结果",
-    "actual_behavior": "实际|实际结果|现象",
-    "environment": "环境|版本|设备",
-    "logs": "日志|log|堆栈|stack",
-}
-
-
-def _regex_extract_section(md: str, pattern: str) -> str:
-    """Extract a section from markdown using heading keyword matching."""
-    m = re.search(
-        rf"(?:{pattern})[：:\s]*\n(.*?)(?=\n##|\n#|\Z)",
-        md,
-        re.DOTALL | re.IGNORECASE,
-    )
-    return m.group(1).strip() if m else ""
-
-
-def _regex_extract_bug_context(md: str, title: str) -> dict:
-    """Fallback regex-based bug context extraction."""
-    data = {"description": title, "missing_fields": [], "confidence": "low"}
-    for field, pattern in _SECTION_PATTERNS.items():
-        value = _regex_extract_section(md, pattern)
-        data[field] = value
-        if not value:
-            data["missing_fields"].append(field)
-    data["raw_markdown"] = md
-    return data
-
 
 def extract_bug_context(markdown: str, title: str = "") -> SemanticResult:
-    """Extract structured bug context from markdown via LLM, with regex fallback."""
+    """Extract structured bug context from markdown via LLM."""
     prompt = f"""分析以下 Bug 报告，提取结构化信息。只输出 JSON，不要其他内容。
 
 标题: {title}
@@ -283,14 +228,11 @@ def extract_bug_context(markdown: str, title: str = "") -> SemanticResult:
 
     llm_result = _call_semantic_llm(prompt, BUG_CONTEXT_SCHEMA)
 
-    if llm_result["ok"] and llm_result["mode"] == "llm":
-        # Ensure raw_markdown is preserved
+    if llm_result["ok"]:
         llm_result["data"]["raw_markdown"] = markdown
         return llm_result
 
-    # Fallback to regex
-    fallback_data = _regex_extract_bug_context(markdown, title)
-    return _fallback_result(fallback_data)
+    return llm_result
 
 
 # ── Pattern Recurrence Matching ──
@@ -307,26 +249,13 @@ PATTERN_RECURRENCE_SCHEMA = {
 }
 
 
-def _keyword_match_pattern(issue_text: str, pattern_name: str, rule: str) -> bool:
-    """Simple keyword matching — adapted from nodes._match_pattern for Chinese text.
-
-    Unlike the original which requires >=2 keyword hits (designed for space-delimited
-    languages), this version accepts >=1 match because Chinese patterns produce fewer
-    space-split tokens.
-    """
-    keywords = (pattern_name + " " + rule).lower().split()
-    matches = sum(1 for kw in keywords if len(kw) >= 2 and kw in issue_text)
-    return matches >= 1
-
-
 def match_pattern_recurrence(issue: dict, patterns: list[dict]) -> SemanticResult:
     """Check if a review issue matches any active learned patterns via LLM semantics."""
     if not patterns:
-        return _fallback_result({"matches": []}, ["no candidate patterns"])
+        return _error_result("no candidate patterns")
 
     issue_desc = issue.get("description", "")
     issue_cat = issue.get("category", "")
-    issue_text = f"{issue_cat} {issue_desc}".lower()
 
     patterns_desc = "\n".join(
         f"- ID: {p['id']}, pattern: {p.get('pattern', '')}, rule: {p.get('rule', '')}"
@@ -369,21 +298,7 @@ Candidate Patterns:
         llm_result["data"]["matches"] = filtered
         return llm_result
 
-    # Fallback to keyword matching
-    fallback_matches = []
-    for p in patterns:
-        if _keyword_match_pattern(issue_text, p.get("pattern", ""), p.get("rule", "")):
-            fallback_matches.append(
-                {
-                    "pattern_id": p["id"],
-                    "matched": True,
-                    "confidence": "low",
-                    "reasoning": "keyword fallback match",
-                    "evidence": [],
-                }
-            )
-
-    return _fallback_result({"matches": fallback_matches})
+    return llm_result
 
 
 # ── Quality Packet Pattern Rerank ──
@@ -396,7 +311,7 @@ def rerank_relevant_patterns(
 ) -> SemanticResult:
     """Use LLM to rerank candidate patterns by actual relevance to the story."""
     if not candidate_patterns:
-        return _fallback_result({"selected": [], "rejected": []})
+        return _error_result("no candidate patterns")
 
     candidates_desc = "\n".join(
         f"- ID: {p['id']}, pattern: {p.get('pattern', '')}, rule: {p.get('rule', '')}, "
@@ -447,20 +362,11 @@ Candidates:
 
     llm_result = _call_semantic_llm(prompt, schema)
 
-    if llm_result["ok"] and llm_result["mode"] == "llm":
+    if llm_result["ok"]:
         llm_result["data"]["selected"] = llm_result["data"].get("selected", [])[:limit]
         return llm_result
 
-    # Fallback: return candidates as-is, truncated to limit
-    selected = [
-        {
-            "pattern_id": p["id"],
-            "relevance": "medium",
-            "reasoning": "tag pre-filter fallback",
-        }
-        for p in candidate_patterns[:limit]
-    ]
-    return _fallback_result({"selected": selected, "rejected": []})
+    return _error_result("rerank failed: no LLM result")
 
 
 # ── Review Summary for Learning ──
@@ -476,22 +382,6 @@ REVIEW_SUMMARY_SCHEMA = {
     },
     "required": ["quality", "summary"],
 }
-
-
-def _marker_summarize_review(content: str) -> dict:
-    """Fallback marker-based review summary (same logic as existing seed_pipeline)."""
-    markers = ["quality", "issues", "suggestions", "评分", "review", "问题"]
-    found = []
-    for line in content.splitlines():
-        for m in markers:
-            if m.lower() in line.lower():
-                found.append(line.strip()[:300])
-    return {
-        "quality": "unknown",
-        "key_issues": [],
-        "useful_for_learning": bool(found),
-        "summary": "\n".join(found) if found else content[:1500],
-    }
 
 
 def summarize_review_for_learning(review_markdown: str) -> SemanticResult:
@@ -537,7 +427,7 @@ Review 内容:
     if llm_result["ok"] and llm_result["mode"] == "llm":
         return llm_result
 
-    return _fallback_result(_marker_summarize_review(review_markdown))
+    return llm_result
 
 
 # ── Debug Recovery Recommendation ──
@@ -586,15 +476,6 @@ def recommend_recovery(debug_packet: dict) -> SemanticResult:
         "evidence": [],
         "human_message": "LLM 不可用，建议人工检查",
     }
-
-    if not _get_api_key():
-        return SemanticResult(
-            ok=False,
-            mode="unavailable",  # type: ignore[arg-type]
-            confidence="low",  # type: ignore[arg-type]
-            data=fallback_data,
-            warnings=["LLM not configured"],
-        )
 
     packet_str = json.dumps(debug_packet, ensure_ascii=False, default=str)[:3000]
 

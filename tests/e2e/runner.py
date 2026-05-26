@@ -102,24 +102,32 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
             "story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None
         ),
     ):
-        # Disable real LLM planner
-        mock_planner.is_available.return_value = False
         mock_planner.compress_context.return_value = None
 
-        # If scenario has reviews, enable planner with mock review
+        # Always provide mocked planner returns
+        mock_planner.plan_stage.return_value = {
+            "adapter": "claude",
+            "provider": "deepseek",
+            "model": "sonnet",
+            "skip": False,
+            "summary": "E2E plan",
+            "extra_instructions": "",
+            "reasoning": "test",
+            "trajectory_score": 0.8,
+        }
+        mock_planner.review_stage.return_value = {
+            "quality": "pass",
+            "summary": "E2E review pass",
+            "issues": [],
+            "suggestions": [],
+            "trajectory_score": 0.9,
+            "context_updates": {},
+            "reasoning": "test",
+        }
+
+        # If scenario has reviews, use side_effect for dynamic behavior
         if scenario.reviews:
-            mock_planner.is_available.return_value = True
             mock_planner.review_stage.side_effect = _mock_review_stage
-            mock_planner.plan_stage.return_value = {
-                "adapter": "claude",
-                "provider": "deepseek",
-                "model": "sonnet",
-                "skip": False,
-                "summary": "Fallback plan",
-                "extra_instructions": "",
-                "reasoning": "test",
-                "trajectory_score": 0.8,
-            }
 
         # Fake tool dispatch
         mock_get_tool.return_value = fake_tool

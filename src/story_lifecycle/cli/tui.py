@@ -935,12 +935,11 @@ class StoryBoardApp(App):
         self._render()
 
     def _render(self, full: bool = True):
-        from ..orchestrator.router import llm_is_available
         from .setup import get_config
 
         config = get_config()
         provider = config.get("provider", "N/A")
-        router_status = f"enabled ({provider})" if llm_is_available() else "disabled"
+        router_status = f"enabled ({provider})"
         active = len([s for s in self.stories if s["status"] == "active"])
 
         header = self.query_one("#header-bar")

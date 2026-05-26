@@ -159,7 +159,6 @@ class TestSubStoryWaitResume:
             patch("story_lifecycle.orchestrator.graph._executor.submit") as mock_submit,
         ):
             # Planner returns a split decision
-            mock_planner.is_available.return_value = True
             mock_planner.compress_context.return_value = None
             mock_planner.plan_stage.return_value = {
                 "split": True,

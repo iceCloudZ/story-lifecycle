@@ -29,10 +29,6 @@ def _api_config() -> tuple[str, str, str]:
     )
 
 
-def is_available() -> bool:
-    return bool(_api_config()[0])
-
-
 def _load_team_knowledge() -> str:
     """加载团队记忆（~/.story-lifecycle/knowledge/）。"""
     knowledge_dir = STORY_HOME / "knowledge"

@@ -73,8 +73,33 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
             "story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None
         ),
     ):
-        mock_planner.is_available.return_value = False
         mock_planner.compress_context.return_value = None
+        mock_planner.plan_stage.return_value = {
+            "adapter": "claude",
+            "provider": "deepseek",
+            "model": "sonnet",
+            "skip": False,
+            "summary": "Demo: design the feature",
+            "extra_instructions": "Create a simple hello world feature",
+            "reasoning": "Demo mode",
+            "trajectory_score": 0.9,
+        }
+        mock_planner.review_stage.return_value = {
+            "quality": "pass",
+            "summary": "Looks good",
+            "feedback": "",
+            "issues": [],
+            "suggestions": [],
+            "trajectory_score": 0.9,
+            "context_updates": {},
+            "reasoning": "Demo review",
+        }
+        mock_planner.review_plan.return_value = {
+            "quality": "pass",
+            "blockers": [],
+            "suggestions": [],
+            "reasoning": "Demo plan review",
+        }
 
         mock_get_tool.return_value = demo_tool
         mock_ttyd.session_name.return_value = f"story-{_DEMO_KEY}"

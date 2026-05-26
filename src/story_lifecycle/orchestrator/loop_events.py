@@ -99,27 +99,3 @@ def log_loop_completed(
             "remaining_findings": remaining_findings or [],
         },
     )
-
-
-def log_loop_fallback(
-    *,
-    story_key: str,
-    stage: str,
-    loop_id: str,
-    from_mode: str,
-    to_mode: str,
-    reason: str,
-    repair_packet_path: str = "",
-) -> None:
-    db.log_event(
-        story_key,
-        stage,
-        "evaluator_loop_fallback",
-        {
-            "loop_id": loop_id,
-            "from_mode": from_mode,
-            "to_mode": to_mode,
-            "reason": reason,
-            "repair_packet_path": repair_packet_path,
-        },
-    )

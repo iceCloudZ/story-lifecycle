@@ -21,6 +21,7 @@ checkpoint.db
 .story-context/
 .story-knowledge/
 .story-done/
+.story-runs/
 
 # OS
 .DS_Store
@@ -30,3 +31,4 @@ Thumbs.db
 Done
 Installing
 Stopping
+To

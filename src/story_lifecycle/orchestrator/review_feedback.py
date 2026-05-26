@@ -102,45 +102,6 @@ def _parse_json_review(content: str) -> list[dict]:
     return []
 
 
-_SEVERITY_PATTERN = re.compile(r"\[(HIGH|MEDIUM|LOW)\]", re.IGNORECASE)
-_BULLET_PATTERN = re.compile(r"^[-*]\s+(.+)$", re.MULTILINE)
-_LOCATION_PATTERN = re.compile(r"(\S+\.py(?::\d+)?)", re.IGNORECASE)
-
-
-def _parse_bullet_review(content: str) -> list[dict]:
-    """Parse bullet-list review into candidate findings."""
-    candidates = []
-    for m in _BULLET_PATTERN.finditer(content):
-        line = m.group(1).strip()
-        if not line:
-            continue
-
-        severity = "medium"
-        sev_match = _SEVERITY_PATTERN.search(line)
-        if sev_match:
-            severity = sev_match.group(1).lower()
-            line = _SEVERITY_PATTERN.sub("", line).strip()
-
-        location = ""
-        loc_match = _LOCATION_PATTERN.search(line)
-        if loc_match:
-            location = loc_match.group(1)
-
-        candidates.append(
-            {
-                "severity": severity,
-                "category": "unknown",
-                "description": line[:500],
-                "location": location,
-                "recommendation": "",
-                "root_cause": "",
-                "evidence": [],
-                "confidence": "low",
-            }
-        )
-    return candidates[:MAX_CANDIDATES]
-
-
 # ── Schema validation ──
 
 
@@ -250,48 +211,44 @@ def extract_candidate_findings(
 ) -> dict:
     """Extract candidate findings from review content.
 
-    Returns: {"mode": "llm"|"rule_fallback", "candidates": [...], "summary": str}
+    Returns: {"mode": "llm"|"error", "candidates": [...], "summary": str}
     """
     # Try JSON input first (no LLM needed)
     json_candidates = _parse_json_review(content)
     if json_candidates:
         validated, warnings = validate_candidates(json_candidates)
         return {
-            "mode": "rule_fallback",
+            "mode": "llm",
             "candidates": validated,
             "summary": f"Parsed {len(validated)} findings from JSON input",
             "warnings": warnings,
         }
 
-    # Try LLM extraction
-    api_key = os.environ.get("STORY_LLM_API_KEY", "")
-    if api_key:
-        try:
-            candidates = _llm_extract(content, api_key)
-            if candidates is not None:
-                validated, warnings = validate_candidates(candidates)
-                return {
-                    "mode": "llm",
-                    "candidates": validated,
-                    "summary": f"LLM extracted {len(validated)} candidate findings",
-                    "warnings": warnings,
-                }
-        except Exception as exc:
-            log.warning(f"LLM extraction failed, falling back: {exc}")
+    # LLM extraction
+    try:
+        candidates = _llm_extract(content)
+        if candidates is not None:
+            validated, warnings = validate_candidates(candidates)
+            return {
+                "mode": "llm",
+                "candidates": validated,
+                "summary": f"LLM extracted {len(validated)} candidate findings",
+                "warnings": warnings,
+            }
+    except Exception as exc:
+        log.warning(f"LLM extraction failed: {exc}")
 
-    # Fallback: bullet-list parser
-    bullet_candidates = _parse_bullet_review(content)
-    validated, warnings = validate_candidates(bullet_candidates)
     return {
-        "mode": "rule_fallback",
-        "candidates": validated,
-        "summary": f"Rule parser extracted {len(validated)} candidates",
-        "warnings": warnings,
+        "mode": "error",
+        "candidates": [],
+        "summary": "LLM extraction failed: no findings extracted",
+        "warnings": ["LLM extraction failed"],
     }
 
 
-def _llm_extract(content: str, api_key: str) -> list[dict] | None:
+def _llm_extract(content: str) -> list[dict] | None:
     """Call LLM to extract candidate findings. Returns list or None on failure."""
+    api_key = os.environ.get("STORY_LLM_API_KEY", "")
     base_url = os.environ.get("STORY_LLM_BASE_URL", "https://api.deepseek.com")
     model = os.environ.get("STORY_LLM_MODEL", "deepseek-chat")
 

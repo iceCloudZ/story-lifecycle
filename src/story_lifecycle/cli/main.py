@@ -249,7 +249,9 @@ def _run_server(host, port):
         run_setup()
         load_config_to_env()
         if not is_configured():
-            return
+            console.print("[red]LLM API key is required to run the server.[/]")
+            console.print("Run 'story setup' to configure, or set STORY_LLM_API_KEY.")
+            raise SystemExit(1)
 
     from ..db import models as db
 

@@ -40,7 +40,6 @@ class _SubLoopConfig:
     reviewer_model: str = ""
     pass_condition: str = ""
     mode: str = "short_lived"
-    fallback: str = "repair_packet"
 
 
 @dataclass
@@ -73,7 +72,6 @@ class AdversarialConfig:
             reviewer_model=code_raw.get("reviewer_model", ""),
             pass_condition=code_raw.get("pass_condition", "no_open_blocker"),
             mode=code_raw.get("mode", "short_lived"),
-            fallback=code_raw.get("fallback", "repair_packet"),
         )
 
         return cls(enabled=True, plan_loop=plan_cfg, code_loop=code_cfg)

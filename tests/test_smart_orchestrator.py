@@ -119,21 +119,18 @@ class TestRouteAfterPoll:
 
 class TestPlanStageNode:
     @patch("story_lifecycle.orchestrator.nodes.planner")
-    def test_fallback_when_no_api_key(self, mock_planner):
-        mock_planner.is_available.return_value = False
+    def test_planner_failure_blocks_story(self, mock_planner):
         mock_planner.compress_context.return_value = None
+        mock_planner.plan_stage.side_effect = RuntimeError("LLM timeout")
 
         state = _make_state()
         result = plan_stage_node(state)
 
-        assert result["plan_summary"] == "Fallback: using profile config"
-        assert result["plan"] is not None
-        assert result["plan"]["adapter"] in ("claude", None)
-        assert result.get("status") != "skipping"
+        assert result.get("_pre_routed_action") == "wait_confirm"
+        assert "LLM timeout" in result.get("last_error", "")
 
     @patch("story_lifecycle.orchestrator.nodes.planner")
     def test_llm_plan_generates_task_file(self, mock_planner):
-        mock_planner.is_available.return_value = True
         mock_planner.compress_context.return_value = None
         mock_planner.plan_stage.return_value = {
             "adapter": "claude",
@@ -163,7 +160,6 @@ class TestPlanStageNode:
 
     @patch("story_lifecycle.orchestrator.nodes.planner")
     def test_skip_when_plan_says_skip(self, mock_planner):
-        mock_planner.is_available.return_value = True
         mock_planner.compress_context.return_value = None
         mock_planner.plan_stage.return_value = {
             "skip": True,
@@ -179,7 +175,6 @@ class TestPlanStageNode:
 
     @patch("story_lifecycle.orchestrator.nodes.planner")
     def test_fallback_on_planner_exception(self, mock_planner):
-        mock_planner.is_available.return_value = True
         mock_planner.compress_context.return_value = None
         mock_planner.plan_stage.side_effect = Exception("LLM timeout")
 
@@ -202,7 +197,6 @@ class TestReviewStageNode:
     @patch("story_lifecycle.orchestrator.nodes.planner")
     def test_retry_fatigue_forces_fail(self, mock_planner):
         """When review_round_count >= retry_limit, gate blocks with GateDecision."""
-        mock_planner.is_available.return_value = True
 
         state = _make_state(
             execution_count=5,
@@ -226,7 +220,6 @@ class TestReviewStageNode:
     def test_stale_executor_no_review_fatigue(self, mock_planner):
         """When review_round_count==0 but execution_count>=retry_limit, gate blocks
         with stale executor reason — review never actually ran."""
-        mock_planner.is_available.return_value = True
 
         state = _make_state(
             execution_count=MAX_REVIEW_RETRIES,
@@ -247,7 +240,6 @@ class TestReviewStageNode:
 
     @patch("story_lifecycle.orchestrator.nodes.planner")
     def test_review_pass(self, mock_planner):
-        mock_planner.is_available.return_value = True
         mock_planner.review_stage.return_value = {
             "quality": "pass",
             "summary": "Design looks good",
@@ -276,7 +268,6 @@ class TestReviewStageNode:
 
     @patch("story_lifecycle.orchestrator.nodes.planner")
     def test_review_revise_sets_error(self, mock_planner):
-        mock_planner.is_available.return_value = True
         mock_planner.review_stage.return_value = {
             "quality": "revise",
             "summary": "Missing error handling",
@@ -311,7 +302,6 @@ class TestReviewStageNode:
 
     @patch("story_lifecycle.orchestrator.nodes.planner")
     def test_review_fail(self, mock_planner):
-        mock_planner.is_available.return_value = True
         mock_planner.review_stage.return_value = {
             "quality": "fail",
             "summary": "Completely off-track",
@@ -647,7 +637,6 @@ class TestSubStoryDelegation:
     @patch("story_lifecycle.orchestrator.nodes.planner")
     @patch("story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None)
     def test_split_creates_sub_stories(self, mock_interrupt, mock_planner):
-        mock_planner.is_available.return_value = True
         mock_planner.compress_context.return_value = None
         mock_planner.plan_stage.return_value = {
             "split": True,

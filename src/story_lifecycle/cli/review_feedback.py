@@ -49,9 +49,7 @@ def import_cmd(story_key, review_file):
     console.print("\n[dim]Extracting candidate findings...[/]")
     result = import_review(story_key, content)
 
-    mode_label = (
-        "[green]LLM[/]" if result["mode"] == "llm" else "[yellow]rule fallback[/]"
-    )
+    mode_label = "[green]LLM[/]" if result["mode"] == "llm" else "[red]error[/]"
     console.print(f"  Mode: {mode_label}")
     console.print(f"  Imported: [green]{result['imported']}[/] finding(s)")
 

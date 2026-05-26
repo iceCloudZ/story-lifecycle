@@ -20,10 +20,6 @@ def _get_model():
     return os.environ.get("STORY_LLM_MODEL", "deepseek-chat")
 
 
-def llm_is_available() -> bool:
-    return bool(_get_api_key())
-
-
 def route(state: dict, stage_config: dict) -> dict:
     """Decide what to do next.
 

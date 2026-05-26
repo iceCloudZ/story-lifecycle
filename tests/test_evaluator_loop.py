@@ -1128,17 +1128,14 @@ def test_plan_stage_node_uses_loop_when_enabled(isolated_story_home):
         return_value=_enabled_adversarial_profile(),
     ):
         with patch(
-            "story_lifecycle.orchestrator.nodes.planner.is_available", return_value=True
+            "story_lifecycle.orchestrator.nodes.planner.compress_context",
+            return_value=None,
         ):
             with patch(
-                "story_lifecycle.orchestrator.nodes.planner.compress_context",
-                return_value=None,
-            ):
-                with patch(
-                    "story_lifecycle.orchestrator.evaluator_loop.run_plan_loop",
-                    return_value=loop_result,
-                ) as mock_loop:
-                    result = plan_stage_node(state)
+                "story_lifecycle.orchestrator.evaluator_loop.run_plan_loop",
+                return_value=loop_result,
+            ) as mock_loop:
+                result = plan_stage_node(state)
 
     assert mock_loop.called
     assert result["plan_summary"] == "Implement auth via adversarial loop"
@@ -1173,20 +1170,17 @@ def test_plan_stage_node_skips_loop_when_disabled(isolated_story_home):
     # load_profile returns profile with NO adversarial config (default minimal)
     with patch("story_lifecycle.orchestrator.nodes.load_profile", return_value={}):
         with patch(
-            "story_lifecycle.orchestrator.nodes.planner.is_available", return_value=True
+            "story_lifecycle.orchestrator.nodes.planner.compress_context",
+            return_value=None,
         ):
             with patch(
-                "story_lifecycle.orchestrator.nodes.planner.compress_context",
-                return_value=None,
+                "story_lifecycle.orchestrator.nodes.planner.plan_stage",
+                return_value=plan_result,
             ):
                 with patch(
-                    "story_lifecycle.orchestrator.nodes.planner.plan_stage",
-                    return_value=plan_result,
-                ):
-                    with patch(
-                        "story_lifecycle.orchestrator.evaluator_loop.run_plan_loop"
-                    ) as mock_loop:
-                        result = plan_stage_node(state)
+                    "story_lifecycle.orchestrator.evaluator_loop.run_plan_loop"
+                ) as mock_loop:
+                    result = plan_stage_node(state)
 
     assert not mock_loop.called
     assert result["plan_summary"] == "Normal plan"
@@ -1233,13 +1227,10 @@ def test_review_stage_node_uses_loop_when_enabled(isolated_story_home):
         return_value=_enabled_adversarial_profile(),
     ):
         with patch(
-            "story_lifecycle.orchestrator.nodes.planner.is_available", return_value=True
-        ):
-            with patch(
-                "story_lifecycle.orchestrator.evaluator_loop.run_code_review_loop",
-                return_value=loop_result,
-            ) as mock_loop:
-                result = review_stage_node(state)
+            "story_lifecycle.orchestrator.evaluator_loop.run_code_review_loop",
+            return_value=loop_result,
+        ) as mock_loop:
+            result = review_stage_node(state)
 
     assert mock_loop.called
     assert result["last_error"] is not None
@@ -1274,16 +1265,13 @@ def test_review_stage_node_skips_loop_when_disabled(isolated_story_home):
 
     with patch("story_lifecycle.orchestrator.nodes.load_profile", return_value={}):
         with patch(
-            "story_lifecycle.orchestrator.nodes.planner.is_available", return_value=True
+            "story_lifecycle.orchestrator.nodes.planner.review_stage",
+            return_value=review_result,
         ):
             with patch(
-                "story_lifecycle.orchestrator.nodes.planner.review_stage",
-                return_value=review_result,
-            ):
-                with patch(
-                    "story_lifecycle.orchestrator.evaluator_loop.run_code_review_loop"
-                ) as mock_loop:
-                    result = review_stage_node(state)
+                "story_lifecycle.orchestrator.evaluator_loop.run_code_review_loop"
+            ) as mock_loop:
+                result = review_stage_node(state)
 
     assert not mock_loop.called
     assert result["review_summary"] == "Looks good"
