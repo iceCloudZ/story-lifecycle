@@ -71,16 +71,6 @@ INFRA_TOOLS = {
         },
         "required": False,
     },
-    "tmux": {
-        "name": "tmux (fallback)",
-        "check": lambda: _which("tmux"),
-        "install_hint": "apt install tmux / brew install tmux",
-        "install_cmds": {
-            "apt-get": ["sudo", "apt-get", "install", "-y", "tmux"],
-            "brew": ["brew", "install", "tmux"],
-        },
-        "required": False,
-    },
     "ttyd": {
         "name": "ttyd",
         "check": lambda: _which("ttyd"),
@@ -222,16 +212,15 @@ def run_doctor():
         )
 
     # Multiplexer check
-    has_mplex = INFRA_TOOLS["zellij"]["check"]() or INFRA_TOOLS["tmux"]["check"]()
+    has_mplex = INFRA_TOOLS["zellij"]["check"]()
     if not has_mplex:
         console.print()
         console.print(
             Panel(
                 "[yellow]No terminal multiplexer found.[/]\n\n"
-                "Install Zellij (recommended) or tmux:\n"
-                "  Zellij:  cargo install zellij / brew install zellij\n"
-                "  tmux:    apt install tmux / brew install tmux\n\n"
-                "Without a multiplexer, AI terminal sessions won't launch.\n"
+                "Install Zellij:\n"
+                "  cargo install zellij / brew install zellij / winget install zellij\n\n"
+                "Without Zellij, AI terminal sessions won't launch.\n"
                 "Run [bold]story --fix[/] to auto-install.",
                 title="Warning",
                 border_style="yellow",

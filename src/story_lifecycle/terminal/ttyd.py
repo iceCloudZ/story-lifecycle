@@ -1,4 +1,4 @@
-"""Terminal session management — per-story sessions via Zellij (preferred) or tmux."""
+"""Terminal session management — per-story sessions via Zellij."""
 
 import json
 import os
@@ -22,13 +22,8 @@ _next_port = BASE_PORT
 _story_ports: dict[str, int] = {}
 _port_lock = threading.Lock()
 
-# Multiplexer detection (zellij preferred over tmux, cross-platform)
-_MPLEX = None  # "zellij" or "tmux"
-
-for cmd in ("zellij", "tmux"):
-    if shutil.which(cmd):
-        _MPLEX = cmd
-        break
+# Multiplexer detection (Zellij is cross-platform: Linux/macOS/Windows)
+_MPLEX = "zellij" if shutil.which("zellij") else None
 
 
 def _run(cmd: list, **kwargs):
@@ -109,27 +104,24 @@ def create_session(name: str, workspace: str):
     """Create a detached/background session with the given CWD."""
     if not _MPLEX:
         return
-    if _MPLEX == "zellij":
-        cmd = [
-            "zellij",
-            "attach",
-            "--create-background",
-            name,
-            "options",
-            "--default-cwd",
-            workspace,
-        ]
-        if os.name == "nt":
-            cmd.extend(["--default-shell", "powershell.exe"])
-        _run(
-            cmd,
-            capture_output=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    elif _MPLEX == "tmux":
-        _run(["tmux", "new-session", "-d", "-s", name, "-c", workspace])
+    cmd = [
+        "zellij",
+        "attach",
+        "--create-background",
+        name,
+        "options",
+        "--default-cwd",
+        workspace,
+    ]
+    if os.name == "nt":
+        cmd.extend(["--default-shell", "powershell.exe"])
+    _run(
+        cmd,
+        capture_output=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     time.sleep(0.5)
 
 
@@ -142,19 +134,16 @@ def _strip_ansi(text: str) -> str:
 
 def session_alive(name: str) -> bool:
     """Check if a session exists and is alive."""
-    if _MPLEX == "zellij":
-        r = _run(["zellij", "list-sessions"], text=True, timeout=5)
-        if r.returncode == 0:
-            for line in _strip_ansi(r.stdout).splitlines():
-                parts = line.strip().split()
-                if not parts:
-                    continue
-                if parts[0] == name and "EXITED" not in line:
-                    return True
+    if not _MPLEX:
         return False
-    elif _MPLEX == "tmux":
-        r = _run(["tmux", "has-session", "-t", name])
-        return r.returncode == 0
+    r = _run(["zellij", "list-sessions"], text=True, timeout=5)
+    if r.returncode == 0:
+        for line in _strip_ansi(r.stdout).splitlines():
+            parts = line.strip().split()
+            if not parts:
+                continue
+            if parts[0] == name and "EXITED" not in line:
+                return True
     return False
 
 
@@ -172,33 +161,26 @@ def resolve_session_state(name: str) -> str:
     if not _MPLEX:
         return SessionState.UNKNOWN
 
-    if _MPLEX == "zellij":
-        r = _run(["zellij", "list-sessions"], text=True, timeout=5)
-        if r.returncode != 0:
-            # Zellij returns 1 when no sessions exist (legitimate MISSING)
-            # vs actual errors like permission/crash (UNKNOWN)
-            err = (r.stderr or "").lower()
-            if "no session" in err or "not found" in err or r.returncode == 1:
-                return SessionState.MISSING
-            return SessionState.UNKNOWN
-        for line in _strip_ansi(r.stdout).splitlines():
-            parts = line.strip().split()
-            if not parts:
-                continue
-            if parts[0] == name:
-                return SessionState.EXITED if "EXITED" in line else SessionState.LIVE
-        return SessionState.MISSING
-
-    if _MPLEX == "tmux":
-        r = _run(["tmux", "has-session", "-t", name])
-        return SessionState.LIVE if r.returncode == 0 else SessionState.MISSING
-
-    return SessionState.UNKNOWN
+    r = _run(["zellij", "list-sessions"], text=True, timeout=5)
+    if r.returncode != 0:
+        # Zellij returns 1 when no sessions exist (legitimate MISSING)
+        # vs actual errors like permission/crash (UNKNOWN)
+        err = (r.stderr or "").lower()
+        if "no session" in err or "not found" in err or r.returncode == 1:
+            return SessionState.MISSING
+        return SessionState.UNKNOWN
+    for line in _strip_ansi(r.stdout).splitlines():
+        parts = line.strip().split()
+        if not parts:
+            continue
+        if parts[0] == name:
+            return SessionState.EXITED if "EXITED" in line else SessionState.LIVE
+    return SessionState.MISSING
 
 
 def delete_exited_session(name: str) -> bool:
     """Delete a dead Zellij session so a foreground layout can reuse the name."""
-    if _MPLEX != "zellij":
+    if not _MPLEX:
         return False
     r = _run(["zellij", "list-sessions"], text=True, timeout=5)
     if r.returncode != 0:
@@ -213,10 +195,8 @@ def delete_exited_session(name: str) -> bool:
 
 def kill_session(name: str):
     """Kill a session."""
-    if _MPLEX == "zellij":
+    if _MPLEX:
         _run(["zellij", "kill-session", name])
-    elif _MPLEX == "tmux":
-        _run(["tmux", "kill-session", "-t", name])
 
 
 def send_keys(name: str, *keys: str):
@@ -225,121 +205,84 @@ def send_keys(name: str, *keys: str):
     Special key names: "Enter", "C-c" (translated per multiplexer).
     Plain strings are written as characters.
     """
-    if _MPLEX == "zellij":
-        for k in keys:
-            if k == "Enter":
-                _run(["zellij", "--session", name, "action", "send-keys", "enter"])
-            elif k == "C-c":
-                _run(["zellij", "--session", name, "action", "send-keys", "ctrl-c"])
-            elif k == "C-d":
-                _run(["zellij", "--session", name, "action", "send-keys", "ctrl-d"])
-            else:
-                _run(["zellij", "--session", name, "action", "write-chars", k])
-    elif _MPLEX == "tmux":
-        _run(["tmux", "send-keys", "-t", name, *keys])
+    if not _MPLEX:
+        return
+    for k in keys:
+        if k == "Enter":
+            _run(["zellij", "--session", name, "action", "send-keys", "enter"])
+        elif k == "C-c":
+            _run(["zellij", "--session", name, "action", "send-keys", "ctrl-c"])
+        elif k == "C-d":
+            _run(["zellij", "--session", name, "action", "send-keys", "ctrl-d"])
+        else:
+            _run(["zellij", "--session", name, "action", "write-chars", k])
 
 
 def capture_pane(name: str, lines: int = 20) -> str:
     """Capture the visible content of a session's pane."""
-    if _MPLEX == "zellij":
-        r = _run(
-            ["zellij", "--session", name, "action", "dump-screen"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        output = r.stdout or ""
-        return "\n".join(output.rstrip().split("\n")[-lines:])
-    elif _MPLEX == "tmux":
-        r = _run(
-            ["tmux", "capture-pane", "-t", name, "-p", "-S", f"-{lines}"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return r.stdout or ""
-    return ""
+    if not _MPLEX:
+        return ""
+    r = _run(
+        ["zellij", "--session", name, "action", "dump-screen"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    output = r.stdout or ""
+    return "\n".join(output.rstrip().split("\n")[-lines:])
 
 
 def paste_text(name: str, text: str):
     """Paste text into a session's active pane."""
-    if _MPLEX == "zellij":
+    if _MPLEX:
         _run(["zellij", "--session", name, "action", "write-chars", text])
-    elif _MPLEX == "tmux":
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
-            f.write(text)
-            tmp = f.name
-        buf = f"sp-{name}"
-        _run(["tmux", "load-buffer", "-b", buf, tmp])
-        _run(["tmux", "paste-buffer", "-b", buf, "-t", name])
-        os.unlink(tmp)
 
 
 def attach_cmd(name: str) -> str:
     """Return the shell command to attach to a session."""
-    if _MPLEX == "zellij":
-        return f"zellij attach {name}"
-    return f"tmux attach -t {name}"
+    return f"zellij attach {name}"
 
 
 def attach_args(name: str) -> list[str]:
     """Return argv to attach to a session without invoking a shell."""
-    if _MPLEX == "zellij":
-        return ["zellij", "attach", name]
-    return ["tmux", "attach", "-t", name]
+    return ["zellij", "attach", name]
 
 
 def enter_session_args(name: str, workspace: str) -> list[str]:
     """Return argv to create and enter a session without invoking a shell."""
-    if _MPLEX == "zellij":
-        cmd = [
-            "zellij",
-            "attach",
-            "--create",
-            name,
-            "options",
-            "--default-cwd",
-            workspace,
-        ]
-        if os.name == "nt":
-            cmd.extend(["--default-shell", "powershell.exe"])
-        return cmd
-    return ["tmux", "new-session", "-A", "-s", name, "-c", workspace]
+    cmd = [
+        "zellij",
+        "attach",
+        "--create",
+        name,
+        "options",
+        "--default-cwd",
+        workspace,
+    ]
+    if os.name == "nt":
+        cmd.extend(["--default-shell", "powershell.exe"])
+    return cmd
 
 
 def enter_session_cmd(name: str, workspace: str) -> str:
     """Return the command to create and enter a session."""
-    if _MPLEX == "zellij":
-        cmd = f"zellij attach --create {name} options --default-cwd {workspace}"
-        if os.name == "nt":
-            cmd += " --default-shell powershell.exe"
-        return cmd
-    return f"tmux new-session -A -s {name} -c {workspace}"
+    cmd = f"zellij attach --create {name} options --default-cwd {workspace}"
+    if os.name == "nt":
+        cmd += " --default-shell powershell.exe"
+    return cmd
 
 
 def list_sessions() -> list[str]:
     """List all session names."""
-    if _MPLEX == "zellij":
-        r = _run(["zellij", "list-sessions"], text=True, timeout=5)
-        if r.returncode == 0:
-            return [
-                _strip_ansi(line.strip().split()[0])
-                for line in r.stdout.strip().split("\n")
-                if line.strip() and "EXITED" not in _strip_ansi(line)
-            ]
+    if not _MPLEX:
         return []
-    elif _MPLEX == "tmux":
-        r = _run(
-            ["tmux", "list-sessions", "-F", "#{session_name}"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if r.returncode == 0:
-            return [
-                line.strip() for line in r.stdout.strip().split("\n") if line.strip()
-            ]
-        return []
+    r = _run(["zellij", "list-sessions"], text=True, timeout=5)
+    if r.returncode == 0:
+        return [
+            _strip_ansi(line.strip().split()[0])
+            for line in r.stdout.strip().split("\n")
+            if line.strip() and "EXITED" not in _strip_ansi(line)
+        ]
     return []
 
 
@@ -473,7 +416,7 @@ def zellij_execution_args(
 
     Does NOT call subprocess.run or create any background session.
     """
-    if _MPLEX != "zellij":
+    if not _MPLEX:
         return None
 
     from . import platform_ops

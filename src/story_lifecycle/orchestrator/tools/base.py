@@ -52,7 +52,7 @@ class BaseTool:
         session = ttyd.session_name(key)
 
         # Headless first: if no TUI app, always use subprocess — never
-        # inject into tmux/zellij sessions even if one happens to exist.
+        # inject into Zellij sessions even if one happens to exist.
         from ..graph import _tui_app
 
         if _tui_app is None:

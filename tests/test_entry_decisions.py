@@ -871,15 +871,3 @@ class TestResolveSessionState:
 
         monkeypatch.setattr(ttyd_mod, "_MPLEX", None)
         assert resolve_session_state("s-TEST-001") == SessionState.UNKNOWN
-
-    def test_tmux_live(self, monkeypatch):
-        import subprocess
-        import story_lifecycle.terminal.ttyd as ttyd_mod
-
-        monkeypatch.setattr(ttyd_mod, "_MPLEX", "tmux")
-        monkeypatch.setattr(
-            ttyd_mod,
-            "_run",
-            lambda *a, **kw: subprocess.CompletedProcess(a[0], 0, "", ""),
-        )
-        assert resolve_session_state("s-TEST-001") == SessionState.LIVE

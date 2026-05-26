@@ -20,7 +20,7 @@ _DEMO_TITLE = "Demo: Hello Story Lifecycle"
 
 
 def run_demo():
-    """Run a simulated story lifecycle — no LLM, no AI CLI, no tmux."""
+    """Run a simulated story lifecycle — no LLM, no AI CLI."""
     import tempfile
 
     tmp = tempfile.mkdtemp(prefix="story-demo-")

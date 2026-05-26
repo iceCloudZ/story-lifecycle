@@ -337,7 +337,7 @@ def entry_action_notice(action: StageEntryAction, story: dict) -> str | None:
         StageEntryAction.SHOW_STATUS: f"Story {key} 已结束（{story.get('status', '')}），不可操作。",
         StageEntryAction.SHOW_RUNNING: f"Story {key} 正在运行中，AI session 健康，无需重复启动。",
         StageEntryAction.SHOW_WORKSPACE_BUSY: "Workspace 被其他 story 占用，请等待完成后再试。",
-        StageEntryAction.SHOW_SESSION_UNKNOWN: "无法确定 session 状态，请检查 Zellij/tmux 是否正常。",
+        StageEntryAction.SHOW_SESSION_UNKNOWN: "无法确定 session 状态，请检查 Zellij 是否正常。",
         StageEntryAction.SHOW_CLI_EXIT_ERROR: f"CLI 进程异常退出（stage: {stage}），按 r 重新启动。",
         StageEntryAction.SHOW_GATE_STATUS: (
             f"Story {key} 被 review gate 阻塞（{story.get('last_error', '')}）。"
