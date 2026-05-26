@@ -508,7 +508,7 @@ def run_code_review_loop(
     from ..db import models as db
     from . import planner
     from .loop_events import log_loop_started, log_loop_round, log_loop_completed
-    from .quality import record_finding
+    from .quality import record_finding, update_finding_status
 
     story_key = state.get("story_key", "")
     stage = state.get("current_stage", "")
@@ -650,6 +650,25 @@ def run_code_review_loop(
         "resolved": [f"{cat}:{loc}" for cat, loc in resolved_keys],
         "repeated": [f"{cat}:{loc}" for cat, loc in repeated_keys],
     }
+
+    # --- Sync resolved findings to DB ---
+    if resolved_keys:
+        for f in prev_high_findings:
+            key = (_category_of(f), f.get("location", ""))
+            if key in resolved_keys:
+                try:
+                    update_finding_status(
+                        story_key,
+                        f["id"],
+                        "verified",
+                        reason="resolved in adversarial code loop",
+                    )
+                except Exception:
+                    log.warning(
+                        "Failed to verify resolved finding %s for %s",
+                        f.get("id", "?"),
+                        story_key,
+                    )
 
     # --- No-progress detection ---
     no_progress = False
