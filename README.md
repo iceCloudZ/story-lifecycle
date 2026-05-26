@@ -1,203 +1,230 @@
 # Story Lifecycle Manager
 
-**Story-level AI orchestration** — hand a TAPD/Jira story to AI agents, let them design, implement, and test through multi-stage workflows.
+**Story 级 AI 编排器** — 把一个需求交给 AI，让它走完设计→实现→测试→审查的完整生命周期。
 
-Most AI coding tools work at the **task** level: "write a function", "fix this bug", "refactor this file". Story Lifecycle works at the **story** level: a complete requirement that goes through design → implementation → test → review, with each stage handled by a dedicated AI session.
+## 安装 & 快速开始
+
+```bash
+pip install story-lifecycle
+story setup           # 配置 LLM API Key（必填）
+story demo            # 0 依赖体验完整流程
+story serve           # 启动编排服务 (localhost:8180)
+story                 # 打开 TUI 面板
+```
+
+## 核心理念
+
+每个 Story 都经历多个阶段（design → implement → test → review），每个阶段由独立的 AI 会话处理。编排器负责：
+
+- **规划**：每阶段开始前，Planner LLM 分析 story 上下文，生成任务书
+- **执行**：AI CLI（Claude Code / Codex / Aider 等）在隔离的 Zellij session 中工作
+- **审查**：Reviewer LLM 审查阶段产出，识别问题
+- **路由**：LLM 决定 advance / retry / skip / fail
 
 ```
-STORY-123 "Add login feature"
-  ├─ [design]    Claude Code  → spec + complexity assessment
-  ├─ [implement] Codex CLI    → code changes
-  └─ [test]      Aider        → verification + smoke test
+STORY-123 "Add dark mode"
+  ├─ [plan:design]    Planner → 任务书
+  ├─ [execute:design] Claude Code → spec + 复杂度评估
+  ├─ [review:design]  Reviewer → 审查意见
+  ├─ [plan:implement] Planner → 编码任务书
+  ├─ [execute:implement] Claude Code → 代码修改
+  ├─ [review:implement] Reviewer → 代码审查
+  └─ [execute:test]   Claude Code → 测试验证 → 完成
 ```
 
-## Why Story Lifecycle?
+## 对抗循环（v0.5.0+）
 
-| | Story Lifecycle | Babysitter | Brain-dev |
-|---|---|---|---|
-| **Unit of work** | Story (requirement lifecycle) | Task (code→test→fix loop) | Task (code generation) |
-| **Multi-stage** | Design → Implement → Test → Review | Single iterative loop | Single shot |
-| **Mix AI CLIs** | Claude Code / Codex / Aider / Gemini per stage | Claude Code only | Claude Code only |
-| **Auto-split** | Complex stories → sub-tasks with dependencies | No | No |
-| **Custom workflow** | YAML profiles (3 to 14+ stages) | Fixed flow | Fixed flow |
-| **Orchestration** | LangGraph state machine + LLM router | Agent loop | Agent loop |
+v0.5.2 的编排引擎内置双层对抗循环，是质量保证的核心机制：
 
-Story Lifecycle is not another "AI writes code" tool. It's a **project manager for AI agents** — deciding *which* agent does *what*, tracking progress, handling failures, and escalating when needed.
+### Plan ↔ Review 循环
 
-## Key Features
+执行计划不是一次生成的——Planner 产出计划后，Reviewer 立即审查：
 
-### 1. Each Stage Uses a Different AI CLI
+```
+plan → review → revise → review → pass
+  │                            │
+  └── 最多 3 轮 ──────────────→ wait_confirm (人工介入)
+```
 
-The adapter pattern lets you assign different AI tools to different stages. Design benefits from Claude Code's architectural thinking, implementation from Codex's code generation, and testing from Aider's test-first approach.
+每轮审查检查：范围覆盖、上下文完整性、可行性、风险点。Reviewer 不满意就打回重来。
+
+### Code ↔ Review 循环
+
+代码写完后同样经过对抗审查：
+
+```
+execute → review → revise → review → pass
+   │                           │
+   └── 最多 3 轮 ────────────→ wait_confirm
+```
+
+### 收敛条件
+
+- `pass`：无阻塞性问题，推进
+- `revise`：有 high/major 问题，打回修改
+- `no_progress`：连续无改善，自动终止等人工
+- `max_rounds`：达到上限，自动终止等人工
+
+完整对抗循环的设计文档见 `docs/superpowers/specs/2026-05-24-evaluator-optimizer-loop-design.md`。
+
+## 质量飞轮
+
+系统会从每次审查中沉淀可复用的质量经验：
+
+```
+审查发现 Finding → 接受 → 修复 → 验证 → 学习为 Learned Pattern
+                                                      │
+新 Story ─────────────────── 模式复发检测 ──────────────┘
+```
+
+- **Finding**：每次审查产出的问题记录（open → accepted → fixed → verified → learned）
+- **Quality Packet**：story 启动时注入相关的历史 pattern 和检查清单
+- **Pattern Recurrence**：新 issue 自动匹配已知 pattern，检测复发
+
+## 子 Story 拆分
+
+复杂需求自动拆分为独立子任务：
+
+```
+STORY-100 (L: "重构认证系统")
+  ├─ STORY-100-auth (M) → depends on: none
+  ├─ STORY-100-api (S)  → depends on: STORY-100-auth
+  └─ STORY-100-test (M) → depends on: STORY-100-auth, STORY-100-api
+```
+
+子 story 共享父 story 的知识库，有依赖关系的按序执行，无依赖的并行跑。
+
+## SWE-bench Runner
+
+内置 SWE-bench 评估管线，用于批量测试和引擎改进：
+
+```bash
+story swebench run \
+  --instances sweep-verified.jsonl \
+  --run-id my-run \
+  --budget smoke \
+  --agent claude
+```
+
+完整流程：prepare → solve → export → eval → summarize
+
+## TUI 面板
+
+```
+story    # 启动 TUI
+
+[n] 创建 Story       [N] 创建子 Story    [i] 收件箱
+[e] 进入 AI 会话     [s] 跳过当前阶段     [f] 标记失败
+[r] 恢复             [a] 中止             [?] 帮助
+```
+
+TUI 展示每个 Story 的状态、当前阶段、执行次数、轨迹评分。
+
+## 配置
+
+### Profile（流程定义）
 
 ```yaml
 # profiles/minimal.yaml
 stages:
   design:
-    cli: claude          # Claude Code for architecture analysis
-    skill: "/brainstorming"
+    order: 1
+    description: "需求分析与方案设计"
+    review: true          # 启用对抗审查
+    max_retries: 2
+    expected_outputs: [spec_path, complexity]
   implement:
-    cli: codex           # Codex CLI for code generation
-  test:
-    cli: aider           # Aider for test-driven verification
+    order: 2
+    review: true
+    max_retries: 3
+    expected_outputs: [files_changed, summary]
+  review:
+    order: 3
+    review: false
+    expected_outputs: []
+
+quality:
+  enabled: true
+  inject_quality_packet: true
+  inject_executor_checklist: true
+
+adversarial:
+  enabled: true
+  plan_loop:
+    enabled: true
+    max_rounds: 3
+  code_loop:
+    enabled: true
+    max_rounds: 3
 ```
 
-Adding a new AI tool requires only a small adapter class — see `src/story_lifecycle/adapters/`.
-
-### 2. Story-Driven, Not Task-Driven
-
-Stories come from your project management tool (TAPD, Jira) and carry real business context: title, PRD link, acceptance criteria. The orchestrator treats each story as a **lifecycle** — it progresses through stages, accumulates knowledge, and produces auditable artifacts at every step.
+### LLM Provider
 
 ```bash
-# Create from a real requirement
-story create STORY-1065520 -t "职业邮箱限制"
-
-# Each stage produces structured output
-.story-done/STORY-1065520/design.json    # {"complexity": "M", "spec_path": "docs/..."}
-.story-done/STORY-1065520/implement.json # {"files_changed": [...], "summary": "..."}
+story setup   # 交互式配置
 ```
 
-### 3. Complexity-Aware with Auto-Subtask Delegation
+支持：DeepSeek（默认）、Anthropic、OpenAI、智谱 GLM、自定义 OpenAI 兼容端点。
 
-The design stage evaluates story complexity (S/M/L). Large stories are automatically split into parallel sub-tasks with dependency management:
-
-```
-STORY-100 (L: "Refactor auth system")
-  ├─ STORY-100-A (M) → depends on: none
-  ├─ STORY-100-B (S) → depends on: STORY-100-A
-  └─ STORY-100-C (M) → depends on: STORY-100-A
-```
-
-Sub-stories inherit parent knowledge and run in parallel via `ThreadPoolExecutor`. The parent story waits for all children before advancing.
-
-### 4. Profile-Driven Workflows
-
-Define your team's process in YAML. Start simple, add stages as needed:
+### Adapter（AI CLI）
 
 ```yaml
-# Minimal: 3 stages for quick iterations
-# Standard: 14 stages for production pipelines
-# Custom: drop a YAML in ~/.story-lifecycle/profiles/
+# ~/.story-lifecycle/adapters.yaml
+my-tool:
+  launch_cmd: "my-cli --model {model}"
+  inject_method: stdin
 ```
 
-Each stage configures its own AI CLI, allowed providers, max retries, review gates, and expected outputs.
-
-### 5. LangGraph State Machine + LLM Router
-
-The orchestration engine is a proper state machine built on LangGraph:
+## 架构
 
 ```
-plan → execute → poll → review → router → advance/retry/skip/fail
-  ↑                                                  │
-  └──────────────────────────────────────────────────┘
-```
-
-The **router node** decides what happens after each stage:
-- **With API key**: LLM evaluates the result and decides advance/retry/skip
-- **Without API key**: Rule-based fallback — works out of the box
-
-### 6. One-Command Setup
-
-```bash
-pip install story-lifecycle
-story              # First run: auto-check + offer to install missing tools
-story --fix        # Or run doctor fix directly: detects package managers, installs what's missing
-```
-
-Auto-detects your platform (brew / apt / npm / pip / winget) and installs missing AI CLIs with confirmation prompts.
-
-## Quick Start
-
-```bash
-# 1. Install
-pip install story-lifecycle
-
-# 2. First-run setup (LLM config + environment check)
-story setup
-
-# 3. See it work — simulated lifecycle, no AI needed
-story demo
-
-# 4. Create your first real story
-story create MY-001 -t "Add dark mode toggle"
-
-# 5. Watch the board
-story
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│                  story serve                     │
-│              (FastAPI + LangGraph)               │
-│                                                  │
-│  Story ──► plan ──► execute ──► poll ──► review  │
-│               │                              │   │
-│               ◄─── advance/retry/skip/fail ◄─┘   │
-│                          │                       │
-│                   ┌──────┴──────┐                │
-│                   │ LLM Router  │                │
-│                   │ + fallback  │                │
-│                   └─────────────┘                │
-└──────────┬───────────┬──────────────┬────────────┘
+┌──────────────────────────────────────────────────┐
+│                   story serve                     │
+│              (FastAPI + LangGraph)                │
+│                                                   │
+│  plan ──→ execute ──→ poll ──→ review ──→ router  │
+│    │                                       │      │
+│    │    adversarial loop:                  │      │
+│    │    plan↔review / code↔review          │      │
+│    │                                       │      │
+│    └── advance / retry / skip / fail ──────┘      │
+│                                                   │
+│  LLM 必填 — 无 fallback，不可用时报错暂停          │
+└──────────┬───────────┬──────────────┬─────────────┘
            │           │              │
      ┌─────┴──┐  ┌─────┴──┐   ┌─────┴──┐
      │Claude  │  │Codex   │   │Aider   │   ← Adapters
      │Code    │  │CLI     │   │        │
      └────────┘  └────────┘   └────────┘
-         │           │             │
-     ┌───┴───────────┴─────────────┴───┐
-     │     tmux / zellij + ttyd        │  ← Session management
-     └─────────────────────────────────┘
+           │           │             │
+     ┌─────┴───────────┴─────────────┴──┐
+     │       Zellij session 管理         │  ← 终端复用
+     └──────────────────────────────────┘
 ```
 
-**Module layout:**
-- `orchestrator/graph.py` — LangGraph StateGraph (plan → execute → poll → review → router)
-- `orchestrator/nodes.py` — node implementations + prompt rendering
-- `orchestrator/router.py` — LLM routing decisions with rule-based fallback
-- `adapters/` — adapter pattern for AI CLI tools (`BaseAdapter` → `ClaudeAdapter`)
-- `cli/` — Click CLI with Rich TUI board, doctor, and setup wizard
-- `db/models.py` — SQLite with raw SQL (story, stage_log, gate_result)
-- `profiles/` — YAML stage definitions
-- `prompts/` — per-stage markdown templates with `{variable}` substitution
-
-## CLI Reference
+## CLI 参考
 
 ```
-story                                    Launch TUI board (first run: setup wizard)
-story demo                               Run simulated lifecycle (no AI needed)
-story create <KEY> -t <TITLE>            Create and start a story
-story create <KEY> -t <TITLE> --dry-run  Preview prompts without executing
-story create <KEY> --no-start            Create but don't start (for later resume)
-story --fix                              Auto-install missing dependencies
-story --serve                            Start API server (port 8180)
-story setup                              Configure LLM provider & API key
-story doctor                             Check environment
-story --version                          Show version
-
-# Inside TUI board:
-  [n]     Create new story
-  [N]     Create sub-story
-  [i]     Inbox (import from TAPD/Jira)
-  [e]     Enter AI session
-  [s]     Skip current stage
-  [f]     Mark story as failed
-  [r]     Resume blocked story
-  [a]     Abort story
-  [q]     Quit
+story                          TUI 面板
+story demo                     模拟完整流程
+story create <KEY> -t <TITLE>  创建并启动 story
+story create <KEY> --dry-run   预览 prompts
+story serve                    启动 API 服务器 (8180)
+story setup                    配置 LLM
+story doctor                   环境检查
+story swebench run             SWE-bench 评估
+story review-feedback import   导入审查反馈
+story review-feedback list     查看 findings
+story approvals list           待审批队列
 ```
 
-## Platform Support
+## 平台支持
 
-| Platform | CLI + DB + TUI | AI Execution |
-|----------|----------------|--------------|
-| **Linux** | Full | tmux / zellij + ttyd |
-| **macOS** | Full | tmux / zellij + ttyd |
-| **Windows (WSL2)** | Full | tmux / zellij + ttyd |
-| **Windows (native)** | Full | Git Bash pop-up window |
-
-Linux/macOS/WSL2 use tmux or zellij for persistent sessions with web terminal (ttyd) access. On native Windows, AI sessions open in a new Git Bash window — same workflow, different window management.
+| 平台 | CLI + TUI | AI 执行 |
+|------|-----------|---------|
+| Linux | ✓ | Zellij |
+| macOS | ✓ | Zellij |
+| Windows | ✓ | Zellij (Git Bash) |
 
 ## License
 
