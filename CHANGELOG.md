@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.7] - 2026-05-27
+
+### Fixed
+- 任务书增加完成信号（done 文件路径 + JSON 格式示例）
+- 任务书增加事实/假设边界约束：未找到的表名/字段名标记为假设
+- 任务书 headless 兼容：用 open_questions 替代"与产品经理确认"
+- 任务书配置语义清晰：执行工具/执行模型，移除编排层内部字段
+- 移除任务书中的 skill 指令（skill 通过 tool_args 传递，非所有 AI CLI 支持）
+
 ## [0.5.6] - 2026-05-26
 
 ### Added
