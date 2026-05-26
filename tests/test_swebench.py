@@ -411,7 +411,7 @@ class TestExportPredictions:
         assert row["model_name_or_path"] == "story-lifecycle-claude"
 
     def test_export_empty_patch_for_missing_done(self, tmp_path):
-        """没有 finalize.json 时导出空 patch。"""
+        """没有 finalize.json 时导出空 patch，manifest 标 export_failed。"""
         inst = SWEbenchInstance("inst-1", "a/b", "c1", "ps")
         run_dir = tmp_path / "r1"
         ws = run_dir / "inst-1"
@@ -422,6 +422,11 @@ class TestExportPredictions:
 
         rows = export_predictions(store, "r1")
         assert rows[0]["model_patch"] == ""
+
+        manifest = store.load_manifest("r1")
+        entry = manifest["instances"][0]
+        assert entry["status"] == "export_failed"
+        assert entry["failure_type"] == "empty_patch"
 
 
 class TestPatchNoiseInspection:

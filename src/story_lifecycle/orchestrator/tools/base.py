@@ -51,7 +51,30 @@ class BaseTool:
         launch = adapter.launch_cmd(model)
         session = ttyd.session_name(key)
 
-        # Only inject into an already-existing healthy session.
+        # Headless first: if no TUI app, always use subprocess — never
+        # inject into tmux/zellij sessions even if one happens to exist.
+        from ..graph import _tui_app
+
+        if _tui_app is None:
+            headless_fn = getattr(adapter, "headless_launch_cmd", None)
+            cmd = headless_fn(model, prompt) if headless_fn else None
+            if cmd is not None:
+                return self._run_headless(
+                    state,
+                    cmd,
+                    prompt,
+                    workspace,
+                    adapter_name,
+                    model,
+                    tool_name,
+                )
+            # Adapter doesn't support headless — fall through to session launch
+            log.warning(
+                "Adapter %s does not support headless, falling back to launch_cli",
+                adapter_name,
+            )
+
+        # TUI mode: try injecting into an existing healthy session first.
         # Never create_session + send_keys on Windows/Zellij — the background
         # pane may be empty (no ConPTY), causing prompt to disappear.
         injected = False
@@ -67,51 +90,22 @@ class BaseTool:
 
         foreground_zellij = False
         if not injected:
-            # Write prompt to temp file (used by TUI paths; headless uses
-            # prompt string directly via adapter.headless_launch_cmd)
             tmp = (
                 Path(tempfile.gettempdir())
                 / f"story-prompt-{key}-{state['current_stage']}.md"
             )
             tmp.write_text(prompt, encoding="utf-8")
 
-            from ..graph import _tui_app
+            # TUI running — try zellij foreground, else terminal window
+            zellij_args = ttyd.zellij_execution_args(key, workspace, launch, str(tmp))
+            if zellij_args is not None:
+                from ..graph import emit_terminal_request
 
-            if _tui_app is None:
-                # Headless — run CLI synchronously via subprocess.
-                # This path is independent of zellij availability.
-                headless_fn = getattr(adapter, "headless_launch_cmd", None)
-                cmd = headless_fn(model, prompt) if headless_fn else None
-                if cmd is not None:
-                    return self._run_headless(
-                        state,
-                        cmd,
-                        prompt,
-                        workspace,
-                        adapter_name,
-                        model,
-                        tool_name,
-                    )
-                # Adapter doesn't support headless — fall back to launch_cli
-                log.warning(
-                    "Adapter %s does not support headless, falling back to launch_cli",
-                    adapter_name,
-                )
+                emit_terminal_request(key, zellij_args)
+                foreground_zellij = True
+            else:
                 ttyd.launch_cli(key, workspace, launch, str(tmp))
                 ttyd._mplex_launched.add(key)
-            else:
-                # TUI running — try zellij foreground, else terminal window
-                zellij_args = ttyd.zellij_execution_args(
-                    key, workspace, launch, str(tmp)
-                )
-                if zellij_args is not None:
-                    from ..graph import emit_terminal_request
-
-                    emit_terminal_request(key, zellij_args)
-                    foreground_zellij = True
-                else:
-                    ttyd.launch_cli(key, workspace, launch, str(tmp))
-                    ttyd._mplex_launched.add(key)
 
         from ..graph import emit_terminal_opened
 

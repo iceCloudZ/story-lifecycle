@@ -1609,6 +1609,34 @@ def advance_node(state: StoryState) -> StoryState:
         state["last_error"] = f"Missing expected outputs: {missing}"
         return state  # goes back to router
 
+    # Hard gate for benchmark finalize: must have actual patch output
+    if stage == "finalize" and state.get("profile") == "swebench":
+        from pathlib import Path as _P
+
+        workspace = state["workspace"]
+        has_patch = bool(ctx.get("model_patch"))
+        if not has_patch:
+            # Check git diff against base_commit
+            try:
+                import subprocess as _sp
+
+                base = ctx.get("base_commit")
+                if base and _P(workspace).exists():
+                    r = _sp.run(
+                        ["git", "diff", base],
+                        cwd=workspace,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    if r.returncode == 0 and r.stdout.strip():
+                        has_patch = True
+            except Exception:
+                pass
+        if not has_patch:
+            state["last_error"] = "finalize has no model_patch and no git diff"
+            return state
+
     # DoD gate: block on open high findings
     try:
         from .quality import check_dod
