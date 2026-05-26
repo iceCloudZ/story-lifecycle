@@ -945,10 +945,13 @@ class StoryBoardApp(App):
         header = self.query_one("#header-bar")
         completed = getattr(self, "_completed_stories", [])
         completed_count = len(completed)
+        from importlib.metadata import version as _pkg_version
+
+        v = _pkg_version("story-lifecycle")
         header.update(
             "\n"
             "  [bold cyan]◆[/] [bold white]Story[/][bold cyan]Lifecycle[/] "
-            f" [dim]│[/] Router: {router_status} [dim]│[/] Stories: {active} active"
+            f"[dim]v{v}[/] [dim]│[/] Router: {router_status} [dim]│[/] Stories: {active} active"
             f"{f' [dim]│[/] {completed_count} completed' if completed_count else ''}"
         )
 
