@@ -181,7 +181,8 @@ class TestPlanStageNode:
         state = _make_state()
         result = plan_stage_node(state)
 
-        assert result["plan_summary"] == "Fallback: using profile config"
+        assert result.get("_pre_routed_action") == "wait_confirm"
+        assert "LLM timeout" in result.get("last_error", "")
 
 
 # -------- review_stage_node --------

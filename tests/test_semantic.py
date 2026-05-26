@@ -36,25 +36,14 @@ def test_semantic_result_llm_mode():
     assert r["data"] == {"test": 1}
 
 
-def test_semantic_result_fallback_mode():
-    """_fallback_result returns mode=rule_fallback, confidence=low."""
-    from story_lifecycle.orchestrator.semantic import _fallback_result
-
-    r = _fallback_result(data={"test": 1})
-    assert r["ok"] is True
-    assert r["mode"] == "rule_fallback"
-    assert r["confidence"] == "low"
-    assert r["warnings"] == ["LLM unavailable, using rule fallback"]
-
-
 def test_semantic_result_error_mode():
     """_error_result returns mode=error."""
     from story_lifecycle.orchestrator.semantic import _error_result
 
-    r = _error_result("boom")
+    r = _error_result("test error")
     assert r["ok"] is False
     assert r["mode"] == "error"
-    assert "boom" in r["warnings"]
+    assert "test error" in r["warnings"]
 
 
 def test_call_semantic_llm_no_api_key():
@@ -179,27 +168,27 @@ def test_extract_bug_context_llm_success():
     assert result["data"]["expected_behavior"] == "正常登录"
 
 
-def test_extract_bug_context_fallback():
-    """Without LLM, returns rule_fallback with regex extraction."""
+def test_extract_bug_context_error():
+    """Without LLM, returns error result."""
     from story_lifecycle.orchestrator.semantic import extract_bug_context
 
     with patch.dict("os.environ", {}, clear=True):
         result = extract_bug_context("## 复现步骤\n点按钮\n\n## 预期结果\n成功", "标题")
 
-    assert result["mode"] == "rule_fallback"
-    assert "点按钮" in result["data"].get("steps_to_reproduce", "")
+    assert result["mode"] == "error"
+    assert not result["ok"]
 
 
-def test_extract_bug_context_llm_error_fallback():
-    """LLM error falls back to regex extraction."""
+def test_extract_bug_context_llm_error():
+    """LLM error returns error result, no fallback."""
     from story_lifecycle.orchestrator.semantic import extract_bug_context
 
     with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
         with patch("httpx.post", side_effect=Exception("timeout")):
             result = extract_bug_context("## 复现步骤\n点按钮", "标题")
 
-    assert result["mode"] == "rule_fallback"
-    assert "点按钮" in result["data"].get("steps_to_reproduce", "")
+    assert result["mode"] == "error"
+    assert not result["ok"]
 
 
 # ── match_pattern_recurrence ──
@@ -240,8 +229,8 @@ def test_match_pattern_recurrence_llm_match():
     assert result["data"]["matches"][0]["pattern_id"] == "p-001"
 
 
-def test_match_pattern_recurrence_fallback():
-    """Without LLM, uses keyword matching fallback."""
+def test_match_pattern_recurrence_error():
+    """Without LLM, returns error result."""
     from story_lifecycle.orchestrator.semantic import match_pattern_recurrence
 
     issue = {"description": "缺少回滚方案导致无法恢复", "category": "error_handling"}
@@ -252,8 +241,8 @@ def test_match_pattern_recurrence_fallback():
     with patch.dict("os.environ", {}, clear=True):
         result = match_pattern_recurrence(issue, patterns)
 
-    assert result["mode"] == "rule_fallback"
-    assert len(result["data"]["matches"]) >= 1
+    assert result["mode"] == "error"
+    assert not result["ok"]
 
 
 def test_match_pattern_recurrence_no_match():
@@ -383,7 +372,7 @@ def test_rerank_relevant_patterns_llm():
 
 
 def test_rerank_relevant_patterns_fallback():
-    """Without LLM, returns top candidates as-is."""
+    """Without LLM, returns error result."""
     from story_lifecycle.orchestrator.semantic import rerank_relevant_patterns
 
     story_ctx = {"title": "test", "stage": "implement", "type": "feature"}
@@ -400,8 +389,8 @@ def test_rerank_relevant_patterns_fallback():
     with patch.dict("os.environ", {}, clear=True):
         result = rerank_relevant_patterns(story_ctx, candidates, limit=5)
 
-    assert result["mode"] == "rule_fallback"
-    assert len(result["data"]["selected"]) == 1
+    assert result["mode"] == "error"
+    assert not result["ok"]
 
 
 # ── summarize_review_for_learning ──
@@ -437,8 +426,8 @@ def test_summarize_review_llm_success():
     assert result["data"]["useful_for_learning"] is True
 
 
-def test_summarize_review_fallback():
-    """Without LLM, uses marker-based fallback."""
+def test_summarize_review_error():
+    """Without LLM, returns error result."""
     from story_lifecycle.orchestrator.semantic import summarize_review_for_learning
 
     review_md = "## Review\nquality: pass\n\n### Issues\n- minor style issue"
@@ -446,8 +435,8 @@ def test_summarize_review_fallback():
     with patch.dict("os.environ", {}, clear=True):
         result = summarize_review_for_learning(review_md)
 
-    assert result["mode"] == "rule_fallback"
-    assert "quality" in result["data"]
+    assert result["mode"] == "error"
+    assert not result["ok"]
 
 
 # ── recommend_recovery ──
@@ -531,12 +520,12 @@ def test_recommend_recovery_enforces_unknown_ask_human():
     assert result["data"]["recommended_action"] == "ask_human"
 
 
-def test_recommend_recovery_fallback():
-    """Without LLM, returns conservative fallback."""
+def test_recommend_recovery_error():
+    """Without LLM, returns error result."""
     from story_lifecycle.orchestrator.semantic import recommend_recovery
 
     with patch.dict("os.environ", {}, clear=True):
         result = recommend_recovery({"story": {"status": "error"}})
 
-    assert result["mode"] == "unavailable"
-    assert result["data"]["recommended_action"] == "ask_human"
+    assert result["mode"] == "error"
+    assert not result["ok"]
