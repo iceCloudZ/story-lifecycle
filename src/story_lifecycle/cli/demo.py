@@ -54,7 +54,10 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
     console.rule("[bold cyan]Story Lifecycle Demo[/]")
     console.print()
     console.print(f"  Story: [cyan]{_DEMO_KEY}[/]")
-    console.print("  Profile: [dim]minimal (design → implement → test)[/]")
+    from ..orchestrator.nodes import load_profile
+
+    stages = list(load_profile("minimal").get("stages", {}).keys())
+    console.print(f"  Profile: [dim]minimal ({' → '.join(stages)})[/]")
     console.print("  Mode: [dim]simulated (no real AI)[/]")
     console.print()
 

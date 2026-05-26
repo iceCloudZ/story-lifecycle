@@ -1,0 +1,28 @@
+# Headless smoke test profile — design + implement, no expected_outputs
+version: 2
+cli: claude
+
+stages:
+  design:
+    order: 1
+    description: "分析 bug 并设计方案"
+    confirm: false
+    review: false
+    max_retries: 0
+    expected_outputs: []
+    next_default: [implement]
+
+  implement:
+    order: 2
+    description: "编码实现修复"
+    confirm: false
+    review: false
+    max_retries: 0
+    expected_outputs: []
+    next_default: []
+
+quality:
+  enabled: false
+
+adversarial:
+  enabled: false

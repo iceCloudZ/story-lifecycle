@@ -87,15 +87,23 @@ def _is_cancelled(state: StoryState) -> bool:
 
 
 def load_profile(profile_name: str) -> dict:
-    """Load a profile YAML. Searches: project .story/ → STORY_HOME → built-in."""
+    """Load a profile YAML. Searches: project .story/ → STORY_HOME → package built-in."""
+    # Built-in: load from package data (src/story_lifecycle/profiles/)
+    import importlib.resources as _ir
+
     for base in [
         Path.cwd() / ".story",
         STORY_HOME,
-        Path(__file__).parent.parent.parent.parent,  # package root (story-lifecycle/)
     ]:
         path = base / "profiles" / f"{profile_name}.yaml"
         if path.exists():
             return yaml.safe_load(path.read_text(encoding="utf-8"))
+    # Package built-in via importlib.resources
+    try:
+        ref = _ir.files("story_lifecycle.profiles").joinpath(f"{profile_name}.yaml")
+        return yaml.safe_load(ref.read_text(encoding="utf-8"))
+    except (FileNotFoundError, TypeError):
+        pass
     raise FileNotFoundError(f"Profile not found: {profile_name}")
 
 
@@ -1853,13 +1861,22 @@ def _render_prompt(stage: str, state: StoryState) -> tuple[str, dict]:
     """
     template_paths = [
         STORY_HOME / "prompts" / f"{stage}.md",
-        Path(__file__).parent.parent.parent.parent / "prompts" / f"{stage}.md",
     ]
     template = None
     for p in template_paths:
         if p.exists():
             template = p.read_text(encoding="utf-8")
             break
+
+    # Package built-in via importlib.resources
+    if not template:
+        try:
+            import importlib.resources as _ir
+
+            ref = _ir.files("story_lifecycle.prompts").joinpath(f"{stage}.md")
+            template = ref.read_text(encoding="utf-8")
+        except (FileNotFoundError, TypeError):
+            pass
 
     if not template:
         # Default prompt

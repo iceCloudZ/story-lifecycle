@@ -1,0 +1,77 @@
+# Story Lifecycle — Minimal Profile (3 stages)
+# Default profile for quick iterations
+version: 2
+cli: claude
+
+stages:
+  design:
+    order: 1
+    description: "需求分析与方案设计"
+    skill: "/brainstorming"
+    confirm: false
+    review: true
+    max_retries: 2
+    allowed_providers: [deepseek, zhipu]
+    expected_outputs:
+      - spec_path
+      - complexity
+    next_default: [implement]
+
+  implement:
+    order: 2
+    description: "编码实现"
+    confirm: false
+    review: true
+    max_retries: 3
+    allowed_providers: [deepseek, zhipu, anthropic]
+    expected_outputs:
+      - files_changed
+      - summary
+    next_default: [review]
+
+  review:
+    order: 3
+    description: "代码审查"
+    confirm: false
+    review: false
+    max_retries: 2
+    expected_outputs: []
+    next_default: []
+
+quality:
+  enabled: true
+  readiness_check: true
+  inject_quality_packet: true
+  inject_executor_checklist: true
+  block_on_open_high_findings: true
+  verification_commands:
+    - pytest
+    - ruff check src tests
+
+adversarial:
+  enabled: true
+  plan_loop:
+    enabled: true
+    stages: [design, implement]
+    max_rounds: 3
+    pass_condition: no_open_blocker_or_major
+  code_loop:
+    enabled: true
+    mode: short_lived
+    max_rounds: 3
+    pass_condition: no_open_blocker
+    fallback: repair_packet
+  observability:
+    log_round_events: true
+    estimate_prompt_segments: true
+
+# Reviewer configuration (P0: documents current behavior; P1: enables CLI reviewers)
+reviewers:
+  design:
+    mode: api
+    visible: false
+    max_rounds: 3
+  implement:
+    mode: api
+    visible: false
+    max_rounds: 3
