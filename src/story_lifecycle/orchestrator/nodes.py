@@ -288,14 +288,38 @@ def plan_stage_node(state: StoryState) -> StoryState:
                             f"\n## 前序 Review 建议\n"
                             f"请先处理以下问题：\n{rf.read_text(encoding='utf-8')}"
                         )
+                expected_outputs = cfg.get("expected_outputs", [])
+                skill = cfg.get("skill", "")
+                done_path = f".story/done/{story_key}/{stage}.json"
+
+                # Build expected_outputs JSON example
+                output_example = {k: "..." for k in expected_outputs}
+                output_hint = ""
+                if expected_outputs:
+                    import json as _json
+
+                    output_hint = (
+                        f"\n## 完成信号\n"
+                        f"完成后必须写入 `{done_path}`，纯 JSON（不要 markdown 代码块）：\n"
+                        f"```json\n{_json.dumps(output_example, ensure_ascii=False, indent=2)}\n```\n"
+                    )
+
+                skill_section = ""
+                if skill:
+                    skill_section = (
+                        f"\n## Skill\n执行前先调用 `{skill}` 进行结构化分析。\n"
+                    )
+
                 pf.write_text(
                     f"# 任务书: {stage}\n\n"
                     f"## 执行指令\n{plan.get('extra_instructions', '')}\n"
-                    f"{review_section}\n\n"
+                    f"{review_section}\n"
+                    f"{skill_section}\n"
                     f"## 配置\n"
                     f"- Adapter: {plan.get('adapter', 'claude')}\n"
                     f"- Provider: {plan.get('provider', 'deepseek')}\n"
                     f"- Model: {plan.get('model', 'sonnet')}\n\n"
+                    f"{output_hint}\n"
                     f"## 决策理由\n{plan.get('reasoning', '')}\n\n"
                     f"## 路径评分\n"
                     f"当前路径评分: {plan.get('trajectory_score', 'N/A')}/1.0",
