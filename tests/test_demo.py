@@ -30,6 +30,25 @@ def _run_demo_with_db(tmp_path: Path):
         from story_lifecycle.orchestrator import nodes as nodes_mod
 
         mock_planner.compress_context.return_value = None
+        mock_planner.plan_stage.return_value = {
+            "adapter": "claude",
+            "provider": "deepseek",
+            "model": "sonnet",
+            "skip": False,
+            "summary": "Test plan",
+            "extra_instructions": "Do the thing",
+            "reasoning": "test",
+            "trajectory_score": 0.9,
+        }
+        mock_planner.review_stage.return_value = {
+            "quality": "pass",
+            "summary": "Looks good",
+            "issues": [],
+            "suggestions": [],
+            "trajectory_score": 0.9,
+            "context_updates": {},
+            "reasoning": "test",
+        }
         mock_get_tool.return_value = DemoTool()
         mock_ttyd.session_name.return_value = "story-demo-hello"
         mock_ttyd.session_alive.return_value = True
