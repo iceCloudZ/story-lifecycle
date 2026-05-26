@@ -73,6 +73,18 @@ def cli(ctx, serve, host, port, fix_deps):
     load_config_to_env()
 
     if ctx.invoked_subcommand is not None:
+        if ctx.invoked_subcommand not in ("doctor", "demo"):
+            if not is_configured():
+                console.print(
+                    "[yellow]LLM API key not configured — launching setup wizard.[/]\n"
+                )
+                run_setup()
+                load_config_to_env()
+                if not is_configured():
+                    console.print(
+                        "[red]Setup incomplete. Run 'story' again to retry.[/]"
+                    )
+                    raise SystemExit(1)
         return
 
     if fix_deps:

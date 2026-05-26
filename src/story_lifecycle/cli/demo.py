@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rich.console import Console
-from rich.table import Table
 
 from ..db import models as db
 from ..orchestrator import graph as graph_mod
@@ -62,8 +61,44 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
     demo_tool = DemoTool()
     start = time.monotonic()
 
+    from ..orchestrator import router as llm_router
+
+    def _demo_route(state, cfg):
+        return {"action": "advance", "reasoning": "Demo mode"}
+
+    _plan_return = {
+        "adapter": "claude",
+        "provider": "deepseek",
+        "model": "sonnet",
+        "skip": False,
+        "summary": "Demo: design the feature",
+        "extra_instructions": "Create a simple hello world feature",
+        "reasoning": "Demo mode",
+        "trajectory_score": 0.9,
+    }
+    _review_return = {
+        "quality": "pass",
+        "summary": "Looks good",
+        "feedback": "",
+        "issues": [],
+        "suggestions": [],
+        "trajectory_score": 0.9,
+        "context_updates": {},
+        "reasoning": "Demo review",
+    }
+    _review_plan_return = {
+        "quality": "pass",
+        "blockers": [],
+        "suggestions": [],
+        "reasoning": "Demo plan review",
+    }
+
+    _mock_targets = [
+        "story_lifecycle.orchestrator.nodes.planner",
+        "story_lifecycle.orchestrator.planner",
+    ]
+
     with (
-        patch("story_lifecycle.orchestrator.nodes.planner") as mock_planner,
         patch("story_lifecycle.orchestrator.tools.get_tool") as mock_get_tool,
         patch("story_lifecycle.orchestrator.nodes.ttyd") as mock_ttyd,
         patch("story_lifecycle.orchestrator.nodes.notify"),
@@ -72,34 +107,18 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
         patch(
             "story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None
         ),
+        patch.object(llm_router, "route", _demo_route),
     ):
-        mock_planner.compress_context.return_value = None
-        mock_planner.plan_stage.return_value = {
-            "adapter": "claude",
-            "provider": "deepseek",
-            "model": "sonnet",
-            "skip": False,
-            "summary": "Demo: design the feature",
-            "extra_instructions": "Create a simple hello world feature",
-            "reasoning": "Demo mode",
-            "trajectory_score": 0.9,
-        }
-        mock_planner.review_stage.return_value = {
-            "quality": "pass",
-            "summary": "Looks good",
-            "feedback": "",
-            "issues": [],
-            "suggestions": [],
-            "trajectory_score": 0.9,
-            "context_updates": {},
-            "reasoning": "Demo review",
-        }
-        mock_planner.review_plan.return_value = {
-            "quality": "pass",
-            "blockers": [],
-            "suggestions": [],
-            "reasoning": "Demo plan review",
-        }
+        # Mock planner at both import sites
+        mock_planners = []
+        for target in _mock_targets:
+            mp = patch(target)
+            m = mp.start()
+            m.compress_context.return_value = None
+            m.plan_stage.return_value = _plan_return
+            m.review_stage.return_value = _review_return
+            m.review_plan.return_value = _review_plan_return
+            mock_planners.append(mp)
 
         mock_get_tool.return_value = demo_tool
         mock_ttyd.session_name.return_value = f"story-{_DEMO_KEY}"
@@ -110,6 +129,9 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
 
         with patch.object(nodes_mod, "STORY_HOME", workspace):
             graph_mod._run_story_impl(_DEMO_KEY)
+
+        for mp in mock_planners:
+            mp.stop()
 
     elapsed = time.monotonic() - start
 
@@ -129,25 +151,17 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
         console.print(f"  Time: [dim]{elapsed:.1f}s[/]")
         console.print()
 
-        stages_done = {}
-        for e in events:
-            if e["event_type"] == "execute":
-                stages_done[e["stage"]] = True
-
-        for s in ("design", "implement", "review"):
-            mark = "[green]✓[/]" if s in stages_done else "[dim]○[/]"
-            console.print(f"  {mark} {s}")
-
-        console.print()
-
         if events:
-            table = Table(title="Event Log", show_lines=False, padding=0)
-            table.add_column("Stage", style="cyan", width=12)
-            table.add_column("Type", style="white", width=12)
-            table.add_column("Detail", style="dim")
+            _show_types = {"plan", "execute", "review"}
+            current_stage = None
             for e in events:
-                e_stage = e.get("stage", "")
                 etype = e.get("event_type", "")
+                if etype not in _show_types:
+                    continue
+                e_stage = e.get("stage", "")
+                if e_stage != current_stage:
+                    current_stage = e_stage
+                    console.print(f"  [bold cyan]\\[{e_stage}][/]")
                 payload = e.get("payload", "")
                 if isinstance(payload, str):
                     try:
@@ -156,13 +170,14 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
                         pass
                 detail = ""
                 if isinstance(payload, dict):
-                    attempt = payload.get("attempt", "")
-                    tool = payload.get("tool", "")
-                    detail = (
-                        f"attempt {attempt} ({tool})" if tool else str(payload)[:60]
-                    )
-                table.add_row(e_stage, etype, detail)
-            console.print(table)
+                    if etype == "plan":
+                        detail = payload.get("summary", "")[:60]
+                    elif etype == "review":
+                        q = payload.get("quality", "")
+                        detail = f"{q} — {payload.get('summary', '')[:40]}"
+                    elif etype == "execute":
+                        detail = f"attempt {payload.get('attempt', '?')} ({payload.get('tool', '')})"
+                console.print(f"    [green]✓[/] {etype:8s} {detail}")
             console.print()
 
     console.rule("[bold green]Demo Complete[/]")
