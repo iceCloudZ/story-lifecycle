@@ -1,4 +1,5 @@
 # SWE-bench benchmark profile — design → implement → test → finalize
+# 默认启用对抗循环，提升产出质量
 version: 2
 cli: claude
 
@@ -55,4 +56,30 @@ quality:
   enabled: false
 
 adversarial:
-  enabled: false
+  enabled: true
+  plan_loop:
+    enabled: true
+    stages: [design, implement]
+    max_rounds: 3
+    reviewer_model: deepseek-v4-pro
+    pass_condition: no_open_blocker_or_major
+  code_loop:
+    enabled: true
+    mode: short_lived
+    max_rounds: 3
+    reviewer_model: deepseek-v4-pro
+    pass_condition: no_open_blocker
+    fallback: repair_packet
+  observability:
+    log_round_events: true
+    estimate_prompt_segments: true
+
+reviewers:
+  design:
+    mode: api
+    visible: false
+    max_rounds: 3
+  implement:
+    mode: api
+    visible: false
+    max_rounds: 3
