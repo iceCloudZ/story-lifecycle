@@ -253,11 +253,13 @@ class BaseTool:
             data = {"output": (stdout or "")[:2000], "synthetic": True}
 
         # Auto-discover artifacts the CLI may have written but not reported.
-        # Design stage often writes docs/design.md without setting spec_path.
+        # Design stage often writes docs/design*.md without setting spec_path.
         if stage == "design" and "spec_path" not in data:
-            design_doc = Path(workspace) / "docs" / "design.md"
-            if design_doc.exists():
-                data["spec_path"] = "docs/design.md"
+            docs_dir = Path(workspace) / "docs"
+            if docs_dir.is_dir():
+                candidates = sorted(docs_dir.glob("design*.md"))
+                if candidates:
+                    data["spec_path"] = f"docs/{candidates[-1].name}"
 
         done_path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"

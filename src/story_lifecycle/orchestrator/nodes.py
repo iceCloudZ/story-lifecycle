@@ -1344,7 +1344,11 @@ def poll_completion_node(state: StoryState) -> StoryState:
         except PermissionError:
             pass
         ttyd.clear_launch_state(key)
+        # Stage-scope synthetic flag so it doesn't pollute other stages
+        is_synthetic = data.pop("synthetic", None)
         state["context"].update(data)
+        if is_synthetic:
+            state["context"][f"_synthetic_{stage}"] = True
         cfg = get_stage_config(state.get("profile", "minimal"), stage)
         for field in cfg.get("expected_outputs", []):
             if field in data:
@@ -1596,7 +1600,8 @@ def advance_node(state: StoryState) -> StoryState:
 
     # Schema guard: check expected_outputs (skip for synthetic headless output)
     ctx = state.get("context", {})
-    if ctx.get("synthetic"):
+    stage_synthetic = ctx.get(f"_synthetic_{stage}")
+    if stage_synthetic:
         missing = []
     else:
         missing = [k for k in cfg.get("expected_outputs", []) if k not in ctx]

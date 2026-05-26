@@ -463,6 +463,21 @@ def _read_model_patch(workspace: Path, story_key: str) -> str:
         except Exception:
             pass
 
+        # Claude may have committed changes — diff against base_commit from DB
+        try:
+            from ..db import models as _db
+
+            story = _db.get_story(story_key)
+            if story and story.get("context_json"):
+                ctx = json.loads(story["context_json"])
+                base = ctx.get("base_commit")
+                if base:
+                    r = _run_git("diff", base, cwd=str(workspace))
+                    if r.returncode == 0 and r.stdout.strip():
+                        return r.stdout
+        except Exception:
+            pass
+
     return ""
 
 
@@ -479,6 +494,15 @@ def export_predictions(
 
         patch = _read_model_patch(workspace, story_key)
         noise = inspect_patch_noise(patch)
+
+        if not patch:
+            store.update_instance(
+                run_id,
+                instance_id,
+                status="export_failed",
+                failure_type="empty_patch",
+            )
+            log.warning("Empty patch for %s — marking export_failed", instance_id)
 
         row = {
             "instance_id": instance_id,

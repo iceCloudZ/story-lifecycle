@@ -24,6 +24,7 @@ class ClaudeAdapter(BaseAdapter):
 
     def headless_launch_cmd(self, model: str, prompt: str) -> list[str] | None:
         # Prompt is NOT included here — piped via stdin by _run_headless.
+        # --permission-mode acceptEdits: allows file edits without prompting
         return [
             resolve_executable("claude"),
             "-p",
@@ -31,6 +32,8 @@ class ClaudeAdapter(BaseAdapter):
             model,
             "--allowedTools",
             "Bash,Read,Edit,Write,Glob,Grep",
+            "--permission-mode",
+            "acceptEdits",
         ]
 
     def inject_prompt(self, prompt: str, story_key: str, stage: str) -> str:
