@@ -525,10 +525,22 @@ def test_api_import_review_feedback(tmp_path):
 
     db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
 
+    # Use JSON input which works without LLM
     resp = client.post(
         "/api/story/S1/review-feedback",
         json={
-            "content": "- [HIGH] api.py:42 缺少空指针检查\n- [MEDIUM] 缺少测试",
+            "content": json.dumps(
+                {
+                    "candidate_findings": [
+                        {
+                            "severity": "high",
+                            "category": "security",
+                            "description": "缺少空指针检查",
+                            "location": "api.py:42",
+                        }
+                    ]
+                }
+            )
         },
     )
     assert resp.status_code == 200
@@ -750,22 +762,35 @@ def test_review_feedback_intake_e2e(tmp_path):
     assert story is not None
     assert story["current_stage"] == "implement"
 
-    # 1. Import review (rule fallback, no LLM)
-    review_md = (
-        "- [HIGH] api.py:42 缺少空指针检查，可能导致 NPE\n"
-        "- [MEDIUM] 缺少边界测试 case\n"
-        "- [LOW] 变量命名不规范"
+    # 1. Import review via JSON (structured input, no LLM required)
+    review_json = json.dumps(
+        {
+            "candidate_findings": [
+                {
+                    "severity": "high",
+                    "category": "security",
+                    "description": "缺少空指针检查，可能导致 NPE",
+                    "location": "api.py:42",
+                },
+                {
+                    "severity": "medium",
+                    "category": "testing",
+                    "description": "缺少边界测试 case",
+                },
+                {
+                    "severity": "low",
+                    "category": "style",
+                    "description": "变量命名不规范",
+                },
+            ]
+        }
     )
     env = {"STORY_HOME": str(tmp_path)}
-    if "STORY_LLM_API_KEY" in os.environ:
-        env["STORY_LLM_API_KEY"] = ""
     with patch.dict("os.environ", env):
-        # Ensure no LLM key triggers fallback
-        os.environ.pop("STORY_LLM_API_KEY", None)
-        result = import_review("TAPD-100100", review_md)
+        result = import_review("TAPD-100100", review_json)
 
     assert result["imported"] >= 2  # at least the HIGH and MEDIUM
-    assert result["mode"] in ("llm", "error")
+    assert result["mode"] == "llm"
 
     # 2. List findings
     findings = db.get_open_findings("TAPD-100100")

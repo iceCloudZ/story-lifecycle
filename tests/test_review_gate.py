@@ -2,6 +2,7 @@
 
 import json
 import os
+from unittest.mock import patch
 
 
 # ---------------------------------------------------------------------------
@@ -256,10 +257,24 @@ class TestReviewStageFatigue:
         assert gd["reason_code"] == "review_not_run_due_to_stale_executor_attempt_count"
         assert gd["review_round_count"] == 0
 
-    def test_no_fatigue_when_counts_below_limit(self, isolated_story_home, monkeypatch):
+    @patch("story_lifecycle.orchestrator.nodes.planner")
+    def test_no_fatigue_when_counts_below_limit(
+        self, mock_planner, isolated_story_home, monkeypatch
+    ):
         """Should not block when both counts are below limit."""
         from story_lifecycle.orchestrator import nodes
         from story_lifecycle.db import models as db
+
+        mock_planner.compress_context.return_value = None
+        mock_planner.review_stage.return_value = {
+            "quality": "pass",
+            "summary": "test",
+            "issues": [],
+            "suggestions": [],
+            "trajectory_score": 0.9,
+            "context_updates": {},
+            "reasoning": "test",
+        }
 
         db.upsert_story("FATIGUE-03", workspace=os.getcwd(), profile="minimal")
 
@@ -268,10 +283,7 @@ class TestReviewStageFatigue:
             execution_count=2,
         )
 
-        # Should NOT block — planner may not be available, but fatigue gates
-        # are checked first and should pass through
         result = nodes.review_stage_node(state)
-        # No _pre_routed_action means it passed the fatigue guards
         assert result.get("_pre_routed_action") != "wait_confirm"
         assert result.get("_gate_decision") is None
 
