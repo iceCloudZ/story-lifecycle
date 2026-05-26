@@ -54,13 +54,11 @@ adversarial:
     enabled: true
     stages: [design, implement]
     max_rounds: 3
-    reviewer_model: deepseek-v4-pro
     pass_condition: no_open_blocker_or_major
   code_loop:
     enabled: true
     mode: short_lived
     max_rounds: 3
-    reviewer_model: deepseek-v4-pro
     pass_condition: no_open_blocker
     fallback: repair_packet
   observability:
