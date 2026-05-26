@@ -269,7 +269,10 @@ class TestReviewStageFatigue:
             execution_count=2,
         )
 
-        with patch("story_lifecycle.orchestrator.nodes.planner") as mock_planner:
+        with (
+            patch("story_lifecycle.orchestrator.nodes.planner") as mock_planner,
+            patch("story_lifecycle.orchestrator.nodes.AdversarialConfig") as mock_adv,
+        ):
             mock_planner.compress_context.return_value = None
             mock_planner.review_stage.return_value = {
                 "quality": "pass",
@@ -280,6 +283,9 @@ class TestReviewStageFatigue:
                 "context_updates": {},
                 "reasoning": "test",
             }
+            mock_adv.from_profile.return_value.code_loop.enabled = False
+            mock_adv.from_profile.return_value.plan_loop.enabled = False
+            mock_adv.from_profile.return_value.enabled = False
             result = nodes.review_stage_node(state)
 
         assert result.get("_pre_routed_action") != "wait_confirm"
