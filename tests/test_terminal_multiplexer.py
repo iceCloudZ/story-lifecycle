@@ -145,6 +145,7 @@ def test_tui_shows_prompt_when_no_session_on_windows(monkeypatch):
     monkeypatch.setattr(tui.os, "name", "nt")
     monkeypatch.setattr(tui.ttyd, "session_name", lambda key: f"s-{key}")
     monkeypatch.setattr(tui.ttyd, "session_alive", lambda _session: False)
+    monkeypatch.setattr(tui.ttyd, "resolve_session_state", lambda _session: "missing")
     monkeypatch.setattr(
         tui.ttyd,
         "create_session",
