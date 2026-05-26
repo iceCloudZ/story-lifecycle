@@ -283,9 +283,10 @@ class TestReviewStageFatigue:
                 "context_updates": {},
                 "reasoning": "test",
             }
-            mock_adv.from_profile.return_value.code_loop.enabled = False
-            mock_adv.from_profile.return_value.plan_loop.enabled = False
             mock_adv.from_profile.return_value.enabled = False
+            mock_adv.from_profile.return_value.code_loop_enabled.return_value = False
+            mock_adv.from_profile.return_value.plan_loop_enabled.return_value = False
+            mock_adv.from_profile.return_value.code_loop.max_rounds = 3
             result = nodes.review_stage_node(state)
 
         assert result.get("_pre_routed_action") != "wait_confirm"
