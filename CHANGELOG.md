@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.6] - 2026-05-26
+
+### Added
+- `story upgrade` 命令 — 一键升级到最新版本
+- Orchestrator Agent idea 文档（`docs/idea-orchestrator-agent.md`）
+
+### Changed
+- profiles/ 和 prompts/ 打包进 wheel，`pip install` 后不再报 profile not found
+- `load_profile()` / `_render_prompt()` 改用 `importlib.resources` 加载内置资源
+- 无 LLM API key 时自动引导 setup 向导（排除 doctor/demo/upgrade 命令）
+- `story demo` 输出精简：按 stage 分组，只显示 plan/execute/review 关键步骤
+
+### Fixed
+- `story demo` planner mock 不覆盖 evaluator_loop 内部 import，导致调真实 LLM
+- demo header 硬编码 "design → implement → test"，实际是 review
+
+## [0.5.4] - 2026-05-26
+
+### Changed
+- 默认 DeepSeek 模型更新为 deepseek-v4-pro / deepseek-v4-flash
+- `story doctor` 新增 textual 依赖检查
+
+## [0.5.3] - 2026-05-26
+
+### Fixed
+- retag 修复发布流程
+
 ## [0.5.2] - 2026-05-26
 
 ### Changed
