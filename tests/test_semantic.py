@@ -52,7 +52,7 @@ def test_call_semantic_llm_no_api_key():
 
     with patch.dict("os.environ", {}, clear=True):
         result = _call_semantic_llm("test prompt", {})
-    assert result["mode"] == "unavailable"
+    assert result["mode"] == "error"
     assert result["ok"] is False
 
 

@@ -59,7 +59,7 @@ def _run_demo_with_db(tmp_path: Path):
             "demo-hello",
             title="Demo: Hello Story Lifecycle",
             workspace=str(tmp_path),
-            profile="minimal",
+            profile="demo",
             current_stage="design",
             status="active",
         )

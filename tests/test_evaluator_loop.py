@@ -130,29 +130,6 @@ def test_log_loop_completed_writes_event(isolated_story_home):
     assert p["remaining_findings"] == []
 
 
-def test_log_loop_fallback_writes_event(isolated_story_home):
-    from story_lifecycle.db import models as db
-    from story_lifecycle.orchestrator.loop_events import log_loop_fallback
-
-    db.upsert_story("LOOP-EV4", workspace=os.getcwd(), profile="minimal")
-    log_loop_fallback(
-        story_key="LOOP-EV4",
-        stage="implement",
-        loop_id="code:20260524-fb",
-        from_mode="persistent",
-        to_mode="short_lived",
-        reason="session_dead",
-        repair_packet_path=".story/context/LOOP-EV4/repair_implement_round2.md",
-    )
-    events = _get_events_by_type("LOOP-EV4", "evaluator_loop_fallback")
-    assert len(events) == 1
-    p = _parse_payload(events[0])
-    assert p["from_mode"] == "persistent"
-    assert p["to_mode"] == "short_lived"
-    assert p["reason"] == "session_dead"
-    assert "repair_implement_round2" in p["repair_packet_path"]
-
-
 # -- AdversarialConfig tests --
 
 

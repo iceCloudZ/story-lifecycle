@@ -171,13 +171,13 @@ def test_extract_candidates_json_input():
     with patch.dict("os.environ", {}, clear=True):
         result = extract_candidate_findings(json_review, "S1")
 
-    assert result["mode"] == "rule_fallback"
+    assert result["mode"] == "llm"
     assert len(result["candidates"]) == 1
     assert result["candidates"][0]["category"] == "security"
 
 
-def test_extract_candidates_fallback_on_llm_error():
-    """LLM error falls back to simple rule-based parser."""
+def test_extract_candidates_error_on_llm_failure():
+    """LLM error returns error mode, no rule fallback."""
     from story_lifecycle.orchestrator.review_feedback import extract_candidate_findings
 
     review_md = "- [HIGH] api.py:42 缺少空指针检查\n- [MEDIUM] 缺少测试"
@@ -185,8 +185,8 @@ def test_extract_candidates_fallback_on_llm_error():
         with patch("httpx.post", side_effect=Exception("timeout")):
             result = extract_candidate_findings(review_md, "S1")
 
-    assert result["mode"] == "rule_fallback"
-    assert len(result["candidates"]) >= 1
+    assert result["mode"] == "error"
+    assert len(result["candidates"]) == 0
 
 
 def test_validate_candidates_rejects_invalid():
@@ -534,7 +534,7 @@ def test_api_import_review_feedback(tmp_path):
     assert resp.status_code == 200
     data = resp.json()
     assert data["imported"] >= 1
-    assert data["mode"] == "rule_fallback"
+    assert data["mode"] in ("llm", "error")
 
 
 def test_api_list_review_feedback(tmp_path):
@@ -765,7 +765,7 @@ def test_review_feedback_intake_e2e(tmp_path):
         result = import_review("TAPD-100100", review_md)
 
     assert result["imported"] >= 2  # at least the HIGH and MEDIUM
-    assert result["mode"] == "rule_fallback"
+    assert result["mode"] in ("llm", "error")
 
     # 2. List findings
     findings = db.get_open_findings("TAPD-100100")
