@@ -167,11 +167,21 @@ def force_stop_story(story_key: str) -> bool:
     return was_running
 
 
-def is_workspace_locked(workspace: str) -> bool:
-    """Check if a workspace lock is currently held."""
+def is_workspace_locked(workspace: str, exclude_story: str = "") -> bool:
+    """Check if a workspace lock is held by a *different* story.
+
+    If *exclude_story* is given and it is the current owner, returns False
+    (same story holding its own lock is not a conflict).
+    """
     ws = str(workspace)
     entry = _workspace_locks.get(ws)
-    return entry is not None and entry["lock"].locked()
+    if entry is None or not entry["lock"].locked():
+        return False
+    if exclude_story:
+        owner = entry.get("owner_token")
+        if owner and owner[0] == exclude_story:
+            return False
+    return True
 
 
 def get_epoch(story_key: str) -> int:
@@ -252,14 +262,25 @@ def build_graph() -> StateGraph:
     return graph
 
 
-def get_compiled_graph():
-    """Return a compiled graph with SQLite checkpointer. Thread-safe."""
-    import sqlite3
+_compiled_graph = None
+_compiled_graph_lock = threading.Lock()
 
-    checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(checkpoint_db), check_same_thread=False)
-    saver = SqliteSaver(conn)
-    return build_graph().compile(checkpointer=saver)
+
+def get_compiled_graph():
+    """Return a cached compiled graph with SQLite checkpointer. Thread-safe."""
+    global _compiled_graph
+    if _compiled_graph is not None:
+        return _compiled_graph
+    with _compiled_graph_lock:
+        if _compiled_graph is not None:
+            return _compiled_graph
+        import sqlite3
+
+        checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(checkpoint_db), check_same_thread=False)
+        saver = SqliteSaver(conn)
+        _compiled_graph = build_graph().compile(checkpointer=saver)
+        return _compiled_graph
 
 
 def run_story(story_key: str, epoch: int = 0):

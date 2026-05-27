@@ -1034,7 +1034,7 @@ class StoryBoardApp(App):
         ws = s.get("workspace", "")
         ws_state = (
             WorkspaceState.LOCKED_BY_OTHER
-            if ws and is_workspace_locked(ws)
+            if ws and is_workspace_locked(ws, exclude_story=story_key)
             else WorkspaceState.FREE
         )
         state = resolve_stage_state(
@@ -1366,7 +1366,7 @@ class StoryBoardApp(App):
         ws = s.get("workspace", "")
         ws_state = (
             WorkspaceState.LOCKED_BY_OTHER
-            if ws and is_workspace_locked(ws)
+            if ws and is_workspace_locked(ws, exclude_story=key)
             else WorkspaceState.FREE
         )
         state = resolve_stage_state(
