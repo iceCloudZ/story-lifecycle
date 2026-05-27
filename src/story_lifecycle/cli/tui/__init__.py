@@ -912,50 +912,6 @@ class ParentSelectDialog(ModalScreen):
             self.dismiss(s.get("story_key"))
 
 
-class CopilotDialog(ModalScreen):
-    """Modal dialog for asking Copilot a question."""
-
-    CSS = """
-    CopilotDialog {
-        align: center middle;
-    }
-    #copilot-dialog {
-        width: 70;
-        height: auto;
-        padding: 1 2;
-        background: $surface;
-        border: thick $accent;
-    }
-    #copilot-dialog Input {
-        margin: 1 0;
-    }
-    """
-
-    def compose(self) -> ComposeResult:
-        with VerticalScroll(id="copilot-dialog"):
-            yield Static("[bold]Ask Copilot[/]")
-            yield Static(
-                "输入你的问题，Copilot 将分析诊断数据包并提供建议（只读，不修改工作流状态）。"
-            )
-            yield Input(
-                placeholder="e.g. 为什么 Story 卡住了？应该怎么排查？",
-                id="copilot-input",
-            )
-            yield Static("[dim]Enter 提交 · Esc 取消[/]")
-
-    def on_mount(self):
-        self.query_one("#copilot-input", Input).focus()
-
-    def on_input_submitted(self, event: Input.Submitted):
-        if event.value.strip():
-            self.dismiss(event.value.strip())
-        else:
-            self.dismiss(None)
-
-    def key_escape(self):
-        self.dismiss(None)
-
-
 class CopilotState:
     """Encapsulated Copilot UI state — question, result, loading flag."""
 
