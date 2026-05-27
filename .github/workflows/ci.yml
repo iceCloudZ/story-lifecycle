@@ -49,10 +49,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run tests
-        run: pytest -v -n 4 --dist loadfile -k "not e2e"
-
-      - name: Run e2e tests
-        run: pytest -v tests/e2e/
+        run: pytest -v
 
   build-check:
     name: Verify build
