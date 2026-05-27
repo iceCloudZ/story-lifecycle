@@ -37,12 +37,21 @@ def isolated_story_home(tmp_path, monkeypatch):
     monkeypatch.setattr(graph, "checkpoint_db", checkpoint_path)
     monkeypatch.setattr(nodes_mod, "STORY_HOME", story_home)
 
+    # Force load_profile to always use package built-in profiles,
+    # preventing tests from accidentally loading repo-root .story/ profiles
+    _orig_load = nodes_mod.load_profile
+
+    def _load_builtin_only(name: str) -> dict:
+        import importlib.resources as _ir
+
+        try:
+            ref = _ir.files("story_lifecycle.profiles").joinpath(f"{name}.yaml")
+            return __import__("yaml").safe_load(ref.read_text(encoding="utf-8"))
+        except (FileNotFoundError, TypeError):
+            pass
+        raise FileNotFoundError(f"Profile not found: {name}")
+
+    monkeypatch.setattr(nodes_mod, "load_profile", _load_builtin_only)
+
     db.init_db()
     return story_home
-
-
-@pytest.fixture(autouse=True)
-def _isolate_cwd(tmp_path, monkeypatch):
-    """Prevent tests from creating .story/ in the repo root via load_profile."""
-    monkeypatch.chdir(tmp_path)
-    yield

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.19] - 2026-05-27
+
+### Changed
+- CI 测试并行化：单元测试 xdist 4 worker，e2e 串行
+- 测试隔离改为 monkeypatch load_profile 强制使用 package 内置 profile
+
 ## [0.5.18] - 2026-05-27
 
 ### Changed
