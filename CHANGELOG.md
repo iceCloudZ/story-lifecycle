@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.23] - 2026-05-27
+
+### Added
+- P1 Ask Copilot：诊断面板中按 `y` 打开对话，输入问题后调 LLM 分析 Debug Packet，返回结构化建议（不自动执行）
+
+### Fixed
+- 诊断面板渲染异常导致 `r` 键无响应：`_copilot_*` 属性未初始化 + `_render()` 中异常未捕获
+- `story` import 时 `PackageNotFoundError` 崩溃：版本号查找改为 try/except fallback
+- Board 启动前检查 LLM 配置，缺失时主动引导 setup（而非静默进入显示 `missing_config`）
+- 启动时静默清理 `~` 前缀损坏 pip 安装片，消除 `WARNING: Ignoring invalid distribution` 警告
+
 ## [0.5.22] - 2026-05-27
 
 ### Fixed
