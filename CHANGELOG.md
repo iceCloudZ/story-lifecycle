@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.26] - 2026-05-27
+
+### Fixed
+- Story card 直接显示卡住原因提示（如 `review gate — 按 r 重试审查`），无需打开诊断面板
+- Copilot `call_from_thread` 在主线程执行时抛 `RuntimeError`，改为检查线程后再调度
+
 ## [0.5.25] - 2026-05-27
 
 ### Added
