@@ -4,26 +4,23 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import TypedDict, Optional
-
-import yaml
 
 from langgraph.errors import GraphInterrupt
 from langgraph.types import interrupt
 
-from ..db import models as db
-from ..terminal import ttyd
-from . import planner
-from . import router as llm_router
-from .notify import send as notify
-from .observability import (
+from ...db import models as db
+from ...terminal import ttyd
+from .. import planner
+from .. import router as llm_router
+from ..notify import send as notify
+from ..observability import (
     log_node_error,
     log_route_decision,
     log_prompt_context,
     log_dod_check,
 )
-from .evaluator_loop import AdversarialConfig
-from .paths import (
+from ..evaluator_loop import AdversarialConfig
+from ..paths import (
     stage_done_file,
     context_dir,
     plan_file,
@@ -32,196 +29,19 @@ from .paths import (
     malformed_done_file,
 )
 
+from .state import StoryState, TIMEOUT_SECONDS, POLL_INTERVAL, STORY_HOME, MAX_REVIEW_RETRIES
+from .profile_loader import load_profile, get_stage_config
+from .stage_resolver import _is_cancelled, _block_for_planner, resolve_next_stage
+from .subtask_delegate import _delegate_subtasks
+from .knowledge import _check_pattern_recurrence, _update_knowledge
+from .prompt_renderer import (
+    _strip_planner_contract_duplicates,
+    _build_stage_contract,
+    _build_plan_executor_prompt,
+    _render_prompt,
+)
+
 log = logging.getLogger("story-lifecycle.nodes")
-
-TIMEOUT_SECONDS = 30 * 60  # 30 minutes per stage
-POLL_INTERVAL = 15  # seconds between poll checks
-STORY_HOME = Path.home() / ".story-lifecycle"
-MAX_REVIEW_RETRIES = 3
-
-
-class StoryState(TypedDict, total=False):
-    story_key: str
-    title: str
-    workspace: str
-    profile: str
-    current_stage: str
-    status: str
-    complexity: str
-    context: dict
-    execution_count: int
-    last_error: Optional[str]
-    stage_start_time: float
-
-    # Smart Orchestrator fields
-    plan_summary: Optional[str]
-    review_summary: Optional[str]
-    trajectory_score: Optional[float]
-    plan: Optional[dict]
-    _next_action: Optional[str]
-    _pending_sub_keys: Optional[list]
-    _router_decision: Optional[dict]
-    _pre_routed_action: Optional[str]
-
-    # Run epoch — for stale-thread cancellation
-    _epoch: int
-    _cancelled: bool
-
-
-def _is_cancelled(state: StoryState) -> bool:
-    """Check if this run has been superseded by a newer epoch."""
-    if state.get("_cancelled"):
-        return True
-    epoch = state.get("_epoch", 0)
-    if not epoch:
-        return False
-    from .graph import is_epoch_current
-
-    if not is_epoch_current(state["story_key"], epoch):
-        state["_cancelled"] = True
-        return True
-    return False
-
-
-# -------- stage config --------
-
-
-def load_profile(profile_name: str) -> dict:
-    """Load a profile YAML. Searches: project .story/ → STORY_HOME → package built-in."""
-    # Built-in: load from package data (src/story_lifecycle/profiles/)
-    import importlib.resources as _ir
-
-    for base in [
-        Path.cwd() / ".story",
-        STORY_HOME,
-    ]:
-        path = base / "profiles" / f"{profile_name}.yaml"
-        if path.exists():
-            return yaml.safe_load(path.read_text(encoding="utf-8"))
-    # Package built-in via importlib.resources
-    try:
-        ref = _ir.files("story_lifecycle.profiles").joinpath(f"{profile_name}.yaml")
-        return yaml.safe_load(ref.read_text(encoding="utf-8"))
-    except (FileNotFoundError, TypeError):
-        pass
-    raise FileNotFoundError(f"Profile not found: {profile_name}")
-
-
-def get_stage_config(profile_name: str, stage_name: str) -> dict:
-    profile = load_profile(profile_name)
-    stages = profile.get("stages", {})
-    return stages.get(stage_name, {})
-
-
-def _block_for_planner(state: StoryState, reason: str) -> StoryState:
-    state["last_error"] = reason
-    state["_pre_routed_action"] = "wait_confirm"
-    state["plan_summary"] = reason
-    try:
-        db.log_event(
-            state["story_key"],
-            state["current_stage"],
-            "planner_blocked",
-            {"reason": reason},
-        )
-    except Exception:
-        pass
-    return state
-
-
-def resolve_next_stage(state: StoryState) -> Optional[str]:
-    """Determine next stage from profile config + complexity."""
-    cfg = get_stage_config(state.get("profile", "minimal"), state["current_stage"])
-    next_map = cfg.get("next_default", {})
-
-    if isinstance(next_map, list):
-        return next_map[0] if next_map else None
-    if isinstance(next_map, dict):
-        complexity = state.get("complexity", "M")
-        candidates = next_map.get(complexity, next_map.get("default", []))
-        return candidates[0] if candidates else None
-    return None
-
-
-# -------- robust JSON parsing --------
-
-
-# -------- robust JSON parsing --------
-
-
-def _extract_json_object(text: str) -> str | None:
-    """Extract the first complete JSON object using bracket counting."""
-    depth = 0
-    start = None
-    for i, ch in enumerate(text):
-        if ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0 and start is not None:
-                return text[start : i + 1]
-    return None
-
-
-def robust_json_parse(filepath: Path) -> dict:
-    """Parse .done JSON with tolerance for markdown wrapping."""
-    raw = filepath.read_text(encoding="utf-8")
-
-    # Strategy 1: direct parse
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-
-    # Strategy 2: bracket-counting extraction (handles arbitrary nesting)
-    extracted = _extract_json_object(raw)
-    if extracted:
-        try:
-            return json.loads(extracted)
-        except json.JSONDecodeError:
-            pass
-
-    # Strategy 3: try extracting between ```json fences
-    m = re.search(r"```json\s*\n(.*?)\n\s*```", raw, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except json.JSONDecodeError:
-            pass
-
-    raise ValueError(f"Cannot parse JSON from {filepath}: {raw[:200]}")
-
-
-# -------- routing functions --------
-
-
-def route_after_plan(state: StoryState) -> str:
-    """Conditional edge after plan_stage: skip, blocked, execute, or end."""
-    if state.get("_cancelled"):
-        return "__end__"
-    if state.get("status") == "skipping":
-        return "skip_stage"
-    if state.get("status") == "waiting_subtasks":
-        return "__end__"
-    # Plan loop blocked — route to router which reads _pre_routed_action
-    if state.get("_pre_routed_action") or state.get("last_error"):
-        return "router"
-    return "execute_stage"
-
-
-def route_after_poll(state: StoryState) -> str:
-    """Conditional edge after poll_completion: review or router (if error)."""
-    if state.get("_cancelled"):
-        return "__end__"
-    if state.get("last_error"):
-        return "router"
-    return "review_stage"
-
-
-# -------- node: plan_stage --------
-
 
 def plan_stage_node(state: StoryState) -> StoryState:
     """架构师/PM 角色：规划当前阶段。
@@ -264,8 +84,8 @@ def plan_stage_node(state: StoryState) -> StoryState:
         profile_cfg = load_profile(profile)
         adv_cfg = AdversarialConfig.from_profile(profile_cfg)
         if adv_cfg.plan_loop_enabled(stage):
-            from ..orchestrator.graph import emit_plan_done
-            from .evaluator_loop import run_plan_loop
+            from ...orchestrator.graph import emit_plan_done
+            from ..evaluator_loop import run_plan_loop
 
             adapters = ["claude"]
             loop_result = run_plan_loop(state, adv_cfg, adapters)
@@ -356,7 +176,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
 
             # Non-pass decisions: route to wait_confirm for human intervention
             if loop_result.decision in ("no_progress", "max_rounds", "fail"):
-                from ..orchestrator.graph import emit_plan_done
+                from ...orchestrator.graph import emit_plan_done
 
                 reason = f"Plan loop {loop_result.decision}: {loop_result.reason}"
                 state["plan_summary"] = reason
@@ -369,7 +189,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
     # --- End adversarial plan loop ---
 
     try:
-        from ..orchestrator.graph import emit_plan_done, emit_plan_activity
+        from ...orchestrator.graph import emit_plan_done, emit_plan_activity
 
         adapters = ["claude"]
         emit_plan_activity(story_key, "正在分析需求，生成执行计划...")
@@ -462,7 +282,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
             action="block_for_planner",
             file_hint=str(STORY_HOME / "planner_error.log"),
         )
-        from ..orchestrator.graph import emit_plan_done
+        from ...orchestrator.graph import emit_plan_done
 
         emit_plan_done(
             story_key,
@@ -473,90 +293,6 @@ def plan_stage_node(state: StoryState) -> StoryState:
             state,
             f"Planner failed: {type(e).__name__}: {e}",
         )
-
-
-def _delegate_subtasks(state: StoryState, plan: dict) -> StoryState:
-    """Split a parent story into sub-stories. Stores sub_keys in state for
-    the graph runner to launch. Uses interrupt() to pause the parent.
-    """
-    import shutil
-
-    parent_key = state["story_key"]
-    workspace = state["workspace"]
-    profile = state.get("profile", "minimal")
-    stage = state["current_stage"]
-    subtasks = plan["subtasks"]
-
-    active_sub_keys = []
-    for i, sub in enumerate(subtasks):
-        sub_key = f"{parent_key}-{sub['key_suffix']}"
-        has_deps = bool(sub.get("depends_on"))
-        sub_status = "blocked" if has_deps else "active"
-
-        db.upsert_story(
-            sub_key,
-            title=sub.get("title", ""),
-            workspace=workspace,
-            profile=profile,
-            current_stage=stage,
-            status=sub_status,
-            parent_key=parent_key,
-            subtask_index=i,
-        )
-
-        # Copy parent knowledge to sub-story (Windows-safe, no symlinks)
-        parent_knowledge = Path(workspace) / ".story-knowledge" / parent_key
-        sub_knowledge = Path(workspace) / ".story-knowledge" / sub_key
-        if parent_knowledge.exists():
-            sub_knowledge.mkdir(parents=True, exist_ok=True)
-            for f in parent_knowledge.glob("*.md"):
-                shutil.copy2(str(f), str(sub_knowledge / f.name))
-
-        # Write per-subtask plan file
-        plan_dir = context_dir(workspace, sub_key)
-        plan_dir.mkdir(parents=True, exist_ok=True)
-        plan_file = plan_dir / f"plan_{stage}.md"
-        plan_file.write_text(
-            f"# 子任务: {sub.get('title', '')}\n\n"
-            f"## 所属 Story\n{parent_key} 的子任务 ({i + 1}/{len(subtasks)})\n\n"
-            f"## 执行指令\n{sub.get('summary', '')}\n\n"
-            f"## 约束\n这是子任务，只负责本模块的实现，不要修改其他模块。\n",
-            encoding="utf-8",
-        )
-
-        if sub_status == "active":
-            active_sub_keys.append(sub_key)
-
-        db.log_event(
-            parent_key,
-            stage,
-            "delegate",
-            {
-                "sub_key": sub_key,
-                "title": sub.get("title", ""),
-                "depends_on": sub.get("depends_on", []),
-                "status": sub_status,
-            },
-        )
-
-    # Store keys for graph runner to launch (no circular import)
-    state["_pending_sub_keys"] = active_sub_keys
-    state["status"] = "waiting_subtasks"
-    state["plan_summary"] = f"拆分为 {len(subtasks)} 个子任务"
-    db.update_story(parent_key, status="waiting_subtasks")
-    db.log_event(
-        parent_key,
-        stage,
-        "split",
-        {
-            "subtask_count": len(subtasks),
-            "sub_keys": [f"{parent_key}-{s['key_suffix']}" for s in subtasks],
-        },
-    )
-
-    # Pause parent via interrupt — resume_story will wake it up
-    interrupt({"reason": "waiting_for_subtasks", "sub_count": len(subtasks)})
-    return state
 
 
 # -------- node: review_stage --------
@@ -585,7 +321,7 @@ def review_stage_node(state: StoryState) -> StoryState:
     stage_output = state.get("context", {})
 
     # --- Review round tracking (replaces execution_count-based fatigue) ---
-    from .gate import (
+    from ..gate import (
         get_review_round_count,
         increment_review_round_count,
         GateDecision,
@@ -672,7 +408,7 @@ def review_stage_node(state: StoryState) -> StoryState:
     # --- Adversarial code review loop ---
     try:
         if adv_cfg.code_loop_enabled(stage):
-            from .evaluator_loop import run_code_review_loop
+            from ..evaluator_loop import run_code_review_loop
 
             # Increment review_round_count BEFORE running the review loop
             new_round = increment_review_round_count(state["context"], stage)
@@ -945,209 +681,6 @@ def review_stage_node(state: StoryState) -> StoryState:
     return state
 
 
-def _check_pattern_recurrence(
-    workspace: str, story_key: str, stage: str, issues: list[dict]
-):
-    """Check if review issues match any active learned patterns (recurrence detection)."""
-    if not issues:
-        return
-
-    try:
-        patterns = db.get_active_learned_patterns(limit=20)
-    except Exception:
-        return
-
-    if not patterns:
-        return
-
-    recurrences = []
-
-    try:
-        from .semantic import match_pattern_recurrence
-
-        for issue in issues:
-            result = match_pattern_recurrence(issue, patterns)
-            for m in result["data"].get("matches", []):
-                pid = m["pattern_id"]
-                pattern_obj = next((p for p in patterns if p["id"] == pid), None)
-                if pattern_obj:
-                    recurrences.append(
-                        {
-                            "pattern_id": pid,
-                            "pattern": pattern_obj.get("pattern", ""),
-                            "confidence": m.get("confidence", "low"),
-                            "reasoning": m.get("reasoning", ""),
-                            "issue": issue,
-                        }
-                    )
-                else:
-                    recurrences.append(
-                        {
-                            "pattern_id": pid,
-                            "pattern": "",
-                            "confidence": m.get("confidence", "low"),
-                            "reasoning": m.get("reasoning", ""),
-                            "issue": issue,
-                        }
-                    )
-    except Exception:
-        log.warning("Pattern recurrence check failed, skipping")
-        return
-
-    if recurrences:
-        db.log_event(
-            story_key,
-            stage,
-            "pattern_recurrence",
-            {
-                "recurrences": recurrences,
-                "count": len(recurrences),
-            },
-        )
-
-
-def _update_knowledge(
-    workspace: str, story_key: str, stage: str, review: dict, stage_output: dict
-):
-    """Reviewer maintains Story-level knowledge base."""
-    knowledge_dir = Path(workspace) / ".story-knowledge" / story_key
-    knowledge_dir.mkdir(parents=True, exist_ok=True)
-
-    # design.md on design stage pass
-    if stage == "design" and review.get("quality") == "pass":
-        design_file = knowledge_dir / "design.md"
-        design_file.write_text(
-            f"# 设计要点: {story_key}\n\n"
-            f"## 需求概述\n{stage_output.get('summary', '')}\n\n"
-            f"## 复杂度\n{stage_output.get('complexity', 'M')}\n\n"
-            f"## 技术约束\n{stage_output.get('constraints', '无特殊约束')}",
-            encoding="utf-8",
-        )
-
-    # Append decisions
-    decisions_file = knowledge_dir / "decisions.md"
-    if not decisions_file.exists():
-        decisions_file.write_text(f"# 决策记录: {story_key}\n", encoding="utf-8")
-
-    with open(decisions_file, "a", encoding="utf-8") as f:
-        f.write(f"\n## {stage} 阶段\n")
-        f.write(f"- 结论: {review.get('summary', '')}\n")
-        f.write(f"- 路径评分: {review.get('trajectory_score', 'N/A')}\n")
-        for issue in review.get("issues", []):
-            f.write(
-                f"- 问题: [{issue.get('severity', '')}] "
-                f"{issue.get('description', '')} @ {issue.get('location', '')}\n"
-            )
-
-    # Append constraints if found
-    constraints = stage_output.get("constraints") or stage_output.get("边界条件")
-    if constraints:
-        constraints_file = knowledge_dir / "constraints.md"
-        existing = (
-            constraints_file.read_text(encoding="utf-8")
-            if constraints_file.exists()
-            else ""
-        )
-        if str(constraints) not in existing:
-            with open(constraints_file, "a", encoding="utf-8") as f:
-                f.write(f"\n## {stage} 阶段添加\n{constraints}\n")
-
-
-# -------- node: execute_stage --------
-
-
-def _strip_planner_contract_duplicates(plan_content: str) -> str:
-    """Keep planner guidance, remove fixed stage-contract sections.
-
-    Planner output is allowed to describe what to do. The stage template owns
-    done-file schema, completion contract, adapter config, and lifecycle bounds.
-    """
-    blocked = {
-        "完成后",
-        "边界",
-        "配置",
-        "决策理由",
-        "路径评分",
-        "完成标准",
-        "输出要求",
-    }
-    lines = plan_content.splitlines()
-    kept: list[str] = []
-    skipping = False
-    for line in lines:
-        if re.match(r"^#\s+.*任务书.*", line):
-            continue
-        heading = re.match(r"^(#{2,6})\s+(.+?)\s*$", line)
-        if heading:
-            title = heading.group(2).strip()
-            if "执行指令" in title:
-                skipping = False
-                continue
-            skipping = any(key in title for key in blocked)
-            if skipping:
-                continue
-        if not skipping:
-            kept.append(line)
-    return "\n".join(kept).strip()
-
-
-def _build_stage_contract(stage: str, state: StoryState) -> str:
-    key = state["story_key"]
-    cfg = get_stage_config(state.get("profile", "minimal"), stage)
-    expected = cfg.get("expected_outputs", [])
-    expected_lines = "\n".join(f"- {name}" for name in expected) or "- none"
-    done_path = f".story/done/{key}/{stage}.json"
-
-    return (
-        "## Stage Contract\n\n"
-        f"- Story Key: {key}\n"
-        f"- Stage: {stage}\n"
-        f"- Done file: `{done_path}`\n"
-        "- The done file must contain raw JSON only. Do not wrap it in markdown.\n"
-        "- Do not continue into later stages after writing the done file.\n\n"
-        "### Required output fields\n\n"
-        f"{expected_lines}\n"
-    )
-
-
-def _build_plan_executor_prompt(
-    stage: str, state: StoryState, plan_content: str
-) -> tuple[str, dict]:
-    """Build executor prompt when planner produced a task packet.
-
-    In this mode the static stage prompt is not injected. It is a fallback only.
-    """
-    _, metadata = _render_prompt(stage, state)
-    skill_instruction = metadata.get("skill_instruction", "")
-    planner_packet = _strip_planner_contract_duplicates(plan_content)
-    contract = _build_stage_contract(stage, state)
-
-    support_sections: list[str] = []
-    if skill_instruction:
-        support_sections.insert(0, skill_instruction)
-    if metadata.get("quality_packet_text"):
-        support_sections.append(metadata["quality_packet_text"])
-    if metadata.get("checklist_text"):
-        support_sections.append(
-            f"## Executor Checklist\n\n{metadata['checklist_text']}"
-        )
-
-    ctx = state.get("context", {})
-    repair_packet_path = ctx.get("repair_packet_path")
-    if repair_packet_path:
-        rp_file = Path(state["workspace"]) / repair_packet_path
-        if rp_file.exists():
-            support_sections.append(
-                f"## Repair Packet\n\n{rp_file.read_text(encoding='utf-8')}"
-            )
-
-    prompt = f"{planner_packet}\n\n---\n\n{contract}"
-    if support_sections:
-        prompt = f"{prompt}\n\n---\n\n" + "\n\n".join(support_sections)
-    metadata["has_plan_file"] = True
-    return prompt, metadata
-
-
 def execute_stage_node(state: StoryState) -> dict:
     """Dispatch stage execution via Tool abstraction."""
     if _is_cancelled(state):
@@ -1239,7 +772,7 @@ def execute_stage_node(state: StoryState) -> dict:
 
     # Dispatch to tool
     tool_name = plan.get("tool", "stage_tool")
-    from .tools import get_tool
+    from ..tools import get_tool
 
     tool = get_tool(tool_name)
     return tool.execute(state, tool_args)
@@ -1364,7 +897,7 @@ def poll_completion_node(state: StoryState) -> StoryState:
         return state
 
     # Session alive but no done file — yield and wait
-    from ..orchestrator.graph import _tui_app
+    from ...orchestrator.graph import _tui_app
 
     if _tui_app is None:
         # Headless mode — subprocess already completed in _launch_in_session.
@@ -1458,7 +991,7 @@ def router_node(state: StoryState) -> StoryState:
         return state
 
     if state.get("last_error") and state.get("review_summary"):
-        from .gate import get_review_round_count
+        from ..gate import get_review_round_count
 
         count = get_review_round_count(state.get("context", {}), stage)
         # Use adversarial max_rounds if configured, else global limit
@@ -1559,24 +1092,6 @@ def router_node(state: StoryState) -> StoryState:
     return state
 
 
-def route_from_router(state: StoryState) -> str:
-    """Pure routing function: read _next_action from state, return edge name."""
-    if state.get("_cancelled"):
-        return "__end__"
-    return state.get("_next_action", "fail")
-
-
-def route_after_advance(state: StoryState) -> str:
-    """After advance: route errors back through router, complete to END, otherwise continue."""
-    if state.get("_cancelled"):
-        return "__end__"
-    if state.get("last_error"):
-        return "router"
-    if state.get("status") == "completed":
-        return "__end__"
-    return "plan_stage"
-
-
 # -------- node: advance --------
 
 
@@ -1589,7 +1104,7 @@ def advance_node(state: StoryState) -> StoryState:
     stage = state["current_stage"]
 
     # Shared validation: expected_outputs + artifact gates (swebench finalize, etc.)
-    from .validation import validate_stage_outputs
+    from ..validation import validate_stage_outputs
 
     profile_data = load_profile(state.get("profile", "minimal"))
     result = validate_stage_outputs(state, profile_config=profile_data)
@@ -1621,7 +1136,7 @@ def advance_node(state: StoryState) -> StoryState:
 
     # DoD gate: block on open high findings
     try:
-        from .quality import check_dod
+        from ..quality import check_dod
 
         dod = check_dod(key, stage)
         # Enrich dod with counts for observability
@@ -1667,7 +1182,7 @@ def advance_node(state: StoryState) -> StoryState:
             source_id = story.get("source_id")
             if source_type and source_id:
                 try:
-                    from ..sources import get_source
+                    from ...sources import get_source
 
                     source = get_source(source_type)
                     if source:
@@ -1768,7 +1283,7 @@ def wait_confirm_node(state: StoryState) -> StoryState:
     key = state["story_key"]
     stage = state["current_stage"]
 
-    from .gate import GateDecision, write_gate_report, gate_decision_from_state
+    from ..gate import GateDecision, write_gate_report, gate_decision_from_state
 
     # Retrieve or build gate decision
     gd_dict = state.pop("_gate_decision", None)
@@ -1833,283 +1348,3 @@ def wait_confirm_node(state: StoryState) -> StoryState:
 
 # -------- prompt rendering --------
 
-
-def _derive_relevance_tags(state: StoryState, stage: str) -> list[str]:
-    """Derive relevance tags from story context for pattern matching."""
-    tags = [stage]
-    ctx = state.get("context", {})
-
-    # Affected modules
-    modules = ctx.get("affected_modules", [])
-    if isinstance(modules, list):
-        tags.extend(modules)
-    elif isinstance(modules, str):
-        tags.append(modules)
-
-    # Touched file paths → derive module tags
-    paths = ctx.get("touched_paths", [])
-    if isinstance(paths, list):
-        for p in paths:
-            if isinstance(p, str) and "/" in p:
-                tags.append(p.split("/")[0])
-            elif isinstance(p, str):
-                tags.append(p)
-
-    category = ctx.get("category")
-    if category:
-        tags.append(category)
-    profile = state.get("profile", "")
-    if profile:
-        tags.append(profile)
-
-    # Source type & sub-type from DB story record
-    try:
-        story = db.get_story(state["story_key"])
-        if story:
-            source_type = story.get("source_type")
-            if source_type:
-                tags.append(source_type)
-            sub_type = story.get("sub_type")
-            if sub_type:
-                tags.append(sub_type)
-    except Exception:
-        pass
-
-    return tags
-
-
-def _build_prd_task_section(state: StoryState, stage: str, has_prd: bool) -> str:
-    """Build AI-enhanced PRD injection section if prd-task-{story_key}.json exists."""
-    if has_prd or stage != "design":
-        return ""
-    workspace = state.get("workspace", "") or str(Path.cwd())
-    story_key = state.get("story_key", "")
-    prd_task_file = Path(workspace) / ".story" / f"prd-task-{story_key}.json"
-    if not prd_task_file.exists():
-        return ""
-    try:
-        prd_task = json.loads(prd_task_file.read_text(encoding="utf-8"))
-        description = prd_task.get("description", "")
-        section = (
-            "## AI 增强 PRD 任务\n\n"
-            f"检测到 PRD 生成任务文件: `{prd_task_file}`\n\n"
-            f"- **来源**: {prd_task.get('source', '未知')}\n"
-            f"- **平台 ID**: {prd_task.get('source_id', '')}\n"
-            f"- **标题**: {prd_task.get('title', '')}\n"
-            f"- **描述**: {description}\n\n"
-            "请执行以下步骤:\n"
-            "1. 使用 `prd-generator` skill 生成结构化 PRD\n"
-            "2. 将生成的 PRD 保存到合适位置（如 `prd/` 目录）\n"
-            "3. 在 `.story/done/` 目录写入完成标记\n"
-        )
-        return section
-    except Exception:
-        return ""
-
-
-def _render_prompt(stage: str, state: StoryState) -> tuple[str, dict]:
-    """Render a prompt for the given stage. Returns (prompt_text, metadata_dict).
-
-    Reads built-in templates or falls back to defaults.
-    """
-    template_paths = [
-        STORY_HOME / "prompts" / f"{stage}.md",
-    ]
-    template = None
-    for p in template_paths:
-        if p.exists():
-            template = p.read_text(encoding="utf-8")
-            break
-
-    # Package built-in via importlib.resources
-    if not template:
-        try:
-            import importlib.resources as _ir
-
-            ref = _ir.files("story_lifecycle.prompts").joinpath(f"{stage}.md")
-            template = ref.read_text(encoding="utf-8")
-        except (FileNotFoundError, TypeError):
-            pass
-
-    if not template:
-        # Default prompt
-        template = f"""执行阶段: {stage}
-Story: {state["story_key"]}
-标题: {state["title"]}
-
-完成后将结果写入项目根目录下的 `.story/done/{state["story_key"]}/{stage}.json`。
-文件必须只包含纯 JSON，不要用 markdown 代码块包裹。"""
-
-    # Variable substitution
-    ctx = state.get("context", {})
-
-    # Sub-story context injection (type-aware)
-    parent_key = None
-    current_story = db.get_story(state["story_key"])
-    if current_story:
-        parent_key = current_story.get("parent_key")
-    if parent_key:
-        parent_story = db.get_story(parent_key)
-        parent_title = parent_story.get("title", "") if parent_story else ""
-        sub_desc = ctx.get("sub_description", "")
-        sub_type = current_story.get("sub_type") or ""
-
-        type_emphasis = {
-            "bug-fix": "修复以下问题",
-            "integration": "前后端联调修改",
-            "refinement": "需求补充/调整",
-            "redo": "重做",
-        }
-        emphasis = type_emphasis.get(sub_type, "子任务")
-
-        context_hints = ""
-        if sub_type == "bug-fix":
-            review_path = ctx.get("review_path")
-            if review_path:
-                context_hints += (
-                    f"\n- 上次评审: {review_path}\n  请关注评审中提到的问题。"
-                )
-        elif sub_type == "integration":
-            spec_path = ctx.get("spec_path")
-            if spec_path:
-                context_hints += (
-                    f"\n- 接口文档: {spec_path}\n  请参考设计文档中的接口定义。"
-                )
-        elif sub_type == "refinement":
-            spec_path = ctx.get("spec_path")
-            if spec_path:
-                context_hints += (
-                    f"\n- 现有设计文档: {spec_path}\n  在此基础上进行补充和调整。"
-                )
-        elif sub_type == "redo":
-            review_path = ctx.get("review_path")
-            review_summary = ctx.get("review_summary", "")
-            if review_path:
-                context_hints += f"\n- 被否决的方案评审: {review_path}"
-            if review_summary:
-                context_hints += f"\n- 评审摘要: {review_summary}"
-            context_hints += "\n  请推翻旧方案，重新设计和实现。"
-
-        sub_header = (
-            f"## 子任务上下文\n\n"
-            f"- **父故事**: {parent_key} — {parent_title}\n"
-            f"- **类型**: {sub_type} — {emphasis}\n"
-            f"- **任务描述**: {sub_desc}\n"
-            f"{context_hints}\n"
-        )
-        template = sub_header + template
-
-    # Quality Packet injection
-    quality_section = ""
-    checklist = ""
-    quality_packet_injected = False
-    quality_checklist_injected = False
-    open_findings_count = 0
-    learned_patterns_count = 0
-    relevance_tags: list[str] = []
-    try:
-        from .quality import build_quality_packet, build_quality_checklist
-
-        relevance_tags = _derive_relevance_tags(state, stage)
-        quality_packet = build_quality_packet(
-            state["story_key"], stage, relevant_tags=relevance_tags
-        )
-        empty_marker = (
-            f"Quality Packet for {state['story_key']}\n\nOpen Findings: none\n"
-        )
-        if quality_packet.strip() != empty_marker.strip():
-            quality_section = f"## Quality Packet\n\n{quality_packet}"
-            quality_packet_injected = True
-        checklist = build_quality_checklist(state["story_key"], stage)
-        if checklist.strip():
-            quality_checklist_injected = True
-        # Count findings and patterns from the packet for metadata
-        try:
-            from ..db import models as _qdb
-
-            findings = _qdb.get_open_findings(state["story_key"])
-            open_findings_count = len(findings)
-            patterns = _qdb.find_relevant_patterns(relevance_tags, limit=5)
-            learned_patterns_count = len(patterns)
-        except Exception:
-            pass
-    except Exception:
-        pass
-
-    # Repair packet injection
-    repair_section = ""
-    repair_packet_path = ctx.get("repair_packet_path")
-    if repair_packet_path:
-        rp_file = Path(state["workspace"]) / repair_packet_path
-        if rp_file.exists():
-            repair_content = rp_file.read_text(encoding="utf-8")
-            repair_section = f"## Repair Packet（修复上下文）\n\n{repair_content}"
-
-    has_prd = bool(ctx.get("prd_path"))
-
-    # Get stage skill from profile
-    profile_name = state.get("profile", "minimal")
-    stage_cfg = get_stage_config(profile_name, stage)
-    skill = stage_cfg.get("skill", "")
-
-    vars_map = {
-        "{story_key}": state["story_key"],
-        "{title}": state.get("title", ""),
-        "{prd_path}": ctx.get("prd_path", ""),
-        "{prd_path_section}": (
-            f"- PRD 文件: {ctx['prd_path']}\n  请读取该文件了解需求详情。"
-            if has_prd
-            else ""
-        ),
-        "{no_prd_section}": (
-            ""
-            if has_prd
-            else "**没有提供 PRD 文件。**\n"
-            "1. 先扫描项目目录，查找已有的需求文档（`docs/`、`prd/`、`requirements/` 等），找到则直接使用\n"
-            "2. 如果没找到，向用户询问需求详情（TAPD/Jira 链接、文字描述、或其他文档）"
-        ),
-        # AI-enhanced PRD injection
-        "{prd_task_section}": _build_prd_task_section(state, stage, has_prd),
-        "{requirement_source}": (
-            "阅读 PRD 文件" if has_prd else "查找项目已有文档或与用户对话，获取需求详情"
-        ),
-        "{spec_path_section}": (
-            f"- Spec 路径: {ctx['spec_path']}" if ctx.get("spec_path") else ""
-        ),
-        "{skill}": skill,
-        "{skill_instruction}": (
-            f"在开始本阶段任务前，请先使用 Skill 工具调用 `{skill}`，"
-            f"基于 skill 的分析结果来完成后续工作。"
-            if skill
-            else ""
-        ),
-        "{quality_packet_section}": quality_section,
-        "{quality_checklist}": checklist,
-        "{repair_packet_section}": repair_section,
-    }
-    _had_repair_placeholder = "{repair_packet_section}" in template
-    for key, value in vars_map.items():
-        template = template.replace(key, value)
-
-    # Append repair packet directly if template had no placeholder
-    if repair_section and not _had_repair_placeholder:
-        template = f"{template}\n\n{repair_section}"
-
-    metadata = {
-        "quality_packet_injected": quality_packet_injected,
-        "quality_checklist_injected": quality_checklist_injected,
-        "quality_packet_text": quality_section,
-        "checklist_text": checklist,
-        "open_findings_count": open_findings_count,
-        "learned_patterns_count": learned_patterns_count,
-        "relevance_tags": relevance_tags,
-        "has_prd": has_prd,
-        "has_plan_file": False,  # set by caller when plan file prepended
-        "skill_instruction": (
-            f"在开始本阶段任务前，请先使用 Skill 工具调用 `{skill}`，"
-            f"基于 skill 的分析结果来完成后续工作。"
-            if skill
-            else ""
-        ),
-    }
-    return template, metadata

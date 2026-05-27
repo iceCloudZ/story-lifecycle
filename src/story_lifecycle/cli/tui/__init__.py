@@ -17,18 +17,18 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Static, Input, Button
 from textual.reactive import reactive
 
-from ..db import models as db
-from ..orchestrator.graph import set_tui_app, take_plan_done, take_terminal_opened
-from ..orchestrator.service import (
+from ...db import models as db
+from ...orchestrator.graph import set_tui_app, take_plan_done, take_terminal_opened
+from ...orchestrator.service import (
     get_story_cli_model,
     fail_story,
     skip_stage,
     create_and_start_story,
     delete_story,
 )
-from ..orchestrator.nodes import load_profile
-from ..terminal import ttyd
-from ..orchestrator.entry import (
+from ...orchestrator.nodes import load_profile
+from ...terminal import ttyd
+from ...orchestrator.entry import (
     StageEntryAction,
     StageEntryState,
     TtydSessionBackend,
@@ -540,7 +540,7 @@ def _render_detail(story: dict) -> str:
 
     # Quality findings panel
     try:
-        from ..db import models as qdb
+        from ...db import models as qdb
 
         findings = qdb.get_open_findings(key)
         if findings:
@@ -1201,7 +1201,7 @@ class StoryBoardApp(App):
         self._render()
 
     def _render(self, full: bool = True):
-        from .setup import get_config
+        from ..setup import get_config
 
         config = get_config()
         provider = config.get("provider", "N/A")
@@ -1293,7 +1293,7 @@ class StoryBoardApp(App):
         s = self.stories[self.selected_index]
         key = s["story_key"]
         try:
-            from ..orchestrator.debug_packet import build_debug_packet
+            from ...orchestrator.debug_packet import build_debug_packet
 
             packet = build_debug_packet(key)
         except Exception as exc:
@@ -1459,7 +1459,7 @@ class StoryBoardApp(App):
         story_key = s["story_key"]
         session = ttyd.session_name(story_key)
 
-        from ..orchestrator.graph import is_story_running, is_workspace_locked
+        from ...orchestrator.graph import is_story_running, is_workspace_locked
 
         is_running = is_story_running(story_key)
         ws = s.get("workspace", "")
@@ -1548,7 +1548,7 @@ class StoryBoardApp(App):
                 panel.set_class(True, "visible")
 
                 # Start the graph — handles plan → execute → poll → review → advance
-                from ..orchestrator.graph import start_story_async
+                from ...orchestrator.graph import start_story_async
 
                 start_story_async(key)
             except Exception as e:
@@ -1564,7 +1564,7 @@ class StoryBoardApp(App):
         import json
 
         from ..adapters import get_adapter
-        from ..orchestrator.nodes import get_stage_config, _render_prompt
+        from ...orchestrator.nodes import get_stage_config, _render_prompt
 
         s = db.get_story(story_key)
         if not s:
@@ -1642,7 +1642,7 @@ class StoryBoardApp(App):
         """Rotate spinner and poll in-memory status bus."""
         try:
             # Check for foreground terminal requests (fast response)
-            from ..orchestrator.graph import (
+            from ...orchestrator.graph import (
                 take_terminal_request,
                 take_plan_activity,
             )
@@ -1679,7 +1679,7 @@ class StoryBoardApp(App):
         s = self.stories[self.selected_index]
         key = s["story_key"]
 
-        from ..orchestrator.graph import is_story_running
+        from ...orchestrator.graph import is_story_running
 
         if is_story_running(key):
             self.notify(
@@ -1697,7 +1697,7 @@ class StoryBoardApp(App):
         s = self.stories[self.selected_index]
         key = s["story_key"]
 
-        from ..orchestrator.graph import is_story_running
+        from ...orchestrator.graph import is_story_running
 
         if is_story_running(key):
             self.notify(
@@ -1715,7 +1715,7 @@ class StoryBoardApp(App):
         s = self.stories[self.selected_index]
         key = s["story_key"]
 
-        from ..orchestrator.graph import is_story_running
+        from ...orchestrator.graph import is_story_running
 
         if is_story_running(key):
             self.notify(
@@ -1738,7 +1738,7 @@ class StoryBoardApp(App):
                 },
             )
             db.update_story(key, status="active", last_error=None)
-            from ..orchestrator.graph import start_story_async
+            from ...orchestrator.graph import start_story_async
 
             start_story_async(key)
             self.refresh_stories()
@@ -1759,7 +1759,7 @@ class StoryBoardApp(App):
         key = s["story_key"]
         session = ttyd.session_name(key)
 
-        from ..orchestrator.graph import is_story_running
+        from ...orchestrator.graph import is_story_running
 
         is_running = is_story_running(key)
         warning = ""
@@ -1771,7 +1771,7 @@ class StoryBoardApp(App):
                 return
             _tui_debug("delete_story", story_key=key)
             if is_running:
-                from ..orchestrator.graph import force_stop_story
+                from ...orchestrator.graph import force_stop_story
 
                 force_stop_story(key)
             ttyd.kill_session(session)
@@ -1800,7 +1800,7 @@ class StoryBoardApp(App):
         key = s["story_key"]
         session = ttyd.session_name(key)
 
-        from ..orchestrator.graph import (
+        from ...orchestrator.graph import (
             is_story_running,
             start_story_async,
             is_workspace_locked,
@@ -1871,7 +1871,7 @@ class StoryBoardApp(App):
                 if not confirmed:
                     return
                 _tui_debug("cleanup_dead_and_restart", story_key=key)
-                from ..orchestrator.graph import force_stop_story
+                from ...orchestrator.graph import force_stop_story
 
                 force_stop_story(key)
                 ttyd.delete_exited_session(session)
@@ -1912,7 +1912,7 @@ class StoryBoardApp(App):
             if result is None:
                 return
             try:
-                from ..orchestrator.service import create_sub_story
+                from ...orchestrator.service import create_sub_story
 
                 sub_key = create_sub_story(
                     parent_key=key,
@@ -1940,7 +1940,7 @@ class StoryBoardApp(App):
         key = s["story_key"]
         session = ttyd.session_name(key)
 
-        from ..orchestrator.service import abort_story
+        from ...orchestrator.service import abort_story
 
         try:
             abort_story(key)
@@ -1975,7 +1975,7 @@ class StoryBoardApp(App):
 
     def _startup_sweep(self):
         """On startup, check all non-terminal stories for existing done files and resume."""
-        from ..orchestrator.graph import start_story_async, is_story_running
+        from ...orchestrator.graph import start_story_async, is_story_running
 
         for s in self.stories:
             if s["status"] in _FINISHED_STATUSES:
@@ -1988,12 +1988,12 @@ class StoryBoardApp(App):
                     start_story_async(key)
 
     async def watchdog_check(self):
-        from ..orchestrator.graph import (
+        from ...orchestrator.graph import (
             resume_story,
             is_story_running,
             take_terminal_request,
         )
-        from ..db import models as db
+        from ...db import models as db
 
         # Check for foreground terminal execution requests
         for s in self.stories:
@@ -2030,7 +2030,7 @@ class StoryBoardApp(App):
                     )
 
         # Unblock sub-stories whose dependencies are complete
-        from ..orchestrator.graph import start_story_async
+        from ...orchestrator.graph import start_story_async
 
         blocked_stories = [
             s for s in self.stories if s["status"] == "blocked" and s.get("parent_key")
@@ -2104,7 +2104,7 @@ class StoryBoardApp(App):
     def action_run_doctor(self):
         """Show doctor results in detail panel."""
         import io
-        from .doctor import run_doctor
+        from ..doctor import run_doctor
         from rich.console import Console
 
         buf = io.StringIO()
@@ -2126,7 +2126,7 @@ class StoryBoardApp(App):
 
     def action_run_setup(self):
         """Re-run setup wizard in a suspended terminal."""
-        from .setup import run_setup, load_config_to_env
+        from ..setup import run_setup, load_config_to_env
 
         if os.name == "nt":
             import subprocess
@@ -2153,7 +2153,7 @@ class StoryBoardApp(App):
         """Background thread: fetch pending items from source."""
         from ..sources import get_source
         from ..cli.setup import get_config
-        from ..db import models as db
+        from ...db import models as db
 
         try:
             config = get_config()
@@ -2184,7 +2184,7 @@ class StoryBoardApp(App):
 
     def action_show_inbox(self):
         from ..sources import get_source
-        from .setup import get_config
+        from ..setup import get_config
 
         config = get_config()
         source_name = config.get("story_source", {}).get("enabled", "")
@@ -2225,7 +2225,7 @@ class StoryBoardApp(App):
     def _on_inbox_result(self, result):
         if not result:
             return
-        from ..orchestrator.service import create_story_from_source
+        from ...orchestrator.service import create_story_from_source
 
         for entry in result:
             try:
@@ -2241,7 +2241,7 @@ class StoryBoardApp(App):
                     label = "AI增强PRD" if use_ai_prd else "已创建"
                     self.notify(f"{label}: {r.story_key}")
                 elif r.status == "need_manual_select":
-                    from ..orchestrator.service import create_sub_story
+                    from ...orchestrator.service import create_sub_story
 
                     active = [s for s in self.stories if not s.get("parent_key")]
 
@@ -2263,8 +2263,8 @@ class StoryBoardApp(App):
                                 fetch_bug_content,
                                 format_bug_context,
                             )
-                            from ..orchestrator.graph import start_story_async
-                            from ..db import models as db
+                            from ...orchestrator.graph import start_story_async
+                            from ...db import models as db
 
                             bug_ctx = fetch_bug_content(item)
                             bug_desc = format_bug_context(bug_ctx)
@@ -2332,7 +2332,7 @@ class StoryBoardApp(App):
         s = self.stories[self.selected_index]
         key = s["story_key"]
         try:
-            from ..orchestrator.diagnostics import create_story_diagnostics_bundle
+            from ...orchestrator.diagnostics import create_story_diagnostics_bundle
 
             result = create_story_diagnostics_bundle(story_key=key)
             if result.get("error"):
@@ -2352,7 +2352,7 @@ class StoryBoardApp(App):
     def action_package_global_diagnostics(self):
         """Generate a global diagnostics bundle."""
         try:
-            from ..orchestrator.diagnostics import create_global_diagnostics_bundle
+            from ...orchestrator.diagnostics import create_global_diagnostics_bundle
 
             result = create_global_diagnostics_bundle()
             if result.get("error"):
@@ -2403,8 +2403,8 @@ class StoryBoardApp(App):
 
     def _do_copilot_query(self, story_key: str, question: str):
         """Run copilot LLM call in worker thread."""
-        from ..orchestrator.copilot import ask_copilot
-        from ..db import models as db
+        from ...orchestrator.copilot import ask_copilot
+        from ...db import models as db
 
         try:
             result = ask_copilot(story_key, question)
@@ -2630,7 +2630,7 @@ def run_tui():
                     pass
 
             if len(attach_args) >= 3 and "--session" in attach_args:
-                from ..orchestrator.graph import emit_terminal_opened
+                from ...orchestrator.graph import emit_terminal_opened
 
                 session_name = attach_args[attach_args.index("--session") + 1]
                 if session_name.startswith("s-"):

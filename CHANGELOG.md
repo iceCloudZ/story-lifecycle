@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.38] - 2026-05-27
+
+### Changed
+- `orchestrator/nodes.py` (2115 行) 拆分为 `orchestrator/nodes/` 子包：`state.py`、`profile_loader.py`、`json_helpers.py`、`stage_resolver.py`、`routing.py`、`subtask_delegate.py`、`knowledge.py`、`prompt_renderer.py`、`graph_nodes.py` 十个文件，`__init__.py` 重导出保持向后兼容
+- `cli/tui.py` (2644 行) 拆分为 `cli/tui/` 包，为后续 widget 拆分做准备
+
+### Added
+- `orchestrator/decision_chain.py`：Router 8 级决策优先级显式文档 + Router/Policy/Gate 三者权责说明
+- `docs/architecture-for-java-developers.md`：Java 开发者视角的架构导航指南
+
 ## [0.5.37] - 2026-05-27
 
 ### Added
