@@ -4,10 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.5.29] - 2026-05-27
+## [0.5.30] - 2026-05-27
 
-### Fixed
-- Copilot 回复被截断：`max_tokens` 从 1024 提高到 2048
+### Changed
+- Copilot LLM 调用移除 `max_tokens` 限制，避免长回复被截断
 
 ## [0.5.28] - 2026-05-27
 
