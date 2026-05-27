@@ -933,6 +933,9 @@ class StoryBoardApp(App):
         self._show_diagnostics = True
         self._copilot_loading = False
         self._copilot_question = ""
+        self._copilot_result = None
+        self._copilot_loading = False
+        self._copilot_question = ""
         self._copilot_result: dict | None = None
 
     def compose(self) -> ComposeResult:
@@ -1067,11 +1070,17 @@ class StoryBoardApp(App):
                     )
                     story_list.mount(card)
                     display_idx += 1
-            self._render_diagnostics_panel()
+            try:
+                self._render_diagnostics_panel()
+            except Exception:
+                pass
         else:
             for i, card in enumerate(self.query(StoryCard)):
                 card.set_selected(i == self.selected_index)
-            self._render_diagnostics_panel()
+            try:
+                self._render_diagnostics_panel()
+            except Exception:
+                pass
 
         # Completed stories section
         completed_section = self.query_one("#completed-section")
@@ -1549,6 +1558,12 @@ class StoryBoardApp(App):
     def action_resume_story(self):
         if not self.stories:
             return
+        try:
+            self._resume_story_impl()
+        except Exception as exc:
+            self.notify(f"Resume failed: {exc}", severity="error")
+
+    def _resume_story_impl(self):
         s = self.stories[self.selected_index]
         key = s["story_key"]
         session = ttyd.session_name(key)
