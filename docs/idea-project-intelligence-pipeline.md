@@ -170,6 +170,57 @@ Orchestrator LLM:
 
 这样可以减少幻觉，并让系统输出可审计。
 
+### 与 Code Agent Probe 的关系
+
+Project Intelligence Pipeline 不只能靠静态 scanner。对于真实项目，启动方式、测试入口、模块边界、发布规则往往散落在 README、脚本、CI、配置和代码约定里，单纯 grep 很容易漏。
+
+因此可以引入受控的 **Project Intelligence Probe**：
+
+```text
+Pipeline 生成明确探查问题
+  -> code agent 只读探查项目
+  -> 输出 facts / hypotheses / evidence
+  -> Pipeline 校验并写入 Evidence Store
+```
+
+示例任务：
+
+- “找出这个项目的启动命令和测试命令，给出证据路径。”
+- “分析 claim 模块的核心入口，不要修改任何文件。”
+- “根据 TAPD bug 判断可能关联模块，列出置信度和 evidence。”
+- “检查 CI 配置和数据库迁移规则。”
+
+Probe 输出示例：
+
+```json
+{
+  "facts": [
+    {
+      "type": "test_command",
+      "value": "pytest tests/unit",
+      "evidence": ["pyproject.toml", "tests/unit/"]
+    }
+  ],
+  "hypotheses": [
+    {
+      "type": "related_module",
+      "value": "claim calculation likely lives in src/claim/",
+      "confidence": 0.72,
+      "evidence": ["src/claim/service.py"]
+    }
+  ],
+  "open_questions": []
+}
+```
+
+约束：
+
+- Probe 默认只读。
+- Probe 必须有明确问题和输出 schema。
+- 事实必须带 evidence。
+- 推断必须带 confidence。
+- 写入 Evidence Store 前，系统必须校验路径存在、schema 合法、命令非 destructive。
+
 ## 定时感知
 
 项目情报可以按需采集，也可以定时采集。

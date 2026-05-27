@@ -253,6 +253,75 @@ Evidence Layer
 
 LLM 可以参与推断，但事实层和约束层必须可审计。
 
+### Project Intelligence Probe
+
+StoryOS 可以调用 code agent 来理解项目上下文，但它必须是受控探查，而不是让 agent 自由探索项目。
+
+推荐命名：
+
+```text
+Project Intelligence Probe
+```
+
+流程：
+
+```text
+StoryOS 提出明确问题
+  -> 生成只读任务书和有限上下文包
+  -> 调用 code agent 做项目探查
+  -> 要求输出结构化 JSON + evidence
+  -> StoryOS 校验路径、命令和 schema
+  -> 落盘到 Project Profile / Evidence Store
+```
+
+适合交给 code agent 的只读探查任务：
+
+- 找出项目启动命令和测试命令，并给出证据文件路径。
+- 梳理某个业务模块的核心入口类、配置和测试目录。
+- 根据 TAPD bug 推断可能关联模块，并标注置信度和证据。
+- 检查 CI 配置、脚本入口、数据库迁移规则、发布规则。
+- 总结 README、脚本、配置和目录结构中的工程约束。
+
+输出必须区分 `facts` 和 `hypotheses`：
+
+```json
+{
+  "facts": [
+    {
+      "type": "test_command",
+      "value": "pytest tests/unit",
+      "evidence": ["pyproject.toml", "tests/unit/"]
+    }
+  ],
+  "hypotheses": [
+    {
+      "type": "module_mapping",
+      "value": "claim calculation likely lives in src/claim/",
+      "confidence": 0.72,
+      "evidence": ["src/claim/service.py"]
+    }
+  ],
+  "open_questions": []
+}
+```
+
+边界：
+
+1. **只读**：Probe 阶段默认禁止写文件、改配置、运行 destructive 命令。
+2. **任务有边界**：不得发出“随便看看项目”这类开放任务。
+3. **证据优先**：每个事实必须有文件路径、命令输出或日志片段作为 evidence。
+4. **事实/推断分离**：找到的配置是 fact，模块关联判断是 hypothesis。
+5. **落盘前校验**：StoryOS 校验路径存在、命令格式合理、JSON schema 合法。
+6. **可缓存**：启动命令、测试命令、模块地图进入 Project Profile，不应每个 Story 重新探查。
+
+因此 code agent 不只是 executor，也可以是受控的项目情报采集器：
+
+```text
+Code agent can be a controlled project intelligence collector.
+```
+
+但这个能力应放在 Project Intelligence Input Layer（v0.8），不应提前塞进 v0.6 的诊断地基。
+
 ## Story Source 与 Test Source
 
 ### Story Source
@@ -529,4 +598,3 @@ Project Intelligence Layer
 - StoryOS：产品愿景，Code Agent 操作层。
 - Agentic SDLC Control Plane：外部定位，区别于普通 coding agent。
 - Project Intelligence Layer：核心壁垒，熟悉用户项目并反哺执行。
-
