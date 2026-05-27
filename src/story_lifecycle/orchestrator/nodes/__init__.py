@@ -4,6 +4,12 @@ This package re-exports everything from sub-modules for backward compatibility.
 All existing ``from .nodes import X`` imports continue to work.
 """
 
+# ---- Module-level attributes (tests access nodes.planner, nodes.interrupt, etc.) ----
+from .. import planner as planner
+from .. import router as router
+from langgraph.types import interrupt as interrupt
+from langgraph.errors import GraphInterrupt as GraphInterrupt
+
 # ---- State & constants ----
 from .state import (
     StoryState as StoryState,

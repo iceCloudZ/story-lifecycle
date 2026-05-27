@@ -2,7 +2,6 @@
 
 import json
 import logging
-import re
 from pathlib import Path
 
 from langgraph.errors import GraphInterrupt
@@ -29,19 +28,19 @@ from ..paths import (
     malformed_done_file,
 )
 
-from .state import StoryState, TIMEOUT_SECONDS, POLL_INTERVAL, STORY_HOME, MAX_REVIEW_RETRIES
+from .state import StoryState, STORY_HOME, MAX_REVIEW_RETRIES
 from .profile_loader import load_profile, get_stage_config
 from .stage_resolver import _is_cancelled, _block_for_planner, resolve_next_stage
 from .subtask_delegate import _delegate_subtasks
 from .knowledge import _check_pattern_recurrence, _update_knowledge
+from .json_helpers import robust_json_parse
 from .prompt_renderer import (
-    _strip_planner_contract_duplicates,
-    _build_stage_contract,
     _build_plan_executor_prompt,
     _render_prompt,
 )
 
 log = logging.getLogger("story-lifecycle.nodes")
+
 
 def plan_stage_node(state: StoryState) -> StoryState:
     """架构师/PM 角色：规划当前阶段。
@@ -1347,4 +1346,3 @@ def wait_confirm_node(state: StoryState) -> StoryState:
 
 
 # -------- prompt rendering --------
-
