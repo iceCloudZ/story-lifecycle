@@ -251,7 +251,6 @@ def demo():
 def _run_upgrade():
     """Run pip upgrade. On Windows, spawn a detached child to avoid exe lock."""
     import subprocess
-    import tempfile
 
     pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "story-lifecycle"]
 
@@ -266,14 +265,11 @@ if not errorlevel 1 goto wait
 "{python_exe}" -m pip install --upgrade story-lifecycle
 del "%~f0" 2>nul
 """
-        bat_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".bat", delete=False, encoding="ascii"
-        )
-        bat_file.write(bat)
-        bat_file.close()
+        bat_path = str(Path.home() / ".story-lifecycle" / "upgrade.bat")
+        with open(bat_path, "w", encoding="ascii") as f:
+            f.write(bat)
         subprocess.Popen(
-            f'cmd /c start /min "" "{bat_file.name}"',
-            shell=True,
+            ["cmd", "/c", bat_path],
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
         console.print("  [dim]Upgrade will run after this process exits.[/]")

@@ -1,7 +1,8 @@
-"""P1 Ask Copilot — LLM-powered diagnostic assistant.
+"""P1/P2 Ask Copilot — LLM-powered diagnostic assistant.
 
-Read-only: takes a redacted Debug Packet + user question, returns
-structured CopilotResponse with suggestions. Never modifies workflow state.
+P1: redacted Debug Packet + user question → CopilotResponse with suggestions.
+P2: adds SuggestedAction — confirmable actions with risk levels.
+Never auto-executes state-changing operations.
 """
 
 from __future__ import annotations
@@ -17,6 +18,18 @@ import httpx
 from .debug_packet import build_debug_packet, redact_mapping
 
 log = logging.getLogger("story-lifecycle.copilot")
+
+# Valid copilot-suggested actions → risk level
+VALID_ACTIONS: dict[str, str] = {
+    "package_diagnostics": "read_only",
+    "run_doctor": "read_only",
+    "enter_terminal": "local_config",
+    "run_setup": "local_config",
+    "resume_story": "workflow_state",
+    "skip_stage": "workflow_state",
+    "fail_story": "workflow_state",
+    "abort_story": "workflow_state",
+}
 
 
 def _api_config() -> tuple[str, str, str]:
@@ -68,13 +81,25 @@ def ask_copilot(story_key: str, question: str) -> dict:
 
 
 def _build_prompt(packet: dict, question: str) -> str:
-    return f"""你是一个 Story Lifecycle 诊断助手（Copilot）。你的任务是分析 Story 的诊断数据包，回答用户的问题。
+    return f"""你是一个 Story Lifecycle 诊断助手（Copilot）。你的任务是分析 Story 的诊断数据包，回答用户的问题，并在高置信度时推荐可执行的操作。
 
 ## 角色约束
-- 你只有只读权限，不能修改任何工作流状态
-- 不要建议 skip、fail、retry、advance 等工作流操作
-- 你的建议应该是用户可以手动执行的操作（查看文件、运行命令、检查配置等）
-- 如果不确定，请降低 confidence 并建议用户收集更多信息
+- 你可以推荐操作，但绝不会自动执行；所有 workflow_state 操作必须经用户确认
+- 只推荐诊断数据包中证据充分支持的操作
+- 不确定时宁可少推荐，不要乱推荐
+- 用中文回复
+
+## 可用操作（仅限以下 8 个）
+| 操作名 | 风险等级 | 说明 |
+|---|---|---|
+| package_diagnostics | read_only | 打包当前 Story 诊断信息 |
+| run_doctor | read_only | 运行环境检查 |
+| enter_terminal | local_config | 进入 Story 终端 session |
+| run_setup | local_config | 重新配置 LLM / provider |
+| resume_story | workflow_state | 恢复 Story 执行 |
+| skip_stage | workflow_state | 跳过当前阶段 |
+| fail_story | workflow_state | 标记 Story 失败 |
+| abort_story | workflow_state | 中止 Story 执行 |
 
 ## Story 诊断数据包（已脱敏）
 ```json
@@ -94,15 +119,24 @@ def _build_prompt(packet: dict, question: str) -> str:
       "summary": "简要说明为什么建议这个操作",
       "confidence": "high|medium|low"
     }}
+  ],
+  "actions": [
+    {{
+      "action": "上述 8 个操作名之一",
+      "label": "对用户友好的操作说明（10 字以内）",
+      "risk": "该操作对应的风险等级",
+      "reason": "为什么建议执行这个操作，必须有诊断数据包中的证据支撑"
+    }}
   ]
 }}
 
 ## 规则
-- suggestions 至少提供 1 条，最多 5 条
-- confidence 根据数据包中的证据充分程度判断
-- 优先关注 stuck_reason、done_state、session_state 中的异常信号
-- 如果 recent_events 中有错误事件，应重点关注
-- 用中文回复"""
+- suggestions 至少 1 条、最多 5 条，是用户手动执行的排查建议
+- actions 可选、最多 3 条，是系统可代为执行的操作
+- workflow_state 操作仅在 stuck_reason 明确指向该问题时推荐（如 cli_exited_without_done → resume_story）
+- read_only 操作在任何诊断场景下都可以推荐
+- actions 为空数组时表示当前不需要系统操作
+- 优先关注 stuck_reason、done_state、session_state 中的异常信号"""
 
 
 def _call_llm(
@@ -247,7 +281,36 @@ def _normalize_response(data: dict) -> dict:
     if not isinstance(questions, list):
         questions = []
 
+    actions = _normalize_actions(data.get("actions", []))
+
     return {
         "suggestions": suggestions,
         "questions": [str(q) for q in questions if isinstance(q, str) and q.strip()],
+        "actions": actions,
     }
+
+
+def _normalize_actions(raw_actions: list) -> list[dict]:
+    """Validate and normalize SuggestedAction entries."""
+    valid: list[dict] = []
+    seen = set()
+    for a in (raw_actions or [])[:3]:
+        if not isinstance(a, dict):
+            continue
+        name = str(a.get("action", "")).strip()
+        if name not in VALID_ACTIONS:
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        risk = VALID_ACTIONS[name]
+        valid.append(
+            {
+                "action": name,
+                "label": str(a.get("label", name)).strip() or name,
+                "risk": risk,
+                "reason": str(a.get("reason", "")).strip(),
+                "requires_confirm": risk in ("workflow_state", "local_config"),
+            }
+        )
+    return valid
