@@ -287,9 +287,10 @@ def _quick_stuck_hint(story: dict) -> str:
 
 
 _STAGE_MESSAGES: dict[str, str] = {
-    "design": "正在分析需求并生成技术方案，AI reviewer 会审查方案的完整性和可行性",
-    "implement": "AI 正在编写代码，完成后会由 reviewer 审查代码质量",
-    "review": "AI reviewer 正在审查代码，检查 bug、安全问题和最佳实践",
+    "design": "正在分析需求并生成技术方案，完成后进入设计审查",
+    "review_design": "AI reviewer 正在审查设计方案，检查完整性和可行性",
+    "implement": "AI 正在编写代码，完成后进入代码审查",
+    "review": "AI reviewer 正在审查代码质量，检查 bug 和安全问题",
     "test": "AI 正在运行测试并验证功能正确性",
     "finalize": "AI 正在整理产出物，生成最终报告",
 }
