@@ -4,9 +4,11 @@ This package re-exports everything from sub-modules for backward compatibility.
 All existing ``from .nodes import X`` imports continue to work.
 """
 
-# ---- Module-level attributes (tests access nodes.planner, nodes.interrupt, etc.) ----
+# ---- Module-level attributes (tests access nodes.planner, nodes.ttyd, etc.) ----
 from .. import planner as planner
 from .. import router as router
+from ...terminal import ttyd as ttyd
+from ..notify import send as notify  # noqa: F401
 from langgraph.types import interrupt as interrupt
 from langgraph.errors import GraphInterrupt as GraphInterrupt
 
