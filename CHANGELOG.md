@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.10] - 2026-05-27
+
+### Fixed
+- `story setup` 完成提示改为 `story`（启动 board），而非 `story serve`（v2 功能）
+
 ## [0.5.9] - 2026-05-27
 
 ### Fixed
