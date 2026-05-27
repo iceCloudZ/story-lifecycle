@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.22] - 2026-05-27
+
+### Fixed
+- TUI 启动时 `on_resize` 先于 `on_mount` 触发导致 `AttributeError: '_show_diagnostics'` 闪退
+- `story upgrade` Windows bat 脚本闪退：改用 `start /min` 最小化、`findstr` 替代 `find`、ascii 编码、初始延时
+
 ## [0.5.21] - 2026-05-27
 
 ### Added
