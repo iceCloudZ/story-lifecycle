@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.17] - 2026-05-27
+
+### Changed
+- CI 测试并行化：pytest-xdist 4 worker + loadfile 调度
+- conftest 自动隔离 cwd，防止测试间 profile 加载污染
+
 ## [0.5.16] - 2026-05-27
 
 ### Changed

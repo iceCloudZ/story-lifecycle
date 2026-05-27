@@ -39,3 +39,10 @@ def isolated_story_home(tmp_path, monkeypatch):
 
     db.init_db()
     return story_home
+
+
+@pytest.fixture(autouse=True)
+def _isolate_cwd(tmp_path, monkeypatch):
+    """Prevent tests from creating .story/ in the repo root via load_profile."""
+    monkeypatch.chdir(tmp_path)
+    yield
