@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.25] - 2026-05-27
+
+### Added
+- P2 SuggestedAction TUI 交互层：诊断面板渲染 Copilot 建议操作（含风险着色），数字键 1-3 触发执行，workflow_state / local_config 操作弹确认框，所有确认/拒绝写入 `copilot_action_confirmed` / `copilot_action_rejected` 事件
+
 ## [0.5.24] - 2026-05-27
 
 ### Changed
