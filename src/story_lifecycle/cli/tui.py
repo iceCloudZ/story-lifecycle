@@ -765,6 +765,50 @@ class ParentSelectDialog(ModalScreen):
             self.dismiss(s.get("story_key"))
 
 
+class CopilotDialog(ModalScreen):
+    """Modal dialog for asking Copilot a question."""
+
+    CSS = """
+    CopilotDialog {
+        align: center middle;
+    }
+    #copilot-dialog {
+        width: 70;
+        height: auto;
+        padding: 1 2;
+        background: $surface;
+        border: thick $accent;
+    }
+    #copilot-dialog Input {
+        margin: 1 0;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="copilot-dialog"):
+            yield Static("[bold]Ask Copilot[/]")
+            yield Static(
+                "输入你的问题，Copilot 将分析诊断数据包并提供建议（只读，不修改工作流状态）。"
+            )
+            yield Input(
+                placeholder="e.g. 为什么 Story 卡住了？应该怎么排查？",
+                id="copilot-input",
+            )
+            yield Static("[dim]Enter 提交 · Esc 取消[/]")
+
+    def on_mount(self):
+        self.query_one("#copilot-input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted):
+        if event.value.strip():
+            self.dismiss(event.value.strip())
+        else:
+            self.dismiss(None)
+
+    def key_escape(self):
+        self.dismiss(None)
+
+
 class StoryBoardApp(App):
     """Interactive story board TUI."""
 
@@ -871,6 +915,7 @@ class StoryBoardApp(App):
         Binding("i", "show_inbox", "Inbox"),
         Binding("question_mark", "help", "Help", key_display="?"),
         Binding("o", "toggle_diagnostics", "Diag", key_display="o"),
+        Binding("y", "ask_copilot", "Ask Copilot", key_display="y"),
         Binding("p", "package_story_diagnostics", "Pkg Story", key_display="p"),
         Binding("shift+p", "package_global_diagnostics", "Pkg Global", key_display="P"),
         Binding("q", "quit", "Quit"),
@@ -886,6 +931,9 @@ class StoryBoardApp(App):
         self._pending_attach_args: list[str] | None = None
         self._session_backend = TtydSessionBackend()
         self._show_diagnostics = True
+        self._copilot_loading = False
+        self._copilot_question = ""
+        self._copilot_result: dict | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(id="header-bar")
@@ -1042,7 +1090,7 @@ class StoryBoardApp(App):
 
         footer = self.query_one("#footer-bar")
         footer.update(
-            " [dim][n] new  [N] sub  [i] inbox  [e] enter  [s] skip  [a] abort  [f] fail  [x] delete  [r] resume  [?] help[/]"
+            " [dim][n] new  [N] sub  [i] inbox  [e] enter  [s] skip  [a] abort  [f] fail  [x] delete  [r] resume  [y] copilot  [?] help[/]"
         )
 
     def _render_diagnostics_panel(self) -> None:
@@ -1114,11 +1162,38 @@ class StoryBoardApp(App):
             ts = str(ev.get("created_at", ""))[:16]
             lines.append(f"[dim]{ts} {et}[/]")
 
+        lines.append("")
+
+        # Copilot section
+        if self._copilot_loading:
+            lines.append("[bold cyan]Copilot 思考中...[/]")
+            lines.append(f"[dim]Q: {self._copilot_question}[/]")
+        elif self._copilot_result:
+            lines.append("[bold cyan]═══ Copilot ═══[/]")
+            lines.append(f"[dim]Q: {self._copilot_question}[/]")
+            lines.append("")
+            if self._copilot_result.get("error"):
+                lines.append(f"[red]错误: {self._copilot_result['error']}[/]")
+            else:
+                suggestions = self._copilot_result.get("suggestions", [])
+                for i, sug in enumerate(suggestions):
+                    conf = sug.get("confidence", "medium")
+                    conf_color = {
+                        "high": "green",
+                        "medium": "yellow",
+                        "low": "dim",
+                    }.get(conf, "dim")
+                    lines.append(f"[{conf_color}]◆ {sug['action']}[/]")
+                    if sug.get("summary"):
+                        lines.append(f"  [dim]{sug['summary']}[/]")
+                    lines.append(f"  [dim]confidence: {conf}[/]")
+                    if i < len(suggestions) - 1:
+                        lines.append("")
+
         lines.extend(
             [
                 "",
-                "[[p]] package story diagnostics",
-                "[[P]] package global diagnostics",
+                "[[p]] package  [[P]] global  [[y]] ask copilot",
             ]
         )
 
@@ -1127,12 +1202,16 @@ class StoryBoardApp(App):
     def action_cursor_up(self):
         if self.selected_index > 0:
             self.selected_index -= 1
+            self._copilot_result = None
+            self._copilot_loading = False
             self._render(full=False)
 
     def action_cursor_down(self):
         visible = self._visible_stories()
         if visible and self.selected_index < len(visible) - 1:
             self.selected_index += 1
+            self._copilot_result = None
+            self._copilot_loading = False
             self._render(full=False)
 
     def action_open_action_menu(self):
@@ -1984,6 +2063,7 @@ class StoryBoardApp(App):
             "  D       Doctor (env check)\n"
             "  S       Setup (reconfigure)\n"
             "  i       Inbox (external source)\n"
+            "  y       Ask Copilot (diagnostics)\n"
             "  ?       Help\n"
             "  q       Quit"
         )
@@ -2035,6 +2115,76 @@ class StoryBoardApp(App):
             self.notify(f"Global bundle: {path}", title="Diagnostics")
         except Exception as exc:
             self.notify(f"Error: {exc}", severity="error")
+
+    def action_ask_copilot(self):
+        """Open the Ask Copilot dialog for the selected story."""
+        if not self.stories or self.selected_index >= len(self.stories):
+            self.notify("No story selected", severity="warning")
+            return
+        self.push_screen(CopilotDialog(), self._on_copilot_question)
+
+    def _on_copilot_question(self, question: str | None):
+        """Callback when user submits a copilot question."""
+        if not question:
+            return
+        s = self.stories[self.selected_index]
+        key = s["story_key"]
+        self._copilot_loading = True
+        self._copilot_question = question
+        self._copilot_result = None
+        self._render_diagnostics_panel()
+        self.notify(f"Asking Copilot about {key}...", title="Copilot")
+        self.run_worker(
+            self._do_copilot_query(key, question),
+            thread=True,
+            exclusive=False,
+        )
+
+    def _do_copilot_query(self, story_key: str, question: str):
+        """Run copilot LLM call in worker thread."""
+        from ..orchestrator.copilot import ask_copilot
+        from ..db import models as db
+
+        try:
+            result = ask_copilot(story_key, question)
+        except Exception as exc:
+            result = {
+                "error": str(exc),
+                "suggestions": [],
+                "questions": [],
+            }
+
+        try:
+            s = db.get_story(story_key)
+            stage = s.get("current_stage", "") if s else ""
+        except Exception:
+            stage = ""
+
+        db.log_event(
+            story_key,
+            stage,
+            "copilot_query",
+            {
+                "question": question,
+                "has_error": bool(result.get("error")),
+                "suggestion_count": len(result.get("suggestions", [])),
+            },
+        )
+
+        self.call_from_thread(self._on_copilot_done, result)
+
+    def _on_copilot_done(self, result: dict):
+        """Called on main thread when copilot query completes."""
+        self._copilot_loading = False
+        self._copilot_result = result
+        self._render_diagnostics_panel()
+        count = len(result.get("suggestions", []))
+        if result.get("error"):
+            self.notify(
+                f"Copilot: {result['error']}", severity="warning", title="Copilot"
+            )
+        else:
+            self.notify(f"Copilot returned {count} suggestion(s)", title="Copilot")
 
     def on_resize(self, event):
         """Handle terminal resize -- hide diagnostics on narrow screens."""
