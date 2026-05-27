@@ -30,7 +30,6 @@ jobs:
 
   test:
     name: Test (Python ${{ matrix.python-version }} on ${{ matrix.os }})
-    needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -52,7 +51,6 @@ jobs:
 
   build-check:
     name: Verify build
-    needs: lint
     runs-on: ubuntu-latest
 
     steps:
