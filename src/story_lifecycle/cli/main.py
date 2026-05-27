@@ -1,5 +1,6 @@
 """CLI entry point — `story` command (launches board directly)."""
 
+import os
 import sys
 
 # Force UTF-8 on Windows (GBK can't encode Chinese + Unicode arrows)
@@ -224,6 +225,18 @@ def upgrade():
 
     current = _pkg_version("story-lifecycle")
     console.print(f"  Current version: [cyan]{current}[/]")
+
+    # Clean up broken ~-prefixed distributions left by interrupted pip installs
+    import shutil
+    import site
+
+    sp = site.getsitepackages()[0]
+    broken = [d for d in os.listdir(sp) if d.startswith("~")]
+    if broken:
+        console.print(f"  Cleaning {len(broken)} broken distribution(s)...")
+        for d in broken:
+            shutil.rmtree(os.path.join(sp, d), ignore_errors=True)
+
     console.print("  Upgrading...")
 
     result = subprocess.run(
