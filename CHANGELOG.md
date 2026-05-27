@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.14] - 2026-05-27
+
+### Fixed
+- `story upgrade` 在 Windows 上因 story.exe 被锁定而失败，改为后台子进程升级后自动退出
+- 修复 `is_workspace_locked` mock 缺少 `exclude_story` 参数导致 CI 失败
+
 ## [0.5.13] - 2026-05-27
 
 ### Fixed

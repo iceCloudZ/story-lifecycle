@@ -220,6 +220,7 @@ def demo():
 def upgrade():
     """Upgrade story-lifecycle to the latest version."""
     import subprocess
+    import tempfile
 
     from importlib.metadata import version as _pkg_version
 
@@ -239,11 +240,35 @@ def upgrade():
 
     console.print("  Upgrading...")
 
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade", "story-lifecycle"],
-        capture_output=True,
-        text=True,
-    )
+    pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "story-lifecycle"]
+
+    if sys.platform == "win32":
+        # story.exe is locked by this process — spawn a detached child to run pip,
+        # then exit so the exe is released for overwrite.
+        script = f"""import subprocess, sys, time
+time.sleep(1)
+r = subprocess.run({pip_cmd!r}, capture_output=True, text=True)
+print(r.stdout)
+if r.returncode != 0:
+    print(r.stderr, file=sys.stderr)
+    sys.exit(r.returncode)
+"""
+        script_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        )
+        script_file.write(script)
+        script_file.close()
+        subprocess.Popen(
+            [sys.executable, script_file.name],
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            close_fds=True,
+        )
+        console.print(
+            "  [dim]Upgrade running in background. This process will exit.[/]"
+        )
+        raise SystemExit(0)
+
+    result = subprocess.run(pip_cmd, capture_output=True, text=True)
     if result.returncode == 0:
         new = _pkg_version("story-lifecycle")
         console.print(f"  [green]Upgraded to {new}[/]")
