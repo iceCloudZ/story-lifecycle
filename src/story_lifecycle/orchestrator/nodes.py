@@ -237,6 +237,15 @@ def plan_stage_node(state: StoryState) -> StoryState:
     workspace = state["workspace"]
     story_key = state["story_key"]
 
+    # Guard: execution_count exceeded max_retries — pause for human decision
+    max_retries = cfg.get("max_retries", 3)
+    if state.get("execution_count", 0) >= max_retries:
+        state["_pre_routed_action"] = "wait_confirm"
+        state["last_error"] = (
+            f"执行次数 ({state['execution_count']}) 已达上限 ({max_retries})，等待人工决定"
+        )
+        return state
+
     # Clear stale routing state from previous graph cycles
     state.pop("_next_action", None)
     state.pop("_pre_routed_action", None)
@@ -1486,6 +1495,28 @@ def router_node(state: StoryState) -> StoryState:
         state["_next_action"] = "fail"
         log_route_decision(
             state, "fail", "review_retry_exhausted", router_mode="review"
+        )
+        return state
+
+    # 4.5 Hard limit: execution_count exceeded stage max_retries
+    max_retries = cfg.get("max_retries", 3)
+    if state.get("execution_count", 0) >= max_retries:
+        db.log_event(
+            key,
+            stage,
+            "router",
+            {
+                "action": "wait_confirm",
+                "reason": "execution_count_exceeded",
+                "count": state["execution_count"],
+            },
+        )
+        state["_next_action"] = "wait_confirm"
+        state["last_error"] = (
+            f"执行次数 ({state['execution_count']}) 已达上限 ({max_retries})，等待人工决定"
+        )
+        log_route_decision(
+            state, "wait_confirm", "execution_count_exceeded", router_mode="rule"
         )
         return state
 
