@@ -112,7 +112,7 @@ def test_tui_defers_attach_until_after_textual_exits_on_windows(
     from story_lifecycle.orchestrator import graph as graph_mod
 
     monkeypatch.setattr(graph_mod, "is_story_running", lambda key: True)
-    monkeypatch.setattr(graph_mod, "is_workspace_locked", lambda ws: False)
+    monkeypatch.setattr(graph_mod, "is_workspace_locked", lambda ws, **kw: False)
 
     app.action_enter_terminal()
 
