@@ -1118,10 +1118,13 @@ def _build_plan_executor_prompt(
     In this mode the static stage prompt is not injected. It is a fallback only.
     """
     _, metadata = _render_prompt(stage, state)
+    skill_instruction = metadata.get("skill_instruction", "")
     planner_packet = _strip_planner_contract_duplicates(plan_content)
     contract = _build_stage_contract(stage, state)
 
     support_sections: list[str] = []
+    if skill_instruction:
+        support_sections.insert(0, skill_instruction)
     if metadata.get("quality_packet_text"):
         support_sections.append(metadata["quality_packet_text"])
     if metadata.get("checklist_text"):
@@ -2075,7 +2078,8 @@ Story: {state["story_key"]}
         ),
         "{skill}": skill,
         "{skill_instruction}": (
-            f"请先执行 skill: `{skill}` 来进行结构化分析，然后基于分析结果完成本阶段任务。"
+            f"在开始本阶段任务前，请先使用 Skill 工具调用 `{skill}`，"
+            f"基于 skill 的分析结果来完成后续工作。"
             if skill
             else ""
         ),
@@ -2101,5 +2105,11 @@ Story: {state["story_key"]}
         "relevance_tags": relevance_tags,
         "has_prd": has_prd,
         "has_plan_file": False,  # set by caller when plan file prepended
+        "skill_instruction": (
+            f"在开始本阶段任务前，请先使用 Skill 工具调用 `{skill}`，"
+            f"基于 skill 的分析结果来完成后续工作。"
+            if skill
+            else ""
+        ),
     }
     return template, metadata
