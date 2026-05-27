@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.37] - 2026-05-27
+
+### Added
+- 阶段条显示对抗循环标记 `⟳`：`design⟳` / `implement⟳`
+- `review_design` 阶段使用 `codex` CLI
+
 ## [0.5.36] - 2026-05-27
 
 ### Added
