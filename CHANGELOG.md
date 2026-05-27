@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.15] - 2026-05-27
+
+### Fixed
+- `story upgrade` Windows 升级改为 bat 脚本等待进程退出后再执行 pip，解决 exe 文件锁导致安装失败
+- 抽取 `_run_upgrade()` 函数，平台特殊逻辑与业务逻辑分离
+
 ## [0.5.14] - 2026-05-27
 
 ### Fixed

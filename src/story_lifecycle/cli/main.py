@@ -216,12 +216,49 @@ def demo():
     run_demo()
 
 
-@cli.command()
-def upgrade():
-    """Upgrade story-lifecycle to the latest version."""
+def _run_upgrade():
+    """Run pip upgrade. On Windows, spawn a detached child to avoid exe lock."""
     import subprocess
     import tempfile
 
+    pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "story-lifecycle"]
+
+    if sys.platform == "win32":
+        # story.exe is locked by this process — write a bat script that waits for
+        # this PID to exit, then runs pip.  We use `tasklist` polling because
+        # `wait /b <pid>` only works for child processes.
+        pid = os.getpid()
+        bat = f"""@echo off
+:wait
+tasklist /fi "PID eq {pid}" /nh 2>nul | find "{pid}" >nul
+if %errorlevel%==0 (
+    timeout /t 2 /nobreak >nul
+    goto wait
+)
+{sys.executable} -m pip install --upgrade story-lifecycle
+del "%~f0"
+"""
+        bat_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".bat", delete=False, encoding="utf-8"
+        )
+        bat_file.write(bat)
+        bat_file.close()
+        subprocess.Popen(
+            [bat_file.name],
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.DETACHED_PROCESS,
+            close_fds=True,
+            shell=True,
+        )
+        console.print("  [dim]Upgrade will run after this process exits.[/]")
+        raise SystemExit(0)
+
+    return subprocess.run(pip_cmd, capture_output=True, text=True)
+
+
+@cli.command()
+def upgrade():
+    """Upgrade story-lifecycle to the latest version."""
     from importlib.metadata import version as _pkg_version
 
     current = _pkg_version("story-lifecycle")
@@ -240,35 +277,7 @@ def upgrade():
 
     console.print("  Upgrading...")
 
-    pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "story-lifecycle"]
-
-    if sys.platform == "win32":
-        # story.exe is locked by this process — spawn a detached child to run pip,
-        # then exit so the exe is released for overwrite.
-        script = f"""import subprocess, sys, time
-time.sleep(1)
-r = subprocess.run({pip_cmd!r}, capture_output=True, text=True)
-print(r.stdout)
-if r.returncode != 0:
-    print(r.stderr, file=sys.stderr)
-    sys.exit(r.returncode)
-"""
-        script_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, encoding="utf-8"
-        )
-        script_file.write(script)
-        script_file.close()
-        subprocess.Popen(
-            [sys.executable, script_file.name],
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-            close_fds=True,
-        )
-        console.print(
-            "  [dim]Upgrade running in background. This process will exit.[/]"
-        )
-        raise SystemExit(0)
-
-    result = subprocess.run(pip_cmd, capture_output=True, text=True)
+    result = _run_upgrade()
     if result.returncode == 0:
         new = _pkg_version("story-lifecycle")
         console.print(f"  [green]Upgraded to {new}[/]")
