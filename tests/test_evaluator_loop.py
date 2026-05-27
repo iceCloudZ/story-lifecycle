@@ -1053,6 +1053,27 @@ def test_code_review_loop_records_prompt_tokens_estimation(isolated_story_home):
 def _enabled_adversarial_profile():
     """Profile with both adversarial loops enabled."""
     return {
+        "cli": "claude",
+        "stages": {
+            "design": {
+                "description": "Design",
+                "review": True,
+                "expected_outputs": ["spec_path", "complexity"],
+                "next_default": ["implement"],
+            },
+            "implement": {
+                "description": "Implement",
+                "review": True,
+                "expected_outputs": ["files_changed", "summary"],
+                "next_default": ["review"],
+            },
+            "review": {
+                "description": "Review",
+                "review": False,
+                "expected_outputs": [],
+                "next_default": [],
+            },
+        },
         "adversarial": {
             "enabled": True,
             "plan_loop": {
@@ -1066,8 +1087,24 @@ def _enabled_adversarial_profile():
                 "mode": "short_lived",
                 "max_rounds": 3,
             },
-        }
+        },
     }
+
+
+def _patch_load_profile(return_value):
+    """Context manager that patches all three load_profile import paths."""
+    from contextlib import ExitStack
+    from unittest.mock import patch
+
+    stack = ExitStack()
+    targets = [
+        "story_lifecycle.orchestrator.nodes.load_profile",
+        "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
+        "story_lifecycle.orchestrator.nodes.profile_loader.load_profile",
+    ]
+    for t in targets:
+        stack.enter_context(patch(t, return_value=return_value))
+    return stack
 
 
 def test_plan_stage_node_uses_loop_when_enabled(isolated_story_home):
@@ -1100,12 +1137,9 @@ def test_plan_stage_node_uses_loop_when_enabled(isolated_story_home):
         reason="all_blockers_resolved",
     )
 
-    with patch(
-        "story_lifecycle.orchestrator.nodes.load_profile",
-        return_value=_enabled_adversarial_profile(),
-    ):
+    with _patch_load_profile(_enabled_adversarial_profile()):
         with patch(
-            "story_lifecycle.orchestrator.nodes.planner.compress_context",
+            "story_lifecycle.orchestrator.planner.compress_context",
             return_value=None,
         ):
             with patch(
@@ -1145,13 +1179,19 @@ def test_plan_stage_node_skips_loop_when_disabled(isolated_story_home):
     }
 
     # load_profile returns profile with NO adversarial config (default minimal)
-    with patch("story_lifecycle.orchestrator.nodes.load_profile", return_value={}):
+    with (
+        patch("story_lifecycle.orchestrator.nodes.load_profile", return_value={}),
+        patch(
+            "story_lifecycle.orchestrator.nodes.profile_loader.load_profile",
+            return_value={},
+        ),
+    ):
         with patch(
-            "story_lifecycle.orchestrator.nodes.planner.compress_context",
+            "story_lifecycle.orchestrator.planner.compress_context",
             return_value=None,
         ):
             with patch(
-                "story_lifecycle.orchestrator.nodes.planner.plan_stage",
+                "story_lifecycle.orchestrator.planner.plan_stage",
                 return_value=plan_result,
             ):
                 with patch(
@@ -1199,10 +1239,7 @@ def test_review_stage_node_uses_loop_when_enabled(isolated_story_home):
         reason="code_review_revise",
     )
 
-    with patch(
-        "story_lifecycle.orchestrator.nodes.load_profile",
-        return_value=_enabled_adversarial_profile(),
-    ):
+    with _patch_load_profile(_enabled_adversarial_profile()):
         with patch(
             "story_lifecycle.orchestrator.evaluator_loop.run_code_review_loop",
             return_value=loop_result,
@@ -1240,9 +1277,9 @@ def test_review_stage_node_skips_loop_when_disabled(isolated_story_home):
         "reasoning": "All OK",
     }
 
-    with patch("story_lifecycle.orchestrator.nodes.load_profile", return_value={}):
+    with _patch_load_profile({}):
         with patch(
-            "story_lifecycle.orchestrator.nodes.planner.review_stage",
+            "story_lifecycle.orchestrator.planner.review_stage",
             return_value=review_result,
         ):
             with patch(

@@ -64,7 +64,13 @@ def _disable_adversarial_for_legacy_node_tests():
         },
         "adversarial": {"enabled": False},
     }
-    with patch("story_lifecycle.orchestrator.nodes.load_profile", return_value=profile):
+    with (
+        patch("story_lifecycle.orchestrator.nodes.load_profile", return_value=profile),
+        patch(
+            "story_lifecycle.orchestrator.nodes.profile_loader.load_profile",
+            return_value=profile,
+        ),
+    ):
         yield
 
 
@@ -118,7 +124,7 @@ class TestRouteAfterPoll:
 
 
 class TestPlanStageNode:
-    @patch("story_lifecycle.orchestrator.nodes.planner")
+    @patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner")
     def test_planner_failure_blocks_story(self, mock_planner):
         mock_planner.compress_context.return_value = None
         mock_planner.plan_stage.side_effect = RuntimeError("LLM timeout")
@@ -129,7 +135,7 @@ class TestPlanStageNode:
         assert result.get("_pre_routed_action") == "wait_confirm"
         assert "LLM timeout" in result.get("last_error", "")
 
-    @patch("story_lifecycle.orchestrator.nodes.planner")
+    @patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner")
     def test_llm_plan_generates_task_file(self, mock_planner):
         mock_planner.compress_context.return_value = None
         mock_planner.plan_stage.return_value = {
@@ -158,7 +164,7 @@ class TestPlanStageNode:
             content = plan_file.read_text(encoding="utf-8")
             assert "Create REST endpoints" in content
 
-    @patch("story_lifecycle.orchestrator.nodes.planner")
+    @patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner")
     def test_skip_when_plan_says_skip(self, mock_planner):
         mock_planner.compress_context.return_value = None
         mock_planner.plan_stage.return_value = {
@@ -173,7 +179,7 @@ class TestPlanStageNode:
         assert result["status"] == "skipping"
         assert "跳过" in (result["plan_summary"] or "")
 
-    @patch("story_lifecycle.orchestrator.nodes.planner")
+    @patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner")
     def test_fallback_on_planner_exception(self, mock_planner):
         mock_planner.compress_context.return_value = None
         mock_planner.plan_stage.side_effect = Exception("LLM timeout")
@@ -195,7 +201,7 @@ class TestReviewStageNode:
 
         assert result.get("review_summary") is None
 
-    @patch("story_lifecycle.orchestrator.nodes.planner")
+    @patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner")
     def test_retry_fatigue_forces_fail(self, mock_planner):
         """When review_round_count >= retry_limit, gate blocks with GateDecision."""
 
@@ -208,7 +214,7 @@ class TestReviewStageNode:
         )
         # Need stage config with expected_outputs
         with patch(
-            "story_lifecycle.orchestrator.nodes.get_stage_config",
+            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
             return_value={"expected_outputs": ["output"]},
         ):
             result = review_stage_node(state)
@@ -217,7 +223,7 @@ class TestReviewStageNode:
         assert "review" in result["last_error"].lower()
         assert result["_gate_decision"]["reason_code"] == "review_retry_limit"
 
-    @patch("story_lifecycle.orchestrator.nodes.planner")
+    @patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner")
     def test_stale_executor_no_review_fatigue(self, mock_planner):
         """When review_round_count==0 but execution_count>=retry_limit, gate blocks
         with stale executor reason — review never actually ran."""
@@ -227,7 +233,7 @@ class TestReviewStageNode:
             context={"output": "some data"},
         )
         with patch(
-            "story_lifecycle.orchestrator.nodes.get_stage_config",
+            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
             return_value={"expected_outputs": ["output"]},
         ):
             result = review_stage_node(state)
@@ -239,7 +245,7 @@ class TestReviewStageNode:
             == "review_not_run_due_to_stale_executor_attempt_count"
         )
 
-    @patch("story_lifecycle.orchestrator.nodes.planner")
+    @patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner")
     def test_review_pass(self, mock_planner):
         mock_planner.review_stage.return_value = {
             "quality": "pass",
@@ -258,7 +264,7 @@ class TestReviewStageNode:
                 context={"prd_path": "prd/TEST-001.md"},
             )
             with patch(
-                "story_lifecycle.orchestrator.nodes.get_stage_config",
+                "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
                 return_value={"expected_outputs": ["prd_path"]},
             ):
                 result = review_stage_node(state)
@@ -267,7 +273,7 @@ class TestReviewStageNode:
             assert result["trajectory_score"] == 0.9
             assert result.get("last_error") is None
 
-    @patch("story_lifecycle.orchestrator.nodes.planner")
+    @patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner")
     def test_review_revise_sets_error(self, mock_planner):
         mock_planner.review_stage.return_value = {
             "quality": "revise",
@@ -293,7 +299,7 @@ class TestReviewStageNode:
                 context={"prd_path": "prd/TEST-001.md"},
             )
             with patch(
-                "story_lifecycle.orchestrator.nodes.get_stage_config",
+                "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
                 return_value={"expected_outputs": ["prd_path"]},
             ):
                 result = review_stage_node(state)
@@ -301,7 +307,7 @@ class TestReviewStageNode:
             assert result["last_error"] is not None
             assert "1 high severity" in result["last_error"]
 
-    @patch("story_lifecycle.orchestrator.nodes.planner")
+    @patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner")
     def test_review_fail(self, mock_planner):
         mock_planner.review_stage.return_value = {
             "quality": "fail",
@@ -320,7 +326,7 @@ class TestReviewStageNode:
                 context={"prd_path": "prd/TEST-001.md"},
             )
             with patch(
-                "story_lifecycle.orchestrator.nodes.get_stage_config",
+                "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
                 return_value={"expected_outputs": ["prd_path"]},
             ):
                 result = review_stage_node(state)
@@ -336,7 +342,7 @@ class TestRouterNode:
     def test_happy_path_advance(self):
         state = _make_state(last_error=None)
         with patch(
-            "story_lifecycle.orchestrator.nodes.get_stage_config",
+            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
             return_value={"confirm": False},
         ):
             result_state = router_node(state)
@@ -345,7 +351,7 @@ class TestRouterNode:
     def test_happy_path_wait_confirm(self):
         state = _make_state(last_error=None)
         with patch(
-            "story_lifecycle.orchestrator.nodes.get_stage_config",
+            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
             return_value={"confirm": True},
         ):
             result_state = router_node(state)
@@ -529,7 +535,7 @@ class TestAdvanceNode:
                 return_value="implement",
             ),
             patch(
-                "story_lifecycle.orchestrator.nodes.get_stage_config",
+                "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
                 return_value={"expected_outputs": ["prd_path"]},
             ),
             patch(
@@ -559,7 +565,7 @@ class TestSkipNode:
         db.upsert_story("TEST-001", title="Test", workspace="/tmp")
         state = _make_state()
         with patch(
-            "story_lifecycle.orchestrator.nodes.get_stage_config",
+            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
             return_value={"expected_outputs": ["prd_path", "spec_path"]},
         ):
             result = skip_node(state)
@@ -637,12 +643,18 @@ class TestGraphCompilation:
 
 
 class TestSubStoryDelegation:
-    @patch("story_lifecycle.orchestrator.nodes.planner")
+    @patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner")
     @patch(
         "story_lifecycle.orchestrator.nodes.graph_nodes.interrupt",
         side_effect=lambda x: None,
     )
-    def test_split_creates_sub_stories(self, mock_interrupt, mock_planner):
+    @patch(
+        "story_lifecycle.orchestrator.nodes.subtask_delegate.interrupt",
+        side_effect=lambda x: None,
+    )
+    def test_split_creates_sub_stories(
+        self, mock_sub_interrupt, mock_interrupt, mock_planner
+    ):
         mock_planner.compress_context.return_value = None
         mock_planner.plan_stage.return_value = {
             "split": True,
