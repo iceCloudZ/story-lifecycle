@@ -912,7 +912,7 @@ class StoryBoardApp(App):
         width: 44;
         min-width: 34;
         max-width: 56;
-        height: 100%;
+        height: 1fr;
         padding: 1 2;
         border-left: solid $accent;
         background: $panel;
@@ -921,6 +921,29 @@ class StoryBoardApp(App):
 
     #diagnostics-panel.hidden {
         display: none;
+    }
+
+    #right-pane {
+        width: 44;
+        min-width: 34;
+        max-width: 56;
+        height: 100%;
+    }
+
+    #right-pane.hidden {
+        display: none;
+    }
+
+    #copilot-bar {
+        height: auto;
+        padding: 0 1;
+        border-left: solid $accent;
+        border-top: solid $panel-lighten-1;
+        background: $panel;
+    }
+
+    #copilot-bar Input {
+        width: 100%;
     }
 
     #footer-bar {
@@ -990,7 +1013,12 @@ class StoryBoardApp(App):
                 yield VerticalScroll(id="story-list")
                 yield Static(id="completed-section")
                 yield Static(id="detail-panel")
-            yield Static(id="diagnostics-panel")
+            with Vertical(id="right-pane"):
+                yield Static(id="diagnostics-panel")
+                yield Input(
+                    id="copilot-input",
+                    placeholder="按 y 聚焦 · 输入问题 · Enter 发送",
+                )
         yield Static(id="footer-bar")
         yield Footer()
 
@@ -1049,7 +1077,7 @@ class StoryBoardApp(App):
         # Hide diagnostics on narrow screens at startup
         if self.size.width < 120:
             self._show_diagnostics = False
-            self.query_one("#diagnostics-panel").set_class(True, "hidden")
+            self.query_one("#right-pane").set_class(True, "hidden")
 
     def _visible_stories(self) -> list[dict]:
         """Return stories visible after collapse filtering."""
@@ -2148,8 +2176,8 @@ class StoryBoardApp(App):
     def action_toggle_diagnostics(self):
         """Toggle the right-side diagnostics panel visibility."""
         self._show_diagnostics = not self._show_diagnostics
-        panel = self.query_one("#diagnostics-panel")
-        panel.set_class(not self._show_diagnostics, "hidden")
+        pane = self.query_one("#right-pane")
+        pane.set_class(not self._show_diagnostics, "hidden")
         if self._show_diagnostics:
             self._render_diagnostics_panel()
 
@@ -2193,11 +2221,22 @@ class StoryBoardApp(App):
             self.notify(f"Error: {exc}", severity="error")
 
     def action_ask_copilot(self):
-        """Open the Ask Copilot dialog for the selected story."""
+        """Focus the copilot input for inline questioning."""
         if not self.stories or self.selected_index >= len(self.stories):
             self.notify("No story selected", severity="warning")
             return
-        self.push_screen(CopilotDialog(), self._on_copilot_question)
+        inp = self.query_one("#copilot-input", Input)
+        inp.focus()
+
+    def on_input_submitted(self, event: Input.Submitted):
+        """Handle copilot input submission."""
+        if event.input.id != "copilot-input":
+            return
+        question = event.value.strip()
+        if not question:
+            return
+        event.input.clear()
+        self._on_copilot_question(question)
 
     def _on_copilot_question(self, question: str | None):
         """Callback when user submits a copilot question."""
@@ -2355,15 +2394,15 @@ class StoryBoardApp(App):
     def on_resize(self, event):
         """Handle terminal resize -- hide diagnostics on narrow screens."""
         width = event.size.width
-        panel = self.query_one("#diagnostics-panel")
+        pane = self.query_one("#right-pane")
         if width < 120:
             if self._show_diagnostics:
                 self._show_diagnostics = False
-                panel.set_class(True, "hidden")
+                pane.set_class(True, "hidden")
         else:
             if not self._show_diagnostics:
                 self._show_diagnostics = True
-                panel.set_class(False, "hidden")
+                pane.set_class(False, "hidden")
                 self._render_diagnostics_panel()
 
 
