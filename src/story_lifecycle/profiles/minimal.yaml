@@ -20,17 +20,23 @@ stages:
   review_design:
     order: 2
     description: "设计审查"
+    cli: claude
+    model: haiku
     skill: ""
     confirm: false
     review: false
-    max_retries: 2
+    max_retries: 1
     allowed_providers: [deepseek, zhipu]
-    expected_outputs: []
+    expected_outputs:
+      - quality
+      - issues
     next_default: [implement]
 
   implement:
     order: 3
     description: "编码实现"
+    cli: claude
+    model: sonnet
     confirm: false
     review: true
     max_retries: 3
@@ -43,10 +49,15 @@ stages:
   review:
     order: 4
     description: "代码审查"
+    cli: claude
+    model: haiku
+    skill: ""
     confirm: false
     review: false
-    max_retries: 2
-    expected_outputs: []
+    max_retries: 1
+    expected_outputs:
+      - quality
+      - issues
     next_default: []
 
 quality:
