@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.20] - 2026-05-27
+
+### Changed
+- 测试隔离改进：monkeypatch load_profile 强制使用 package 内置 profile，防 xdist 污染
+- xdist 并行暂回退，待测试隔离彻底解决后再启用
+
 ## [0.5.19] - 2026-05-27
 
 ### Changed
