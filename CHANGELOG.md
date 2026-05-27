@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.9] - 2026-05-27
+
+### Fixed
+- 修复 `story doctor` 作为子命令组无法直接运行的问题
+- `story doctor` 输出提示只需安装一个 AI CLI 工具即可运行，减少首次安装困惑
+
 ## [0.5.8] - 2026-05-27
 
 ### Added
@@ -20,8 +26,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 修复 pip 安装后 `story setup` 找不到命令的问题
 - 修复用户手动加入 PATH 后 `story setup` / `story serve` 被误判为用法不对的问题
 - `story setup` / `story serve` 不再被启动前 API key 检查拦截
-- 修复 `story doctor` 作为子命令组无法直接运行的问题
-- `story doctor` 输出提示只需安装一个 AI CLI 工具即可运行，减少首次安装困惑
 
 ## [0.5.7] - 2026-05-27
 
