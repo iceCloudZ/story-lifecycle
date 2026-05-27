@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.16] - 2026-05-27
+
+### Changed
+- CI 流水线优化：lint/test/build-check 并行、pip 缓存、pytest-xdist 4 worker 并行测试
+- Release 流程 TestPyPI 与 PyPI 并行发布
+
 ## [0.5.15] - 2026-05-27
 
 ### Fixed
