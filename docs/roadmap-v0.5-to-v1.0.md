@@ -4,6 +4,8 @@
 >
 > Orchestrator Agent 设计（`docs/idea-orchestrator-agent.md`）的 P0–P7 已拆入各版本。
 >
+> Story Lifecycle 正在演进为 **StoryOS**：面向真实软件项目的 Code Agent 操作层。v1.0 前不改包名、CLI 和 DB 命名；StoryOS 作为产品愿景，`Agentic SDLC Control Plane` 作为品类定位，`Project Intelligence Layer` 作为核心模块。
+>
 > **服务端部署（ttyd / 后台守护 / 多租户等）属于 v2，不纳入此路线图。**
 
 ---
@@ -49,6 +51,32 @@
 - `docs/design-terminal-entry-lifecycle.md`
 - `docs/design-foreground-zellij-execution.md`
 - `docs/idea-orchestrator-agent.md`
+- `docs/idea-storyos-project-intelligence-control-plane.md`
+
+---
+
+## StoryOS 收敛主线
+
+现有 roadmap 不推翻，StoryOS 是它的上位叙事：
+
+| 版本 | StoryOS 视角 | 核心结果 |
+|---|---|---|
+| v0.6.0 | Control Plane Foundation | 诊断、DecisionEnvelope、Policy 骨架、复杂度分流 |
+| v0.7.0 | Evidence & Memory Layer | SWE-bench 梯度、Working Memory、Budget Ledger |
+| v0.8.0 | Project Intelligence Input Layer | Story Source、Test Source、Project Profile seed、Resource Lock |
+| v0.9.0 | Project-Aware Orchestration | Meta-Planner、Strategic Router、Blackboard、双飞轮治理 |
+| v1.0.0 | StoryOS Baseline | 可诊断、可编排、可验证、可治理的 agent 操作层 |
+
+最小闭环：
+
+```text
+Story Source
+  -> Project Intelligence
+  -> Agent Runtime
+  -> Test Source / Review Gate
+  -> Diagnostics
+  -> Flywheel
+```
 
 ---
 
@@ -57,28 +85,29 @@
 ```
 v0.6.0            v0.7.0            v0.8.0            v0.9.0            v1.0.0
     │                 │                 │                 │                 │
-    │ 质量闭环        │ Engine 数据层    │ Domain 输入层    │ 双飞轮治理层     │ 生产就绪        │
-    │ 架构审查 /     │ 梯度归因 /      │ 多模型对比 /    │ 项目智能 /      │ CI/CD /         │
-    │ 阶段交接 /     │ 模式提取 /      │ PRD 增强 /      │ 飞轮晋升 /      │ 文档 /          │
-    │ DecisionEnvelope│ 偏好数据集 /    │ 开放生态 /      │ 边界仲裁 /      │ Stage Graph /   │
-    │ Policy Engine  │ Working Memory  │ Resource Lock   │ Strategic Router│ Guarded Apply   │
-    │ Complexity分类 │ Budget Ledger   │                 │ Blackboard      │                 │
-    │                 │                 │                 │ Meta-Planner    │                 │
+    │ Control Plane   │ Evidence &      │ Project Intel   │ Project-aware   │ StoryOS         │
+    │ Foundation      │ Memory Layer    │ Input Layer     │ Orchestration   │ Baseline        │
+    │ Diagnostics /   │ 梯度归因 /      │ Story Source /  │ 双飞轮治理 /    │ CI/CD /         │
+    │ DecisionEnvelope│ 模式提取 /      │ Test Source /   │ Meta-Planner /  │ 文档 /          │
+    │ Policy Engine / │ 偏好数据集 /    │ Project Profile │ Strategic Router│ Stage Graph /   │
+    │ Complexity分类 │ Working Memory  │ Resource Lock   │ Blackboard      │ Guarded Apply   │
+    │ 质量闭环        │ Budget Ledger   │ 开放生态        │ 边界仲裁         │                 │
 ```
 
 ---
 
-## v0.6.0 — 质量闭环 + 编排决策闭环
+## v0.6.0 — Control Plane Foundation
 
-**目标**：两条主线并行——① 补齐 review 环节最后两块拼图（架构审查 + 阶段交接），② 建立编排决策闭环（DecisionEnvelope + Policy Engine + Complexity Classifier）。
+**目标**：三条主线并行——① 补齐 review 环节最后两块拼图（架构审查 + 阶段交接），② 建立编排决策闭环（DecisionEnvelope + Policy Engine + Complexity Classifier），③ 建立 StoryOS 的诊断地基（Debug Packet + `story diagnostics` + Board 右侧常驻诊断面板）。
 
-> 对应 Orchestrator Agent P0 + P1。
+> 对应 Orchestrator Agent P0 + P1；对应 StoryOS 的 Control Plane Foundation。
 
 当前代码对比：
 
 - 已有：`quality.py`、`gate.py`、`review_feedback.py`、`seed_pipeline.py`、`semantic.py`，能支撑 finding、learned pattern、quality packet 和 review 语义摘要。
 - 已有：`router.py` 做 retry/advance/skip 路由、`planner.py` 输出 plan dict、`nodes.py` 做 stage 状态推进。但决策输出非结构化，无 policy 校验，无复杂度分流。
-- 待补：`architecture_triggers.py`、stage handoff 协议、DecisionEnvelope 类型定义、Policy Engine 骨架、Complexity Classifier。
+- 已有：`observability.py::build_debug_response()`、`event_log`、`stage_log`、`gate_result`、`.story/context` 和 `.story/done`，但无稳定 Debug Packet schema、无脱敏诊断包、无右侧常驻诊断面板。
+- 待补：`architecture_triggers.py`、stage handoff 协议、DecisionEnvelope 类型定义、Policy Engine 骨架、Complexity Classifier、`debug_packet.py`、`diagnostics.py`、`story diagnostics` CLI、Board Diagnostics Panel。
 
 参考设计文档：
 
@@ -87,6 +116,20 @@ v0.6.0            v0.7.0            v0.8.0            v0.9.0            v1.0.0
 - `docs/idea-stage-handoff-package.md`
 - `docs/story-lifecycle-ai-engineering-gap-roadmap.md`
 - `docs/idea-orchestrator-agent.md` §P0 DecisionEnvelope + Policy Engine、§P1 Complexity Classifier
+- `docs/design-board-diagnostics-panel.md`
+- `docs/idea-storyos-project-intelligence-control-plane.md`
+
+### Board Diagnostics + Debug Packet
+
+| 模块 | 内容 | 关键文件 |
+|------|------|----------|
+| Debug Packet | 稳定 story 诊断 schema：story、done_state、session_state、terminal_output、stuck_reason、recent_events | 新增 `orchestrator/debug_packet.py` |
+| Stuck Reason | `cli_exited_without_done`、`done_malformed`、`stage_timeout`、`loop_exhausted` 等确定性规则 | `orchestrator/debug_packet.py` |
+| Diagnostic Bundle | 脱敏 zip：summary.md、debug_packet.json、events、stage_logs、gate_results、terminal/recent_output.txt | 新增 `orchestrator/diagnostics.py` |
+| CLI | `story diagnostics STORY_KEY`、`story diagnostics --global`、`--no-zip` | 新增 `cli/diagnostics.py`，注册到 `cli/main.py` |
+| Board 右侧常驻面板 | 当前 Story 摘要、卡住原因、最近事件、诊断动作 | `cli/tui.py` |
+| 诊断快捷键 | `[p]` 当前 Story 诊断、`[P]` 全局诊断 | `cli/tui.py` |
+| 脱敏 | API key/token/password/authorization/.env/完整 diff 默认不打包 | `orchestrator/diagnostics.py` |
 
 ### 架构审查门禁
 
@@ -206,17 +249,17 @@ START 阶段做 cheap intake，trivial 任务走简化路径。
 
 ---
 
-## v0.8.0 — Domain 输入层 & 资源锁预演
+## v0.8.0 — Project Intelligence Input Layer
 
-**目标**：三条主线——① PRD 输入增强和多模型对比，② 资源锁 dry-run（为并行调度做安全准备），③ 开放生态补齐。
+**目标**：四条主线——① Story Source 产品化和 PRD 输入增强，② Test Source 抽象与项目测试发现，③ Project Profile seed（让系统开始熟悉项目），④ 资源锁 dry-run（为并行调度做安全准备）。
 
-> 对应 Orchestrator Agent P1.5。
+> 对应 Orchestrator Agent P1.5；对应 StoryOS 的 Project Intelligence Input Layer。
 
 当前代码对比：
 
 - 已有：`StorySource`、`ManualSource`、`TapdSource`、`PrdProvider`、`TapdBodyPrdProvider`、`LocalFilePrdProvider`、`ShellAdapter`、`story demo`、doctor 中 Qoder/Gemini 检测。
 - 已有：`service.py` 子故事创建、`graph.py` story 状态推进。但无资源锁机制，子故事并行依赖 workspace mutex。
-- 待补：TAPD HTML→Markdown 高质量转换、AI PRD 增强、多模型并行对比、Resource Lock dry-run。
+- 待补：TAPD HTML→Markdown 高质量转换、AI PRD 增强、Story Source 配置产品化、Test Source 抽象、repo test discovery、Project Profile seed、多模型并行对比、Resource Lock dry-run。
 
 参考设计文档：
 
@@ -226,14 +269,41 @@ START 阶段做 cheap intake，trivial 任务走简化路径。
 - `docs/superpowers/plans/2026-05-23-story-source-p1.md`
 - `docs/superpowers/specs/2026-05-21-story-lifecycle-v2-design.md`
 - `docs/idea-orchestrator-agent.md` §Resource Locks、§并行策略
+- `docs/idea-storyos-project-intelligence-control-plane.md`
 
-### PRD 输入增强
+### Story Source 产品化 + PRD 输入增强
 
 | 模块 | 内容 | 关键文件 |
 |------|------|----------|
 | PRD 提取质量 | TAPD HTML→markdown 替换为 markdownify/html2text | `sources/tapd_source.py`（替换提取逻辑） |
 | AI 增强 PRD | 拉取时可选 LLM 优化 PRD 内容 | `sources/tapd_source.py`（新增 enhance 步骤） |
 | 本地文件 PRD | 已有 LocalFilePrdProvider，补配置化、错误提示和 TUI 可见性 | `sources/base.py`、`cli/tui.py` |
+| Story Source 统一输出 | source、source_id、type、title、body、acceptance_criteria、comments、priority、business_area | `sources/base.py` |
+| TUI 可见性 | Story 来源、原始链接、验收标准、最近评论可见 | `cli/tui.py` |
+
+### Test Source 抽象
+
+没有 Test Source，系统只能判断“任务写完了”；有 Test Source，才能判断“任务做对了”。
+
+| 模块 | 内容 | 关键文件 |
+|------|------|----------|
+| TestSource 接口 | 统一本地测试、CI、PRD checklist、benchmark 验证源 | 新增 `testsources/base.py` 或 `orchestrator/test_source.py` |
+| Repo test discovery | 自动发现 pytest/maven/npm/gradle 等候选测试命令 | 新增 `orchestrator/project_profile.py` |
+| Test Plan | 根据 Story 影响范围选择最小验证命令 | 新增 `orchestrator/test_plan.py` |
+| PRD checklist | 从 acceptance criteria 生成人工/半自动验证 checklist | `orchestrator/test_plan.py` |
+| TUI 展示 | 当前 Story 的建议测试和验证状态 | `cli/tui.py` |
+
+### Project Profile Seed
+
+Project Profile 是 Project Intelligence Layer 的第一版项目画像，P0.8 只做事实收集，不做复杂学习。
+
+| 模块 | 内容 | 关键文件 |
+|------|------|----------|
+| Repo scanner | 语言、包管理器、入口文件、测试目录、CI 文件、服务目录 | 新增 `orchestrator/project_profile.py` |
+| Profile 文件 | `.story/project/profile.json` 或 `.story/context/project_profile.json` | 新增 `orchestrator/project_profile.py` |
+| 启动/测试候选 | 从 README、package/maven/pytest/CI 推断候选命令 | `orchestrator/project_profile.py` |
+| Evidence | 每个候选命令记录来源证据，避免 LLM 幻觉 | `orchestrator/project_profile.py` |
+| CLI | `story project inspect` 输出项目画像 | 新增 `cli/project.py` |
 
 ### 多模型并行对比
 
@@ -358,9 +428,9 @@ Story START 生成 StrategyEnvelope，Plan 阶段执行 Scope & Decomposition Ga
 
 ---
 
-## v1.0.0 — 生产就绪 + 动态编排
+## v1.0.0 — StoryOS Baseline
 
-**目标**：达到可公开发布的质量标准 + 完成动态编排能力（Stage Graph、Graph Patch、Guarded Apply）。
+**目标**：达到可公开发布的质量标准 + 完成动态编排能力（Stage Graph、Graph Patch、Guarded Apply），形成 StoryOS baseline：可诊断、可编排、可验证、可治理的 Code Agent 操作层。
 
 > 对应 Orchestrator Agent P6 + P7。
 
@@ -378,6 +448,7 @@ Story START 生成 StrategyEnvelope，Plan 阶段执行 Scope & Decomposition Ga
 - `docs/design-terminal-entry-lifecycle.md`
 - `docs/design-swebench-runner.md`
 - `docs/idea-orchestrator-agent.md` §Stage Library、§Stage Graph、§Graph Patch、§Guarded Apply
+- `docs/idea-storyos-project-intelligence-control-plane.md`
 
 ### CI / CD
 
@@ -471,14 +542,29 @@ Story START 生成 StrategyEnvelope，Plan 阶段执行 Scope & Decomposition Ga
 ```
 v0.6.0 ──→ v0.7.0 ──→ v0.8.0 ──→ v0.9.0 ──→ v1.0.0
   │           │           │           │           │
-  │           │           │           │           └── 最终发布 + 动态编排
-  │           │           │           └── 治理层+智能路由需要 P0-P2 和输入层就位
-  │           │           └── Domain 输入层 + 资源锁预演，可与 v0.7 并行
-  │           └── Engine 数据层 + Working Memory，需要 P0 基础
-  └── 质量闭环 + DecisionEnvelope + Policy Engine + Complexity Classifier
+  │           │           │           │           └── StoryOS baseline + 动态编排
+  │           │           │           └── 项目感知编排需要 P0-P2 和输入层就位
+  │           │           └── Project Intelligence Input Layer + 资源锁预演，可与 v0.7 并行
+  │           └── Evidence & Memory Layer，需要 P0 诊断和决策基础
+  └── Control Plane Foundation：诊断 + DecisionEnvelope + Policy Engine + Complexity Classifier
 ```
 
 v0.7.0 和 v0.8.0 可并行推进，二者在 v0.9.0 汇合。
+
+---
+
+## StoryOS 能力映射
+
+| StoryOS 能力 | 首次落地版本 | 说明 |
+|---|---|---|
+| Diagnostics / Debug Packet | v0.6.0 | 操作层可观测地基 |
+| DecisionEnvelope / Policy | v0.6.0 | 控制平面决策协议 |
+| Evidence & Memory | v0.7.0 | trace、budget、working memory |
+| Story Source | v0.8.0 | TAPD/PRD/本地需求输入产品化 |
+| Test Source | v0.8.0 | 项目验证入口和 test plan |
+| Project Profile | v0.8.0 | Project Intelligence seed |
+| Project-aware Router / Planner | v0.9.0 | 消费项目画像、blackboard、双飞轮信号 |
+| StoryOS Baseline | v1.0.0 | 可诊断、可编排、可验证、可治理 |
 
 ---
 
