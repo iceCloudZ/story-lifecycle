@@ -1,6 +1,6 @@
 # v0.5.0 → v1.0.0 版本路线图
 
-> 基于 `docs/` 全部设计文档与当前代码实现的真实差距。当前版本 v0.5.8。
+> 基于 `docs/` 全部设计文档与当前代码实现的真实差距。当前版本 v0.5.37。
 >
 > Orchestrator Agent 设计（`docs/idea-orchestrator-agent.md`）的 P0–P7 已拆入各版本。
 >
@@ -10,7 +10,19 @@
 
 ---
 
-## 已完成（v0.5.8 已包含，无需重复规划）
+## 当前执行焦点：v0.6 Reliability Loop
+
+v0.6 不再扩展 StoryOS、Project Intelligence、双飞轮、Meta-Planner 或新的控制平面能力。当前项目先冻结功能面，集中把最小闭环跑稳：
+
+```text
+可安装 -> 可启动 -> 可跑通 -> 可卡住 -> 可排查
+```
+
+v0.6 的验收依据以 `docs/code-freeze-and-reliability-loop-plan.md` 和 `docs/v0.6-reliability-loop-tasks.md` 为准。其他设计文档只作为后续 backlog，不作为 v0.6 必做范围。
+
+---
+
+## 已完成（v0.5.x 已包含，无需重复规划）
 
 以下内容已实现，**不出现在后续版本中**：
 
@@ -61,7 +73,7 @@
 
 | 版本 | StoryOS 视角 | 核心结果 |
 |---|---|---|
-| v0.6.0 | Control Plane Foundation | 诊断、DecisionEnvelope、Policy 骨架、复杂度分流 |
+| v0.6.0 | Reliability Loop | 可安装、可启动、可跑通、可卡住、可排查 |
 | v0.7.0 | Evidence & Memory Layer | SWE-bench 梯度、Working Memory、Budget Ledger |
 | v0.8.0 | Project Intelligence Input Layer | Story Source、Test Source、Project Profile seed、Agent Probe、Resource Lock |
 | v0.9.0 | Project-Aware Orchestration | Meta-Planner、Strategic Router、Blackboard、双飞轮治理 |
@@ -85,96 +97,57 @@ Story Source
 ```
 v0.6.0            v0.7.0            v0.8.0            v0.9.0            v1.0.0
     │                 │                 │                 │                 │
-    │ Control Plane   │ Evidence &      │ Project Intel   │ Project-aware   │ StoryOS         │
-    │ Foundation      │ Memory Layer    │ Input Layer     │ Orchestration   │ Baseline        │
-    │ Diagnostics /   │ 梯度归因 /      │ Story Source /  │ 双飞轮治理 /    │ CI/CD /         │
-    │ DecisionEnvelope│ 模式提取 /      │ Test Source /   │ Meta-Planner /  │ 文档 /          │
-    │ Policy Engine / │ 偏好数据集 /    │ Project Profile │ Strategic Router│ Stage Graph /   │
-    │ Complexity分类 │ Working Memory  │ Resource Lock   │ Blackboard      │ Guarded Apply   │
-    │ 质量闭环        │ Budget Ledger   │ 开放生态        │ 边界仲裁         │                 │
+    │ Reliability    │ Evidence &      │ Project Intel   │ Project-aware   │ StoryOS         │
+    │ Loop           │ Memory Layer    │ Input Layer     │ Orchestration   │ Baseline        │
+    │ install/start  │ 梯度归因 /      │ Story Source /  │ 双飞轮治理 /    │ CI/CD /         │
+    │ run/stuck/debug│ 模式提取 /      │ Test Source /   │ Meta-Planner /  │ 文档 /          │
+    │ CLI稳定 /       │ 偏好数据集 /    │ Project Profile │ Strategic Router│ Stage Graph /   │
+    │ 诊断可用        │ Working Memory  │ Resource Lock   │ Blackboard      │ Guarded Apply   │
+    │ 最小回归        │ Budget Ledger   │ 开放生态        │ 边界仲裁         │                 │
 ```
 
 ---
 
-## v0.6.0 — Control Plane Foundation
+## v0.6.0 — Reliability Loop
 
-**目标**：三条主线并行——① 补齐 review 环节最后两块拼图（架构审查 + 阶段交接），② 建立编排决策闭环（DecisionEnvelope + Policy Engine + Complexity Classifier），③ 建立 StoryOS 的诊断地基（Debug Packet + `story diagnostics` + Board 右侧常驻诊断面板）。
+**目标**：冻结功能面，优先让当前代码的最小用户闭环稳定。v0.6 只做可靠性收敛、真实诊断、CLI/TUI 回归测试和文档归档，不引入新的智能编排能力。
 
-> 对应 Orchestrator Agent P0 + P1；对应 StoryOS 的 Control Plane Foundation。
+> 对应当前工程收敛阶段；StoryOS 的控制平面能力从 v0.7 起再逐步恢复推进。
 
 当前代码对比：
 
-- 已有：`quality.py`、`gate.py`、`review_feedback.py`、`seed_pipeline.py`、`semantic.py`，能支撑 finding、learned pattern、quality packet 和 review 语义摘要。
-- 已有：`router.py` 做 retry/advance/skip 路由、`planner.py` 输出 plan dict、`nodes.py` 做 stage 状态推进。但决策输出非结构化，无 policy 校验，无复杂度分流。
-- 已有：`observability.py::build_debug_response()`、`event_log`、`stage_log`、`gate_result`、`.story/context` 和 `.story/done`，但无稳定 Debug Packet schema、无脱敏诊断包、无右侧常驻诊断面板。
-- 待补：`architecture_triggers.py`、stage handoff 协议、DecisionEnvelope 类型定义、Policy Engine 骨架、Complexity Classifier、`debug_packet.py`、`diagnostics.py`、`story diagnostics` CLI、Board Diagnostics Panel。
+- 已有：`story setup`、`story doctor`、`story diagnostics`、TUI、Debug Packet、Policy/Copilot 等代码已经出现，但需要按真实安装和真实用户路径重新验证。
+- 已有：`.story/done`、`.story/context`、event/stage/gate 日志等诊断材料，但需要确认“卡住时能拿到足够证据”，尤其是 terminal recent output。
+- 待补：安装入口、帮助信息、setup/doctor/diagnostics/TUI 的最小回归测试；`story diagnostics` 的真实可用性；Board 右侧诊断面板在窄屏和异常 story 下的稳定性。
 
 参考设计文档：
 
-- `docs/idea-architecture-review-gate.md`
-- `docs/engineering-architecture-review-triggers.md`
-- `docs/idea-stage-handoff-package.md`
-- `docs/story-lifecycle-ai-engineering-gap-roadmap.md`
-- `docs/idea-orchestrator-agent.md` §P0 DecisionEnvelope + Policy Engine、§P1 Complexity Classifier
+- `docs/code-freeze-and-reliability-loop-plan.md`
+- `docs/v0.6-reliability-loop-tasks.md`
 - `docs/design-board-diagnostics-panel.md`
-- `docs/idea-storyos-project-intelligence-control-plane.md`
+- `docs/design-three-layer-validation.md`
+- `docs/problem-workspace-git-constraint.md`
 
-### Board Diagnostics + Debug Packet
+### P0 验收闭环
 
-| 模块 | 内容 | 关键文件 |
-|------|------|----------|
-| Debug Packet | 稳定 story 诊断 schema：story、done_state、session_state、terminal_output、stuck_reason、recent_events | 新增 `orchestrator/debug_packet.py` |
-| Stuck Reason | `cli_exited_without_done`、`done_malformed`、`stage_timeout`、`loop_exhausted` 等确定性规则 | `orchestrator/debug_packet.py` |
-| Diagnostic Bundle | 脱敏 zip：summary.md、debug_packet.json、events、stage_logs、gate_results、terminal/recent_output.txt | 新增 `orchestrator/diagnostics.py` |
-| CLI | `story diagnostics STORY_KEY`、`story diagnostics --global`、`--no-zip` | 新增 `cli/diagnostics.py`，注册到 `cli/main.py` |
-| Board 右侧常驻面板 | 当前 Story 摘要、卡住原因、最近事件、诊断动作 | `cli/tui.py` |
-| 诊断快捷键 | `[p]` 当前 Story 诊断、`[P]` 全局诊断 | `cli/tui.py` |
-| 脱敏 | API key/token/password/authorization/.env/完整 diff 默认不打包 | `orchestrator/diagnostics.py` |
+| 闭环 | v0.6 必须回答的问题 | 验收方式 |
+|------|----------------------|----------|
+| 可安装 | 用户安装后是否一定有 `story` 命令 | wheel / editable install smoke |
+| 可启动 | `story setup`、`story doctor` 是否不会因为配置态误判而卡住 | CLI help + dry command tests |
+| 可跑通 | 最小 story 是否能走到 stage 执行和 done 协议 | 最小 profile 回归 |
+| 可卡住 | done 缺失、done malformed、CLI 退出等异常是否被识别 | debug_packet 单测 |
+| 可排查 | 用户能否一键导出脱敏诊断包给维护者 | `story diagnostics --no-zip` + zip smoke |
 
-### 架构审查门禁
+### v0.6 暂停项
 
-| 模块 | 内容 | 关键文件 |
-|------|------|----------|
-| Signal 收集 | Bug 分类 → 模式识别 | `orchestrator/quality.py`（已有 pattern 匹配） |
-| 触发判定 | 多 Bug 指向同一抽象层失败 | 新增 `orchestrator/architecture_triggers.py` |
-| Packet 生成 | 结构化的架构审查请求 | `orchestrator/quality.py`（扩展现有 packet） |
-| TUI 展示 | 架构告警入口 | `cli/tui.py` |
+以下能力保留设计文档，但不在 v0.6 新增或扩展：
 
-### 阶段交接包
-
-| 模块 | 内容 | 关键文件 |
-|------|------|----------|
-| Handoff 协议 | YAML frontmatter + markdown 结构定义 | `orchestrator/nodes.py`（advance 节点触发生成） |
-| LLM 自动生成 | 阶段完成时自动生成交接文档 | `orchestrator/planner.py`（调用 LLM 生成） |
-| Review 校验 | 交接质量审查 | `orchestrator/gate.py`（扩展 gate 检查） |
-| 注入到下级 prompt | Executor 拿到上一阶段的 handoff 作为上下文 | `orchestrator/nodes.py` `_render_prompt()` |
-
-### P0: DecisionEnvelope + Policy Engine 骨架
-
-统一 planner / router / reviewer 的决策输出结构，建立 `LLM proposes, Policy disposes` 闭环。
-
-| 模块 | 内容 | 关键文件 |
-|------|------|----------|
-| DecisionEnvelope 类型 | decision_id、confidence、reason、budget_delta、requires_human、policy_result | 新增 `orchestrator/envelope.py` |
-| StrategyEnvelope 类型 | strategy_id、mode、initial_route、budget、thresholds、human_interrupt_policy | 新增 `orchestrator/envelope.py` |
-| Router 输出改造 | `router.py` 返回 DecisionEnvelope 而非裸 action string | `orchestrator/router.py` |
-| Planner 输出改造 | `planner.py` plan dict 嵌入 DecisionEnvelope 字段 | `orchestrator/planner.py` |
-| Policy Engine 骨架 | allow / reject / needs_confirm / shadow_only 四态裁决 | 新增 `orchestrator/policy.py` |
-| Policy 最小规则 | destructive→needs_confirm、production risk→needs_confirm、超预算→reject、低 confidence→needs_confirm | `orchestrator/policy.py` |
-| Graph 节点集成 | plan_stage / router_node 调用 policy_check 后再执行 | `orchestrator/nodes.py`、`orchestrator/graph.py` |
-| 审计日志 | 每次 policy decision 写入 event_log | `orchestrator/observability.py` |
-
-### P1: Complexity Classifier + Simple Execution Path
-
-START 阶段做 cheap intake，trivial 任务走简化路径。
-
-| 模块 | 内容 | 关键文件 |
-|------|------|----------|
-| Complexity Classifier | 规则/小模型判断 trivial/S/M/L/Epic | 新增 `orchestrator/complexity.py` |
-| START cheap intake | 只读标题、来源元数据、PRD 摘要、关键词 | `orchestrator/entry.py`（扩展 intake 逻辑） |
-| Simple Execution Path | trivial 任务跳过完整 Meta-Planner，可选轻量 review | `orchestrator/graph.py`（条件分支） |
-| 熔断机制 | 修改文件数超阈值、触及高风险路径、retry 超限 → return_to_plan | `orchestrator/nodes.py`（circuit breaker） |
-| Profile 集成 | minimal profile 增加 `simple_path` 配置段 | `profiles/minimal.yaml` |
+- DecisionEnvelope / Policy Engine 的进一步编排集成
+- Complexity Classifier / Simple Execution Path
+- Meta-Planner、Stage Graph、Graph Patch
+- Project Intelligence Probe / Workspace Onboarding 自动激活
+- SWE-bench 数据飞轮和双飞轮治理
+- Micro-tool、Tool Router、DPO 数据集
 
 ---
 
@@ -572,8 +545,8 @@ v0.6.0 ──→ v0.7.0 ──→ v0.8.0 ──→ v0.9.0 ──→ v1.0.0
   │           │           │           │           └── StoryOS baseline + 动态编排
   │           │           │           └── 项目感知编排需要 P0-P2 和输入层就位
   │           │           └── Project Intelligence Input Layer + 资源锁预演，可与 v0.7 并行
-  │           └── Evidence & Memory Layer，需要 P0 诊断和决策基础
-  └── Control Plane Foundation：诊断 + DecisionEnvelope + Policy Engine + Complexity Classifier
+  │           └── Evidence & Memory Layer，需要 v0.6 可靠性闭环和诊断基础
+  └── Reliability Loop：可安装 + 可启动 + 可跑通 + 可卡住 + 可排查
 ```
 
 v0.7.0 和 v0.8.0 可并行推进，二者在 v0.9.0 汇合。
@@ -585,7 +558,8 @@ v0.7.0 和 v0.8.0 可并行推进，二者在 v0.9.0 汇合。
 | StoryOS 能力 | 首次落地版本 | 说明 |
 |---|---|---|
 | Diagnostics / Debug Packet | v0.6.0 | 操作层可观测地基 |
-| DecisionEnvelope / Policy | v0.6.0 | 控制平面决策协议 |
+| Reliability Loop | v0.6.0 | 安装、启动、运行、卡住、排查的最小闭环 |
+| DecisionEnvelope / Policy | v0.7.0+ | 控制平面决策协议；v0.6 只冻结和验证已有代码 |
 | Evidence & Memory | v0.7.0 | trace、budget、working memory |
 | Story Source | v0.8.0 | TAPD/PRD/本地需求输入产品化 |
 | Test Source | v0.8.0 | 项目验证入口和 test plan |
@@ -601,8 +575,8 @@ v0.7.0 和 v0.8.0 可并行推进，二者在 v0.9.0 汇合。
 
 | 优先级 | 内容 | 目标版本 |
 |--------|------|----------|
-| P0 | DecisionEnvelope + Policy Engine 骨架 | v0.6.0 |
-| P1 | Complexity Classifier + Simple Execution Path | v0.6.0 |
+| P0 | DecisionEnvelope + Policy Engine 骨架 | v0.7.0+ |
+| P1 | Complexity Classifier + Simple Execution Path | v0.7.0+ |
 | P2 | Working Memory + Budget Ledger | v0.7.0 |
 | P1.5 | Resource Lock Dry-run | v0.8.0 |
 | P3 | Strategic Router Shadow Mode | v0.9.0 |
