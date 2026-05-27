@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.21] - 2026-05-27
+
+### Added
+- Board 右侧常驻诊断面板：展示 Story 卡住原因、会话状态、最近事件和诊断动作
+- `story diagnostics STORY_KEY` 命令：生成 Story 级诊断包（debug_packet、summary、events、stage_logs、gate_results、配置、环境、done 快照、terminal 输出、git 状态）
+- `story diagnostics --global` 命令：生成全局系统诊断包（环境、配置、CLI 帮助输出、包元数据、错误日志尾部）
+- Debug Packet 模块：`build_debug_packet()` 统一诊断数据 schema，供 TUI 和 CLI 共享
+- 确定性 Stuck Reason 规则引擎：10 种阻塞信号检测（missing_config、story_blocked、gate_blocked、done_malformed、done_waiting、cli_exited_without_done、stage_timeout、loop_exhausted 等）
+- 脱敏工具 `redact_text()` / `redact_mapping()`：自动遮盖 API key、token、password 等敏感信息
+- `get_stage_logs()` / `get_gate_results()` DB 查询助手，JOIN story 表按 story_key 查询
+- 窄屏自适应：终端宽度 < 120 列自动隐藏诊断面板
+- TUI 快捷键 `o` 切换诊断面板、`p` 打包 Story 诊断、`P` 打包全局诊断
+- StoryOS 定位理念文档
+- Board Copilot 诊断设计文档
+
+### Changed
+- `.gitignore` 新增 `.worktrees/` 排除项
+
+### Fixed
+- `stage_timeout` 卡住原因分支死代码：与 `done_waiting` 条件相同导致永远不可达，已通过 stage_log 时间戳计算实际耗时修复
+
 ## [0.5.20] - 2026-05-27
 
 ### Changed
