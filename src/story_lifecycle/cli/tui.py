@@ -2267,6 +2267,9 @@ class StoryBoardApp(App):
         """Callback when user submits a copilot question."""
         if not question:
             return
+        if not self.stories or self.selected_index >= len(self.stories):
+            self.notify("No story selected", severity="warning")
+            return
         s = self.stories[self.selected_index]
         key = s["story_key"]
         self._copilot_loading = True
