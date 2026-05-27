@@ -57,10 +57,15 @@ def _first_run_check():
     return True
 
 
+def _get_version():
+    try:
+        return __import__("importlib.metadata").metadata.version("story-lifecycle")
+    except Exception:
+        return "unknown"
+
+
 @click.group(invoke_without_command=True)
-@click.version_option(
-    version=__import__("importlib.metadata").metadata.version("story-lifecycle")
-)
+@click.version_option(version=_get_version(), message="%(prog)s %(version)s")
 @click.option("--serve", is_flag=True, help="Start API server instead of board")
 @click.option("--host", default="127.0.0.1", help="Server bind address")
 @click.option("--port", default=8180, help="Server bind port")
