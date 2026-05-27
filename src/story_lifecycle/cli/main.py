@@ -265,11 +265,13 @@ if not errorlevel 1 goto wait
 "{python_exe}" -m pip install --upgrade story-lifecycle
 del "%~f0" 2>nul
 """
-        bat_path = str(Path.home() / ".story-lifecycle" / "upgrade.bat")
-        with open(bat_path, "w", encoding="ascii") as f:
-            f.write(bat)
+        _ensure_dir = Path.home() / ".story-lifecycle"
+        _ensure_dir.mkdir(parents=True, exist_ok=True)
+        bat_path = _ensure_dir / "upgrade.bat"
+        bat_path.write_text(bat, encoding="ascii")
         subprocess.Popen(
-            ["cmd", "/c", bat_path],
+            f'start "" "{bat_path}"',
+            shell=True,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
         console.print("  [dim]Upgrade will run after this process exits.[/]")
