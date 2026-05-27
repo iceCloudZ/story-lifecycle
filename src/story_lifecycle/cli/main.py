@@ -107,6 +107,16 @@ def cli(ctx, serve, host, port, fix_deps):
     if not _first_run_check():
         return
 
+    if not is_configured():
+        console.print("[yellow]LLM API key not configured.[/]\n")
+        if console.input("[bold]Run setup wizard now? [Y/n][/] ").strip().lower() in (
+            "",
+            "y",
+            "yes",
+        ):
+            run_setup()
+            load_config_to_env()
+
     _run_board()
 
 
