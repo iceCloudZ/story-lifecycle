@@ -184,7 +184,16 @@ P0 使用 dict/dataclass 均可；对外写入 JSON 时使用 snake_case。
     "backend": "zellij",
     "session_name": "story-STORY-001",
     "session_alive": false,
-    "cli_exit_state": "exited_without_done"
+    "cli_exit_state": "exited_without_done",
+    "stage_started_at": "2026-05-27T14:05:00+08:00",
+    "stage_elapsed_seconds": 930
+  },
+  "terminal_output": {
+    "available": true,
+    "path": "terminal/recent_output.txt",
+    "line_count": 500,
+    "truncated": true,
+    "missing_reason": ""
   },
   "stuck_reason": {
     "code": "cli_exited_without_done",
@@ -214,11 +223,15 @@ P0 先使用确定性规则：
 | `done_malformed` | 当前 done 存在但解析失败 | error | done JSON 损坏，请查看 malformed 文件 |
 | `done_waiting` | session alive 且 done 不存在 | info | Agent 正在执行或等待 done 文件 |
 | `cli_exited_without_done` | CLI 已退出且 done 不存在 | warning | CLI 已退出，但当前阶段未写 done 文件 |
+| `stage_timeout` | session alive、done 不存在、当前 stage 执行时间超过阈值 | warning | 当前阶段运行时间过长，可能陷入等待或长耗时命令 |
+| `loop_exhausted` | review/plan 对抗循环达到 max_rounds 或 no-progress | warning | 对抗循环已达到上限，可能需要人工介入 |
 | `gate_blocked` | status paused 且存在 gate_decision/last_error | warning | Gate 阻塞，需要处理审查结果 |
 | `story_blocked` | status blocked | error | Story 已阻塞，需要人工恢复或失败处理 |
 | `waiting_subtasks` | status waiting_subtasks | info | 父 Story 正在等待子任务完成 |
 
 这些规则应放在 `debug_packet.py`，TUI 只消费结果，不重复判断。
+
+`stage_timeout` 的默认阈值 P0 可先写死为 15 分钟，后续再放入 profile。`loop_exhausted` 应优先从 `event_log` 中的 evaluator/review/no-progress 事件判断，而不是由 TUI 重新推理。
 
 ## Diagnostic Bundle
 
@@ -256,12 +269,58 @@ context/
   known_context_files.txt
 terminal/
   session_state.json
+  recent_output.txt
 workspace/
   git_status.txt
   git_diff_stat.txt
 ```
 
 P0 不要求所有文件都存在；缺失项写入 `manifest.json` 的 `missing` 列表。
+
+`terminal/recent_output.txt` 是 Story 级诊断的关键产物。P0 规则：
+
+- 如果后端是 Zellij，必须尝试采集当前 pane 最近 N 行 scrollback。
+- 默认 N=500 行，超过后截断并在 manifest 标记 `truncated=true`。
+- 如果当前平台、后端或 session 状态无法采集，必须在 `manifest.json` 里写明 `missing_reason`。
+- 如果采集失败，不中断诊断包生成。
+- Windows 下如果没有可用终端后端，允许缺失，但 summary.md 必须提示维护者终端输出不可用。
+
+终端输出的优先级高于 `git_diff_stat.txt`。排查 “CLI 退出但没有 done” 时，维护者应首先查看 `terminal/recent_output.txt`。
+
+### Summary 报告
+
+`summary.md` 是面向维护者的人读报告，不是 `debug_packet.json` 的格式化副本。它必须把 P0 规则结论和下一步关注点写清楚。
+
+模板：
+
+```markdown
+# 诊断报告: STORY-001
+
+- **状态**: active / implement
+- **Workspace**: D:\project
+- **卡住原因**: cli_exited_without_done
+- **说明**: CLI 已退出，但当前阶段未写 done 文件。
+
+## 最近关键事件
+
+- 14:21 execute_stage
+- 14:24 terminal_exit
+- 14:24 cli_exited_without_done
+
+## 重点关注
+
+1. 先看 `terminal/recent_output.txt`，确认 Agent 执行命令是否报错。
+2. 再看 `debug_packet.json` 的 `done_state`。
+3. 如果存在 malformed done，查看 `done/current.malformed`。
+
+## 包内容状态
+
+- terminal/recent_output.txt: present, truncated=true
+- done/current.malformed: missing
+- config.redacted.yaml: present
+```
+
+如果 `stuck_reason.code=stage_timeout`，重点关注应提示检查最近终端输出是否停在长耗时命令、依赖安装或测试命令。若 `loop_exhausted`，重点关注应提示查看 review/evaluator 事件。
 
 ### Global 包内容
 
@@ -297,6 +356,9 @@ logs/
   ],
   "missing": [
     {"path": "terminal/recent_output.txt", "reason": "not available on Windows"}
+  ],
+  "truncated": [
+    {"path": "terminal/recent_output.txt", "line_limit": 500}
   ]
 }
 ```
@@ -413,6 +475,26 @@ yield Footer()
 }
 ```
 
+### 窄屏布局规则
+
+右侧常驻面板不能挤爆左侧 Story 列表。P0 使用确定性宽度规则：
+
+| terminal width | 行为 |
+|---|---|
+| `< 120` 列 | 默认隐藏 diagnostics panel，左侧占满 |
+| `120-159` 列 | diagnostics panel 压缩为 34-38 列 |
+| `>= 160` 列 | diagnostics panel 使用 44 列 |
+
+左侧面板必须保留最小可读宽度。建议约束：
+
+```text
+left_min_width = 84
+diagnostics_min_width = 34
+diagnostics_default_width = 44
+```
+
+如果 `terminal_width - diagnostics_width < left_min_width`，必须隐藏或压缩 diagnostics panel，而不是继续压缩 Story 列表。
+
 ### 渲染函数
 
 新增：
@@ -474,31 +556,42 @@ def action_package_global_diagnostics(self): ...
 1. `build_debug_packet()` 覆盖 active/paused/blocked/waiting_subtasks。
 2. malformed done 文件不会被吞掉，packet 中 `done_state.valid=false`。
 3. `explain_stuck_reason()` 对主要状态返回稳定 code。
-4. `redact_text()` 能脱敏 key/token/password/authorization。
-5. `create_story_diagnostics_bundle()` 生成 manifest、summary、debug_packet。
-6. `create_global_diagnostics_bundle()` 未配置 LLM 时仍能运行。
+4. `stage_timeout` 在 session alive 且超阈值时触发。
+5. `loop_exhausted` 能从 evaluator/review/no-progress 事件触发。
+6. `redact_text()` 能脱敏 key/token/password/authorization。
+7. `create_story_diagnostics_bundle()` 生成 manifest、summary、debug_packet。
+8. `summary.md` 包含 stuck reason、最近事件和重点关注文件。
+9. `terminal/recent_output.txt` 可缺失但必须在 manifest 记录原因。
+10. `create_global_diagnostics_bundle()` 未配置 LLM 时仍能运行。
 
 TUI 层测试：
 
 1. `_render_diagnostics_packet()` 对空 story、正常 story、blocked story 都能输出。
 2. cursor 切换时右侧面板更新。
 3. `[p]` 调用 bundler 并展示路径。
+4. 终端宽度 `< 120` 时默认隐藏右侧面板。
+5. 终端宽度不足以保留左侧最小宽度时不挤压 Story 列表。
 
 集成测试：
 
 1. 构造 CLI exited without done 的 Story，诊断包记录 stuck_reason。
 2. 构造 malformed done，诊断包包含 malformed 文件。
-3. `story diagnostics --global` 输出 zip 且不包含 API key。
+3. 构造 stage timeout，右侧面板展示长耗时警告。
+4. 构造 loop exhausted，诊断包记录相关 evaluator/review 事件。
+5. Zellij 可用时，诊断包包含 `terminal/recent_output.txt`。
+6. `story diagnostics --global` 输出 zip 且不包含 API key。
 
 ## 落地顺序
 
 1. `orchestrator/debug_packet.py`
-2. `orchestrator/diagnostics.py`
-3. `cli/diagnostics.py` + `cli/main.py` 注册
-4. 单元测试覆盖 debug packet、redaction、bundle
-5. `cli/tui.py` 右侧只读面板
-6. TUI `[p]` / `[P]` 接入 bundler
-7. 回归 `story setup`、`story doctor`、`story diagnostics --global`
+2. `cli/diagnostics.py` + `story diagnostics STORY_KEY --no-zip`
+3. `summary.md`、redaction、terminal recent output
+4. `orchestrator/diagnostics.py` zip bundle
+5. 单元测试覆盖 debug packet、stuck reason、redaction、summary、bundle
+6. 用一个真实/模拟 Story 跑 `story diagnostics STORY_KEY --no-zip`，确认目录和报告足够回答问题
+7. `cli/tui.py` 右侧只读面板
+8. TUI `[p]` / `[P]` 接入 bundler
+9. 回归 `story setup`、`story doctor`、`story diagnostics --global`
 
 ## 后续阶段
 
@@ -520,4 +613,3 @@ P3 Policy Engine：
 - SuggestedAction 升级为 DecisionEnvelope。
 - 接入 autonomy level 和 policy check。
 - 右侧面板展示 policy decision。
-
