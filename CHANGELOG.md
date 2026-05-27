@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.28] - 2026-05-27
+
+### Fixed
+- Copilot 输入框发送无响应：`run_worker` 传参错误导致 `WorkerError`，改为 lambda 延迟调用
+- `story upgrade` bat 文件找不到：确保目录存在 + `start` 替代 `cmd /c`
+
 ## [0.5.27] - 2026-05-27
 
 ### Changed
