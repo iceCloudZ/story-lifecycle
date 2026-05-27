@@ -225,31 +225,25 @@ def _run_upgrade():
     pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "story-lifecycle"]
 
     if sys.platform == "win32":
-        # story.exe is locked by this process — write a bat script that waits for
-        # this PID to exit, then runs pip.  We use `tasklist` polling because
-        # `wait /b <pid>` only works for child processes.
         pid = os.getpid()
+        python_exe = sys.executable
         bat = f"""@echo off
 :wait
-tasklist /fi "PID eq {pid}" /nh 2>nul | find "{pid}" >nul
-if %errorlevel%==0 (
-    timeout /t 2 /nobreak >nul
-    goto wait
-)
-{sys.executable} -m pip install --upgrade story-lifecycle
-del "%~f0"
+timeout /t 2 /nobreak >nul
+tasklist /fi "PID eq {pid}" 2>nul | findstr /c:"{pid}" >nul 2>&1
+if not errorlevel 1 goto wait
+"{python_exe}" -m pip install --upgrade story-lifecycle
+del "%~f0" 2>nul
 """
         bat_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".bat", delete=False, encoding="utf-8"
+            mode="w", suffix=".bat", delete=False, encoding="ascii"
         )
         bat_file.write(bat)
         bat_file.close()
         subprocess.Popen(
-            [bat_file.name],
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-            | subprocess.DETACHED_PROCESS,
-            close_fds=True,
+            f'cmd /c start /min "" "{bat_file.name}"',
             shell=True,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
         console.print("  [dim]Upgrade will run after this process exits.[/]")
         raise SystemExit(0)
