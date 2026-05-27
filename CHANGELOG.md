@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.32] - 2026-05-27
+
+### Added
+- Config 自动备份保护：每次 CLI 启动备份 `config.yaml` → `config.yaml.bak`，丢失时自动恢复
+
 ## [0.5.31] - 2026-05-27
 
 ### Added
