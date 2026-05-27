@@ -885,6 +885,7 @@ class StoryBoardApp(App):
         self._pending_items: list = []
         self._pending_attach_args: list[str] | None = None
         self._session_backend = TtydSessionBackend()
+        self._show_diagnostics = True
 
     def compose(self) -> ComposeResult:
         yield Static(id="header-bar")
