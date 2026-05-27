@@ -781,6 +781,15 @@ class StoryBoardApp(App):
         border-bottom: solid $accent;
     }
 
+    #body-row {
+        height: 1fr;
+    }
+
+    #left-pane {
+        width: 1fr;
+        height: 100%;
+    }
+
     #plan-panel {
         height: 0;
         padding: 0;
@@ -812,6 +821,21 @@ class StoryBoardApp(App):
         height: auto;
         max-height: 14;
         display: block;
+    }
+
+    #diagnostics-panel {
+        width: 44;
+        min-width: 34;
+        max-width: 56;
+        height: 100%;
+        padding: 1 2;
+        border-left: solid $accent;
+        background: $panel;
+        overflow-y: auto;
+    }
+
+    #diagnostics-panel.hidden {
+        display: none;
     }
 
     #footer-bar {
@@ -846,6 +870,9 @@ class StoryBoardApp(App):
         Binding("shift+s", "run_setup", "Setup", key_display="S"),
         Binding("i", "show_inbox", "Inbox"),
         Binding("question_mark", "help", "Help", key_display="?"),
+        Binding("o", "toggle_diagnostics", "Diag", key_display="o"),
+        Binding("p", "package_story_diagnostics", "Pkg Story", key_display="p"),
+        Binding("shift+p", "package_global_diagnostics", "Pkg Global", key_display="P"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -862,9 +889,12 @@ class StoryBoardApp(App):
     def compose(self) -> ComposeResult:
         yield Static(id="header-bar")
         yield Static(id="plan-panel")
-        yield VerticalScroll(id="story-list")
-        yield Static(id="completed-section")
-        yield Static(id="detail-panel")
+        with Horizontal(id="body-row"):
+            with Vertical(id="left-pane"):
+                yield VerticalScroll(id="story-list")
+                yield Static(id="completed-section")
+                yield Static(id="detail-panel")
+            yield Static(id="diagnostics-panel")
         yield Static(id="footer-bar")
         yield Footer()
 
@@ -894,6 +924,7 @@ class StoryBoardApp(App):
         set_tui_app(self)
         self._watchdog_interval = 3
         self._show_detail = False
+        self._show_diagnostics = True
         self._collapsed_parents: set[str] = set()
         self._plan_story_key = ""
         self._spinner_idx = -1  # -1 = stopped
@@ -918,6 +949,11 @@ class StoryBoardApp(App):
                 self.set_interval(_poll_interval, self._poll_source)
         except Exception:
             pass
+
+        # Hide diagnostics on narrow screens at startup
+        if self.size.width < 120:
+            self._show_diagnostics = False
+            self.query_one("#diagnostics-panel").set_class(True, "hidden")
 
     def _visible_stories(self) -> list[dict]:
         """Return stories visible after collapse filtering."""
@@ -982,9 +1018,11 @@ class StoryBoardApp(App):
                     )
                     story_list.mount(card)
                     display_idx += 1
+            self._render_diagnostics_panel()
         else:
             for i, card in enumerate(self.query(StoryCard)):
                 card.set_selected(i == self.selected_index)
+            self._render_diagnostics_panel()
 
         # Completed stories section
         completed_section = self.query_one("#completed-section")
@@ -1005,6 +1043,85 @@ class StoryBoardApp(App):
         footer.update(
             " [dim][n] new  [N] sub  [i] inbox  [e] enter  [s] skip  [a] abort  [f] fail  [x] delete  [r] resume  [?] help[/]"
         )
+
+    def _render_diagnostics_panel(self) -> None:
+        """Render the right-side diagnostics panel for the selected story."""
+        panel = self.query_one("#diagnostics-panel")
+        if not self.stories or self.selected_index >= len(self.stories):
+            panel.update("[dim]No story selected[/]")
+            return
+
+        s = self.stories[self.selected_index]
+        key = s["story_key"]
+        try:
+            from ..orchestrator.debug_packet import build_debug_packet
+
+            packet = build_debug_packet(key)
+        except Exception as exc:
+            panel.update(f"[red]Error building diagnostics: {exc}[/]")
+            return
+
+        if "error" in packet:
+            panel.update(f"[dim]Diagnostics unavailable: {packet['error']}[/]")
+            return
+
+        story = packet["story"]
+        stuck = packet["stuck_reason"]
+        session = packet["session_state"]
+        events = packet.get("recent_events", [])
+        done = packet["done_state"]
+
+        severity_color = {
+            "error": "red",
+            "warning": "yellow",
+            "info": "dim",
+        }.get(stuck.get("severity", "info"), "dim")
+
+        lines = [
+            "[bold]Diagnostics[/]",
+            "",
+            f"[bold cyan]{key}[/]",
+            f"status: {story['status']}",
+            f"stage: {story['current_stage']}",
+            "",
+        ]
+
+        if stuck["code"] != "none":
+            lines.append(f"[bold {severity_color}]可能卡住：[/]")
+            lines.append(f"[{severity_color}]{stuck['message']}[/]")
+        else:
+            lines.append("[dim]未发现阻塞信号[/]")
+
+        lines.append("")
+
+        if session.get("cli_exit_state") and session["cli_exit_state"] != "none":
+            lines.append(f"[dim]CLI exit: {session['cli_exit_state']}[/]")
+        if session.get("session_name"):
+            alive = "alive" if session.get("session_alive") else "dead"
+            lines.append(f"[dim]Session: {session['session_name']} ({alive})[/]")
+
+        if not done.get("exists"):
+            lines.append("[dim]Done: missing[/]")
+        elif done.get("valid") is False:
+            lines.append("[red]Done: corrupted[/]")
+
+        lines.append("")
+
+        lines.append("[bold]最近事件：[/]")
+        for ev in events[-8:]:
+            et = ev.get("event_type", "?")
+            ts = str(ev.get("created_at", ""))[:16]
+            lines.append(f"[dim]{ts} {et}[/]")
+
+        lines.extend(
+            [
+                "",
+                "[[p]] package story diagnostics",
+                "[[P]] package global diagnostics",
+            ]
+        )
+
+        panel.update("\n".join(lines))
 
     def action_cursor_up(self):
         if self.selected_index > 0:
@@ -1870,6 +1987,67 @@ class StoryBoardApp(App):
             "  q       Quit"
         )
         panel.set_class(True, "visible")
+
+    def action_toggle_diagnostics(self):
+        """Toggle the right-side diagnostics panel visibility."""
+        self._show_diagnostics = not self._show_diagnostics
+        panel = self.query_one("#diagnostics-panel")
+        panel.set_class(not self._show_diagnostics, "hidden")
+        if self._show_diagnostics:
+            self._render_diagnostics_panel()
+
+    def action_package_story_diagnostics(self):
+        """Generate a diagnostic bundle for the selected story."""
+        if not self.stories or self.selected_index >= len(self.stories):
+            self.notify("No story selected", severity="warning")
+            return
+        s = self.stories[self.selected_index]
+        key = s["story_key"]
+        try:
+            from ..orchestrator.diagnostics import create_story_diagnostics_bundle
+
+            result = create_story_diagnostics_bundle(story_key=key)
+            if result.get("error"):
+                self.notify(f"Diagnostics failed: {result['error']}", severity="error")
+                return
+            path = result["path"]
+            self.notify(f"Bundle: {path}", title="Diagnostics")
+            db.log_event(
+                key,
+                s.get("current_stage", ""),
+                "diagnostic_bundle_created",
+                {"bundle_path": path, "bundle_type": "story"},
+            )
+        except Exception as exc:
+            self.notify(f"Error: {exc}", severity="error")
+
+    def action_package_global_diagnostics(self):
+        """Generate a global diagnostics bundle."""
+        try:
+            from ..orchestrator.diagnostics import create_global_diagnostics_bundle
+
+            result = create_global_diagnostics_bundle()
+            if result.get("error"):
+                self.notify(f"Diagnostics failed: {result['error']}", severity="error")
+                return
+            path = result["path"]
+            self.notify(f"Global bundle: {path}", title="Diagnostics")
+        except Exception as exc:
+            self.notify(f"Error: {exc}", severity="error")
+
+    def on_resize(self, event):
+        """Handle terminal resize -- hide diagnostics on narrow screens."""
+        width = event.size.width
+        panel = self.query_one("#diagnostics-panel")
+        if width < 120:
+            if self._show_diagnostics:
+                self._show_diagnostics = False
+                panel.set_class(True, "hidden")
+        else:
+            if not self._show_diagnostics:
+                self._show_diagnostics = True
+                panel.set_class(False, "hidden")
+                self._render_diagnostics_panel()
 
 
 def run_tui():
