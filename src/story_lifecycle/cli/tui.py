@@ -286,6 +286,52 @@ def _quick_stuck_hint(story: dict) -> str:
     return tag
 
 
+def _add_loop_status(lines: list[str], events: list[dict]) -> None:
+    """Append evaluator loop status to diagnostics lines."""
+    # Check last 15 events for loop activity
+    loop_events = [
+        e for e in events[-15:] if e.get("event_type", "").startswith("evaluator_loop_")
+    ]
+    if not loop_events:
+        return
+
+    latest = loop_events[-1]
+    etype = latest.get("event_type", "")
+    payload = latest.get("payload", {})
+    if isinstance(payload, str):
+        try:
+            import json as _json
+
+            payload = _json.loads(payload)
+        except Exception:
+            payload = {}
+
+    if etype == "evaluator_loop_started":
+        lt = payload.get("loop_type", "?")
+        mx = payload.get("max_rounds", "?")
+        lines.append(f"[bold cyan]⚙ 对抗循环: {lt}[/] (最多 {mx} 轮)")
+        lines.append("[dim]AI 正在审查和修正产出...[/]")
+    elif etype == "evaluator_loop_round":
+        lt = payload.get("loop_type", "?")
+        rnd = payload.get("round_id", "?")
+        dec = payload.get("decision", "?")
+        color = "green" if dec == "pass" else "yellow" if dec == "revise" else "red"
+        lines.append(
+            f"[bold cyan]⚙ 对抗循环: {lt} 第{rnd}轮[/] → [{color}]{dec}[/{color}]"
+        )
+        if payload.get("no_progress"):
+            lines.append("[bold red]⚠ 检测到无进展，可能陷入死循环[/]")
+    elif etype == "evaluator_loop_completed":
+        lt = payload.get("loop_type", "?")
+        dec = payload.get("decision", "?")
+        color = (
+            "green"
+            if dec in ("pass", "code_review_passed", "all_blockers_resolved")
+            else "yellow"
+        )
+        lines.append(f"[bold cyan]⚙ 对抗循环完成: {lt}[/] → [{color}]{dec}[/{color}]")
+
+
 def _render_detail(story: dict) -> str:
     """Render expanded detail for a story."""
     import json
@@ -1245,6 +1291,9 @@ class StoryBoardApp(App):
             et = ev.get("event_type", "?")
             ts = str(ev.get("created_at", ""))[:16]
             lines.append(f"[dim]{ts} {et}[/]")
+
+        # Evaluator loop status
+        _add_loop_status(lines, events)
 
         lines.append("")
 

@@ -1321,23 +1321,23 @@ def poll_completion_node(state: StoryState) -> StoryState:
                 db.update_context(key, field, str(data[field]))
         return state
 
-    # No done file yet — check if the session crashed (only for mplex-launched sessions)
+    # No done file yet — check if the session exited (only for mplex-launched sessions)
     session = ttyd.session_name(key)
     if key in ttyd._mplex_launched and not ttyd.session_alive(session):
-        state["last_error"] = "CC process crashed (session dead)"
+        state["last_error"] = ""
         log_node_error(
             key,
             stage,
             "poll_completion_node",
-            "SessionDead",
-            f"CC session {session} is dead, no done file found",
+            "SessionClosed",
+            f"Session {session} closed, no done file yet — keeping story active",
             execution_count=state.get("execution_count", 0),
             recoverable=True,
-            action="set_last_error",
+            action="keep_active",
         )
         return state
 
-    # Check CLI exit marker (foreground Zellij writes this when CLI process exits)
+    # Check CLI exit marker (written when user/aI exits the terminal)
     import tempfile as _tf
 
     exit_marker = Path(_tf.gettempdir()) / f"story-exit-{key}"
@@ -1347,16 +1347,16 @@ def poll_completion_node(state: StoryState) -> StoryState:
             exit_marker.unlink(missing_ok=True)
         except Exception:
             ec = "?"
-        state["last_error"] = f"CLI exited (code: {ec}) without producing .done file"
+        state["last_error"] = ""
         log_node_error(
             key,
             stage,
             "poll_completion_node",
-            "CLIExited",
-            f"CLI exited (code: {ec}) without .done file for stage {stage}",
+            "TerminalClosed",
+            f"Terminal closed (exit: {ec}), stage {stage} still in progress",
             execution_count=state.get("execution_count", 0),
             recoverable=True,
-            action="set_last_error",
+            action="keep_active",
         )
         return state
 
