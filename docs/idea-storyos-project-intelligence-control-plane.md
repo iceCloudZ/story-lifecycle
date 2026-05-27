@@ -428,6 +428,7 @@ StoryOS 不是新方向，而是现有设计的上位收敛。
 | Review Gate | Governance Layer |
 | Diagnostic Bundle | Runtime Evidence |
 | Project Intelligence 双飞轮 | Project Intelligence Layer + Flywheel |
+| Workspace Onboarding | Project Intelligence Layer 初始化 |
 
 因此 roadmap 不需要推翻，而是可以在 v0.6-v1.0 里加一个统一叙事：
 
