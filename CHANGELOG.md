@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.18] - 2026-05-27
+
+### Changed
+- CI 单元测试 xdist 并行，e2e 测试串行跑
+
 ## [0.5.17] - 2026-05-27
 
 ### Changed
