@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.27] - 2026-05-27
+
+### Changed
+- Copilot 弹窗改为诊断面板下方内嵌输入框：按 `y` 聚焦输入，Enter 发送，结果直接渲染在面板中
+
 ## [0.5.26] - 2026-05-27
 
 ### Fixed
