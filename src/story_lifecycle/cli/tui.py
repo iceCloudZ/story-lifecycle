@@ -1531,7 +1531,10 @@ class StoryBoardApp(App):
         """Rotate spinner and poll in-memory status bus."""
         try:
             # Check for foreground terminal requests (fast response)
-            from ..orchestrator.graph import take_terminal_request
+            from ..orchestrator.graph import (
+                take_terminal_request,
+                take_plan_activity,
+            )
 
             for s in self.stories:
                 args = take_terminal_request(s["story_key"])
@@ -1546,6 +1549,10 @@ class StoryBoardApp(App):
             if result:
                 summary, ok = result
                 self._plan_label = summary[:60] if ok else f"⚠ {summary[:60]}"
+            else:
+                activity = take_plan_activity(self._plan_story_key)
+                if activity:
+                    self._plan_label = activity[:60]
             if take_terminal_opened(self._plan_story_key):
                 self._plan_label = "✓ 终端已启动"
             self._spinner_idx += 1

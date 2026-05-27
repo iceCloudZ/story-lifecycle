@@ -38,6 +38,7 @@ _tui_app: object | None = None
 # In-memory status bus — thread-safe, no file I/O
 _status_lock = threading.Lock()
 _plan_done: dict[str, tuple[str, bool]] = {}
+_plan_activity: dict[str, str] = {}
 _terminal_opened: set[str] = set()
 _terminal_requests: dict[str, list[str]] = {}
 
@@ -116,6 +117,18 @@ def emit_plan_done(story_key: str, summary: str, ok: bool = True) -> None:
     """Signal that planning is complete."""
     with _status_lock:
         _plan_done[story_key] = (summary, ok)
+
+
+def emit_plan_activity(story_key: str, activity: str) -> None:
+    """Update the current planning activity label for the TUI spinner."""
+    with _status_lock:
+        _plan_activity[story_key] = activity
+
+
+def take_plan_activity(story_key: str) -> str | None:
+    """Atomically read and clear plan activity."""
+    with _status_lock:
+        return _plan_activity.pop(story_key, None)
 
 
 def take_plan_done(story_key: str) -> tuple[str, bool] | None:

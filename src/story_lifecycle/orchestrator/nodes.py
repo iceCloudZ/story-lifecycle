@@ -369,9 +369,10 @@ def plan_stage_node(state: StoryState) -> StoryState:
     # --- End adversarial plan loop ---
 
     try:
-        from ..orchestrator.graph import emit_plan_done
+        from ..orchestrator.graph import emit_plan_done, emit_plan_activity
 
         adapters = ["claude"]
+        emit_plan_activity(story_key, "正在分析需求，生成执行计划...")
         plan = planner.plan_stage(state, cfg, adapters)
 
         if plan.get("skip"):

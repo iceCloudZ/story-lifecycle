@@ -328,6 +328,10 @@ def run_plan_loop(
     # Resolve optimizer model from env for logging
     optimizer_model = os.environ.get("STORY_LLM_MODEL", "")
 
+    from ..orchestrator.graph import emit_plan_activity
+
+    emit_plan_activity(story_key, "正在评估计划质量...")
+
     log_loop_started(
         story_key=story_key,
         stage=stage,
@@ -406,6 +410,7 @@ def run_plan_loop(
                 decision = "revise"
 
             # Log round event
+            emit_plan_activity(story_key, f"评估第{round_num}轮: {decision}")
             log_loop_round(
                 story_key=story_key,
                 stage=stage,
