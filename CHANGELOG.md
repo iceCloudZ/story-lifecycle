@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.24] - 2026-05-27
+
+### Changed
+- P2 SuggestedAction：Copilot 新增 8 种结构化操作建议（read_only / local_config / workflow_state），含风险等级和确认机制
+- `story upgrade` bat 脚本写入已知路径 `~/.story-lifecycle/upgrade.bat`，修复 tempfile 路径找不到的问题
+
 ## [0.5.23] - 2026-05-27
 
 ### Added
