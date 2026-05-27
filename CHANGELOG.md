@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.39] - 2026-05-28
+
+### Fixed
+- CI 在 macOS/Windows 上失败：`terminal/` 缺少 `__init__.py`，导致 `from ...terminal import ttyd` 导入失败
+- `nodes/__init__.py` 缺少 `ttyd`、`notify`、`planner`、`router` 等重导出
+- `nodes/__init__.py` 缺少 `interrupt`、`GraphInterrupt` 重导出
+- 测试 `mock.patch` 目标未适配 `nodes/` 子包拆分（`load_profile`、`planner` 引用路径）
+- monkeypatching 未适配 `nodes/` 子包结构
+
+### Changed
+- 重构：提取 `CopilotState` dataclass，从分散的 `_copilot_*` 属性集中管理
+
+### Removed
+- 删除废弃的 `CopilotDialog` 类（已被 inline input 替代）
+
 ## [0.5.38] - 2026-05-27
 
 ### Changed
