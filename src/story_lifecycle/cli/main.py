@@ -81,6 +81,7 @@ def cli(ctx, serve, host, port, fix_deps):
             "demo",
             "upgrade",
             "swebench",
+            "diagnostics",
         ):
             if not is_configured():
                 console.print(
@@ -369,6 +370,10 @@ def _run_server(host, port):
         "story_lifecycle.orchestrator.api:app", host=host, port=port, reload=False
     )
 
+
+from .diagnostics import diagnostics  # noqa: E402
+
+cli.add_command(diagnostics)
 
 if __name__ == "__main__":
     cli()

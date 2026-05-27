@@ -331,6 +331,32 @@ def log_stage(story_key: str, stage: str, action: str, detail: str = ""):
         )
 
 
+def get_stage_logs(story_key: str, limit: int = 50) -> list[dict]:
+    """Return recent stage_log rows for a story, newest first."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT sl.* FROM stage_log sl
+               JOIN story s ON s.id = sl.story_id
+               WHERE s.story_key = ?
+               ORDER BY sl.id DESC LIMIT ?""",
+            (story_key, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_gate_results(story_key: str, limit: int = 20) -> list[dict]:
+    """Return recent gate_result rows for a story, newest first."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT gr.* FROM gate_result gr
+               JOIN story s ON s.id = gr.story_id
+               WHERE s.story_key = ?
+               ORDER BY gr.id DESC LIMIT ?""",
+            (story_key, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def delete_story(story_key: str):
     with _db() as conn:
         row = conn.execute(
