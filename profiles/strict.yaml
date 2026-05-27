@@ -1,0 +1,99 @@
+# Story Lifecycle — Strict Profile (4 stages with explicit review)
+# 严格路径：design → review_design → implement → review
+# 适用于高风险需求、团队协作、上线前审查。
+version: 4
+cli: claude
+
+stages:
+  design:
+    order: 1
+    description: "需求分析与方案设计"
+    skill: "/brainstorming"
+    confirm: false
+    review: true
+    max_retries: 2
+    allowed_providers: [deepseek, zhipu]
+    expected_outputs:
+      - spec_path
+      - complexity
+    next_default: [review_design]
+
+  review_design:
+    order: 2
+    description: "设计审查"
+    cli: codex
+    model: haiku
+    skill: ""
+    confirm: false
+    review: false
+    max_retries: 1
+    allowed_providers: [deepseek, zhipu]
+    expected_outputs:
+      - quality
+      - issues
+    next_default: [implement]
+
+  implement:
+    order: 3
+    description: "编码实现"
+    cli: claude
+    model: sonnet
+    confirm: false
+    review: true
+    max_retries: 3
+    allowed_providers: [deepseek, zhipu, anthropic]
+    expected_outputs:
+      - files_changed
+      - summary
+    next_default: [review]
+
+  review:
+    order: 4
+    description: "代码审查"
+    cli: claude
+    model: haiku
+    skill: ""
+    confirm: false
+    review: false
+    max_retries: 1
+    expected_outputs:
+      - quality
+      - issues
+    next_default: []
+
+quality:
+  enabled: true
+  readiness_check: true
+  inject_quality_packet: true
+  inject_executor_checklist: true
+  block_on_open_high_findings: true
+  verification_commands:
+    - pytest
+    - ruff check src tests
+
+adversarial:
+  enabled: true
+  plan_loop:
+    enabled: true
+    stages: [design, implement]
+    max_rounds: 3
+    pass_condition: no_open_blocker_or_major
+  code_loop:
+    enabled: true
+    mode: short_lived
+    max_rounds: 3
+    pass_condition: no_open_blocker
+    fallback: repair_packet
+  observability:
+    log_round_events: true
+    estimate_prompt_segments: true
+
+reviewers:
+  design:
+    mode: api
+    visible: true
+    max_rounds: 3
+  implement:
+    mode: api
+    visible: true
+    max_rounds: 3

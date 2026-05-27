@@ -99,7 +99,8 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
         patch("story_lifecycle.orchestrator.graph.emit_plan_done"),
         patch("story_lifecycle.orchestrator.graph.emit_terminal_opened"),
         patch(
-            "story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None
+            "story_lifecycle.orchestrator.nodes.graph_nodes.interrupt",
+            side_effect=lambda x: None,
         ),
     ):
         mock_planner.compress_context.return_value = None

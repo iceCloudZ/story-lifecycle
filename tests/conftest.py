@@ -5,6 +5,7 @@ import pytest
 from story_lifecycle.db import models as db
 from story_lifecycle.orchestrator import graph
 import story_lifecycle.orchestrator.nodes as nodes_mod
+import story_lifecycle.orchestrator.nodes.profile_loader as _pl
 
 
 @pytest.fixture(autouse=True)
@@ -39,8 +40,6 @@ def isolated_story_home(tmp_path, monkeypatch):
 
     # Force load_profile to always use package built-in profiles,
     # preventing tests from accidentally loading repo-root .story/ profiles
-    _orig_load = nodes_mod.load_profile
-
     def _load_builtin_only(name: str) -> dict:
         import importlib.resources as _ir
 
@@ -51,7 +50,10 @@ def isolated_story_home(tmp_path, monkeypatch):
             pass
         raise FileNotFoundError(f"Profile not found: {name}")
 
+    # Patch at both the module re-export AND the direct source,
+    # since graph_nodes.py imports directly from .profile_loader
     monkeypatch.setattr(nodes_mod, "load_profile", _load_builtin_only)
+    monkeypatch.setattr(_pl, "load_profile", _load_builtin_only)
 
     db.init_db()
     return story_home

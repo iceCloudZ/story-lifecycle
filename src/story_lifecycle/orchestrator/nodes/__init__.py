@@ -6,7 +6,7 @@ All existing ``from .nodes import X`` imports continue to work.
 
 # ---- Module-level attributes (tests access nodes.planner, nodes.ttyd, etc.) ----
 from .. import planner as planner
-from .. import router as router
+from .. import router as llm_router  # noqa: F401
 from ...terminal import ttyd as ttyd
 from ..notify import send as notify  # noqa: F401
 from langgraph.types import interrupt as interrupt

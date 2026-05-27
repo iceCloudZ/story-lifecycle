@@ -23,7 +23,8 @@ def _run_demo_with_db(tmp_path: Path):
         patch("story_lifecycle.orchestrator.graph.emit_plan_done"),
         patch("story_lifecycle.orchestrator.graph.emit_terminal_opened"),
         patch(
-            "story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None
+            "story_lifecycle.orchestrator.nodes.graph_nodes.interrupt",
+            side_effect=lambda x: None,
         ),
     ):
         from story_lifecycle.orchestrator.demo_tool import DemoTool

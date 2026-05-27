@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..db import models as db
 
-# Predefined payloads for the 3-stage minimal profile
+# Predefined payloads for demo profiles (design, implement, review)
 _DEMO_PAYLOADS = {
     "design": {
         "spec_path": "docs/spec.md",

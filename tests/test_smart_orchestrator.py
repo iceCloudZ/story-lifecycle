@@ -402,7 +402,9 @@ class TestRouterNode:
         state = _make_state(
             last_error="Execution failed",
         )
-        with patch("story_lifecycle.orchestrator.nodes.llm_router") as mock_router:
+        with patch(
+            "story_lifecycle.orchestrator.nodes.graph_nodes.llm_router"
+        ) as mock_router:
             mock_router.route.return_value = {
                 "action": "retry",
                 "reasoning": "Transient error",
@@ -636,7 +638,10 @@ class TestGraphCompilation:
 
 class TestSubStoryDelegation:
     @patch("story_lifecycle.orchestrator.nodes.planner")
-    @patch("story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None)
+    @patch(
+        "story_lifecycle.orchestrator.nodes.graph_nodes.interrupt",
+        side_effect=lambda x: None,
+    )
     def test_split_creates_sub_stories(self, mock_interrupt, mock_planner):
         mock_planner.compress_context.return_value = None
         mock_planner.plan_stage.return_value = {

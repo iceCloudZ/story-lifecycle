@@ -349,6 +349,7 @@ class TestWaitConfirmNode:
             interrupted.append(payload)
 
         monkeypatch.setattr(nodes, "interrupt", _fake_interrupt)
+        monkeypatch.setattr(nodes.graph_nodes, "interrupt", _fake_interrupt)
         monkeypatch.setattr(graph_mod, "is_story_running", lambda k: False)
 
         result = nodes.wait_confirm_node(state)
@@ -386,6 +387,9 @@ class TestWaitConfirmNode:
 
         interrupted = []
         monkeypatch.setattr(nodes, "interrupt", lambda p: interrupted.append(p))
+        monkeypatch.setattr(
+            nodes.graph_nodes, "interrupt", lambda p: interrupted.append(p)
+        )
         monkeypatch.setattr(graph_mod, "is_story_running", lambda k: False)
 
         result = nodes.wait_confirm_node(state)
@@ -424,6 +428,9 @@ class TestWaitConfirmNode:
 
         interrupted = []
         monkeypatch.setattr(nodes, "interrupt", lambda p: interrupted.append(p))
+        monkeypatch.setattr(
+            nodes.graph_nodes, "interrupt", lambda p: interrupted.append(p)
+        )
         monkeypatch.setattr(graph_mod, "is_story_running", lambda k: False)
 
         result = nodes.wait_confirm_node(state)
