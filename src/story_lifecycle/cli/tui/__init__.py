@@ -956,6 +956,27 @@ class CopilotDialog(ModalScreen):
         self.dismiss(None)
 
 
+class CopilotState:
+    """Encapsulated Copilot UI state — question, result, loading flag."""
+
+    __slots__ = ("loading", "question", "result")
+
+    def __init__(self):
+        self.loading = False
+        self.question = ""
+        self.result: dict | None = None
+
+    def reset(self):
+        self.loading = False
+        self.question = ""
+        self.result = None
+
+    def start(self, question: str):
+        self.loading = True
+        self.question = question
+        self.result = None
+
+
 class StoryBoardApp(App):
     """Interactive story board TUI."""
 
@@ -1104,12 +1125,7 @@ class StoryBoardApp(App):
         self._pending_attach_args: list[str] | None = None
         self._session_backend = TtydSessionBackend()
         self._show_diagnostics = True
-        self._copilot_loading = False
-        self._copilot_question = ""
-        self._copilot_result = None
-        self._copilot_loading = False
-        self._copilot_question = ""
-        self._copilot_result: dict | None = None
+        self._copilot = CopilotState()
 
     def compose(self) -> ComposeResult:
         yield Static(id="header-bar")
@@ -1360,17 +1376,17 @@ class StoryBoardApp(App):
         lines.append("")
 
         # Copilot section
-        if self._copilot_loading:
+        if self._copilot.loading:
             lines.append("[bold cyan]Copilot 思考中...[/]")
-            lines.append(f"[dim]Q: {self._copilot_question}[/]")
-        elif self._copilot_result:
+            lines.append(f"[dim]Q: {self._copilot.question}[/]")
+        elif self._copilot.result:
             lines.append("[bold cyan]═══ Copilot ═══[/]")
-            lines.append(f"[dim]Q: {self._copilot_question}[/]")
+            lines.append(f"[dim]Q: {self._copilot.question}[/]")
             lines.append("")
-            if self._copilot_result.get("error"):
-                lines.append(f"[red]错误: {self._copilot_result['error']}[/]")
+            if self._copilot.result.get("error"):
+                lines.append(f"[red]错误: {self._copilot.result['error']}[/]")
             else:
-                suggestions = self._copilot_result.get("suggestions", [])
+                suggestions = self._copilot.result.get("suggestions", [])
                 for i, sug in enumerate(suggestions):
                     conf = sug.get("confidence", "medium")
                     conf_color = {
@@ -1385,7 +1401,7 @@ class StoryBoardApp(App):
                     if i < len(suggestions) - 1:
                         lines.append("")
 
-                actions = self._copilot_result.get("actions", [])
+                actions = self._copilot.result.get("actions", [])
                 if actions:
                     lines.append("")
                     lines.append("[bold cyan]建议操作：[/]")
@@ -1436,16 +1452,14 @@ class StoryBoardApp(App):
     def action_cursor_up(self):
         if self.selected_index > 0:
             self.selected_index -= 1
-            self._copilot_result = None
-            self._copilot_loading = False
+            self._copilot.reset()
             self._render(full=False)
 
     def action_cursor_down(self):
         visible = self._visible_stories()
         if visible and self.selected_index < len(visible) - 1:
             self.selected_index += 1
-            self._copilot_result = None
-            self._copilot_loading = False
+            self._copilot.reset()
             self._render(full=False)
 
     def action_open_action_menu(self):
@@ -2390,9 +2404,7 @@ class StoryBoardApp(App):
             return
         s = self.stories[self.selected_index]
         key = s["story_key"]
-        self._copilot_loading = True
-        self._copilot_question = question
-        self._copilot_result = None
+        self._copilot.start(question)
         self._render_diagnostics_panel()
         self.notify(f"Asking Copilot about {key}...", title="Copilot")
         self.run_worker(
@@ -2441,8 +2453,8 @@ class StoryBoardApp(App):
 
     def _on_copilot_done(self, result: dict):
         """Called on main thread when copilot query completes."""
-        self._copilot_loading = False
-        self._copilot_result = result
+        self._copilot.loading = False
+        self._copilot.result = result
         self._render_diagnostics_panel()
         count = len(result.get("suggestions", []))
         n_actions = len(result.get("actions", []))
@@ -2471,9 +2483,9 @@ class StoryBoardApp(App):
 
     def _execute_copilot_action(self, index: int):
         """Execute a copilot-suggested action, respecting policy engine decisions."""
-        if not self._copilot_result:
+        if not self._copilot.result:
             return
-        actions = self._copilot_result.get("actions", [])
+        actions = self._copilot.result.get("actions", [])
         if index >= len(actions):
             return
         a = actions[index]
