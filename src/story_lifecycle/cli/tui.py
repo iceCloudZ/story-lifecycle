@@ -1107,7 +1107,10 @@ class StoryBoardApp(App):
         completed_count = len(completed)
         from importlib.metadata import version as _pkg_version
 
-        v = _pkg_version("story-lifecycle")
+        try:
+            v = _pkg_version("story-lifecycle")
+        except Exception:
+            v = "unknown"
         header.update(
             "\n"
             "  [bold cyan]◆[/] [bold white]Story[/][bold cyan]Lifecycle[/] "
@@ -1282,11 +1285,33 @@ class StoryBoardApp(App):
                     }
                     for i, a in enumerate(actions):
                         rc = risk_color.get(a.get("risk", ""), "dim")
-                        confirm = " [需确认]" if a.get("requires_confirm") else ""
-                        lines.append(f"  [{i + 1}] [{rc}]{a['label']}[/]{confirm}")
+                        policy = a.get("policy", {})
+                        pol_level = policy.get("level", "confirm")
+
+                        if pol_level == "forbidden":
+                            badge = " [red][禁止][/]"
+                        elif pol_level == "apply":
+                            badge = " [green][自动][/]"
+                        else:
+                            badge = " [yellow][需确认][/]"
+
+                        lines.append(f"  [{i + 1}] [{rc}]{a['label']}[/]{badge}")
                         if a.get("reason"):
                             lines.append(f"      [dim]{a['reason']}[/]")
-                    lines.append(f"[dim]按 [1-{min(len(actions), 3)}] 执行操作[/]")
+                        if policy.get("reason"):
+                            lines.append(f"      [dim]policy: {policy['reason']}[/]")
+                        if policy.get("rejection_count", 0) > 0:
+                            lines.append(
+                                f"      [dim red]已拒绝 {policy['rejection_count']} 次[/]"
+                            )
+
+                    exec_count = sum(
+                        1
+                        for a in actions
+                        if a.get("policy", {}).get("level") != "forbidden"
+                    )
+                    if exec_count:
+                        lines.append(f"[dim]按 [1-{min(exec_count, 3)}] 执行操作[/]")
 
         lines.extend(
             [
@@ -2324,38 +2349,56 @@ class StoryBoardApp(App):
         self._execute_copilot_action(2)
 
     def _execute_copilot_action(self, index: int):
-        """Execute a copilot-suggested action, with confirmation for risky actions."""
+        """Execute a copilot-suggested action, respecting policy engine decisions."""
         if not self._copilot_result:
             return
         actions = self._copilot_result.get("actions", [])
         if index >= len(actions):
             return
         a = actions[index]
+        policy = a.get("policy", {})
+        pol_level = policy.get("level", "confirm")
 
-        if a.get("requires_confirm"):
-            risk_label = {
-                "workflow_state": "工作流状态变更",
-                "local_config": "本地配置修改",
-            }.get(a.get("risk", ""), a.get("risk", ""))
-
-            def on_confirm(confirmed):
-                if confirmed:
-                    self._do_execute_copilot_action(a)
-                else:
-                    self._log_copilot_action(a, "rejected")
-
-            self.push_screen(
-                ConfirmDialog(
-                    f"执行操作: {a['label']}?\n\n"
-                    f"操作: {a['action']}\n"
-                    f"风险等级: {risk_label}\n"
-                    f"原因: {a.get('reason', '')}\n\n"
-                    f"该操作将修改工作流状态，是否继续？"
-                ),
-                on_confirm,
+        if pol_level == "forbidden":
+            self.notify(
+                f"禁止执行: {a['label']} — {policy.get('reason', '')}",
+                severity="error",
+                title="Policy Engine",
             )
-        else:
+            return
+
+        if pol_level == "apply":
             self._do_execute_copilot_action(a)
+            return
+
+        risk_label = {
+            "workflow_state": "工作流状态变更",
+            "local_config": "本地配置修改",
+        }.get(a.get("risk", ""), a.get("risk", ""))
+
+        rejection_info = ""
+        if policy.get("rejection_count", 0) > 0:
+            rejection_info = (
+                f"\n已拒绝次数: {policy['rejection_count']}\n"
+                f"policy: {policy.get('reason', '')}"
+            )
+
+        def on_confirm(confirmed):
+            if confirmed:
+                self._do_execute_copilot_action(a)
+            else:
+                self._log_copilot_action(a, "rejected")
+
+        self.push_screen(
+            ConfirmDialog(
+                f"执行操作: {a['label']}?\n\n"
+                f"操作: {a['action']}\n"
+                f"风险等级: {risk_label}"
+                f"{rejection_info}\n\n"
+                f"该操作将修改工作流状态，是否继续？"
+            ),
+            on_confirm,
+        )
 
     def _do_execute_copilot_action(self, action: dict):
         """Execute a copilot action and log it to event_log."""
