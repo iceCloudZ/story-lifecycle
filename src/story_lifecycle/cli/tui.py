@@ -2250,7 +2250,7 @@ class StoryBoardApp(App):
         self._render_diagnostics_panel()
         self.notify(f"Asking Copilot about {key}...", title="Copilot")
         self.run_worker(
-            self._do_copilot_query(key, question),
+            lambda: self._do_copilot_query(key, question),
             thread=True,
             exclusive=False,
         )
