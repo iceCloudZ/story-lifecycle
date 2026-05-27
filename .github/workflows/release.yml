@@ -20,6 +20,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
 
       - name: Build package
         run: pipx run build
@@ -55,7 +56,7 @@ jobs:
 
   pypi-publish:
     name: Publish to PyPI
-    needs: testpypi-publish
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -75,7 +76,7 @@ jobs:
 
   github-release:
     name: Create GitHub Release
-    needs: pypi-publish
+    needs: [testpypi-publish, pypi-publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write

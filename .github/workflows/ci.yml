@@ -18,15 +18,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
 
       - name: Install with dev dependencies
         run: pip install -e ".[dev]"
 
       - name: Ruff lint
-        run: pipx run ruff check src/
+        run: ruff check src/
 
       - name: Ruff format check
-        run: pipx run ruff format --check src/
+        run: ruff format --check src/
 
   test:
     name: Test (Python ${{ matrix.python-version }} on ${{ matrix.os }})
@@ -42,6 +43,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
 
       - name: Install with dev dependencies
         run: pip install -e ".[dev]"
@@ -59,6 +61,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
 
       - name: Build package
         run: pipx run build
