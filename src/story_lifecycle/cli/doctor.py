@@ -184,7 +184,7 @@ def run_doctor():
 
     # AI CLIs
     console.print()
-    console.print("[bold]AI CLI Tools[/]")
+    console.print("[bold]AI CLI Tools[/]  [dim](只需安装其中一个即可运行)[/]")
     cli_table = Table(show_header=False, padding=(0, 1))
     cli_table.add_column("Status", width=6)
     cli_table.add_column("Tool", width=15)
@@ -208,7 +208,7 @@ def run_doctor():
         console.print(
             Panel(
                 "[yellow]No AI CLI tools detected.[/]\n\n"
-                "Install at least one:\n"
+                "只需安装 [bold]其中一个[/] 即可：\n"
                 "  Claude Code: npm install -g @anthropic-ai/claude-code\n"
                 "  Codex CLI:   npm install -g @openai/codex\n"
                 "  Qoder CLI:   curl -fsSL https://qoder.com/install | bash\n"
@@ -224,7 +224,8 @@ def run_doctor():
             Panel(
                 f"[green]{len(available)} CLI tools available:[/] {', '.join(available)}\n\n"
                 f"Default CLI: [bold]{available[0]}[/]\n"
-                f"Change with: [bold]story setup[/] or edit [bold]~/.story-lifecycle/config.yaml[/]",
+                f"Change with: [bold]story setup[/] or edit [bold]~/.story-lifecycle/config.yaml[/]\n\n"
+                f"[dim]只需一个 CLI 工具即可运行，其余为可选项。[/]",
                 border_style="green",
             )
         )
@@ -236,9 +237,8 @@ def run_doctor():
         console.print(
             Panel(
                 "[yellow]Textual (TUI) not installed.[/]\n\n"
-                "Install Textual:\n"
-                "  pip install textual\n\n"
-                "Without Textual, the TUI board won't start.\n"
+                "pip install textual\n\n"
+                "TUI board 需要此组件。\n"
                 "Run [bold]story --fix[/] to auto-install.",
                 title="Warning",
                 border_style="yellow",
@@ -252,9 +252,8 @@ def run_doctor():
         console.print(
             Panel(
                 "[yellow]No terminal multiplexer found.[/]\n\n"
-                "Install Zellij:\n"
-                "  cargo install zellij / brew install zellij / winget install zellij\n\n"
-                "Without Zellij, AI terminal sessions won't launch.\n"
+                "winget install zellij\n\n"
+                "AI 终端会话需要此组件。\n"
                 "Run [bold]story --fix[/] to auto-install.",
                 title="Warning",
                 border_style="yellow",

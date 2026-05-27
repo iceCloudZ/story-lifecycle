@@ -73,7 +73,14 @@ def cli(ctx, serve, host, port, fix_deps):
     load_config_to_env()
 
     if ctx.invoked_subcommand is not None:
-        if ctx.invoked_subcommand not in ("doctor", "demo", "upgrade", "swebench"):
+        if ctx.invoked_subcommand not in (
+            "setup",
+            "serve",
+            "doctor",
+            "demo",
+            "upgrade",
+            "swebench",
+        ):
             if not is_configured():
                 console.print(
                     "[yellow]LLM API key not configured — launching setup wizard.[/]\n"
@@ -186,6 +193,21 @@ def create(key, title, prd, profile, workspace, no_start, dry_run):
 
 
 @cli.command()
+def setup():
+    """Configure LLM provider and API key."""
+    run_setup()
+    load_config_to_env()
+
+
+@cli.command()
+@click.option("--host", default="127.0.0.1", help="Server bind address")
+@click.option("--port", default=8180, help="Server bind port")
+def serve(host, port):
+    """Start the API server."""
+    _run_server(host, port)
+
+
+@cli.command()
 def demo():
     """Run a simulated lifecycle — no LLM, no AI CLI needed."""
     from .demo import run_demo
@@ -232,9 +254,12 @@ from .swebench import swebench_group  # noqa: E402
 cli.add_command(swebench_group)
 
 
-@cli.group()
-def doctor():
+@cli.group(invoke_without_command=True, no_args_is_help=False)
+@click.pass_context
+def doctor(ctx):
     """System diagnostics and maintenance."""
+    if ctx.invoked_subcommand is None:
+        run_doctor()
 
 
 @doctor.command()

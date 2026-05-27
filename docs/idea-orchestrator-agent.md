@@ -177,6 +177,7 @@ Meta-Planner 是“战役计划”制定者。它不关心某个 stage 的具体
 触发时机：
 
 - Story START。
+- 进入 design 前的 scope/decomposition 判断。
 - 连续 retry 无进展。
 - trajectory_score 显著下降。
 - 预算即将耗尽。
@@ -212,9 +213,446 @@ Meta-Planner 是“战役计划”制定者。它不关心某个 stage 的具体
     "ask_on_production_risk": true,
     "ask_on_budget_overrun": true,
     "ask_on_low_confidence_below": 0.6
+  },
+  "router_thresholds": {
+    "min_trajectory_score_for_advance": 0.75,
+    "review_score_revise_threshold": 0.65,
+    "max_retry_without_progress": 2,
+    "trigger_on_budget_burn_rate": 0.8
   }
 }
 ```
+
+Meta-Planner 还有一个不可后移到 design 末尾的职责：判断当前输入到底是单个 story，还是需要拆分的 epic。这个判断不能等到 design 阶段末尾再做，否则一个大需求已经消耗了大量设计成本，后续 implement 也会变成大爆炸修改。
+
+但是这个判断也不应该在 START 阶段做完整深读。START 阶段如果读完整 PRD、扫描代码、分析影响面，然后 plan 阶段再读一次，会造成 token 爆炸。更合理的方式是：
+
+```text
+START
+  cheap intake only
+  不深读 PRD
+  不做完整代码影响分析
+  只选择 profile / budget / autonomy level / 是否需要 deep plan
+  可运行 Complexity Classifier，识别 trivial/S/M/L/Epic
+
+PLAN
+  做一次深度理解
+  完成 scope sizing
+  如果是 L/Epic，则拆分子任务并生成上下文包
+```
+
+因此 Orchestrator Agent 的职责不是“START 阶段提前深读并拆分”，而是保证 **design/execute 之前已经完成 scope sizing 和 context sharding**。
+
+### Complexity Classifier 与 Simple Execution Path
+
+START 阶段可以做极轻量 Complexity Classifier，但不能做深度分析。它只消费标题、来源元数据、PRD 摘要、文件大小、关键词和少量 repo hints。
+
+输出：
+
+```json
+{
+  "complexity_hint": "trivial",
+  "confidence": 0.82,
+  "recommended_path": "simple_execution",
+  "reason": "single-file documentation wording change; no code/database/API impact detected"
+}
+```
+
+复杂度分流：
+
+```text
+trivial
+  -> Simple Execution Path
+  -> 不调用完整 Meta-Planner
+  -> 不做 decomposition
+  -> 可跳过 review 或使用轻量 review
+
+S/M
+  -> normal plan
+
+L/Epic
+  -> decomposition-aware plan
+```
+
+Simple Execution Path 适用场景：
+
+- typo / 文案修复。
+- 单文件低风险变更。
+- 无 DB/API/生产影响。
+- 无跨模块依赖。
+- 用户明确要求快速处理。
+
+即使走 Simple Execution Path，也必须保留 done 协议、event_log 和最小 review/verification 证据。
+
+Simple Execution Path 必须有熔断机制。Classifier 的误判成本是不对称的：把 trivial 判成 S/M 只是多花成本；把 Epic 判成 trivial 会造成严重错误。
+
+熔断信号：
+
+- 修改文件数超过阈值，例如 3 个。
+- 触及 DB migration、配置中心、权限、安全、支付、理赔、发布脚本等高风险路径。
+- 出现 review revise/fail。
+- 出现新的跨模块依赖。
+- done JSON 声明 complexity 从 trivial/S 升级到 M/L。
+- 执行耗时或 retry 超过 simple path budget。
+
+熔断后：
+
+```text
+simple_execution
+-> circuit_break
+-> return_to_plan
+-> normal plan / decomposition-aware plan
+```
+
+```text
+intake / story created
+-> START cheap intake
+-> PLAN deep analysis + scope sizing
+-> decide:
+     S/M story: enter design
+     L/epic: create decomposition proposal
+-> human_confirm or auto-create sub-stories by autonomy level
+-> per-sub-story design
+```
+
+判断信号：
+
+- 是否跨多个业务域或多个 bounded context。
+- 是否同时包含数据模型、计算逻辑、管理端 API、前端交互、迁移、回归测试。
+- 是否需要多个团队或多类 reviewer。
+- 是否存在可独立交付的功能切片。
+- 是否有明显依赖顺序，例如模型/DDL 先于计算策略，API 先于前端。
+- 是否设计文档产出会覆盖过多模块，导致 review 无法聚焦。
+
+Scope & Decomposition Gate 输出：
+
+```json
+{
+  "scope_decision": "decompose",
+  "complexity": "L",
+  "reason": "PRD touches domain model, DDL, calculation engine, admin API, frontend config, migration, quote simulation and claim regression.",
+  "recommended_next_stage": "confirm_decomposition",
+  "sub_stories": [
+    {
+      "key": "001-A",
+      "title": "分段赔付领域模型与数据结构设计",
+      "scope": ["domain model", "DDL", "migration"],
+      "depends_on": []
+    },
+    {
+      "key": "001-B",
+      "title": "分段赔付计算策略设计",
+      "scope": ["claim calculation", "segment algorithm", "edge cases"],
+      "depends_on": ["001-A"]
+    },
+    {
+      "key": "001-C",
+      "title": "保障因子管理端配置 API",
+      "scope": ["CRUD API", "validation", "OpenAPI"],
+      "depends_on": ["001-A"]
+    },
+    {
+      "key": "001-D",
+      "title": "前端分段规则配置交互",
+      "scope": ["dynamic rows", "interval validation", "UX constraints"],
+      "depends_on": ["001-C"]
+    },
+    {
+      "key": "001-E",
+      "title": "报价试算与理赔链路回归",
+      "scope": ["integration tests", "compatibility", "regression cases"],
+      "depends_on": ["001-B", "001-C"]
+    }
+  ],
+  "human_interrupt_required": true
+}
+```
+
+这类拆分建议不应该由 design stage 的执行 Agent 在文档末尾“顺手建议”。执行 Agent 已经进入具体设计上下文，天然会倾向继续展开细节。拆分是编排层职责，应该由 Orchestrator Agent 在任务生命周期入口做。
+
+更精确地说：拆分可以发生在 plan 阶段，但必须由 Orchestrator Agent / Meta-Planner 作为编排决策完成，而不是由 design executor 在产出设计文档后才附带建议。
+
+## Plan-stage Decomposition 与 Context Sharding
+
+Story Lifecycle 的一个天然优势是：不同 stage 默认在新窗口/新进程中运行，上下文天然隔离。共享上下文必须显式写入文件。这非常适合做可控的多 Agent 调度。
+
+因此，推荐的拆分模型是：
+
+```text
+PLAN
+  -> 一次性深读 PRD + repo signals + domain hints
+  -> 判断 S/M/L/Epic
+  -> 如果 S/M：生成单一 Task Packet
+  -> 如果 L/Epic：
+       生成 Decomposition Plan
+       生成 Dependency Graph
+       生成 per-task Task Packets
+
+EXECUTE
+  -> 读取 Decomposition Plan + Task Packets
+  -> 校验依赖图和冲突
+  -> 按拓扑层确定性调度
+  -> 能并行的 task 并行执行
+  -> 每个 task 新开隔离 agent/window
+  -> 每个 agent 只读取自己的 Task Packet
+
+REVIEW
+  -> 审查每个 task artifact
+  -> 审查集成风险
+  -> 决定 retry specific task / retry merge / return_to_plan
+```
+
+核心原则：
+
+```text
+全局深读只发生一次。
+拆分后的子任务必须上下文隔离。
+子 Agent 不继承完整 PRD、完整代码分析和完整历史上下文。
+每个子 Agent 只读取自己的 Task Packet。
+```
+
+### Decomposition Plan
+
+建议写入：
+
+```text
+.story/context/{story_key}/plan/decomposition.json
+```
+
+示例：
+
+```json
+{
+  "story_key": "001",
+  "strategy": "decompose",
+  "complexity": "L",
+  "tasks": [
+    {
+      "id": "A",
+      "title": "分段赔付领域模型与数据结构",
+      "packet_path": ".story/context/001/plan/tasks/A.md",
+      "depends_on": [],
+      "can_parallel": true,
+      "expected_artifacts": ["docs/specs/001-A-domain-model.md"],
+      "risk": "high"
+    },
+    {
+      "id": "B",
+      "title": "分段赔付计算策略",
+      "packet_path": ".story/context/001/plan/tasks/B.md",
+      "depends_on": ["A"],
+      "can_parallel": false,
+      "expected_artifacts": ["docs/specs/001-B-calculation.md"]
+    },
+    {
+      "id": "C",
+      "title": "保障因子管理端配置 API",
+      "packet_path": ".story/context/001/plan/tasks/C.md",
+      "depends_on": ["A"],
+      "can_parallel": true,
+      "expected_artifacts": ["docs/specs/001-C-admin-api.md"]
+    },
+    {
+      "id": "D",
+      "title": "前端分段规则配置交互",
+      "packet_path": ".story/context/001/plan/tasks/D.md",
+      "depends_on": ["C"],
+      "can_parallel": false,
+      "expected_artifacts": ["docs/specs/001-D-frontend.md"]
+    },
+    {
+      "id": "E",
+      "title": "报价试算与理赔链路回归",
+      "packet_path": ".story/context/001/plan/tasks/E.md",
+      "depends_on": ["B", "C"],
+      "can_parallel": false,
+      "expected_artifacts": ["docs/specs/001-E-regression.md"]
+    }
+  ]
+}
+```
+
+### Task Packet
+
+每个子任务上下文包建议写入：
+
+```text
+.story/context/{story_key}/plan/tasks/{task_id}.md
+```
+
+Task Packet 应包含：
+
+- 子任务目标。
+- 明确范围。
+- 非目标。
+- 依赖任务。
+- 可读取文件。
+- 禁止修改范围。
+- 资源锁。
+- 输入契约。
+- 输出契约。
+- 预期 artifact。
+- 测试要求。
+- 风险提示。
+- 完成 done JSON 协议。
+
+示例结构：
+
+```markdown
+# Task A: 分段赔付领域模型与数据结构
+
+## Goal
+设计分段赔付所需的领域模型、值对象、数据库结构和迁移策略。
+
+## Scope
+- 领域实体和值对象
+- DDL 草案
+- 兼容旧数据
+- 回滚方案
+
+## Non-goals
+- 不设计前端交互
+- 不实现理赔计算算法
+- 不修改代码
+
+## Relevant Files
+- backend/.../coverage/...
+- db/migration/...
+
+## Resource Locks
+- write:domain:claim_calculation
+- write:db_table:coverage_rule
+- write:file_glob:backend/**/CoverageRuleService.java
+
+## Output
+- docs/specs/001-A-domain-model.md
+
+## Done JSON
+{
+  "status": "success",
+  "task_id": "A",
+  "artifacts": ["docs/specs/001-A-domain-model.md"],
+  "summary": "...",
+  "open_questions": []
+}
+```
+
+Resource Locks 是并行调度的关键。`depends_on` 只能表达先后关系，不能表达资源冲突。两个 task 即使没有显式依赖，只要写锁冲突，也不能并行。
+
+资源锁类型示例：
+
+```json
+{
+  "resource_locks": [
+    {
+      "type": "file_glob",
+      "value": "backend/**/CoverageRuleService.java",
+      "mode": "write"
+    },
+    {
+      "type": "domain_area",
+      "value": "claim_calculation",
+      "mode": "write"
+    },
+    {
+      "type": "db_table",
+      "value": "coverage_rule",
+      "mode": "write"
+    },
+    {
+      "type": "api_prefix",
+      "value": "/api/v1/coverage-factors",
+      "mode": "write"
+    }
+  ]
+}
+```
+
+调度条件：
+
+```text
+depends_on satisfied
++ no conflicting resource_locks
+= can run parallel
+```
+
+### Execute 阶段职责
+
+execute 阶段不应该重新做完整依赖分析，也不应该重新深读 PRD。它的职责是确定性调度：
+
+```text
+load decomposition.json
+validate dependency graph
+validate packet_path exists
+validate no cycle
+validate parallel conflict hints
+validate resource_locks
+validate lock wait timeout
+topological sort
+run ready tasks by layer
+collect task done files
+merge task summaries
+emit execute summary
+```
+
+如果 execute 发现依赖图无效或并行冲突，不应该自行重拆，而应该返回 plan：
+
+```json
+{
+  "status": "blocked",
+  "reason": "invalid_decomposition",
+  "details": "Task B and C both modify CoverageRuleService.java but are marked parallel",
+  "recommended_action": "return_to_plan"
+}
+```
+
+调度器还需要防止资源锁死锁或长期等待。第一阶段可以不做复杂死锁图算法，先采用保守策略：
+
+- 每一层调度前先计算完整 runnable set。
+- 只启动 resource_locks 互不冲突的 task。
+- 如果某个 task 因锁等待超过阈值，标记为 `lock_wait_timeout`。
+- 如果连续 N 次调度轮询没有新 task 启动且仍有未完成 task，标记为 `scheduler_no_progress`。
+- 这类情况不由 execute 自行重排，应返回 plan 或 wait_confirm。
+
+示例：
+
+```json
+{
+  "status": "blocked",
+  "reason": "lock_wait_timeout",
+  "details": "Task C waited 10 minutes for write lock api_prefix:/api/v1/coverage-factors",
+  "recommended_action": "return_to_plan"
+}
+```
+
+### 并行策略
+
+并行不由子 Agent 自由决定，而由 plan 产出的 dependency graph 和 execute 的确定性调度器决定。
+
+```text
+layer 1: A
+layer 2: B + C
+layer 3: D + E
+merge/review
+```
+
+若某个 task 失败：
+
+- 依赖它的 task 阻塞。
+- 不依赖它的 task 可以继续。
+- 失败 task 的 packet、stdout、done、artifact 汇总给 review/router。
+- router 决定 retry task、return_to_plan 或 fail story。
+
+### Context Sharding 的收益
+
+这个模型解决的问题：
+
+- 避免每个子 Agent 重读完整 PRD。
+- 避免执行阶段重复做全局推理。
+- 保持 stage/window 的天然隔离优势。
+- 让并行边界可审计。
+- 让失败传播清楚。
+- 让 review 可以按 task 精准定位问题。
 
 ### Strategic Router
 
@@ -224,10 +662,10 @@ Strategic Router 是“前线战术指挥”。它在 stage 结束后，根据 S
 
 - review 结果为 revise/fail。
 - stage output 缺关键 artifact。
-- retry 多轮无进展。
-- trajectory_score 下降。
+- retry 多轮无进展，超过 StrategyEnvelope.router_thresholds。
+- trajectory_score 低于 StrategyEnvelope.router_thresholds。
 - provider/model health 降级。
-- budget 异常。
+- budget burn rate 超过 StrategyEnvelope.router_thresholds。
 - domain/engine constraint 冲突。
 - story 进入生产风险区。
 
@@ -445,6 +883,14 @@ Orchestrator Agent 如果没有预算意识，会天然倾向于多问 LLM、多
 
 Policy Engine 是系统安全边界。它消费 StrategyEnvelope / DecisionEnvelope，但只执行符合约束的提案。
 
+Policy Engine 不能等到后期才实现。哪怕 P0 只有硬编码规则，也必须先形成闭环：
+
+```text
+proposal -> policy_check -> allow / reject / needs_confirm / shadow_only
+```
+
+否则 DecisionEnvelope 只是日志，无法验证 `LLM proposes, Policy disposes`。
+
 校验维度：
 
 - 是否在 autonomy level 允许范围内。
@@ -466,6 +912,19 @@ Policy Engine 是系统安全边界。它消费 StrategyEnvelope / DecisionEnvel
   "blocked_actions": ["auto_apply_graph_patch"]
 }
 ```
+
+P0 的 Policy Engine Skeleton 可以只包含最小规则：
+
+```text
+1. destructive action 一律 needs_confirm。
+2. production risk 一律 needs_confirm。
+3. budget_delta 超过剩余预算则 reject 或 downgrade。
+4. confidence 低于 autonomy level 阈值则 needs_confirm。
+5. graph patch 不在 allowlist 内则 reject。
+6. L0/L1 autonomy 下所有 apply 类动作转为 shadow_only 或 needs_confirm。
+```
+
+后续再逐步从硬编码规则演进为 profile/config 驱动。即使未来引入规则 DSL 或 LLM 辅助解释 policy，最终裁决仍必须由确定性 policy check 产出。
 
 ## 自主等级
 
@@ -559,6 +1018,115 @@ Agent 什么时候必须问人：
 - budget policy 调优。
 - human override 分析。
 
+## Blackboard 异步契约
+
+EventBus 是事实日志，Blackboard 是聚合快照。两者不能阻塞主执行路径。
+
+```text
+stage emits event
+-> append event_log synchronously and quickly
+-> background aggregator consumes event_log
+-> update blackboard snapshot asynchronously
+-> router reads latest snapshot if available
+```
+
+约束：
+
+- event_log 写入可以在主流程同步完成，但必须足够快。
+- blackboard 聚合必须异步，不能成为 story 执行关键路径。
+- router 读取 blackboard 时必须容忍过期数据。
+- blackboard snapshot 必须带 `updated_at`、`ttl`、`staleness_ms`。
+- blackboard 不可用时，router 降级为不使用该信号，而不是阻塞。
+- TUI / debug panel 应显示 snapshot 新鲜度，让用户知道决策使用的是多久之前的全局状态。
+
+示例：
+
+```json
+{
+  "snapshot_id": "bb-20260527-100000",
+  "updated_at": "2026-05-27T10:00:00Z",
+  "staleness_ms": 4200,
+  "provider_health": {
+    "codex/headless/windows": {
+      "status": "degraded",
+      "ttl_seconds": 3600
+    }
+  }
+}
+```
+
+TUI 展示示例：
+
+```text
+Blackboard: provider health degraded (snapshot 4.2s old, ttl 3600s)
+```
+
+## Graph Patch Shadow / Sandbox Validation
+
+Graph Patch 是高风险能力。尤其是以下动作：
+
+```text
+insert_stage
+switch_model
+split_sub_story
+parallel_dispatch
+skip_stage
+```
+
+在低自治等级下，这些 patch 应先进入 shadow mode：
+
+```json
+{
+  "patch_id": "patch-001",
+  "proposal": "insert_stage:architecture_review",
+  "actual_path": "retry:implement",
+  "shadow_path": "architecture_review -> design -> implement",
+  "applied": false,
+  "reason": "L2 autonomy only allows shadow",
+  "later_outcome": "retry_failed_same_boundary_issue"
+}
+```
+
+shadow mode 的目标不是立即改变流程，而是积累反事实数据：
+
+- Agent 想怎么干。
+- Policy 为什么没让它干。
+- 实际路径结果如何。
+- 如果用户/评审认为提案更好，记录 counterfactual label。
+
+反事实标签不能完全自动推断。业务项目中如果 shadow proposal 与实际路径分歧，应在 TUI 提供非阻塞标注入口：
+
+```text
+AI 曾建议插入 architecture_review，系统实际选择 retry implement。
+如果当前 retry 结果不理想，可标记：AI 建议更合理 / 实际路径更合理 / 无法判断。
+```
+
+这些标签进入后续 router preference dataset。
+
+对于 SWE-bench 或安全沙箱，可以进一步做 sandbox validation：真实跑一条分支，比较 pass rate、成本、时间和失败类型。业务项目默认不做真实分支执行，除非显式授权。
+
+Scope & Decomposition Gate 也必须进入审计日志。后续如果某个大 story 因为未拆分导致 implement 失败、review 疲劳或回归爆炸，系统可以追溯是 scope sizing 判断错误，还是用户覆盖了拆分建议。
+
+```json
+{
+  "decision_id": "scope-001",
+  "decision_type": "scope_decomposition",
+  "story_key": "001",
+  "input_signals": [
+    "ddl_change",
+    "calculation_engine_change",
+    "admin_api_change",
+    "frontend_config_change",
+    "migration_required"
+  ],
+  "chosen_action": "decompose",
+  "complexity": "L",
+  "sub_story_count": 5,
+  "policy_result": "needs_confirm",
+  "human_override": null
+}
+```
+
 ## 与双飞轮的关系
 
 Orchestrator Agent 是双飞轮的执行控制面。
@@ -628,44 +1196,70 @@ safety constraint > domain production constraint > engine execution constraint >
 
 ## 落地路线
 
-### P0：DecisionEnvelope
+### P0：DecisionEnvelope + Policy Engine Skeleton
 
 - 统一 planner/router/reviewer 的决策输出结构。
 - 增加 decision_id、confidence、reason、budget_delta、requires_human、policy_result。
-- 不改变当前行为，只增加记录。
+- 增加最小 policy check：allow / reject / needs_confirm / shadow_only。
+- 不改变当前行为，除明确高风险动作进入 needs_confirm。
 
-### P1：Working Memory + Budget Ledger
+### P1：Complexity Classifier + Simple Execution Path
+
+- START 阶段做 cheap intake，不深读。
+- 规则或小模型判断 trivial/S/M/L/Epic。
+- trivial 走 Simple Execution Path，避免完整 Meta-Planner 成本。
+- Simple Execution Path 增加 circuit breaker，发现高风险或范围膨胀时 return_to_plan。
+- 保留 done、event_log 和最小 verification。
+
+### P1.5：Resource Lock Dry-run
+
+- 在真正开启并行调度前，execute 仍串行运行。
+- 后台模拟 resource_locks 争用。
+- 输出“如果并行会冲突”的 dry-run 报告。
+- 用 dry-run 数据校准锁粒度：太粗会导致无法并行，太细会漏掉冲突。
+
+### P2：Working Memory + Budget Ledger
 
 - 每个 story 建立 `.story/context/{story_key}/working_memory.json`。
 - 每个 story 建立 budget ledger。
 - 每个 stage 读取并更新 memory / budget。
 
-### P2：Strategic Router Shadow Mode
+### P3：Strategic Router Shadow Mode
 
 - 只在异常点生成 Strategic Router 建议。
 - 不执行建议，只记录 old_decision vs proposed_decision。
 - 统计 proposed decision 与后续 outcome 的关系。
+- 引入反事实评估字段：human_label、later_outcome、counterfactual_note。
+- TUI 提供非阻塞 human counterfactual label 入口。
 
-### P3：Runtime Blackboard
+### P4：Runtime Blackboard
 
 - 从 event_log 聚合 provider/model/stage 健康度。
 - 支持 TTL 和滑动窗口。
 - planner/router 可读取 blackboard，但只能作为低优先级证据。
+- blackboard 聚合异步执行，主流程只读取可用 snapshot。
+- TUI/debug panel 显示 blackboard snapshot staleness。
 
-### P4：Meta-Planner
+### P5：Meta-Planner + Plan-stage Decomposition
 
 - Story START 生成 StrategyEnvelope。
+- START 只做 cheap intake，完整 StrategyEnvelope 可推迟到 plan。
+- 在 plan 阶段执行 Scope & Decomposition Gate。
+- 对 L/epic 输入输出子故事拆分建议，而不是让 design stage 末尾才建议拆分。
+- 生成 Decomposition Plan、Dependency Graph、Task Packets、Resource Locks。
 - 先只作为 prompt/context，不直接改 graph。
 - major checkpoint 可触发 re-plan。
 
-### P5：Stage Graph + Graph Patch Registry
+### P6：Stage Graph + Graph Patch Registry + Sandbox Validation
 
 - 定义 Stage Library。
 - 定义 Stage Graph。
 - 注册 insert_stage、repeat_stage、split_sub_story、pause_for_human 等 patch。
 - Policy Engine 校验后才允许执行。
+- 高风险 patch 先进入 shadow mode。
+- SWE-bench 或显式授权环境可做 sandbox validation。
 
-### P6：Guarded Apply
+### P7：Guarded Apply
 
 - 根据 autonomy level 启用自动应用。
 - L1/L2 用于真实业务默认模式。
@@ -686,3 +1280,122 @@ Trace-driven Flywheel 作为持续进化机制
 ```
 
 这样系统可以逐步获得全局视野、自主决策和实时学习能力，同时保留 Story Lifecycle 最重要的工程属性：确定性、可解释、可审计、可干预。
+
+## 讨论记录与设计演进
+
+### 1. 拆分时机：不是 design 末尾
+
+真实任务书中出现了一个典型问题：design 阶段任务要求完整阅读 PRD、分析领域模型、设计 DDL、API、算法、前端交互、测试策略，最后才要求“如果 complexity=L，建议后续拆分子 Task”。
+
+这个时机过晚。对于 L/Epic 级需求，等 design executor 写完大设计再建议拆分，已经消耗了大量上下文和设计成本，也会让后续 implement 走向大爆炸修改。
+
+结论：
+
+```text
+拆分不能放在 design 末尾作为附带建议。
+拆分是编排层职责，必须在进入具体执行前完成。
+```
+
+### 2. START 阶段不能深读
+
+随后讨论发现：如果在 START 阶段让 Orchestrator Agent 深读 PRD、扫描代码、分析影响面，然后 plan 阶段又深读一次，会导致 token 爆炸。
+
+结论：
+
+```text
+START 只做 cheap intake。
+START 不做完整拆分。
+START 不做完整技术方案。
+START 只选择 profile、budget、autonomy level 和是否需要 deep plan。
+```
+
+### 3. Plan 阶段拆分是合理的
+
+结合 superpowers / sub-agent 模式，plan 阶段可以做一次深度理解，然后拆分子任务。关键不在于“越早越好”，而在于：
+
+```text
+全局深读只发生一次。
+拆分后的子 Agent 不共享完整上下文。
+每个子 Agent 只读取自己的 Task Packet。
+```
+
+这与 Claude Code subagent、Anthropic orchestrator-worker、OpenAI handoff、LangGraph supervisor/subagent 等方向一致：主 Agent 负责理解、拆分、派发、汇总；子 Agent 用隔离上下文执行局部任务。
+
+### 4. Execute 阶段负责调度，不负责重拆
+
+进一步讨论后，确定 execute 阶段不应该直接看到多个上下文包就自由开多 Agent，也不应该重新做完整依赖分析。
+
+职责边界应是：
+
+```text
+PLAN:
+  deep analysis
+  decomposition
+  dependency graph
+  task packets
+
+EXECUTE:
+  validate graph
+  deterministic scheduling
+  spawn isolated agents
+  collect results
+
+REVIEW:
+  per-task review
+  integration review
+  retry/merge/return_to_plan decision
+```
+
+这样既保留上下文隔离，又能安全利用并行。
+
+### 5. 当前设计结论
+
+最终收敛为：
+
+```text
+START cheap intake
+-> PLAN deep analysis + decomposition + context sharding
+-> EXECUTE deterministic parallel scheduler
+-> REVIEW task-level + integration-level review
+-> ROUTER retry specific task / return_to_plan / advance
+```
+
+这比“START 提前深读拆分”更省 token，也比“execute 临时自由多 Agent”更可控。
+
+### 6. Policy 与调度细节补强
+
+后续评审指出：如果 P0 只有 DecisionEnvelope，没有 Policy Engine，那么 `LLM proposes, Policy disposes` 只是日志，不是闭环。因此 P0 调整为 `DecisionEnvelope + Policy Engine Skeleton`。哪怕规则先硬编码，也必须先有 allow/reject/needs_confirm/shadow_only 的裁决接口。
+
+评审还指出，Task Packet 只靠 `depends_on` 不能保证并行安全。两个任务可能没有显式依赖，但会修改同一个服务、同一张表或同一个 API 前缀。因此增加 Resource Locks，execute 调度时必须同时满足：
+
+```text
+depends_on satisfied
++ no conflicting resource_locks
+= can run parallel
+```
+
+Strategic Router 的异常触发阈值也不应该写死。不同策略下阈值不同：
+
+```text
+quality_first: 更早触发 router
+speed_first: 更晚触发 router
+production_hotfix: 低风险容忍度
+swebench: 更激进探索
+```
+
+因此 `router_thresholds` 进入 StrategyEnvelope。
+
+最后，Blackboard 不能阻塞主流程。EventBus 负责同步写事实，Blackboard 由异步聚合器生成 snapshot。Router 可以读取轻微过期的 snapshot，但不能等待 blackboard 更新。
+
+这些补强让设计从“概念完整”进一步变成“工程可落地”。
+
+### 7. V2 评审补充
+
+进一步评审后补充了四类落地细节：
+
+1. Resource Locks 需要死锁/等待保护。第一阶段不做复杂锁管理，但 execute 必须有 `lock_wait_timeout` 和 `scheduler_no_progress`，避免并行调度卡死。
+2. Simple Execution Path 需要 circuit breaker。Classifier 误把 Epic 判成 trivial 的风险远高于把 trivial 判成 S/M，因此一旦发现范围膨胀或触及高风险资源，必须 return_to_plan。
+3. Blackboard snapshot 的新鲜度应在 TUI/debug panel 展示。用户需要知道 router 使用的是 4 秒前还是 4 分钟前的全局健康信号。
+4. Shadow Mode 的反事实数据不能只靠自动推断。业务项目需要低成本 human label 入口；SWE-bench 才适合真实 sandbox branch 对比。
+
+这些补充的共同目标是：让系统在变聪明之前，先保证不会因为并行、缓存、误分类或反事实幻觉而变得不可靠。

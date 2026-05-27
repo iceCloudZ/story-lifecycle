@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.8] - 2026-05-27
+
+### Added
+- 注册 `story setup` 子命令，安装后可直接进入 LLM 配置向导
+- 注册 `story serve` 子命令，保留 `story --serve` 的兼容入口
+- 增加 CLI 命令注册回归测试，覆盖 `setup` / `serve` / `doctor`
+- 新增多层验证体系设计文档：`docs/design-three-layer-validation.md`
+
+### Changed
+- 更新 Orchestrator Agent idea 文档，补充 Policy Engine、Resource Locks、异步 Blackboard、Shadow Mode 与上下文分片落地细节
+- 更新 v0.5 到 v1.0 路线图，将 Orchestrator Agent 各阶段设计文件映射到版本计划
+
+### Fixed
+- 修复 pip 安装后 `story setup` 找不到命令的问题
+- 修复用户手动加入 PATH 后 `story setup` / `story serve` 被误判为用法不对的问题
+- `story setup` / `story serve` 不再被启动前 API key 检查拦截
+- 修复 `story doctor` 作为子命令组无法直接运行的问题
+- `story doctor` 输出提示只需安装一个 AI CLI 工具即可运行，减少首次安装困惑
+
 ## [0.5.7] - 2026-05-27
 
 ### Fixed
