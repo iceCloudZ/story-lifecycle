@@ -171,7 +171,7 @@ def run_setup():
             f"Provider: {provider_info['name']}\n"
             f"Model: {model}\n"
             f"Config: {CONFIG_FILE}\n\n"
-            f"Run [bold]story serve[/] to start the orchestrator.\n"
+            f"Run [bold]story[/] to start the board.\n"
             f"Re-run [bold]story setup[/] anytime to change settings.",
             border_style="green",
         )
