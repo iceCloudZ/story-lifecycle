@@ -23,6 +23,21 @@ console = Console()
 _FIRST_RUN_MARKER = Path.home() / ".story-lifecycle" / ".initialized"
 
 
+def _cleanup_broken_dists():
+    """Remove ~-prefixed broken distributions left by interrupted pip installs."""
+    try:
+        import shutil
+        import site
+
+        sp = site.getsitepackages()[0]
+        broken = [d for d in os.listdir(sp) if d.startswith("~")]
+        if broken:
+            for d in broken:
+                shutil.rmtree(os.path.join(sp, d), ignore_errors=True)
+    except Exception:
+        pass
+
+
 def _first_run_check():
     """On first run: doctor check + setup wizard. Skip on subsequent runs."""
     if _FIRST_RUN_MARKER.exists():
@@ -75,6 +90,7 @@ def _get_version():
 @click.pass_context
 def cli(ctx, serve, host, port, fix_deps):
     """Story Lifecycle Manager — AI-powered development workflow orchestrator."""
+    _cleanup_broken_dists()
     init_db()
     load_config_to_env()
 
