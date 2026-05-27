@@ -38,6 +38,28 @@ def _cleanup_broken_dists():
         pass
 
 
+def _protect_config():
+    """Auto-backup config.yaml on startup; restore if missing."""
+    config_dir = Path.home() / ".story-lifecycle"
+    config_file = config_dir / "config.yaml"
+    backup_file = config_dir / "config.yaml.bak"
+
+    if config_file.exists():
+        try:
+            import shutil as _shutil
+
+            _shutil.copy2(config_file, backup_file)
+        except Exception:
+            pass
+    elif backup_file.exists():
+        try:
+            import shutil as _shutil
+
+            _shutil.copy2(backup_file, config_file)
+        except Exception:
+            pass
+
+
 def _first_run_check():
     """On first run: doctor check + setup wizard. Skip on subsequent runs."""
     if _FIRST_RUN_MARKER.exists():
@@ -91,6 +113,7 @@ def _get_version():
 def cli(ctx, serve, host, port, fix_deps):
     """Story Lifecycle Manager — AI-powered development workflow orchestrator."""
     _cleanup_broken_dists()
+    _protect_config()
     init_db()
     load_config_to_env()
 
