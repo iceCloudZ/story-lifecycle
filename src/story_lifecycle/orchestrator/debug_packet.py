@@ -52,9 +52,7 @@ def _has_loop_exhausted(story_key: str) -> bool:
             payload = e.get("payload")
             if isinstance(payload, str):
                 try:
-                    import json as _json
-
-                    payload = _json.loads(payload)
+                    payload = json.loads(payload)
                 except Exception:
                     continue
             if isinstance(payload, dict):
@@ -71,6 +69,7 @@ def _explain_stuck_reason(
     done_valid: bool | None,
     cli_exit,
     session_alive: bool,
+    stage_elapsed_seconds: int = 0,
 ) -> dict:
     """Determine why a story might be stuck. Pure deterministic rules."""
     status = story.get("status", "")
@@ -121,12 +120,12 @@ def _explain_stuck_reason(
             "message": "done JSON 损坏，请查看 malformed 文件",
         }
 
-    # 6. done_waiting
-    if session_alive and not done_exists:
+    # 6. stage_timeout
+    if session_alive and not done_exists and stage_elapsed_seconds > 900:
         return {
-            "code": "done_waiting",
-            "severity": "info",
-            "message": "Agent 正在执行或等待 done 文件",
+            "code": "stage_timeout",
+            "severity": "warning",
+            "message": "当前阶段运行时间过长，可能陷入等待或长耗时命令",
         }
 
     # 7. cli_exited_without_done
@@ -139,12 +138,12 @@ def _explain_stuck_reason(
             "message": "CLI 已退出，但当前阶段未写 done 文件。",
         }
 
-    # 8. stage_timeout
+    # 8. done_waiting
     if session_alive and not done_exists:
         return {
-            "code": "stage_timeout",
-            "severity": "warning",
-            "message": "当前阶段运行时间过长，可能陷入等待或长耗时命令",
+            "code": "done_waiting",
+            "severity": "info",
+            "message": "Agent 正在执行或等待 done 文件",
         }
 
     # 9. loop_exhausted
@@ -228,13 +227,35 @@ def build_debug_packet(story_key: str) -> dict:
     else:
         terminal_missing_reason = "session not alive"
 
+    # --- stage timing ---
+    stage_logs = db.get_stage_logs(story_key, limit=30)
+    stage_started_at = ""
+    stage_elapsed_seconds = 0
+    for log in reversed(stage_logs):  # logs are newest-first, reverse = oldest-first
+        if log.get("stage") == stage:
+            raw_ts = log.get("created_at", "")
+            if raw_ts:
+                stage_started_at = str(raw_ts)
+                try:
+                    ts = str(raw_ts).replace(" ", "T")
+                    started_dt = datetime.fromisoformat(ts)
+                    if started_dt.tzinfo is None:
+                        started_dt = started_dt.replace(tzinfo=timezone.utc)
+                    delta = datetime.now(timezone.utc) - started_dt
+                    stage_elapsed_seconds = int(delta.total_seconds())
+                except Exception:
+                    pass
+            break
+
     # --- stuck reason ---
-    stuck = _explain_stuck_reason(s, done_exists, done_valid, cli_exit, session_alive)
+    stuck = _explain_stuck_reason(
+        s, done_exists, done_valid, cli_exit, session_alive, stage_elapsed_seconds
+    )
 
     # --- recent data ---
-    recent_events_raw = db.get_story_events(story_key)
+    all_events = db.get_story_events(story_key)
     recent_events = []
-    for e in recent_events_raw[-50:]:
+    for e in all_events[-50:]:
         payload = e.get("payload")
         if isinstance(payload, str):
             try:
@@ -251,7 +272,6 @@ def build_debug_packet(story_key: str) -> dict:
             }
         )
 
-    stage_logs = db.get_stage_logs(story_key, limit=30)
     gate_results = db.get_gate_results(story_key, limit=20)
 
     # --- file hints ---
@@ -287,8 +307,8 @@ def build_debug_packet(story_key: str) -> dict:
             "session_name": session_name,
             "session_alive": session_alive,
             "cli_exit_state": cli_exit_str or "none",
-            "stage_started_at": "",
-            "stage_elapsed_seconds": 0,
+            "stage_started_at": stage_started_at,
+            "stage_elapsed_seconds": stage_elapsed_seconds,
         },
         "terminal_output": {
             "available": terminal_available,
