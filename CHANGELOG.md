@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.36] - 2026-05-27
+
+### Added
+- Profile v3：review 变为可见阶段，阶段条显示 `design → review_design → implement → review`
+- `review_design` 阶段：设计审查，使用 CLI 执行（Claude Code + haiku），含独立 prompt
+- `review` 阶段走 CLI 执行，不再只是内部 LLM API 调用
+- stage 支持挂载 skill：profile 中配 `skill: "/xxx"`，prompt 自动注入 Skill 工具调用指令
+
+### Fixed
+- `_build_plan_executor_prompt` 丢弃 skill 指令：改为从 metadata 提取并注入到最终 prompt
+- skill 指令格式从斜杠命令改为 "使用 Skill 工具调用"，适配非交互模式
+
+### Changed
+- 诊断面板按 stage 显示不同活动描述，对抗循环状态可见
+- Session 退出不再写 `last_error` 或 block story，保持 active 等待重新进入
+
 ## [0.5.35] - 2026-05-27
 
 ### Changed
