@@ -286,6 +286,52 @@ def _quick_stuck_hint(story: dict) -> str:
     return tag
 
 
+_STAGE_MESSAGES: dict[str, str] = {
+    "design": "正在分析需求并生成技术方案，AI reviewer 会审查方案的完整性和可行性",
+    "implement": "AI 正在编写代码，完成后会由 reviewer 审查代码质量",
+    "review": "AI reviewer 正在审查代码，检查 bug、安全问题和最佳实践",
+    "test": "AI 正在运行测试并验证功能正确性",
+    "finalize": "AI 正在整理产出物，生成最终报告",
+}
+
+
+def _stage_activity(stage: str, session: dict, stuck: dict, events: list[dict]) -> str:
+    """Return a human-readable description of what the system is doing now."""
+    # Check for active adversarial loop first
+    loop_started = any(
+        e.get("event_type") == "evaluator_loop_started" for e in events[-5:]
+    )
+    loop_rounds = [
+        e for e in events[-10:] if e.get("event_type") == "evaluator_loop_round"
+    ]
+    if loop_started and loop_rounds:
+        last_round = loop_rounds[-1]
+        p = last_round.get("payload", {})
+        if isinstance(p, str):
+            try:
+                import json as _json
+
+                p = _json.loads(p)
+            except Exception:
+                p = {}
+        lt = p.get("loop_type", "")
+        rnd = p.get("round_id", "?")
+        label = "方案审查" if lt == "plan" else "代码审查"
+        return f"正在进行{label}（第 {rnd} 轮），AI 之间正在交叉验证..."
+
+    # Stage-specific message
+    base = _STAGE_MESSAGES.get(stage, f"正在执行 {stage} 阶段")
+    if session.get("session_alive"):
+        return f"{base} — AI agent 正在终端中运行"
+    if stuck.get("code") == "done_waiting":
+        return f"{base} — 等待 AI agent 完成当前任务"
+    if stuck.get("code") == "cli_exited_without_done":
+        return "AI agent 已退出，等待用户操作（按 r 恢复，按 e 进入终端）"
+    if stuck.get("code") == "gate_blocked":
+        return "审查发现阻塞问题，需要用户决策（按 A 接受风险，按 r 重试审查）"
+    return base
+
+
 def _add_loop_status(lines: list[str], events: list[dict]) -> None:
     """Append evaluator loop status to diagnostics lines."""
     # Check last 15 events for loop activity
@@ -1250,6 +1296,7 @@ class StoryBoardApp(App):
         events = packet.get("recent_events", [])
         done = packet["done_state"]
 
+        stage_label = story.get("current_stage", "")
         severity_color = {
             "error": "red",
             "warning": "yellow",
@@ -1260,32 +1307,33 @@ class StoryBoardApp(App):
             "[bold]Diagnostics[/]",
             "",
             f"[bold cyan]{key}[/]",
-            f"status: {story['status']}",
-            f"stage: {story['current_stage']}",
+            f"status: {story['status']}   stage: {stage_label}",
             "",
         ]
 
+        # Stage-specific activity description
+        activity = _stage_activity(stage_label, session, stuck, events)
+        if activity:
+            lines.append(f"[bold cyan]{activity}[/]")
+            lines.append("")
+
         if stuck["code"] != "none":
-            lines.append(f"[bold {severity_color}]可能卡住：[/]")
-            lines.append(f"[{severity_color}]{stuck['message']}[/]")
-        else:
-            lines.append("[dim]未发现阻塞信号[/]")
+            lines.append(f"[{severity_color}]↳ {stuck['message']}[/]")
 
         lines.append("")
 
-        if session.get("cli_exit_state") and session["cli_exit_state"] != "none":
-            lines.append(f"[dim]CLI exit: {session['cli_exit_state']}[/]")
         if session.get("session_name"):
-            alive = "alive" if session.get("session_alive") else "dead"
+            alive = "alive" if session.get("session_alive") else "closed"
             lines.append(f"[dim]Session: {session['session_name']} ({alive})[/]")
-
         if not done.get("exists"):
-            lines.append("[dim]Done: missing[/]")
+            lines.append("[dim]Done: 等待中...[/]")
         elif done.get("valid") is False:
-            lines.append("[red]Done: corrupted[/]")
+            lines.append("[red]Done: 文件损坏[/]")
+
+        # Evaluator loop status
+        _add_loop_status(lines, events)
 
         lines.append("")
-
         lines.append("[bold]最近事件：[/]")
         for ev in events[-8:]:
             et = ev.get("event_type", "?")
