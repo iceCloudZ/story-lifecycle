@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.31] - 2026-05-27
+
+### Added
+- P3 Policy Engine：`orchestrator/policy_engine.py` 实现 DecisionEnvelope + AutonomyLevel（shadow/confirm/apply/forbidden）+ 拒绝追踪（3 次连续拒绝后降级 forbidden）
+- Copilot 操作结果写入 `copilot_action_confirmed` / `copilot_action_rejected` / `copilot_action_applied` 事件
+- TUI 诊断面板展示 Policy 决策：`[自动]` / `[需确认]` / `[禁止]` 标签 + policy 理由行 + 拒绝次数提示
+- forbidden 级别操作拒绝执行并 notify 提示
+
 ## [0.5.30] - 2026-05-27
 
 ### Changed

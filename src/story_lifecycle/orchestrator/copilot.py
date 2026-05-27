@@ -1,7 +1,8 @@
-"""P1/P2 Ask Copilot — LLM-powered diagnostic assistant.
+"""P1/P2/P3 Ask Copilot — LLM-powered diagnostic assistant.
 
 P1: redacted Debug Packet + user question → CopilotResponse with suggestions.
 P2: adds SuggestedAction — confirmable actions with risk levels.
+P3: adds Policy Engine — DecisionEnvelope with autonomy levels.
 Never auto-executes state-changing operations.
 """
 
@@ -70,7 +71,12 @@ def ask_copilot(story_key: str, question: str) -> dict:
 
     try:
         raw = _call_llm(base_url, api_key, model, prompt, story_key=story_key)
-        return _parse_copilot_response(raw)
+        result = _parse_copilot_response(raw)
+        # P3: wrap actions with policy engine evaluation
+        raw_actions = result.get("actions", [])
+        if raw_actions:
+            result["actions"] = _wrap_actions_policy(raw_actions, story_key)
+        return result
     except Exception as exc:
         log.warning(f"Copilot LLM call failed: {exc}")
         return {
@@ -313,3 +319,26 @@ def _normalize_actions(raw_actions: list) -> list[dict]:
             }
         )
     return valid
+
+
+def _wrap_actions_policy(raw_actions: list[dict], story_key: str) -> list[dict]:
+    """Wrap normalized actions in DecisionEnvelope with policy evaluation."""
+    from .policy_engine import wrap_actions
+
+    envelopes = wrap_actions(raw_actions, story_key)
+    return [
+        {
+            "action": e.action,
+            "label": e.label,
+            "risk": e.risk,
+            "reason": e.reason,
+            "requires_confirm": e.requires_confirm,
+            "policy": {
+                "level": e.policy.level.value,
+                "reason": e.policy.reason,
+                "matched_rule": e.policy.matched_rule,
+                "rejection_count": e.policy.rejection_count,
+            },
+        }
+        for e in envelopes
+    ]
