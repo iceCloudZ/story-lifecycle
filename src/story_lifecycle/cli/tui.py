@@ -916,6 +916,9 @@ class StoryBoardApp(App):
         Binding("question_mark", "help", "Help", key_display="?"),
         Binding("o", "toggle_diagnostics", "Diag", key_display="o"),
         Binding("y", "ask_copilot", "Ask Copilot", key_display="y"),
+        Binding("1", "copilot_action_1", ""),
+        Binding("2", "copilot_action_2", ""),
+        Binding("3", "copilot_action_3", ""),
         Binding("p", "package_story_diagnostics", "Pkg Story", key_display="p"),
         Binding("shift+p", "package_global_diagnostics", "Pkg Global", key_display="P"),
         Binding("q", "quit", "Quit"),
@@ -1198,6 +1201,23 @@ class StoryBoardApp(App):
                     lines.append(f"  [dim]confidence: {conf}[/]")
                     if i < len(suggestions) - 1:
                         lines.append("")
+
+                actions = self._copilot_result.get("actions", [])
+                if actions:
+                    lines.append("")
+                    lines.append("[bold cyan]建议操作：[/]")
+                    risk_color = {
+                        "read_only": "dim",
+                        "local_config": "yellow",
+                        "workflow_state": "red",
+                    }
+                    for i, a in enumerate(actions):
+                        rc = risk_color.get(a.get("risk", ""), "dim")
+                        confirm = " [需确认]" if a.get("requires_confirm") else ""
+                        lines.append(f"  [{i + 1}] [{rc}]{a['label']}[/]{confirm}")
+                        if a.get("reason"):
+                            lines.append(f"      [dim]{a['reason']}[/]")
+                    lines.append(f"[dim]按 [1-{min(len(actions), 3)}] 执行操作[/]")
 
         lines.extend(
             [
@@ -2194,12 +2214,97 @@ class StoryBoardApp(App):
         self._copilot_result = result
         self._render_diagnostics_panel()
         count = len(result.get("suggestions", []))
+        n_actions = len(result.get("actions", []))
         if result.get("error"):
             self.notify(
                 f"Copilot: {result['error']}", severity="warning", title="Copilot"
             )
+        elif n_actions:
+            self.notify(
+                f"{count} suggestion(s), {n_actions} action(s) — press 1-{n_actions} to execute",
+                title="Copilot",
+            )
         else:
             self.notify(f"Copilot returned {count} suggestion(s)", title="Copilot")
+
+    # ---- copilot action execution (P2) ----
+
+    def action_copilot_action_1(self):
+        self._execute_copilot_action(0)
+
+    def action_copilot_action_2(self):
+        self._execute_copilot_action(1)
+
+    def action_copilot_action_3(self):
+        self._execute_copilot_action(2)
+
+    def _execute_copilot_action(self, index: int):
+        """Execute a copilot-suggested action, with confirmation for risky actions."""
+        if not self._copilot_result:
+            return
+        actions = self._copilot_result.get("actions", [])
+        if index >= len(actions):
+            return
+        a = actions[index]
+
+        if a.get("requires_confirm"):
+            risk_label = {
+                "workflow_state": "工作流状态变更",
+                "local_config": "本地配置修改",
+            }.get(a.get("risk", ""), a.get("risk", ""))
+
+            def on_confirm(confirmed):
+                if confirmed:
+                    self._do_execute_copilot_action(a)
+                else:
+                    self._log_copilot_action(a, "rejected")
+
+            self.push_screen(
+                ConfirmDialog(
+                    f"执行操作: {a['label']}?\n\n"
+                    f"操作: {a['action']}\n"
+                    f"风险等级: {risk_label}\n"
+                    f"原因: {a.get('reason', '')}\n\n"
+                    f"该操作将修改工作流状态，是否继续？"
+                ),
+                on_confirm,
+            )
+        else:
+            self._do_execute_copilot_action(a)
+
+    def _do_execute_copilot_action(self, action: dict):
+        """Execute a copilot action and log it to event_log."""
+        self._log_copilot_action(action, "confirmed")
+
+        handlers = {
+            "package_diagnostics": self.action_package_story_diagnostics,
+            "run_doctor": self.action_run_doctor,
+            "enter_terminal": self.action_enter_terminal,
+            "run_setup": self.action_run_setup,
+            "resume_story": self.action_resume_story,
+            "skip_stage": self.action_skip_stage,
+            "fail_story": self.action_fail_story,
+            "abort_story": self.action_abort_story,
+        }
+        handler = handlers.get(action["action"])
+        if handler:
+            handler()
+
+    def _log_copilot_action(self, action: dict, outcome: str):
+        """Log copilot action confirmation/rejection to event_log."""
+        if not self.stories or self.selected_index >= len(self.stories):
+            return
+        s = self.stories[self.selected_index]
+        db.log_event(
+            s["story_key"],
+            s.get("current_stage", ""),
+            f"copilot_action_{outcome}",
+            {
+                "action": action["action"],
+                "label": action["label"],
+                "risk": action["risk"],
+            },
+        )
 
     def on_resize(self, event):
         """Handle terminal resize -- hide diagnostics on narrow screens."""
