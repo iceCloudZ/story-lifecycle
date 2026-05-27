@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.35] - 2026-05-27
+
+### Changed
+- 诊断面板按 stage 显示不同活动描述（design/implement/review/test 各有对应文案）
+- 对抗循环状态在诊断面板可见：显示循环类型、轮次、决策
+- Session/终端退出不再写 `last_error` 或 block story，保持 active 等待重新进入
+- 措辞优化：去掉 `crash`/`dead`/`blocked` 等负面用语
+
 ## [0.5.34] - 2026-05-27
 
 ### Added
