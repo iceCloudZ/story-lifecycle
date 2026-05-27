@@ -191,7 +191,10 @@ class StoryCard(Static):
         try:
             profile = load_profile(profile_name)
             stages = list(profile.get("stages", {}).keys())
-            bar = _render_stage_bar(stages, stage)
+            loop_stages = (
+                profile.get("adversarial", {}).get("plan_loop", {}).get("stages", [])
+            )
+            bar = _render_stage_bar(stages, stage, loop_stages)
         except FileNotFoundError:
             bar = stage
 
@@ -223,17 +226,26 @@ class StoryCard(Static):
         return "\n".join(lines)
 
 
-def _render_stage_bar(stages: list[str], current: str) -> str:
-    """Render stage progress bar, truncating if too many stages."""
+def _render_stage_bar(
+    stages: list[str],
+    current: str,
+    loop_stages: list[str] | None = None,
+) -> str:
+    """Render stage progress bar. loop_stages get a '⟳' marker for adversarial review."""
+    loop_set = set(loop_stages or [])
+
+    def _mark(s: str) -> str:
+        return f"{s}⟳" if s in loop_set else s
+
     if len(stages) > 5:
         idx = stages.index(current) if current in stages else 0
         show = []
         if idx > 0:
             show.append("...")
-            show.append(f"● {stages[idx - 1]}")
-        show.append(f"◉ [bold]{current}[/]")
+            show.append(f"● {_mark(stages[idx - 1])}")
+        show.append(f"◉ [bold]{_mark(current)}[/]")
         if idx < len(stages) - 1:
-            show.append(f"○ {stages[idx + 1]}")
+            show.append(f"○ {_mark(stages[idx + 1])}")
             if idx + 1 < len(stages) - 1:
                 show.append("...")
         return " → ".join(show)
@@ -241,12 +253,13 @@ def _render_stage_bar(stages: list[str], current: str) -> str:
     parts = []
     idx = stages.index(current) if current in stages else -1
     for i, s in enumerate(stages):
+        label = _mark(s)
         if s == current:
-            parts.append(f"◉ [bold]{s}[/]")
+            parts.append(f"◉ [bold]{label}[/]")
         elif i < idx:
-            parts.append(f"● {s}")
+            parts.append(f"● {label}")
         else:
-            parts.append(f"○ {s}")
+            parts.append(f"○ {label}")
     return " → ".join(parts)
 
 

@@ -20,7 +20,7 @@ stages:
   review_design:
     order: 2
     description: "设计审查"
-    cli: claude
+    cli: codex
     model: haiku
     skill: ""
     confirm: false
