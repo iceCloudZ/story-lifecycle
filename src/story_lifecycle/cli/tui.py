@@ -212,6 +212,11 @@ class StoryCard(Static):
             cli_line,
         ]
 
+        # Show stuck reason on card so user doesn't need diagnostics panel
+        stuck_hint = _quick_stuck_hint(s)
+        if stuck_hint:
+            lines.append(f"  {stuck_hint}")
+
         if last_error and status == "blocked":
             lines.append(f"  [dim red]↳ {last_error[:80]}[/]")
 
@@ -243,6 +248,42 @@ def _render_stage_bar(stages: list[str], current: str) -> str:
         else:
             parts.append(f"○ {s}")
     return " → ".join(parts)
+
+
+_HINT_MAP: dict[tuple[str, bool], tuple[str, str]] = {
+    ("paused", True): ("[bold yellow]⏸ review gate[/]", "按 r 重试审查 / A 接受风险"),
+    ("paused", False): ("[bold yellow]⏸ paused[/]", "按 r 恢复"),
+    ("blocked", False): ("[bold red]✗ blocked[/]", "按 r 恢复或处理"),
+    ("active", False): ("", ""),
+    ("completed", False): ("", ""),
+    ("failed", False): ("", ""),
+    ("aborted", False): ("", ""),
+    ("waiting_subtasks", False): ("[bold magenta]… waiting subs[/]", ""),
+}
+
+
+def _quick_stuck_hint(story: dict) -> str:
+    """Lightweight stuck reason hint for story cards. No DB queries."""
+    status = story.get("status", "active")
+    is_gate = False
+    if status == "paused":
+        try:
+            import json as _json
+
+            ctx = _json.loads(story.get("context_json") or "{}")
+            is_gate = bool(ctx.get("last_gate_decision_id"))
+        except Exception:
+            pass
+
+    hint_key = (status, is_gate)
+    if hint_key not in _HINT_MAP:
+        return ""
+    tag, advice = _HINT_MAP[hint_key]
+    if not tag:
+        return ""
+    if advice:
+        return f"{tag}  [dim]{advice}[/]"
+    return tag
 
 
 def _render_detail(story: dict) -> str:
@@ -2206,7 +2247,12 @@ class StoryBoardApp(App):
             },
         )
 
-        self.call_from_thread(self._on_copilot_done, result)
+        import threading
+
+        if threading.current_thread() is threading.main_thread():
+            self._on_copilot_done(result)
+        else:
+            self.call_from_thread(self._on_copilot_done, result)
 
     def _on_copilot_done(self, result: dict):
         """Called on main thread when copilot query completes."""
