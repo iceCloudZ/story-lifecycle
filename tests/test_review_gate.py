@@ -223,12 +223,16 @@ class TestReviewStageFatigue:
             execution_count=10,
         )
 
-        result = nodes.review_stage_node(state)
+        with patch(
+            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
+            return_value={"review": True},
+        ):
+            result = nodes.review_stage_node(state)
         assert result.get("last_error")
         assert "review retry limit" in result["last_error"].lower()
-        assert result.get("_pre_routed_action") == "wait_confirm"
         assert result.get("_gate_decision") is not None
         gd = result["_gate_decision"]
+        assert gd["decision"] == "wait_confirm"
         assert gd["reason_code"] == "review_retry_limit"
         assert gd["review_round_count"] == 3
 
@@ -249,11 +253,15 @@ class TestReviewStageFatigue:
             execution_count=9,
         )
 
-        result = nodes.review_stage_node(state)
+        with patch(
+            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
+            return_value={"review": True},
+        ):
+            result = nodes.review_stage_node(state)
         assert result.get("last_error")
         assert "review did not run" in result["last_error"].lower()
-        assert result.get("_pre_routed_action") == "wait_confirm"
         gd = result["_gate_decision"]
+        assert gd["decision"] == "wait_confirm"
         assert gd["reason_code"] == "review_not_run_due_to_stale_executor_attempt_count"
         assert gd["review_round_count"] == 0
 
