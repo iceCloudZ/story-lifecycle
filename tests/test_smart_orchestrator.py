@@ -70,6 +70,10 @@ def _disable_adversarial_for_legacy_node_tests():
             "story_lifecycle.orchestrator.nodes.profile_loader.load_profile",
             return_value=profile,
         ),
+        patch(
+            "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
+            return_value=profile,
+        ),
     ):
         yield
 
@@ -544,6 +548,10 @@ class TestAdvanceNode:
             ),
             patch(
                 "story_lifecycle.orchestrator.nodes.load_profile",
+                return_value={"stages": {"design": {"expected_outputs": ["prd_path"]}}},
+            ),
+            patch(
+                "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
                 return_value={"stages": {"design": {"expected_outputs": ["prd_path"]}}},
             ),
         ):

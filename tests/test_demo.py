@@ -16,7 +16,7 @@ def _run_demo_with_db(tmp_path: Path):
     with (
         patch.object(db, "get_db_path", return_value=db_path),
         patch.object(graph_mod, "checkpoint_db", checkpoint_path),
-        patch("story_lifecycle.orchestrator.nodes.planner") as mock_planner,
+        patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner") as mock_planner,
         patch("story_lifecycle.orchestrator.tools.get_tool") as mock_get_tool,
         patch("story_lifecycle.orchestrator.nodes.ttyd") as mock_ttyd,
         patch("story_lifecycle.orchestrator.nodes.notify"),
@@ -26,6 +26,34 @@ def _run_demo_with_db(tmp_path: Path):
             "story_lifecycle.orchestrator.nodes.graph_nodes.interrupt",
             side_effect=lambda x: None,
         ),
+        patch(
+            "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
+            return_value={
+                "cli": "claude",
+                "stages": {
+                    "design": {
+                        "description": "Design",
+                        "review": True,
+                        "expected_outputs": ["spec_path", "complexity"],
+                        "next_default": ["implement"],
+                    },
+                    "implement": {
+                        "description": "Implement",
+                        "review": True,
+                        "expected_outputs": ["files_changed", "summary"],
+                        "next_default": ["review"],
+                    },
+                    "review": {
+                        "description": "Review",
+                        "review": False,
+                        "expected_outputs": [],
+                        "next_default": [],
+                    },
+                },
+                "adversarial": {"enabled": False},
+            },
+        ),
+        patch("story_lifecycle.orchestrator.nodes.state.STORY_HOME", tmp_path),
     ):
         from story_lifecycle.orchestrator.demo_tool import DemoTool
         from story_lifecycle.orchestrator import nodes as nodes_mod

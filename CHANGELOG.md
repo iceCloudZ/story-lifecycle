@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - E2E 测试无限循环：`planner` 和 `load_profile` 的 mock.patch 目标未适配 `nodes/` 子包拆分，mock 未生效导致真实 planner 调用失败 → `wait_confirm → plan_stage` 死循环
+- `test_demo`、`test_review_gate`、`test_evaluator_loop`、`test_smart_orchestrator` 中同类 patch 路径问题一并修复
 
 ## [0.5.39] - 2026-05-28
 

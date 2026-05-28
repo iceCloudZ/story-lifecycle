@@ -1185,6 +1185,10 @@ def test_plan_stage_node_skips_loop_when_disabled(isolated_story_home):
             "story_lifecycle.orchestrator.nodes.profile_loader.load_profile",
             return_value={},
         ),
+        patch(
+            "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
+            return_value={},
+        ),
     ):
         with patch(
             "story_lifecycle.orchestrator.planner.compress_context",

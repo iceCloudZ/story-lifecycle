@@ -278,8 +278,12 @@ class TestReviewStageFatigue:
         )
 
         with (
-            patch("story_lifecycle.orchestrator.nodes.planner") as mock_planner,
-            patch("story_lifecycle.orchestrator.nodes.AdversarialConfig") as mock_adv,
+            patch(
+                "story_lifecycle.orchestrator.nodes.graph_nodes.planner"
+            ) as mock_planner,
+            patch(
+                "story_lifecycle.orchestrator.nodes.graph_nodes.AdversarialConfig"
+            ) as mock_adv,
         ):
             mock_planner.compress_context.return_value = None
             mock_planner.review_stage.return_value = {
