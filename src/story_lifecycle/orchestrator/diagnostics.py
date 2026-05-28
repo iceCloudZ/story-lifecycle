@@ -193,7 +193,14 @@ def create_global_diagnostics_bundle(
         ),
     ]:
         try:
-            r = subprocess.run(cmd_args, capture_output=True, text=True, timeout=15)
+            r = subprocess.run(
+                cmd_args,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+            )
             (cmds_dir / cmd_name).write_text(
                 r.stdout or r.stderr or "(empty)", encoding="utf-8"
             )

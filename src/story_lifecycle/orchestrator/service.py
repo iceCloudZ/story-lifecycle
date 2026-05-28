@@ -12,6 +12,41 @@ MAX_CONTEXT_SIZE = 1 * 1024 * 1024  # 1MB
 MAX_SUB_DEPTH = 1
 
 
+class WorkspaceError(Exception):
+    """Raised when workspace validation fails."""
+
+
+def _validate_workspace(workspace: str) -> None:
+    """Check basic workspace requirements before story creation."""
+    ws = Path(workspace)
+
+    if not ws.exists():
+        raise WorkspaceError(f"Workspace directory does not exist: {ws}")
+
+    if not ws.is_dir():
+        raise WorkspaceError(f"Workspace path is not a directory: {ws}")
+
+    # Check write permission
+    test_file = ws / ".story" / ".write_test"
+    try:
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("ok", encoding="utf-8")
+        test_file.unlink(missing_ok=True)
+    except PermissionError:
+        raise WorkspaceError(f"No write permission in workspace: {ws}")
+    except OSError as e:
+        raise WorkspaceError(f"Cannot write to workspace: {ws} ({e})")
+
+    # Detect legacy .story-done directory
+    legacy = ws / ".story-done"
+    if legacy.exists():
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Legacy .story-done/ directory detected. Run 'story doctor paths' to migrate."
+        )
+
+
 def _save_prd_task(item, workspace: str, story_key: str = ""):
     """Write prd-task-{story_key}.json for AI-enhanced PRD generation."""
     ws = Path(workspace) if workspace else Path.cwd()
@@ -50,6 +85,7 @@ def create_and_start_story(
     The caller (TUI worker or server) is responsible for starting execution.
     """
     ws = workspace or str(Path.cwd())
+    _validate_workspace(ws)
     profile_data = load_profile(profile)
     stages = profile_data.get("stages", {})
     first_stage = next(iter(stages)) if stages else "design"

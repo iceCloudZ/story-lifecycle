@@ -221,9 +221,29 @@ def build_debug_packet(story_key: str) -> dict:
     terminal_available = False
     terminal_path = ""
     terminal_missing_reason = ""
+    terminal_line_count = 0
+    terminal_truncated = False
     if session_alive:
         terminal_available = True
         terminal_path = f"terminal/{session_name}/recent_output.txt"
+        try:
+            import subprocess as _sp
+
+            r = _sp.run(
+                ["zellij", "action", "dump-screen", session_name, "-n", "500"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                terminal_line_count = len(r.stdout.splitlines())
+                terminal_truncated = terminal_line_count >= 500
+            else:
+                terminal_missing_reason = "session alive but dump-screen returned empty"
+        except FileNotFoundError:
+            terminal_missing_reason = "zellij not available"
+        except Exception as exc:
+            terminal_missing_reason = f"dump-screen failed: {exc}"
     else:
         terminal_missing_reason = "session not alive"
 
@@ -313,8 +333,8 @@ def build_debug_packet(story_key: str) -> dict:
         "terminal_output": {
             "available": terminal_available,
             "path": terminal_path,
-            "line_count": 0,
-            "truncated": False,
+            "line_count": terminal_line_count,
+            "truncated": terminal_truncated,
             "missing_reason": terminal_missing_reason,
         },
         "stuck_reason": stuck,

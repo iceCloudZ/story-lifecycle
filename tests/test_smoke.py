@@ -7,6 +7,28 @@ def test_package_imports():
     assert story_lifecycle is not None
 
 
+def test_main_module_entry():
+    """`python -m story_lifecycle` must have a __main__.py."""
+    from pathlib import Path
+
+    import story_lifecycle
+
+    pkg = Path(story_lifecycle.__file__).parent
+    assert (pkg / "__main__.py").exists(), "__main__.py missing from package"
+
+
+def test_version_option():
+    """CLI --version must return a non-empty string."""
+    from click.testing import CliRunner
+    from story_lifecycle.cli.main import cli
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--version"])
+    assert result.exit_code == 0, result.output
+    assert result.output.strip(), "--version produced empty output"
+    assert "unknown" not in result.output.lower(), "--version returned 'unknown'"
+
+
 def test_cli_module_imports():
     from story_lifecycle.cli.main import cli
 

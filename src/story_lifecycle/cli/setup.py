@@ -56,7 +56,10 @@ def is_configured() -> bool:
     """Check if the user has completed setup."""
     if not CONFIG_FILE.exists():
         return False
-    config = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+    try:
+        config = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return False
     return bool(config.get("api_key"))
 
 
@@ -64,7 +67,10 @@ def get_config() -> dict:
     """Load current config, or empty dict."""
     if not CONFIG_FILE.exists():
         return {}
-    return yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+    try:
+        return yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return {}
 
 
 def run_setup():
