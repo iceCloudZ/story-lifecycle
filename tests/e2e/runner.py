@@ -88,7 +88,7 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
         return scenario.review_payload(stage, execution_index=exec_count)
 
     with (
-        patch("story_lifecycle.orchestrator.nodes.planner") as mock_planner,
+        patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner") as mock_planner,
         patch("story_lifecycle.orchestrator.tools.get_tool") as mock_get_tool,
         patch("story_lifecycle.orchestrator.nodes.ttyd") as mock_ttyd,
         patch("story_lifecycle.orchestrator.nodes.notify"),

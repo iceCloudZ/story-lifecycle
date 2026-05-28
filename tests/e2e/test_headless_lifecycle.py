@@ -123,12 +123,14 @@ class TestSubStoryWaitResume:
         }
 
         with (
-            patch("story_lifecycle.orchestrator.nodes.planner") as mock_planner,
+            patch(
+                "story_lifecycle.orchestrator.nodes.graph_nodes.planner"
+            ) as mock_planner,
             patch("story_lifecycle.orchestrator.tools.get_tool") as mock_get_tool,
             patch("story_lifecycle.orchestrator.nodes.ttyd") as mock_ttyd,
             patch("story_lifecycle.orchestrator.nodes.notify"),
             patch(
-                "story_lifecycle.orchestrator.nodes.load_profile",
+                "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
                 return_value={
                     "cli": "claude",
                     "stages": {

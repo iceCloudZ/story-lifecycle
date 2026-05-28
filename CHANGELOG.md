@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.40] - 2026-05-28
+
+### Fixed
+- E2E 测试无限循环：`planner` 和 `load_profile` 的 mock.patch 目标未适配 `nodes/` 子包拆分，mock 未生效导致真实 planner 调用失败 → `wait_confirm → plan_stage` 死循环
+
 ## [0.5.39] - 2026-05-28
 
 ### Fixed
