@@ -9,6 +9,7 @@ from .. import planner as planner
 from .. import router as llm_router  # noqa: F401
 from ...terminal import ttyd as ttyd
 from ..notify import send as notify  # noqa: F401
+from ..evaluator_loop import AdversarialConfig as AdversarialConfig
 from langgraph.types import interrupt as interrupt
 from langgraph.errors import GraphInterrupt as GraphInterrupt
 
