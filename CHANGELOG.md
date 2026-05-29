@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.41] - 2026-05-29
+
+### Added
+- TUI 右侧面板拆分为「诊断」/「Copilot」双 Tab，Copilot 回答独立展示不再被诊断信息遮挡
+- Copilot 查询完成后自动切换到 Copilot Tab，回答即时可见
+- 新增 `_switch_to_copilot_tab()` 自动跳转和 `_build_copilot_lines()` 独立渲染
+
+### Fixed
+- Copilot 建议渲染在 diagnostics 面板最底部，被 stuck reason / evaluator loop / 最近事件等挤到视口外完全看不到
+- `_add_loop_status` 在同一个面板中被重复调用两次，进一步膨胀内容
+- 切换 story 时不再无条件 reset Copilot 状态，改为仅在选中 story 实际变化时 reset
+
 ## [0.5.40] - 2026-05-28
 
 ### Fixed

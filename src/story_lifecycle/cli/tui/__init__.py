@@ -14,7 +14,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll, Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Static, Input, Button
+from textual.widgets import Footer, Static, Input, Button, Tabs, Tab, ContentSwitcher
 from textual.reactive import reactive
 
 from ...db import models as db
@@ -1017,6 +1017,14 @@ class StoryBoardApp(App):
         display: none;
     }
 
+    #right-pane Tabs {
+        height: 3;
+    }
+
+    #right-pane ContentSwitcher {
+        height: 1fr;
+    }
+
     #copilot-bar {
         height: auto;
         padding: 0 1;
@@ -1082,6 +1090,7 @@ class StoryBoardApp(App):
         self._session_backend = TtydSessionBackend()
         self._show_diagnostics = True
         self._copilot = CopilotState()
+        self._copilot_story_key = ""
 
     def compose(self) -> ComposeResult:
         yield Static(id="header-bar")
@@ -1092,7 +1101,12 @@ class StoryBoardApp(App):
                 yield Static(id="completed-section")
                 yield Static(id="detail-panel")
             with Vertical(id="right-pane"):
-                yield Static(id="diagnostics-panel")
+                with Tabs(id="diag-tabs"):
+                    yield Tab("诊断", id="tab-diagnostics")
+                    yield Tab("Copilot", id="tab-copilot")
+                with ContentSwitcher(id="diag-switcher", initial="tab-diagnostics"):
+                    yield Static(id="diagnostics-panel")
+                    yield Static(id="copilot-panel")
                 yield Input(
                     id="copilot-input",
                     placeholder="按 y 聚焦 · 输入问题 · Enter 发送",
@@ -1258,8 +1272,11 @@ class StoryBoardApp(App):
     def _render_diagnostics_panel(self) -> None:
         """Render the right-side diagnostics panel for the selected story."""
         panel = self.query_one("#diagnostics-panel")
+        copilot_panel = self.query_one("#copilot-panel")
+
         if not self.stories or self.selected_index >= len(self.stories):
             panel.update("[dim]No story selected[/]")
+            copilot_panel.update("[dim]No story selected[/]")
             return
 
         s = self.stories[self.selected_index]
@@ -1297,7 +1314,6 @@ class StoryBoardApp(App):
             "",
         ]
 
-        # Stage-specific activity description
         activity = _stage_activity(stage_label, session, stuck, events)
         if activity:
             lines.append(f"[bold cyan]{activity}[/]")
@@ -1316,7 +1332,6 @@ class StoryBoardApp(App):
         elif done.get("valid") is False:
             lines.append("[red]Done: 文件损坏[/]")
 
-        # Evaluator loop status
         _add_loop_status(lines, events)
 
         lines.append("")
@@ -1326,76 +1341,6 @@ class StoryBoardApp(App):
             ts = str(ev.get("created_at", ""))[:16]
             lines.append(f"[dim]{ts} {et}[/]")
 
-        # Evaluator loop status
-        _add_loop_status(lines, events)
-
-        lines.append("")
-
-        # Copilot section
-        if self._copilot.loading:
-            lines.append("[bold cyan]Copilot 思考中...[/]")
-            lines.append(f"[dim]Q: {self._copilot.question}[/]")
-        elif self._copilot.result:
-            lines.append("[bold cyan]═══ Copilot ═══[/]")
-            lines.append(f"[dim]Q: {self._copilot.question}[/]")
-            lines.append("")
-            if self._copilot.result.get("error"):
-                lines.append(f"[red]错误: {self._copilot.result['error']}[/]")
-            else:
-                suggestions = self._copilot.result.get("suggestions", [])
-                for i, sug in enumerate(suggestions):
-                    conf = sug.get("confidence", "medium")
-                    conf_color = {
-                        "high": "green",
-                        "medium": "yellow",
-                        "low": "dim",
-                    }.get(conf, "dim")
-                    lines.append(f"[{conf_color}]◆ {sug['action']}[/]")
-                    if sug.get("summary"):
-                        lines.append(f"  [dim]{sug['summary']}[/]")
-                    lines.append(f"  [dim]confidence: {conf}[/]")
-                    if i < len(suggestions) - 1:
-                        lines.append("")
-
-                actions = self._copilot.result.get("actions", [])
-                if actions:
-                    lines.append("")
-                    lines.append("[bold cyan]建议操作：[/]")
-                    risk_color = {
-                        "read_only": "dim",
-                        "local_config": "yellow",
-                        "workflow_state": "red",
-                    }
-                    for i, a in enumerate(actions):
-                        rc = risk_color.get(a.get("risk", ""), "dim")
-                        policy = a.get("policy", {})
-                        pol_level = policy.get("level", "confirm")
-
-                        if pol_level == "forbidden":
-                            badge = " [red][禁止][/]"
-                        elif pol_level == "apply":
-                            badge = " [green][自动][/]"
-                        else:
-                            badge = " [yellow][需确认][/]"
-
-                        lines.append(f"  [{i + 1}] [{rc}]{a['label']}[/]{badge}")
-                        if a.get("reason"):
-                            lines.append(f"      [dim]{a['reason']}[/]")
-                        if policy.get("reason"):
-                            lines.append(f"      [dim]policy: {policy['reason']}[/]")
-                        if policy.get("rejection_count", 0) > 0:
-                            lines.append(
-                                f"      [dim red]已拒绝 {policy['rejection_count']} 次[/]"
-                            )
-
-                    exec_count = sum(
-                        1
-                        for a in actions
-                        if a.get("policy", {}).get("level") != "forbidden"
-                    )
-                    if exec_count:
-                        lines.append(f"[dim]按 [1-{min(exec_count, 3)}] 执行操作[/]")
-
         lines.extend(
             [
                 "",
@@ -1404,18 +1349,120 @@ class StoryBoardApp(App):
         )
 
         panel.update("\n".join(lines))
+        copilot_panel.update("\n".join(self._build_copilot_lines()))
+
+    def _build_copilot_lines(self) -> list[str]:
+        """Build content for the copilot panel tab."""
+        lines = ["[bold]Copilot[/]", ""]
+
+        if not self.stories or self.selected_index >= len(self.stories):
+            lines.append("[dim]No story selected[/]")
+            return lines
+
+        if self._copilot.loading:
+            lines.append("[bold cyan]Copilot 思考中...[/]")
+            lines.append(f"[dim]Q: {self._copilot.question}[/]")
+            return lines
+
+        if not self._copilot.result:
+            lines.append("[dim]按 y 聚焦输入框，输入问题后 Enter 发送[/]")
+            return lines
+
+        lines.append(f"[dim]Q: {self._copilot.question}[/]")
+        lines.append("")
+
+        if self._copilot.result.get("error"):
+            lines.append(f"[red]错误: {self._copilot.result['error']}[/]")
+            return lines
+
+        suggestions = self._copilot.result.get("suggestions", [])
+        for i, sug in enumerate(suggestions):
+            conf = sug.get("confidence", "medium")
+            conf_color = {
+                "high": "green",
+                "medium": "yellow",
+                "low": "dim",
+            }.get(conf, "dim")
+            lines.append(f"[{conf_color}]◆ {sug['action']}[/]")
+            if sug.get("summary"):
+                lines.append(f"  [dim]{sug['summary']}[/]")
+            lines.append(f"  [dim]confidence: {conf}[/]")
+            if i < len(suggestions) - 1:
+                lines.append("")
+
+        actions = self._copilot.result.get("actions", [])
+        if actions:
+            lines.append("")
+            lines.append("[bold cyan]建议操作：[/]")
+            risk_color = {
+                "read_only": "dim",
+                "local_config": "yellow",
+                "workflow_state": "red",
+            }
+            for i, a in enumerate(actions):
+                rc = risk_color.get(a.get("risk", ""), "dim")
+                policy = a.get("policy", {})
+                pol_level = policy.get("level", "confirm")
+
+                if pol_level == "forbidden":
+                    badge = " [red][禁止][/]"
+                elif pol_level == "apply":
+                    badge = " [green][自动][/]"
+                else:
+                    badge = " [yellow][需确认][/]"
+                lines.append(f"  [{i + 1}] [{rc}]{a['label']}[/]{badge}")
+                if a.get("reason"):
+                    lines.append(f"      [dim]{a['reason']}[/]")
+                if policy.get("reason"):
+                    lines.append(f"      [dim]policy: {policy['reason']}[/]")
+                if policy.get("rejection_count", 0) > 0:
+                    lines.append(
+                        f"      [dim red]已拒绝 {policy['rejection_count']} 次[/]"
+                    )
+
+            exec_count = sum(
+                1 for a in actions if a.get("policy", {}).get("level") != "forbidden"
+            )
+            if exec_count:
+                lines.append(f"[dim]按 [1-{min(exec_count, 3)}] 执行操作[/]")
+
+        questions = self._copilot.result.get("questions", [])
+        if questions:
+            lines.append("")
+            lines.append("[bold cyan]追问：[/]")
+            for q in questions:
+                lines.append(f"  [dim]• {q}[/]")
+
+        return lines
+
+    def _switch_to_copilot_tab(self):
+        """Switch right pane to show the Copilot tab."""
+        try:
+            switcher = self.query_one("#diag-switcher", ContentSwitcher)
+            switcher.current = "tab-copilot"
+        except Exception:
+            pass
+
+    def _reset_copilot_if_story_changed(self):
+        """Reset copilot only when the selected story actually changes."""
+        if not self.stories or self.selected_index >= len(self.stories):
+            return
+        key = self.stories[self.selected_index]["story_key"]
+        if key != self._copilot_story_key:
+            self._copilot.reset()
+            self._copilot_story_key = key
 
     def action_cursor_up(self):
         if self.selected_index > 0:
             self.selected_index -= 1
-            self._copilot.reset()
+            self._reset_copilot_if_story_changed()
             self._render(full=False)
 
     def action_cursor_down(self):
         visible = self._visible_stories()
         if visible and self.selected_index < len(visible) - 1:
             self.selected_index += 1
-            self._copilot.reset()
+            self._reset_copilot_if_story_changed()
             self._render(full=False)
 
     def action_open_action_menu(self):
@@ -2361,6 +2408,7 @@ class StoryBoardApp(App):
         s = self.stories[self.selected_index]
         key = s["story_key"]
         self._copilot.start(question)
+        self._copilot_story_key = key
         self._render_diagnostics_panel()
         self.notify(f"Asking Copilot about {key}...", title="Copilot")
         self.run_worker(
@@ -2412,6 +2460,7 @@ class StoryBoardApp(App):
         self._copilot.loading = False
         self._copilot.result = result
         self._render_diagnostics_panel()
+        self._switch_to_copilot_tab()
         count = len(result.get("suggestions", []))
         n_actions = len(result.get("actions", []))
         if result.get("error"):
