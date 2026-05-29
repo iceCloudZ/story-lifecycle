@@ -494,10 +494,10 @@ class TestEntryGateState:
         s = {"status": "paused", "context_json": "not-json"}
         assert _is_in_gate_wait(s) is False
 
-    def test_resolve_stage_state_returns_gate_wait(self, tmp_path):
+    def test_decide_resume_returns_retry_review_for_gate_wait(self, tmp_path):
         from story_lifecycle.orchestrator.entry import (
-            resolve_stage_state,
-            StageEntryState,
+            decide_resume_action,
+            StageEntryAction,
             WorkspaceState,
         )
 
@@ -523,32 +523,49 @@ class TestEntryGateState:
                 {"last_gate_decision_id": "design-gate-abc12345"}
             ),
         }
-        state = resolve_stage_state(
+        action = decide_resume_action(
             s,
             FakeBackend(),
             is_running=False,
             workspace_state=WorkspaceState.FREE,
         )
-        assert state == StageEntryState.GATE_WAIT_CONFIRM
-
-    def test_gate_state_maps_r_to_retry_review(self):
-        from story_lifecycle.orchestrator.entry import (
-            StageEntryState,
-            StageEntryAction,
-            decide_action,
-        )
-
-        action = decide_action(StageEntryState.GATE_WAIT_CONFIRM, "r")
         assert action == StageEntryAction.RETRY_REVIEW
 
-    def test_gate_state_maps_e_to_show_gate_status(self):
+    def test_gate_state_maps_e_to_show_gate_status(self, tmp_path):
         from story_lifecycle.orchestrator.entry import (
-            StageEntryState,
+            decide_enter_action,
             StageEntryAction,
-            decide_action,
+            WorkspaceState,
         )
 
-        action = decide_action(StageEntryState.GATE_WAIT_CONFIRM, "e")
+        class FakeBackend:
+            def is_healthy(self, sid):
+                return False
+
+            def resolve_session_state(self, sid):
+                return "missing"
+
+            def attach_foreground(self, sid):
+                return ["echo", "attach"]
+
+            def launch_independent_terminal(self, *a, **kw):
+                pass
+
+        s = {
+            "story_key": "GATE-01",
+            "current_stage": "design",
+            "workspace": str(tmp_path),
+            "status": "paused",
+            "context_json": json.dumps(
+                {"last_gate_decision_id": "design-gate-abc12345"}
+            ),
+        }
+        action = decide_enter_action(
+            s,
+            FakeBackend(),
+            is_running=False,
+            workspace_state=WorkspaceState.FREE,
+        )
         assert action == StageEntryAction.SHOW_GATE_STATUS
 
 

@@ -1,11 +1,11 @@
-"""TUI entry decision logic — .done helpers, SessionBackend, state resolver, action decider."""
+"""TUI entry decision logic — .done helpers, SessionBackend, action decider."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Protocol
 
 
 # ---------------------------------------------------------------------------
@@ -119,9 +119,8 @@ class TtydSessionBackend:
 
 
 # ---------------------------------------------------------------------------
-# Layer 3: State resolver + action decider
+# Layer 3: Action decider — story status driven, graph/session deferred
 # ---------------------------------------------------------------------------
-
 
 _FINISHED_STATUSES = frozenset({"completed", "failed", "aborted"})
 
@@ -136,23 +135,6 @@ class WorkspaceState(Enum):
     LOCKED_BY_SELF = "locked_by_self"
     LOCKED_BY_OTHER = "locked_by_other"
     FREE = "free"
-    UNKNOWN = "unknown"
-
-
-class StageEntryState(Enum):
-    STORY_FINISHED = "story_finished"
-    DONE_CORRUPTED = "done_corrupted"
-    DONE_OK = "done_ok"
-    CLI_EXITED_WITHOUT_DONE = "cli_exited_without_done"
-    BLOCKED_BY_WORKSPACE = "blocked_by_workspace"
-    RUNNING_WITH_LIVE_SESSION = "running_with_live_session"
-    RUNNING_WITH_DEAD_SESSION = "running_with_dead_session"
-    RUNNING_WITH_UNKNOWN_SESSION = "running_with_unknown_session"
-    STARTING = "starting"
-    IDLE_WITH_LIVE_SESSION = "idle_with_live_session"
-    IDLE_WITH_DEAD_SESSION = "idle_with_dead_session"
-    IDLE = "idle"
-    GATE_WAIT_CONFIRM = "gate_wait_confirm"
     UNKNOWN = "unknown"
 
 
@@ -177,68 +159,6 @@ class StageEntryAction(Enum):
     NOOP = "noop"
 
 
-def resolve_stage_state(
-    story: dict,
-    backend: SessionBackend,
-    is_running: bool,
-    cli_exit_state: CliExitState | None = None,
-    workspace_state: WorkspaceState | None = None,
-) -> StageEntryState:
-    status = story.get("status", "")
-
-    # Priority 1: terminal story states
-    if status in _FINISHED_STATUSES:
-        return StageEntryState.STORY_FINISHED
-
-    # Priority 2: .done corrupted
-    validation = validate_stage_done(story)
-    if validation.status == DoneStatus.CORRUPTED:
-        return StageEntryState.DONE_CORRUPTED
-
-    # Priority 2.5: Gate wait state (paused + has gate decision)
-    if _is_in_gate_wait(story):
-        return StageEntryState.GATE_WAIT_CONFIRM
-
-    # Priority 3: .done ok
-    if validation.status == DoneStatus.OK:
-        return StageEntryState.DONE_OK
-
-    # Priority 4: CLI exited without .done
-    if cli_exit_state is None:
-        cli_exit_state = resolve_cli_exit_state(story)
-    if cli_exit_state == CliExitState.EXITED_WITHOUT_DONE:
-        return StageEntryState.CLI_EXITED_WITHOUT_DONE
-
-    # Priority 5: workspace blocked
-    if workspace_state is None:
-        workspace_state = WorkspaceState.FREE
-    if workspace_state == WorkspaceState.LOCKED_BY_OTHER:
-        return StageEntryState.BLOCKED_BY_WORKSPACE
-
-    # Priority 6-7: graph running/not running + session state
-    session_id = _session_id_for_story(story)
-    session = backend.resolve_session_state(session_id)
-
-    if is_running:
-        if session == "live":
-            return StageEntryState.RUNNING_WITH_LIVE_SESSION
-        if session == "exited":
-            return StageEntryState.RUNNING_WITH_DEAD_SESSION
-        if session == "missing":
-            return StageEntryState.STARTING
-        return StageEntryState.RUNNING_WITH_UNKNOWN_SESSION
-
-    # graph not running
-    if session == "live":
-        return StageEntryState.IDLE_WITH_LIVE_SESSION
-    if session == "exited":
-        return StageEntryState.IDLE_WITH_DEAD_SESSION
-    if session == "missing":
-        return StageEntryState.IDLE
-
-    return StageEntryState.UNKNOWN
-
-
 def _is_in_gate_wait(story: dict) -> bool:
     """Check if a story is in gate-wait state based on context_json markers."""
     if story.get("status") != "paused":
@@ -258,77 +178,109 @@ def _session_id_for_story(story: dict) -> str:
     return ttyd.session_name(story.get("story_key", ""))
 
 
-_ACTION_TABLE: dict[tuple[StageEntryState, str], StageEntryAction] = {
-    # STORY_FINISHED
-    (StageEntryState.STORY_FINISHED, "e"): StageEntryAction.SHOW_STATUS,
-    (StageEntryState.STORY_FINISHED, "r"): StageEntryAction.SHOW_STATUS,
-    # DONE_CORRUPTED
-    (StageEntryState.DONE_CORRUPTED, "e"): StageEntryAction.PROMPT_FIX_DONE,
-    (StageEntryState.DONE_CORRUPTED, "r"): StageEntryAction.PROMPT_FIX_DONE,
-    # DONE_OK
-    (StageEntryState.DONE_OK, "e"): StageEntryAction.PROMPT_PRESS_R,
-    (StageEntryState.DONE_OK, "r"): StageEntryAction.CONSUME_DONE_RESUME,
-    # CLI_EXITED_WITHOUT_DONE
-    (
-        StageEntryState.CLI_EXITED_WITHOUT_DONE,
-        "e",
-    ): StageEntryAction.SHOW_CLI_EXIT_ERROR,
-    (StageEntryState.CLI_EXITED_WITHOUT_DONE, "r"): StageEntryAction.START_OR_RESUME,
-    # BLOCKED_BY_WORKSPACE
-    (StageEntryState.BLOCKED_BY_WORKSPACE, "e"): StageEntryAction.SHOW_WORKSPACE_BUSY,
-    (StageEntryState.BLOCKED_BY_WORKSPACE, "r"): StageEntryAction.SHOW_WORKSPACE_BUSY,
-    # RUNNING_WITH_LIVE_SESSION
-    (StageEntryState.RUNNING_WITH_LIVE_SESSION, "e"): StageEntryAction.ATTACH,
-    (StageEntryState.RUNNING_WITH_LIVE_SESSION, "r"): StageEntryAction.SHOW_RUNNING,
-    # RUNNING_WITH_DEAD_SESSION
-    (StageEntryState.RUNNING_WITH_DEAD_SESSION, "e"): StageEntryAction.PROMPT_PRESS_R,
-    (
-        StageEntryState.RUNNING_WITH_DEAD_SESSION,
-        "r",
-    ): StageEntryAction.CLEANUP_DEAD_AND_RESTART,
-    # STARTING (graph running, session not yet created)
-    (StageEntryState.STARTING, "e"): StageEntryAction.SHOW_STARTING,
-    (StageEntryState.STARTING, "r"): StageEntryAction.SHOW_RUNNING,
-    # RUNNING_WITH_UNKNOWN_SESSION
-    (
-        StageEntryState.RUNNING_WITH_UNKNOWN_SESSION,
-        "e",
-    ): StageEntryAction.SHOW_SESSION_UNKNOWN,
-    (
-        StageEntryState.RUNNING_WITH_UNKNOWN_SESSION,
-        "r",
-    ): StageEntryAction.SHOW_SESSION_UNKNOWN,
-    # IDLE_WITH_LIVE_SESSION
-    (StageEntryState.IDLE_WITH_LIVE_SESSION, "e"): StageEntryAction.ATTACH,
-    (StageEntryState.IDLE_WITH_LIVE_SESSION, "r"): StageEntryAction.START_OR_RESUME,
-    # IDLE_WITH_DEAD_SESSION
-    (StageEntryState.IDLE_WITH_DEAD_SESSION, "e"): StageEntryAction.PROMPT_PRESS_R,
-    (
-        StageEntryState.IDLE_WITH_DEAD_SESSION,
-        "r",
-    ): StageEntryAction.CLEANUP_DEAD_AND_START,
-    # IDLE
-    (StageEntryState.IDLE, "e"): StageEntryAction.PROMPT_PRESS_R,
-    (StageEntryState.IDLE, "r"): StageEntryAction.START_OR_RESUME,
-    # GATE_WAIT_CONFIRM
-    (StageEntryState.GATE_WAIT_CONFIRM, "e"): StageEntryAction.SHOW_GATE_STATUS,
-    (StageEntryState.GATE_WAIT_CONFIRM, "r"): StageEntryAction.RETRY_REVIEW,
-    # UNKNOWN
-    (StageEntryState.UNKNOWN, "e"): StageEntryAction.SHOW_SESSION_UNKNOWN,
-    (StageEntryState.UNKNOWN, "r"): StageEntryAction.SHOW_SESSION_UNKNOWN,
-}
-
-
-def decide_action(
-    state: StageEntryState,
-    user_action: Literal["e", "r"],
+def decide_enter_action(
+    story: dict,
+    backend: SessionBackend,
+    is_running: bool,
+    workspace_state: WorkspaceState | None = None,
 ) -> StageEntryAction:
-    key = (state, user_action)
-    if key not in _ACTION_TABLE:
-        raise ValueError(
-            f"No action for state={state.value!r} user_action={user_action!r}"
-        )
-    return _ACTION_TABLE[key]
+    """Decide what to do when user wants to enter the terminal.
+
+    Decision tree: story status → workspace → .done state → graph/session.
+    """
+    status = story.get("status", "")
+
+    # 1. finished
+    if status in _FINISHED_STATUSES:
+        return StageEntryAction.SHOW_STATUS
+
+    # 2. workspace blocked
+    if workspace_state == WorkspaceState.LOCKED_BY_OTHER:
+        return StageEntryAction.SHOW_WORKSPACE_BUSY
+
+    # 3. .done corrupted
+    validation = validate_stage_done(story)
+    if validation.status == DoneStatus.CORRUPTED:
+        return StageEntryAction.PROMPT_FIX_DONE
+
+    # 4. gate wait
+    if _is_in_gate_wait(story):
+        return StageEntryAction.SHOW_GATE_STATUS
+
+    # 5. session state
+    session_id = _session_id_for_story(story)
+    session = backend.resolve_session_state(session_id)
+
+    if session == "live":
+        return StageEntryAction.ATTACH
+    if session == "unknown":
+        return StageEntryAction.SHOW_SESSION_UNKNOWN
+
+    # 6. running but no session → starting
+    if is_running and session == "missing":
+        return StageEntryAction.SHOW_STARTING
+
+    # 7. idle or dead session → prompt to start
+    return StageEntryAction.PROMPT_PRESS_R
+
+
+def decide_resume_action(
+    story: dict,
+    backend: SessionBackend,
+    is_running: bool,
+    workspace_state: WorkspaceState | None = None,
+) -> StageEntryAction:
+    """Decide what to do when user wants to resume/start the story.
+
+    Decision tree: story status → workspace → .done state → gate → graph/session.
+    """
+    status = story.get("status", "")
+
+    # 1. finished
+    if status in _FINISHED_STATUSES:
+        return StageEntryAction.SHOW_STATUS
+
+    # 2. workspace blocked
+    if workspace_state == WorkspaceState.LOCKED_BY_OTHER:
+        return StageEntryAction.SHOW_WORKSPACE_BUSY
+
+    # 3. .done corrupted
+    validation = validate_stage_done(story)
+    if validation.status == DoneStatus.CORRUPTED:
+        return StageEntryAction.PROMPT_FIX_DONE
+
+    # 4. gate wait → retry review
+    if _is_in_gate_wait(story):
+        return StageEntryAction.RETRY_REVIEW
+
+    # 5. .done ok → consume and advance
+    if validation.status == DoneStatus.OK:
+        return StageEntryAction.CONSUME_DONE_RESUME
+
+    # 6. CLI exited without .done
+    if resolve_cli_exit_state(story) == CliExitState.EXITED_WITHOUT_DONE:
+        return StageEntryAction.START_OR_RESUME
+
+    # 7. graph running → check session
+    if is_running:
+        session_id = _session_id_for_story(story)
+        session = backend.resolve_session_state(session_id)
+        if session == "exited":
+            return StageEntryAction.CLEANUP_DEAD_AND_RESTART
+        if session == "unknown":
+            return StageEntryAction.SHOW_SESSION_UNKNOWN
+        # live or missing while running = already running / starting
+        return StageEntryAction.SHOW_RUNNING
+
+    # 8. idle → check session
+    session_id = _session_id_for_story(story)
+    session = backend.resolve_session_state(session_id)
+    if session == "exited":
+        return StageEntryAction.CLEANUP_DEAD_AND_START
+    if session == "live":
+        return StageEntryAction.START_OR_RESUME
+    # missing → normal start
+    return StageEntryAction.START_OR_RESUME
 
 
 def entry_action_notice(action: StageEntryAction, story: dict) -> str | None:

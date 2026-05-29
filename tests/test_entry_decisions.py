@@ -1,4 +1,4 @@
-"""Tests for TUI entry decision logic — .done helpers, state resolver, action decider."""
+"""Tests for TUI entry decision logic — .done helpers, action decider."""
 
 import tempfile
 import time
@@ -11,12 +11,11 @@ from story_lifecycle.orchestrator.entry import (
     validate_stage_done,
     DoneStatus,
     TtydSessionBackend,
-    StageEntryState,
     StageEntryAction,
     WorkspaceState,
     cli_exit_marker_path,
-    resolve_stage_state,
-    decide_action,
+    decide_enter_action,
+    decide_resume_action,
     entry_action_notice,
 )
 from story_lifecycle.terminal.ttyd import SessionState, resolve_session_state
@@ -238,7 +237,7 @@ class TestTtydSessionBackend:
 
 
 # ---------------------------------------------------------------------------
-# Layer 3 tests: resolve_stage_state + decide_action
+# Layer 3 tests: decide_enter_action + decide_resume_action
 # ---------------------------------------------------------------------------
 
 
@@ -263,19 +262,27 @@ class FakeBackend:
         pass
 
 
-class TestResolveStageState:
-    def test_story_finished_completed(self, tmp_path):
+# --- decide_enter_action tests ---
+
+
+class TestDecideEnterAction:
+    def test_finished_returns_show_status(self, tmp_path):
         story = _make_story(str(tmp_path), status="completed")
         assert (
-            resolve_stage_state(story, FakeBackend(), is_running=False)
-            == StageEntryState.STORY_FINISHED
+            decide_enter_action(story, FakeBackend(), is_running=False)
+            == StageEntryAction.SHOW_STATUS
         )
 
-    def test_story_finished_failed(self, tmp_path):
-        story = _make_story(str(tmp_path), status="failed")
+    def test_workspace_blocked(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
         assert (
-            resolve_stage_state(story, FakeBackend(), is_running=False)
-            == StageEntryState.STORY_FINISHED
+            decide_enter_action(
+                story,
+                FakeBackend(),
+                is_running=False,
+                workspace_state=WorkspaceState.LOCKED_BY_OTHER,
+            )
+            == StageEntryAction.SHOW_WORKSPACE_BUSY
         )
 
     def test_done_corrupted(self, tmp_path):
@@ -284,187 +291,168 @@ class TestResolveStageState:
         done.parent.mkdir(parents=True, exist_ok=True)
         done.write_text("BROKEN{{{", encoding="utf-8")
         assert (
-            resolve_stage_state(story, FakeBackend(), is_running=False)
-            == StageEntryState.DONE_CORRUPTED
+            decide_enter_action(story, FakeBackend(), is_running=False)
+            == StageEntryAction.PROMPT_FIX_DONE
         )
 
-    def test_done_ok(self, tmp_path):
-        story = _make_story(str(tmp_path), status="active")
-        done = stage_done_file(story)
-        done.parent.mkdir(parents=True, exist_ok=True)
-        done.write_text('{"summary": "ok"}', encoding="utf-8")
+    def test_gate_wait(self, tmp_path):
+        import json
+
+        story = _make_story(str(tmp_path), status="paused")
+        story["context_json"] = json.dumps({"last_gate_decision_id": "abc"})
         assert (
-            resolve_stage_state(story, FakeBackend(), is_running=True)
-            == StageEntryState.DONE_OK
+            decide_enter_action(story, FakeBackend(), is_running=False)
+            == StageEntryAction.SHOW_GATE_STATUS
         )
 
-    def test_cli_exited_without_done(self, tmp_path):
+    def test_live_session_returns_attach(self, tmp_path):
         story = _make_story(str(tmp_path), status="active")
-        marker = cli_exit_marker_path(story["story_key"])
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text("1", encoding="utf-8")
         assert (
-            resolve_stage_state(story, FakeBackend(), is_running=False)
-            == StageEntryState.CLI_EXITED_WITHOUT_DONE
+            decide_enter_action(story, FakeBackend(SessionState.LIVE), is_running=True)
+            == StageEntryAction.ATTACH
         )
-        marker.unlink()
 
-    def test_blocked_by_workspace(self, tmp_path):
+    def test_idle_live_session_returns_attach(self, tmp_path):
         story = _make_story(str(tmp_path), status="active")
         assert (
-            resolve_stage_state(
+            decide_enter_action(story, FakeBackend(SessionState.LIVE), is_running=False)
+            == StageEntryAction.ATTACH
+        )
+
+    def test_running_missing_session_returns_starting(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            decide_enter_action(
+                story, FakeBackend(SessionState.MISSING), is_running=True
+            )
+            == StageEntryAction.SHOW_STARTING
+        )
+
+    def test_unknown_session_returns_unknown(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            decide_enter_action(
+                story, FakeBackend(SessionState.UNKNOWN), is_running=True
+            )
+            == StageEntryAction.SHOW_SESSION_UNKNOWN
+        )
+
+    def test_idle_no_session_returns_prompt(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            decide_enter_action(story, FakeBackend(), is_running=False)
+            == StageEntryAction.PROMPT_PRESS_R
+        )
+
+
+# --- decide_resume_action tests ---
+
+
+class TestDecideResumeAction:
+    def test_finished_returns_show_status(self, tmp_path):
+        story = _make_story(str(tmp_path), status="failed")
+        assert (
+            decide_resume_action(story, FakeBackend(), is_running=False)
+            == StageEntryAction.SHOW_STATUS
+        )
+
+    def test_workspace_blocked(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            decide_resume_action(
                 story,
                 FakeBackend(),
                 is_running=False,
                 workspace_state=WorkspaceState.LOCKED_BY_OTHER,
             )
-            == StageEntryState.BLOCKED_BY_WORKSPACE
+            == StageEntryAction.SHOW_WORKSPACE_BUSY
         )
 
-    def test_running_with_live_session(self, tmp_path):
+    def test_done_corrupted(self, tmp_path):
         story = _make_story(str(tmp_path), status="active")
+        done = stage_done_file(story)
+        done.parent.mkdir(parents=True, exist_ok=True)
+        done.write_text("BROKEN{{{", encoding="utf-8")
         assert (
-            resolve_stage_state(story, FakeBackend(SessionState.LIVE), is_running=True)
-            == StageEntryState.RUNNING_WITH_LIVE_SESSION
+            decide_resume_action(story, FakeBackend(), is_running=False)
+            == StageEntryAction.PROMPT_FIX_DONE
         )
 
-    def test_running_with_dead_session(self, tmp_path):
-        story = _make_story(str(tmp_path), status="active")
+    def test_gate_wait_returns_retry_review(self, tmp_path):
+        import json
+
+        story = _make_story(str(tmp_path), status="paused")
+        story["context_json"] = json.dumps({"last_gate_decision_id": "abc"})
         assert (
-            resolve_stage_state(
-                story, FakeBackend(SessionState.EXITED), is_running=True
-            )
-            == StageEntryState.RUNNING_WITH_DEAD_SESSION
+            decide_resume_action(story, FakeBackend(), is_running=False)
+            == StageEntryAction.RETRY_REVIEW
         )
 
-    def test_running_with_missing_session(self, tmp_path):
-        story = _make_story(str(tmp_path), status="active")
-        assert (
-            resolve_stage_state(
-                story, FakeBackend(SessionState.MISSING), is_running=True
-            )
-            == StageEntryState.STARTING
-        )
-
-    def test_running_with_unknown_session(self, tmp_path):
-        story = _make_story(str(tmp_path), status="active")
-        assert (
-            resolve_stage_state(
-                story, FakeBackend(SessionState.UNKNOWN), is_running=True
-            )
-            == StageEntryState.RUNNING_WITH_UNKNOWN_SESSION
-        )
-
-    def test_idle_with_live_session(self, tmp_path):
-        story = _make_story(str(tmp_path), status="active")
-        assert (
-            resolve_stage_state(story, FakeBackend(SessionState.LIVE), is_running=False)
-            == StageEntryState.IDLE_WITH_LIVE_SESSION
-        )
-
-    def test_idle_with_dead_session(self, tmp_path):
-        story = _make_story(str(tmp_path), status="active")
-        assert (
-            resolve_stage_state(
-                story, FakeBackend(SessionState.EXITED), is_running=False
-            )
-            == StageEntryState.IDLE_WITH_DEAD_SESSION
-        )
-
-    def test_idle(self, tmp_path):
-        story = _make_story(str(tmp_path), status="active")
-        assert (
-            resolve_stage_state(
-                story, FakeBackend(SessionState.MISSING), is_running=False
-            )
-            == StageEntryState.IDLE
-        )
-
-    def test_done_ok_takes_priority_over_running_dead(self, tmp_path):
-        """Even if session is dead, valid .done means DONE_OK state."""
+    def test_done_ok_returns_consume(self, tmp_path):
         story = _make_story(str(tmp_path), status="active")
         done = stage_done_file(story)
         done.parent.mkdir(parents=True, exist_ok=True)
         done.write_text('{"summary": "ok"}', encoding="utf-8")
         assert (
-            resolve_stage_state(
-                story, FakeBackend(SessionState.EXITED), is_running=True
-            )
-            == StageEntryState.DONE_OK
+            decide_resume_action(story, FakeBackend(), is_running=False)
+            == StageEntryAction.CONSUME_DONE_RESUME
         )
 
-    def test_cli_exit_ignored_when_done_ok(self, tmp_path):
-        """If .done exists and is valid, CLI exit marker is irrelevant."""
+    def test_done_ok_takes_priority_over_session_state(self, tmp_path):
+        """Even if session is dead, valid .done means CONSUME_DONE_RESUME."""
         story = _make_story(str(tmp_path), status="active")
         done = stage_done_file(story)
         done.parent.mkdir(parents=True, exist_ok=True)
         done.write_text('{"summary": "ok"}', encoding="utf-8")
+        assert (
+            decide_resume_action(
+                story, FakeBackend(SessionState.EXITED), is_running=True
+            )
+            == StageEntryAction.CONSUME_DONE_RESUME
+        )
+
+    def test_cli_exited_returns_start(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
         marker = cli_exit_marker_path(story["story_key"])
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text("1", encoding="utf-8")
         assert (
-            resolve_stage_state(story, FakeBackend(), is_running=False)
-            == StageEntryState.DONE_OK
+            decide_resume_action(story, FakeBackend(), is_running=False)
+            == StageEntryAction.START_OR_RESUME
         )
         marker.unlink()
 
+    def test_running_dead_session_returns_cleanup_restart(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            decide_resume_action(
+                story, FakeBackend(SessionState.EXITED), is_running=True
+            )
+            == StageEntryAction.CLEANUP_DEAD_AND_RESTART
+        )
 
-DECISION_TABLE = [
-    (StageEntryState.STORY_FINISHED, "e", StageEntryAction.SHOW_STATUS),
-    (StageEntryState.STORY_FINISHED, "r", StageEntryAction.SHOW_STATUS),
-    (StageEntryState.DONE_CORRUPTED, "e", StageEntryAction.PROMPT_FIX_DONE),
-    (StageEntryState.DONE_CORRUPTED, "r", StageEntryAction.PROMPT_FIX_DONE),
-    (StageEntryState.DONE_OK, "e", StageEntryAction.PROMPT_PRESS_R),
-    (StageEntryState.DONE_OK, "r", StageEntryAction.CONSUME_DONE_RESUME),
-    (
-        StageEntryState.CLI_EXITED_WITHOUT_DONE,
-        "e",
-        StageEntryAction.SHOW_CLI_EXIT_ERROR,
-    ),
-    (StageEntryState.CLI_EXITED_WITHOUT_DONE, "r", StageEntryAction.START_OR_RESUME),
-    (StageEntryState.BLOCKED_BY_WORKSPACE, "e", StageEntryAction.SHOW_WORKSPACE_BUSY),
-    (StageEntryState.BLOCKED_BY_WORKSPACE, "r", StageEntryAction.SHOW_WORKSPACE_BUSY),
-    (StageEntryState.RUNNING_WITH_LIVE_SESSION, "e", StageEntryAction.ATTACH),
-    (StageEntryState.RUNNING_WITH_LIVE_SESSION, "r", StageEntryAction.SHOW_RUNNING),
-    (StageEntryState.RUNNING_WITH_DEAD_SESSION, "e", StageEntryAction.PROMPT_PRESS_R),
-    (
-        StageEntryState.RUNNING_WITH_DEAD_SESSION,
-        "r",
-        StageEntryAction.CLEANUP_DEAD_AND_RESTART,
-    ),
-    (
-        StageEntryState.RUNNING_WITH_UNKNOWN_SESSION,
-        "e",
-        StageEntryAction.SHOW_SESSION_UNKNOWN,
-    ),
-    (
-        StageEntryState.RUNNING_WITH_UNKNOWN_SESSION,
-        "r",
-        StageEntryAction.SHOW_SESSION_UNKNOWN,
-    ),
-    (StageEntryState.IDLE_WITH_LIVE_SESSION, "e", StageEntryAction.ATTACH),
-    (StageEntryState.IDLE_WITH_LIVE_SESSION, "r", StageEntryAction.START_OR_RESUME),
-    (StageEntryState.IDLE_WITH_DEAD_SESSION, "e", StageEntryAction.PROMPT_PRESS_R),
-    (
-        StageEntryState.IDLE_WITH_DEAD_SESSION,
-        "r",
-        StageEntryAction.CLEANUP_DEAD_AND_START,
-    ),
-    (StageEntryState.IDLE, "e", StageEntryAction.PROMPT_PRESS_R),
-    (StageEntryState.IDLE, "r", StageEntryAction.START_OR_RESUME),
-    (StageEntryState.UNKNOWN, "e", StageEntryAction.SHOW_SESSION_UNKNOWN),
-    (StageEntryState.UNKNOWN, "r", StageEntryAction.SHOW_SESSION_UNKNOWN),
-]
+    def test_running_live_session_returns_show_running(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            decide_resume_action(story, FakeBackend(SessionState.LIVE), is_running=True)
+            == StageEntryAction.SHOW_RUNNING
+        )
 
+    def test_idle_dead_session_returns_cleanup_start(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            decide_resume_action(
+                story, FakeBackend(SessionState.EXITED), is_running=False
+            )
+            == StageEntryAction.CLEANUP_DEAD_AND_START
+        )
 
-class TestDecideAction:
-    @pytest.mark.parametrize("state,user_action,expected", DECISION_TABLE)
-    def test_decision_table(self, state, user_action, expected):
-        assert decide_action(state, user_action) == expected
-
-    def test_invalid_user_action_raises(self):
-        with pytest.raises(ValueError):
-            decide_action(StageEntryState.IDLE, "x")
+    def test_idle_no_session_returns_start(self, tmp_path):
+        story = _make_story(str(tmp_path), status="active")
+        assert (
+            decide_resume_action(story, FakeBackend(), is_running=False)
+            == StageEntryAction.START_OR_RESUME
+        )
 
 
 class TestEntryActionNotice:

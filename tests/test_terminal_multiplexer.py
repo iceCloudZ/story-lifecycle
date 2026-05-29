@@ -160,8 +160,7 @@ def test_tui_shows_prompt_when_no_session_on_windows(monkeypatch):
     monkeypatch.setattr(graph_mod, "is_story_running", lambda key: False)
 
     # Verify the decision logic produces the expected action
-    state = entry_mod.resolve_stage_state(app.stories[0], app._session_backend, False)
-    action = entry_mod.decide_action(state, "e")
+    action = entry_mod.decide_enter_action(app.stories[0], app._session_backend, False)
     assert action == StageEntryAction.PROMPT_PRESS_R
 
     # The actual TUI call would need a mounted app to query the panel.

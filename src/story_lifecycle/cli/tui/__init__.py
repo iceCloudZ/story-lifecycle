@@ -30,10 +30,9 @@ from ...orchestrator.nodes import load_profile
 from ...terminal import ttyd
 from ...orchestrator.entry import (
     StageEntryAction,
-    StageEntryState,
     TtydSessionBackend,
-    resolve_stage_state,
-    decide_action,
+    decide_enter_action,
+    decide_resume_action,
     entry_action_notice,
     has_stage_done,
     validate_stage_done,
@@ -1504,57 +1503,37 @@ class StoryBoardApp(App):
         )
 
     def _build_actions_for_story(self, s: dict) -> list[tuple[str, str, str]]:
-        """根据 story 状态动态生成可用动作列表。"""
-        key = s["story_key"]
+        """根据 story 状态动态生成可用动作列表。只看 story status。"""
         status = s.get("status", "")
-
-        from ...orchestrator.graph import is_story_running, is_workspace_locked
-
-        is_running = is_story_running(key)
-        ws = s.get("workspace", "")
-        ws_state = (
-            WorkspaceState.LOCKED_BY_OTHER
-            if ws and is_workspace_locked(ws, exclude_story=key)
-            else WorkspaceState.FREE
-        )
-        entry_state = resolve_stage_state(
-            s, self._session_backend, is_running, workspace_state=ws_state
-        )
 
         actions: list[tuple[str, str, str]] = []
 
         if status in _FINISHED_STATUSES:
-            # completed / failed / aborted
             if status in ("failed", "aborted"):
                 actions.append(("resume", "重新开始", "Resume story"))
             actions.append(("delete", "删除", "Delete story"))
             actions.append(("detail", "查看详情", "Show detail"))
             return actions
 
-        if entry_state == StageEntryState.GATE_WAIT_CONFIRM:
-            actions.append(("accept_risk", "接受风险推进", "Accept risk & advance"))
-            actions.append(("skip", "跳过阶段", "Skip current stage"))
-            actions.append(("abort", "终止", "Abort story"))
-            actions.append(("detail", "查看详情", "Show detail"))
-            return actions
+        if status == "paused":
+            try:
+                import json
 
-        if is_running:
-            session = ttyd.session_name(key)
-            session_state = self._session_backend.check(session)
-            if entry_state == StageEntryState.STARTING:
-                actions.append(("detail", "查看详情", "Show detail"))
+                ctx = json.loads(s.get("context_json") or "{}")
+                is_gate = bool(ctx.get("last_gate_decision_id"))
+            except Exception:
+                is_gate = False
+            if is_gate:
+                actions.append(("accept_risk", "接受风险推进", "Accept risk & advance"))
+                actions.append(("skip", "跳过阶段", "Skip current stage"))
                 actions.append(("abort", "终止", "Abort story"))
-            elif session_state in ("live", "unknown"):
-                actions.append(("enter", "进入终端", "Attach to terminal"))
                 actions.append(("detail", "查看详情", "Show detail"))
-                actions.append(("abort", "终止", "Abort story"))
-            else:
-                actions.append(("detail", "查看详情", "Show detail"))
-                actions.append(("abort", "终止", "Abort story"))
-            return actions
+                return actions
 
-        # idle — can start/resume
+        # active / blocked / waiting_subtasks — show generic actions
+        actions.append(("enter", "进入终端", "Attach to terminal"))
         actions.append(("resume", "开始 / 继续", "Start or resume"))
+        actions.append(("abort", "终止", "Abort story"))
         actions.append(("detail", "查看详情", "Show detail"))
         actions.append(("delete", "删除", "Delete story"))
         return actions
@@ -1595,14 +1574,12 @@ class StoryBoardApp(App):
             if ws and is_workspace_locked(ws, exclude_story=story_key)
             else WorkspaceState.FREE
         )
-        state = resolve_stage_state(
+        action = decide_enter_action(
             s, self._session_backend, is_running, workspace_state=ws_state
         )
-        action = decide_action(state, "e")
         _tui_debug(
             "enter_terminal_decision",
             story_key=story_key,
-            state=state.value,
             action=action.value,
         )
 
@@ -1943,36 +1920,28 @@ class StoryBoardApp(App):
             if ws and is_workspace_locked(ws, exclude_story=key)
             else WorkspaceState.FREE
         )
-        state = resolve_stage_state(
+        action = decide_resume_action(
             s, self._session_backend, is_running, workspace_state=ws_state
         )
-        action = decide_action(state, "r")
         _tui_debug(
             "resume_story_decision",
             story_key=key,
-            state=state.value,
             action=action.value,
         )
 
-        # Gate-specific resume: retry review only, skip executor
-        if state == StageEntryState.GATE_WAIT_CONFIRM:
-            if action == StageEntryAction.RETRY_REVIEW:
-                db.update_story(key, status="active", last_error=None)
-                db.update_context(key, "last_gate_decision_id", "")
-                db.update_context(key, "last_gate_decision", "")
-                if not is_story_running(key):
-                    start_story_async(key)
-                self.refresh_stories()
-                self.notify(f"Retrying review for {key}...")
-                return
-            elif action == StageEntryAction.SHOW_GATE_STATUS:
-                self.action_toggle_detail()
-                return
+        if action == StageEntryAction.RETRY_REVIEW:
+            db.update_story(key, status="active", last_error=None)
+            db.update_context(key, "last_gate_decision_id", "")
+            db.update_context(key, "last_gate_decision", "")
+            if not is_story_running(key):
+                start_story_async(key)
+            self.refresh_stories()
+            self.notify(f"Retrying review for {key}...")
+            return
 
         if action == StageEntryAction.START_OR_RESUME:
-            if state == StageEntryState.IDLE_WITH_LIVE_SESSION:
-                _tui_debug("cleanup_live_before_start", story_key=key)
-                ttyd.kill_session(session)
+            _tui_debug("start_or_resume", story_key=key)
+            ttyd.kill_session(session)
             db.update_story(key, status="active", last_error=None)
             if not is_story_running(key):
                 start_story_async(key)

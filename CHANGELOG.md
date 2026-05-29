@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.47] - 2026-05-29
+
+### Changed
+- 重构 entry.py 状态机：砍掉 StageEntryState（13 状态枚举）和 _ACTION_TABLE（26 条二维决策表），改为 decide_enter_action / decide_resume_action 优先级决策链
+- TUI 动作菜单只看 story status 驱动，graph/session 状态下沉到具体动作执行时检查（参考 Temporal/GitHub Actions 设计模式）
+
+### Removed
+- 移除 StageEntryState 枚举、resolve_stage_state()、decide_action()、_ACTION_TABLE
+
 ## [0.5.46] - 2026-05-29
 
 ### Changed
