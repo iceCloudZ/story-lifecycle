@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.44] - 2026-05-29
+
+### Fixed
+- 按 `A` accept risk 后 story 被误 abort：graph 恢复后未跳过 gate 导致 plan→review→wait_confirm 死循环，现通过 `gate_override` 标记直接跳到 advance
+- `failed`/`aborted` 状态的 story 从 TUI 完全消失：`list_completed_stories` 现在包含所有终态，底部区域用 ✓/✗/⊘ 图标区分
+
 ## [0.5.43] - 2026-05-29
 
 ### Fixed

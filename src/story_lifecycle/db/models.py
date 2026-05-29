@@ -266,7 +266,7 @@ def list_active_stories() -> list[dict]:
 def list_completed_stories(limit: int = 20) -> list[dict]:
     with _db() as conn:
         rows = conn.execute(
-            "SELECT * FROM story WHERE status = 'completed' ORDER BY updated_at DESC LIMIT ?",
+            "SELECT * FROM story WHERE status IN ('completed', 'failed', 'aborted') ORDER BY updated_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
     return [dict(r) for r in rows]

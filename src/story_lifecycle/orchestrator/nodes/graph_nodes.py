@@ -1341,6 +1341,19 @@ def wait_confirm_node(state: StoryState) -> StoryState:
     if s and s["status"] == "active":
         state["status"] = "active"
         state["execution_count"] = 0
+        # Check for gate override (e.g. accept_risk_advance from TUI)
+        ctx = {}
+        try:
+            import json as _json
+
+            ctx = _json.loads(s.get("context_json") or "{}")
+        except Exception:
+            pass
+        override = ctx.get("gate_override")
+        if override == "accept_risk_advance":
+            db.update_context(key, "gate_override", "")
+            state["_pre_routed_action"] = "advance"
+            state["execution_count"] = 0
 
     return state
 

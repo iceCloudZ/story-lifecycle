@@ -1252,13 +1252,20 @@ class StoryBoardApp(App):
         # Completed stories section
         completed_section = self.query_one("#completed-section")
         if completed:
-            lines = ["[dim]─── Completed ───[/]"]
+            lines = ["[dim]─── Finished ───[/]"]
             for s in completed[-10:]:
                 key = s["story_key"]
                 title = (s.get("title") or "")[:40]
                 stage = s.get("current_stage", "")
+                status = s.get("status", "completed")
+                if status == "completed":
+                    icon = "[dim green]✓[/]"
+                elif status == "failed":
+                    icon = "[dim red]✗[/]"
+                else:
+                    icon = "[dim yellow]⊘[/]"
                 lines.append(
-                    f"  [dim green]✓[/] [dim]{key}[/]  {title}  [dim]{stage}[/]"
+                    f"  {icon} [dim]{key}[/]  {title}  [dim]{stage} {status}[/]"
                 )
             completed_section.update("\n".join(lines))
         else:
@@ -1755,6 +1762,9 @@ class StoryBoardApp(App):
                 },
             )
             db.update_story(key, status="active", last_error=None)
+            db.update_context(key, "gate_override", "accept_risk_advance")
+            db.update_context(key, "last_gate_decision_id", "")
+            db.update_context(key, "last_gate_decision", "")
             from ...orchestrator.graph import start_story_async
 
             start_story_async(key)
