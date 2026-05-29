@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.46] - 2026-05-29
+
+### Changed
+- TUI 按键从 27 个精简到 7 个（↑↓ Enter n o ? q），参考 lazydocker 设计模式
+- Enter 键改为弹出上下文动作菜单，根据 story 状态动态显示可用操作（进终端/开始/接受风险/跳过/终止/删除/详情）
+- 底栏提示精简为 6 个核心按键
+
+### Removed
+- 移除直接快捷键 e/d/s/f/r/R/F5/x/N/a/A/c/D/S/i/y/1/2/3/p/P，功能全部整合到 Enter 动作菜单
+- 移除 doctor/setup/package-diagnostics TUI 快捷键，改用 CLI 命令
+
 ## [0.5.45] - 2026-05-29
 
 ### Fixed

@@ -14,7 +14,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll, Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Static, Input, Button
+from textual.widgets import Footer, Static, Input, Button, OptionList
 from textual.reactive import reactive
 
 from ...db import models as db
@@ -765,6 +765,59 @@ class ConfirmDialog(ModalScreen):
         self.dismiss(event.button.id == "btn-confirm-yes")
 
 
+class ActionMenuScreen(ModalScreen[str]):
+    """上下文动作菜单 — 根据选中 story 状态动态生成选项。"""
+
+    CSS = """
+    ActionMenuScreen {
+        align: center middle;
+    }
+    #action-menu-container {
+        width: 48;
+        height: auto;
+        max-height: 20;
+        padding: 1 2;
+        background: $surface;
+        border: thick $accent;
+    }
+    #action-menu-container .action-menu-title {
+        margin: 0 0 1 0;
+    }
+    #action-menu-container OptionList {
+        height: auto;
+        max-height: 14;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close_menu", "Close"),
+    ]
+
+    def __init__(self, title: str, actions: list[tuple[str, str, str]]):
+        """actions: list of (action_name, label, description)"""
+        self._title = title
+        self._actions = actions
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="action-menu-container"):
+            yield Static(f"[bold]{self._title}[/]", classes="action-menu-title")
+            ol = OptionList()
+            for _name, label, desc in self._actions:
+                ol.add_option(OptionList.Option(label, id=desc))
+            yield ol
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        idx = event.option_index
+        if 0 <= idx < len(self._actions):
+            self.dismiss(self._actions[idx][0])
+        else:
+            self.dismiss("")
+
+    def action_close_menu(self) -> None:
+        self.dismiss("")
+
+
 class LoadingScreen(ModalScreen):
     """加载中弹窗 — 显示 spinner 等待异步操作完成。"""
 
@@ -1045,29 +1098,8 @@ class StoryBoardApp(App):
         Binding("down", "cursor_down", "Down", key_display="↓"),
         Binding("enter", "open_action_menu", "Actions"),
         Binding("n", "new_story", "New"),
-        Binding("e", "enter_terminal", "Enter"),
-        Binding("d", "toggle_detail", "Detail"),
-        Binding("s", "skip_stage", "Skip"),
-        Binding("f", "fail_story", "Fail"),
-        Binding("r", "resume_story", "Resume"),
-        Binding("shift+r", "refresh", "Refresh", key_display="R"),
-        Binding("f5", "refresh", "Refresh"),
-        Binding("x", "delete_story", "Delete"),
-        Binding("shift+n", "new_sub_story", "Sub", key_display="N"),
-        Binding("a", "abort_story", "Abort"),
-        Binding("shift+a", "accept_risk_advance", "Accept Risk", key_display="A"),
-        Binding("c", "toggle_collapse", "Fold"),
-        Binding("shift+d", "run_doctor", "Doctor", key_display="D"),
-        Binding("shift+s", "run_setup", "Setup", key_display="S"),
-        Binding("i", "show_inbox", "Inbox"),
+        Binding("o", "toggle_diagnostics", "Panel", key_display="o"),
         Binding("question_mark", "help", "Help", key_display="?"),
-        Binding("o", "toggle_diagnostics", "Diag", key_display="o"),
-        Binding("y", "ask_copilot", "Ask Copilot", key_display="y"),
-        Binding("1", "copilot_action_1", ""),
-        Binding("2", "copilot_action_2", ""),
-        Binding("3", "copilot_action_3", ""),
-        Binding("p", "package_story_diagnostics", "Pkg Story", key_display="p"),
-        Binding("shift+p", "package_global_diagnostics", "Pkg Global", key_display="P"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -1097,7 +1129,7 @@ class StoryBoardApp(App):
                 yield Static(id="diagnostics-panel")
                 yield Input(
                     id="copilot-input",
-                    placeholder="按 y 聚焦 · 输入问题 · Enter 发送",
+                    placeholder="输入问题 · Enter 发送",
                 )
         yield Static(id="footer-bar")
         yield Footer()
@@ -1261,7 +1293,7 @@ class StoryBoardApp(App):
 
         footer = self.query_one("#footer-bar")
         footer.update(
-            " [dim][n] new  [N] sub  [i] inbox  [e] enter  [s] skip  [a] abort  [f] fail  [x] delete  [r] resume  [y] copilot  [?] help[/]"
+            " [dim][↑↓] 导航  [Enter] 动作  [n] 新建  [o] 面板  [?] 帮助  [q] 退出[/]"
         )
 
     def _render_diagnostics_panel(self) -> None:
@@ -1304,7 +1336,7 @@ class StoryBoardApp(App):
         }.get(stuck.get("severity", "info"), "dim")
 
         lines = [
-            "[bold]诊断[/]  [dim]\\[o] copilot  \\[y] 提问[/]",
+            "[bold]诊断[/]  [dim]\\[o] 切换 copilot[/]",
             "",
             f"[bold cyan]{key}[/]",
             f"status: {story['status']}   stage: {stage_label}",
@@ -1364,7 +1396,7 @@ class StoryBoardApp(App):
             return lines
 
         if not self._copilot.result:
-            lines.append("[dim]按 y 聚焦输入框，输入问题后 Enter 发送[/]")
+            lines.append("[dim]输入问题后 Enter 发送，o 切换面板[/]")
             return lines
 
         lines.append(f"[dim]Q: {self._copilot.question}[/]")
@@ -1457,7 +1489,94 @@ class StoryBoardApp(App):
             self._render(full=False)
 
     def action_open_action_menu(self):
-        self.action_toggle_detail()
+        if not self.stories:
+            return
+        s = self.stories[self.selected_index]
+        actions = self._build_actions_for_story(s)
+        if not actions:
+            self.notify("当前无可操作项", severity="info")
+            return
+        key = s["story_key"]
+        status = s.get("status", "")
+        self.push_screen(
+            ActionMenuScreen(f"{key}  [{status}]", actions),
+            self._execute_menu_action,
+        )
+
+    def _build_actions_for_story(self, s: dict) -> list[tuple[str, str, str]]:
+        """根据 story 状态动态生成可用动作列表。"""
+        key = s["story_key"]
+        status = s.get("status", "")
+
+        from ...orchestrator.graph import is_story_running, is_workspace_locked
+
+        is_running = is_story_running(key)
+        ws = s.get("workspace", "")
+        ws_state = (
+            WorkspaceState.LOCKED_BY_OTHER
+            if ws and is_workspace_locked(ws, exclude_story=key)
+            else WorkspaceState.FREE
+        )
+        entry_state = resolve_stage_state(
+            s, self._session_backend, is_running, workspace_state=ws_state
+        )
+
+        actions: list[tuple[str, str, str]] = []
+
+        if status in _FINISHED_STATUSES:
+            # completed / failed / aborted
+            if status in ("failed", "aborted"):
+                actions.append(("resume", "重新开始", "Resume story"))
+            actions.append(("delete", "删除", "Delete story"))
+            actions.append(("detail", "查看详情", "Show detail"))
+            return actions
+
+        if entry_state == StageEntryState.GATE_WAIT_CONFIRM:
+            actions.append(("accept_risk", "接受风险推进", "Accept risk & advance"))
+            actions.append(("skip", "跳过阶段", "Skip current stage"))
+            actions.append(("abort", "终止", "Abort story"))
+            actions.append(("detail", "查看详情", "Show detail"))
+            return actions
+
+        if is_running:
+            session = ttyd.session_name(key)
+            session_state = self._session_backend.check(session)
+            if entry_state == StageEntryState.STARTING:
+                actions.append(("detail", "查看详情", "Show detail"))
+                actions.append(("abort", "终止", "Abort story"))
+            elif session_state in ("live", "unknown"):
+                actions.append(("enter", "进入终端", "Attach to terminal"))
+                actions.append(("detail", "查看详情", "Show detail"))
+                actions.append(("abort", "终止", "Abort story"))
+            else:
+                actions.append(("detail", "查看详情", "Show detail"))
+                actions.append(("abort", "终止", "Abort story"))
+            return actions
+
+        # idle — can start/resume
+        actions.append(("resume", "开始 / 继续", "Start or resume"))
+        actions.append(("detail", "查看详情", "Show detail"))
+        actions.append(("delete", "删除", "Delete story"))
+        return actions
+
+    def _execute_menu_action(self, action_name: str) -> None:
+        """Execute the action chosen from the action menu."""
+        if not action_name:
+            return
+        dispatch = {
+            "enter": self.action_enter_terminal,
+            "resume": self.action_resume_story,
+            "detail": self.action_toggle_detail,
+            "skip": self.action_skip_stage,
+            "fail": self.action_fail_story,
+            "abort": self.action_abort_story,
+            "accept_risk": self.action_accept_risk_advance,
+            "delete": self.action_delete_story,
+            "inbox": self.action_show_inbox,
+        }
+        fn = dispatch.get(action_name)
+        if fn:
+            fn()
 
     def action_enter_terminal(self):
         if not self.stories:
@@ -1968,25 +2087,6 @@ class StoryBoardApp(App):
             self._show_detail = True
         self.refresh_stories()
 
-    def action_toggle_collapse(self):
-        if not self.stories:
-            return
-        visible = self._visible_stories()
-        if self.selected_index >= len(visible):
-            return
-        s = visible[self.selected_index]
-        key = s["story_key"]
-        has_children = any(st.get("parent_key") == key for st in self.stories)
-        if has_children:
-            if key in self._collapsed_parents:
-                self._collapsed_parents.discard(key)
-            else:
-                self._collapsed_parents.add(key)
-            self._render()
-
-    def action_refresh(self):
-        self.refresh_stories()
-
     def _startup_sweep(self):
         """On startup, check all non-terminal stories for existing done files and resume."""
         from ...orchestrator.graph import start_story_async, is_story_running
@@ -2114,46 +2214,6 @@ class StoryBoardApp(App):
     def action_quit(self):
         _tui_debug("quit_tui")
         self.exit()
-
-    def action_run_doctor(self):
-        """Show doctor results in detail panel."""
-        import io
-        from ..doctor import run_doctor
-        from rich.console import Console
-
-        buf = io.StringIO()
-        doc_console = Console(file=buf, force_terminal=True)
-        # Temporarily redirect doctor output
-        import story_lifecycle.cli.doctor as doc_mod
-
-        orig = doc_mod.console
-        doc_mod.console = doc_console
-        try:
-            run_doctor()
-        finally:
-            doc_mod.console = orig
-
-        panel = self.query_one("#detail-panel")
-        panel.update(buf.getvalue())
-        panel.set_class(True, "visible")
-        self._show_detail = True
-
-    def action_run_setup(self):
-        """Re-run setup wizard in a suspended terminal."""
-        from ..setup import run_setup, load_config_to_env
-
-        if os.name == "nt":
-            import subprocess
-
-            subprocess.Popen(
-                ["python", "-m", "story_lifecycle.cli.setup"],
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
-            )
-        else:
-            with self.suspend():
-                run_setup()
-        load_config_to_env()
-        self.refresh_stories()
 
     # ---- source polling ----
 
@@ -2309,24 +2369,15 @@ class StoryBoardApp(App):
         self._show_detail = True
         panel = self.query_one("#detail-panel")
         panel.update(
-            "[bold]Key Bindings[/]\n"
-            "  ↑/k     Move up\n"
-            "  ↓/j     Move down\n"
-            "  Enter   Toggle detail\n"
-            "  n       New story\n"
-            "  e       Enter terminal\n"
-            "  d       Toggle detail\n"
-            "  s       Skip stage\n"
-            "  f       Mark failed\n"
-            "  x       Delete story\n"
-            "  r       Resume\n"
-            "  R/F5    Refresh\n"
-            "  D       Doctor (env check)\n"
-            "  S       Setup (reconfigure)\n"
-            "  i       Inbox (external source)\n"
-            "  y       Ask Copilot (diagnostics)\n"
-            "  ?       Help\n"
-            "  q       Quit"
+            "[bold]按键说明[/]\n\n"
+            "  ↑/↓       上下导航\n"
+            "  Enter     弹出动作菜单（根据状态动态显示）\n"
+            "  n         新建 story\n"
+            "  o         切换右侧面板（关→诊断→copilot→关）\n"
+            "  ?         显示此帮助\n"
+            "  q         退出\n\n"
+            "[dim]Enter 动作菜单包含：进终端、开始/继续、\n"
+            "接受风险、跳过、终止、删除、查看详情等[/]"
         )
         panel.set_class(True, "visible")
 
@@ -2344,45 +2395,6 @@ class StoryBoardApp(App):
         elif self._diag_tab == "copilot":
             self._show_diagnostics = False
             pane.set_class(True, "hidden")
-
-    def action_package_story_diagnostics(self):
-        """Generate a diagnostic bundle for the selected story."""
-        if not self.stories or self.selected_index >= len(self.stories):
-            self.notify("No story selected", severity="warning")
-            return
-        s = self.stories[self.selected_index]
-        key = s["story_key"]
-        try:
-            from ...orchestrator.diagnostics import create_story_diagnostics_bundle
-
-            result = create_story_diagnostics_bundle(story_key=key)
-            if result.get("error"):
-                self.notify(f"Diagnostics failed: {result['error']}", severity="error")
-                return
-            path = result["path"]
-            self.notify(f"Bundle: {path}", title="Diagnostics")
-            db.log_event(
-                key,
-                s.get("current_stage", ""),
-                "diagnostic_bundle_created",
-                {"bundle_path": path, "bundle_type": "story"},
-            )
-        except Exception as exc:
-            self.notify(f"Error: {exc}", severity="error")
-
-    def action_package_global_diagnostics(self):
-        """Generate a global diagnostics bundle."""
-        try:
-            from ...orchestrator.diagnostics import create_global_diagnostics_bundle
-
-            result = create_global_diagnostics_bundle()
-            if result.get("error"):
-                self.notify(f"Diagnostics failed: {result['error']}", severity="error")
-                return
-            path = result["path"]
-            self.notify(f"Global bundle: {path}", title="Diagnostics")
-        except Exception as exc:
-            self.notify(f"Error: {exc}", severity="error")
 
     def action_ask_copilot(self):
         """Focus the copilot input for inline questioning."""
@@ -2479,22 +2491,13 @@ class StoryBoardApp(App):
             )
         elif n_actions:
             self.notify(
-                f"{count} suggestion(s), {n_actions} action(s) — press 1-{n_actions} to execute",
+                f"{count} suggestion(s), {n_actions} action(s) available",
                 title="Copilot",
             )
         else:
             self.notify(f"Copilot returned {count} suggestion(s)", title="Copilot")
 
     # ---- copilot action execution (P2) ----
-
-    def action_copilot_action_1(self):
-        self._execute_copilot_action(0)
-
-    def action_copilot_action_2(self):
-        self._execute_copilot_action(1)
-
-    def action_copilot_action_3(self):
-        self._execute_copilot_action(2)
 
     def _execute_copilot_action(self, index: int):
         """Execute a copilot-suggested action, respecting policy engine decisions."""

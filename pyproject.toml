@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "story-lifecycle"
-version = "0.5.45"
+version = "0.5.46"
 description = "AI-powered development workflow orchestrator — from TAPD/Jira story to production"
 readme = "README.md"
 license = {text = "MIT"}
