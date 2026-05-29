@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.42] - 2026-05-29
+
+### Fixed
+- Claude adapter 不再传 `--model` 参数，避免 planner LLM 返回的模型名（如 `deepseek-chat`）导致 Claude Code 报 400 错误
+
 ## [0.5.41] - 2026-05-29
 
 ### Added

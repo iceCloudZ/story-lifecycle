@@ -20,16 +20,12 @@ class ClaudeAdapter(BaseAdapter):
         return None
 
     def launch_cmd(self, model: str) -> str:
-        return f"claude --model {model}"
+        return "claude"
 
     def headless_launch_cmd(self, model: str, prompt: str) -> list[str] | None:
-        # Prompt is NOT included here — piped via stdin by _run_headless.
-        # --permission-mode acceptEdits: allows file edits without prompting
         return [
             resolve_executable("claude"),
             "-p",
-            "--model",
-            model,
             "--allowedTools",
             "Bash,Read,Edit,Write,Glob,Grep",
             "--permission-mode",
