@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.45] - 2026-05-29
+
+### Fixed
+- 右侧面板用 Textual Tabs/ContentSwitcher 崩溃：改为 `o` 键循环切换（隐藏 → 诊断 → Copilot → 隐藏），单面板渲染，不再依赖 Textual 复杂控件
+- Copilot 查询完成后自动切到 Copilot 视图，按 `y` 也自动切换
+
 ## [0.5.44] - 2026-05-29
 
 ### Fixed

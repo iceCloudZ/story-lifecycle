@@ -14,7 +14,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll, Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Static, Input, Button, Tabs, Tab, ContentSwitcher
+from textual.widgets import Footer, Static, Input, Button
 from textual.reactive import reactive
 
 from ...db import models as db
@@ -1017,14 +1017,6 @@ class StoryBoardApp(App):
         display: none;
     }
 
-    #right-pane Tabs {
-        height: 3;
-    }
-
-    #right-pane ContentSwitcher {
-        height: 1fr;
-    }
-
     #copilot-bar {
         height: auto;
         padding: 0 1;
@@ -1091,6 +1083,7 @@ class StoryBoardApp(App):
         self._show_diagnostics = True
         self._copilot = CopilotState()
         self._copilot_story_key = ""
+        self._diag_tab = "diagnostics"  # "diagnostics" or "copilot"
 
     def compose(self) -> ComposeResult:
         yield Static(id="header-bar")
@@ -1101,12 +1094,7 @@ class StoryBoardApp(App):
                 yield Static(id="completed-section")
                 yield Static(id="detail-panel")
             with Vertical(id="right-pane"):
-                with Tabs(id="diag-tabs"):
-                    yield Tab("诊断", id="tab-diagnostics")
-                    yield Tab("Copilot", id="tab-copilot")
-                with ContentSwitcher(id="diag-switcher", initial="tab-diagnostics"):
-                    yield Static(id="diagnostics-panel")
-                    yield Static(id="copilot-panel")
+                yield Static(id="diagnostics-panel")
                 yield Input(
                     id="copilot-input",
                     placeholder="按 y 聚焦 · 输入问题 · Enter 发送",
@@ -1277,13 +1265,15 @@ class StoryBoardApp(App):
         )
 
     def _render_diagnostics_panel(self) -> None:
-        """Render the right-side diagnostics panel for the selected story."""
+        """Render the right-side panel for the selected story."""
         panel = self.query_one("#diagnostics-panel")
-        copilot_panel = self.query_one("#copilot-panel")
 
         if not self.stories or self.selected_index >= len(self.stories):
             panel.update("[dim]No story selected[/]")
-            copilot_panel.update("[dim]No story selected[/]")
+            return
+
+        if self._diag_tab == "copilot":
+            panel.update("\n".join(self._build_copilot_lines()))
             return
 
         s = self.stories[self.selected_index]
@@ -1314,7 +1304,7 @@ class StoryBoardApp(App):
         }.get(stuck.get("severity", "info"), "dim")
 
         lines = [
-            "[bold]Diagnostics[/]",
+            "[bold]诊断[/]  [dim]\\[o] copilot  \\[y] 提问[/]",
             "",
             f"[bold cyan]{key}[/]",
             f"status: {story['status']}   stage: {stage_label}",
@@ -1356,11 +1346,13 @@ class StoryBoardApp(App):
         )
 
         panel.update("\n".join(lines))
-        copilot_panel.update("\n".join(self._build_copilot_lines()))
 
     def _build_copilot_lines(self) -> list[str]:
-        """Build content for the copilot panel tab."""
-        lines = ["[bold]Copilot[/]", ""]
+        """Build content for the copilot panel view."""
+        lines = [
+            "[bold]Copilot[/]  [dim]\\[o] 切换回诊断[/]",
+            "",
+        ]
 
         if not self.stories or self.selected_index >= len(self.stories):
             lines.append("[dim]No story selected[/]")
@@ -1441,14 +1433,6 @@ class StoryBoardApp(App):
                 lines.append(f"  [dim]• {q}[/]")
 
         return lines
-
-    def _switch_to_copilot_tab(self):
-        """Switch right pane to show the Copilot tab."""
-        try:
-            switcher = self.query_one("#diag-switcher", ContentSwitcher)
-            switcher.current = "tab-copilot"
-        except Exception:
-            pass
 
     def _reset_copilot_if_story_changed(self):
         """Reset copilot only when the selected story actually changes."""
@@ -2347,12 +2331,19 @@ class StoryBoardApp(App):
         panel.set_class(True, "visible")
 
     def action_toggle_diagnostics(self):
-        """Toggle the right-side diagnostics panel visibility."""
-        self._show_diagnostics = not self._show_diagnostics
+        """Toggle the right-side panel: hidden → diagnostics → copilot → hidden."""
         pane = self.query_one("#right-pane")
-        pane.set_class(not self._show_diagnostics, "hidden")
-        if self._show_diagnostics:
+        if not self._show_diagnostics:
+            self._show_diagnostics = True
+            self._diag_tab = "diagnostics"
+            pane.set_class(False, "hidden")
             self._render_diagnostics_panel()
+        elif self._diag_tab == "diagnostics":
+            self._diag_tab = "copilot"
+            self._render_diagnostics_panel()
+        elif self._diag_tab == "copilot":
+            self._show_diagnostics = False
+            pane.set_class(True, "hidden")
 
     def action_package_story_diagnostics(self):
         """Generate a diagnostic bundle for the selected story."""
@@ -2398,6 +2389,12 @@ class StoryBoardApp(App):
         if not self.stories or self.selected_index >= len(self.stories):
             self.notify("No story selected", severity="warning")
             return
+        if not self._show_diagnostics:
+            self._show_diagnostics = True
+            pane = self.query_one("#right-pane")
+            pane.set_class(False, "hidden")
+        self._diag_tab = "copilot"
+        self._render_diagnostics_panel()
         inp = self.query_one("#copilot-input", Input)
         inp.focus()
 
@@ -2472,8 +2469,8 @@ class StoryBoardApp(App):
         """Called on main thread when copilot query completes."""
         self._copilot.loading = False
         self._copilot.result = result
+        self._diag_tab = "copilot"
         self._render_diagnostics_panel()
-        self._switch_to_copilot_tab()
         count = len(result.get("suggestions", []))
         n_actions = len(result.get("actions", []))
         if result.get("error"):
