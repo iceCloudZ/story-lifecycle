@@ -343,7 +343,7 @@ class TestResolveStageState:
             resolve_stage_state(
                 story, FakeBackend(SessionState.MISSING), is_running=True
             )
-            == StageEntryState.RUNNING_WITH_DEAD_SESSION
+            == StageEntryState.STARTING
         )
 
     def test_running_with_unknown_session(self, tmp_path):
