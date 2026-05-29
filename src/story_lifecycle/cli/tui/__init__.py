@@ -1863,12 +1863,14 @@ class StoryBoardApp(App):
             db.update_story(key, status="active", last_error=None)
             if not is_story_running(key):
                 start_story_async(key)
+                self.notify(f"正在启动 {key}，session 创建中...", title="Resume")
             self.refresh_stories()
 
         elif action == StageEntryAction.CONSUME_DONE_RESUME:
             db.update_story(key, status="active", last_error=None)
             if not is_story_running(key):
                 start_story_async(key)
+                self.notify(f"正在启动 {key}，session 创建中...", title="Resume")
             self.refresh_stories()
 
         elif action == StageEntryAction.CLEANUP_DEAD_AND_START:
@@ -1880,6 +1882,7 @@ class StoryBoardApp(App):
             db.update_story(key, status="active", last_error=None)
             if not is_story_running(key):
                 start_story_async(key)
+                self.notify(f"正在启动 {key}，session 创建中...", title="Resume")
             self.refresh_stories()
 
         elif action == StageEntryAction.CLEANUP_DEAD_AND_RESTART:

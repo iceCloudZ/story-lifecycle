@@ -148,6 +148,7 @@ class StageEntryState(Enum):
     RUNNING_WITH_LIVE_SESSION = "running_with_live_session"
     RUNNING_WITH_DEAD_SESSION = "running_with_dead_session"
     RUNNING_WITH_UNKNOWN_SESSION = "running_with_unknown_session"
+    STARTING = "starting"
     IDLE_WITH_LIVE_SESSION = "idle_with_live_session"
     IDLE_WITH_DEAD_SESSION = "idle_with_dead_session"
     IDLE = "idle"
@@ -171,6 +172,7 @@ class StageEntryAction(Enum):
     SHOW_SESSION_UNKNOWN = "show_session_unknown"
     SHOW_CLI_EXIT_ERROR = "show_cli_exit_error"
     SHOW_GATE_STATUS = "show_gate_status"
+    SHOW_STARTING = "show_starting"
     RETRY_REVIEW = "retry_review"
     NOOP = "noop"
 
@@ -223,7 +225,7 @@ def resolve_stage_state(
         if session == "exited":
             return StageEntryState.RUNNING_WITH_DEAD_SESSION
         if session == "missing":
-            return StageEntryState.RUNNING_WITH_DEAD_SESSION
+            return StageEntryState.STARTING
         return StageEntryState.RUNNING_WITH_UNKNOWN_SESSION
 
     # graph not running
@@ -284,6 +286,9 @@ _ACTION_TABLE: dict[tuple[StageEntryState, str], StageEntryAction] = {
         StageEntryState.RUNNING_WITH_DEAD_SESSION,
         "r",
     ): StageEntryAction.CLEANUP_DEAD_AND_RESTART,
+    # STARTING (graph running, session not yet created)
+    (StageEntryState.STARTING, "e"): StageEntryAction.SHOW_STARTING,
+    (StageEntryState.STARTING, "r"): StageEntryAction.SHOW_RUNNING,
     # RUNNING_WITH_UNKNOWN_SESSION
     (
         StageEntryState.RUNNING_WITH_UNKNOWN_SESSION,
@@ -339,6 +344,7 @@ def entry_action_notice(action: StageEntryAction, story: dict) -> str | None:
         StageEntryAction.SHOW_WORKSPACE_BUSY: "Workspace 被其他 story 占用，请等待完成后再试。",
         StageEntryAction.SHOW_SESSION_UNKNOWN: "无法确定 session 状态，请检查 Zellij 是否正常。",
         StageEntryAction.SHOW_CLI_EXIT_ERROR: f"CLI 进程异常退出（stage: {stage}），按 r 重新启动。",
+        StageEntryAction.SHOW_STARTING: "Session 正在启动中，请稍候再按 e 进入终端。",
         StageEntryAction.SHOW_GATE_STATUS: (
             f"Story {key} 被 review gate 阻塞（{story.get('last_error', '')}）。"
             f"按 r 重试 review，R 重试 stage，A 接受风险推进。"

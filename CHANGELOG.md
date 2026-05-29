@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.43] - 2026-05-29
+
+### Fixed
+- 按 `r` 启动后立刻按 `e` 报错"没有运行中的 session"：新增 `STARTING` 状态区分 graph 已启动但 session 尚未创建的中间态，给出友好提示
+- 按 `r` 启动时增加 toast 通知"session 创建中"，让用户知道操作已生效
+
 ## [0.5.42] - 2026-05-29
 
 ### Fixed
