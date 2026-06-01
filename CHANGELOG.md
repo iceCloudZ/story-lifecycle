@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.48] - 2026-06-01
+
+### Added
+- 项目智能初始化（Project Intelligence Bootstrap）：`story project init-knowledge` 一键生成 `.story/knowledge/` 知识包，通过 CLI headless 调用 AI 扫描代码库生成 manifest、product、search-catalog、graph、scenarios、indexes
+- `story project sync-knowledge` 检测知识包是否过期（基于 Git commit 对比）
+- 知识包产物校验器：自动检查 manifest/product/search-catalog/graph 文件存在性和格式
+- 结构化搜索工具 `search_knowledge()`：支持按类型/关键词/limit 搜索知识包文件，避免 LLM 直接拼接 shell
+- Bootstrap prompt 模板：指导 AI 按 scan profile（java-spring-microservice/frontend-react-umi/python-service）扫描并生成知识包
+- 创建 story 时自动检测知识包是否存在，缺失时给出 `story project init-knowledge` 提示
+- 知识包模板文件：manifest.yaml、product.yaml、search-catalog.md、graph-schema.json、scenario.md、index.md
+
 ## [0.5.47] - 2026-05-29
 
 ### Changed
