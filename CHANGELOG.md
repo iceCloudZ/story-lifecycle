@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.50] - 2026-06-01
+
+### Changed
+- `story project init-knowledge` 自动检测环境中可用的 AI CLI（claude/codex），不再硬编码 claude
+- 检测到多个 CLI 时显示列表，默认使用第一个
+
 ## [0.5.49] - 2026-06-01
 
 ### Changed
