@@ -17,6 +17,7 @@ from story_lifecycle.knowledge.paths import (
     knowledge_done_file,
     knowledge_context_dir,
 )
+from story_lifecycle.knowledge.scaffold import scaffold_knowledge_dir
 
 
 def test_knowledge_dir():
@@ -87,3 +88,37 @@ def test_knowledge_context_dir():
     assert knowledge_context_dir("/ws", "STORY-1") == Path(
         "/ws/.story/context/STORY-1/knowledge-context"
     )
+
+
+class TestScaffold:
+    def test_creates_all_dirs(self, tmp_path):
+        scaffold_knowledge_dir(tmp_path)
+        dirs = [
+            "knowledge/scenarios",
+            "knowledge/indexes/by-domain",
+            "knowledge/graph",
+            "knowledge/playbooks",
+            "knowledge/declarations",
+            "knowledge/reviews",
+            "knowledge/events",
+            "knowledge/cache",
+            "done/PROJECT-KNOWLEDGE-INIT",
+        ]
+        for d in dirs:
+            assert (tmp_path / ".story" / d).is_dir(), f"Missing .story/{d}"
+
+    def test_creates_gitignore(self, tmp_path):
+        scaffold_knowledge_dir(tmp_path)
+        gi = tmp_path / ".story" / "knowledge" / ".gitignore"
+        assert gi.exists()
+        content = gi.read_text(encoding="utf-8")
+        assert "/indexes/" in content
+        assert "/graph/" in content
+        assert "/events/" in content
+        assert "/cache/" in content
+        assert "product.yaml" not in content
+
+    def test_idempotent(self, tmp_path):
+        scaffold_knowledge_dir(tmp_path)
+        scaffold_knowledge_dir(tmp_path)  # should not raise
+        assert (tmp_path / ".story" / "knowledge").is_dir()
