@@ -3,6 +3,8 @@ import json
 import pytest
 import yaml
 from pathlib import Path
+from click.testing import CliRunner
+from story_lifecycle.cli.main import cli
 from story_lifecycle.knowledge.templates import load_template
 from story_lifecycle.knowledge.paths import (
     knowledge_dir,
@@ -270,3 +272,22 @@ class TestValidator:
         kp.graph_json_path(tmp_path).write_text("not json{{{", encoding="utf-8")
         errors = validate_knowledge_pack(tmp_path)
         assert any("graph" in e.lower() for e in errors)
+
+
+class TestProjectCLI:
+    def test_project_group_registered(self):
+        result = CliRunner().invoke(cli, ["project", "--help"])
+        assert result.exit_code == 0
+        assert "init-knowledge" in result.output
+
+    def test_init_knowledge_help(self):
+        result = CliRunner().invoke(cli, ["project", "init-knowledge", "--help"])
+        assert result.exit_code == 0
+
+    def test_init_knowledge_dry_run_creates_dirs(self, tmp_path, monkeypatch):
+        """--dry-run should create directories without running AI CLI."""
+        result = CliRunner().invoke(
+            cli, ["project", "init-knowledge", "-w", str(tmp_path), "--dry-run"]
+        )
+        assert result.exit_code == 0
+        assert (tmp_path / ".story" / "knowledge").is_dir()
