@@ -27,6 +27,8 @@ from story_lifecycle.knowledge.paths import (
 from story_lifecycle.knowledge.scaffold import scaffold_knowledge_dir
 from story_lifecycle.knowledge.bootstrap import render_bootstrap_prompt
 from story_lifecycle.knowledge.validator import validate_knowledge_pack
+from story_lifecycle.knowledge.stale import check_stale
+from story_lifecycle.knowledge.search import search_knowledge
 
 
 def test_knowledge_dir():
@@ -291,3 +293,88 @@ class TestProjectCLI:
         )
         assert result.exit_code == 0
         assert (tmp_path / ".story" / "knowledge").is_dir()
+
+
+class TestStale:
+    def _write_manifest(self, tmp_path, commit="abc123", ts="2026-01-01T00:00:00"):
+        from story_lifecycle.knowledge import paths as kp
+
+        manifest = {
+            "version": 1,
+            "source": {"commit": commit, "timestamp": ts, "dirty": False},
+            "status": "ready",
+        }
+        kp.manifest_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+        kp.manifest_path(tmp_path).write_text(yaml.dump(manifest), encoding="utf-8")
+
+    def test_fresh_when_commit_matches(self, tmp_path, monkeypatch):
+        self._write_manifest(tmp_path, commit="abc123def456")
+        monkeypatch.setattr(
+            "story_lifecycle.knowledge.stale._get_git_commit",
+            lambda w: "abc123def456",
+        )
+        result = check_stale(tmp_path)
+        assert not result["stale"]
+
+    def test_stale_when_commit_differs(self, tmp_path, monkeypatch):
+        self._write_manifest(tmp_path, commit="old_commit")
+        monkeypatch.setattr(
+            "story_lifecycle.knowledge.stale._get_git_commit",
+            lambda w: "new_commit",
+        )
+        result = check_stale(tmp_path)
+        assert result["stale"]
+        assert "commit" in result["reason"]
+
+    def test_stale_when_no_manifest(self, tmp_path):
+        result = check_stale(tmp_path)
+        assert result["stale"]
+
+    def test_stale_when_manifest_status_is_stale(self, tmp_path):
+        from story_lifecycle.knowledge import paths as kp
+
+        manifest = {
+            "version": 1,
+            "source": {"commit": "abc", "timestamp": "2026-01-01"},
+            "status": "stale",
+        }
+        kp.manifest_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+        kp.manifest_path(tmp_path).write_text(yaml.dump(manifest), encoding="utf-8")
+        result = check_stale(tmp_path)
+        assert result["stale"]
+
+
+class TestSearch:
+    def _setup_index(self, tmp_path, content):
+        from story_lifecycle.knowledge import paths as kp
+        from story_lifecycle.knowledge.scaffold import scaffold_knowledge_dir
+
+        scaffold_knowledge_dir(tmp_path)
+        idx = kp.indexes_dir(tmp_path) / "api-index.md"
+        idx.write_text(content, encoding="utf-8")
+
+    def test_search_finds_keyword(self, tmp_path):
+        self._setup_index(
+            tmp_path, "# API Index\n\n## /api/withdraw\nwithdraw endpoint\n"
+        )
+        results = search_knowledge(str(tmp_path), keyword="withdraw")
+        assert len(results) > 0
+        assert any("withdraw" in r["line"].lower() for r in results)
+
+    def test_search_by_type_filter(self, tmp_path):
+        self._setup_index(tmp_path, "# API Index\n\n## /api/withdraw\n")
+        results = search_knowledge(str(tmp_path), keyword="withdraw", target_type="api")
+        assert all("api" in r["file"] for r in results)
+
+    def test_search_no_results(self, tmp_path):
+        self._setup_index(tmp_path, "# API Index\nnothing here\n")
+        results = search_knowledge(str(tmp_path), keyword="nonexistent_xyz")
+        assert results == []
+
+    def test_search_limit(self, tmp_path):
+        content = "# API Index\n" + "\n".join(
+            f"## /api/withdraw/{i}\nwithdraw endpoint {i}\n" for i in range(50)
+        )
+        self._setup_index(tmp_path, content)
+        results = search_knowledge(str(tmp_path), keyword="withdraw", limit=5)
+        assert len(results) <= 5
