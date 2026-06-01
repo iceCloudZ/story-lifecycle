@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.49] - 2026-06-01
+
+### Changed
+- `story project init-knowledge` 默认改为交互模式：启动 zellij 会话/新终端窗口运行 Claude CLI，注入 prompt 让 AI 实时交互式生成知识包
+- 保留 `--headless` 标志用于 CI 场景的非交互执行
+
 ## [0.5.48] - 2026-06-01
 
 ### Added
