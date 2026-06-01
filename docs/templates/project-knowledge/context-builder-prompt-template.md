@@ -36,13 +36,26 @@
 - MQ topic/tag
 - 历史 bug 关键词
 
-使用 `rg` 搜索 `.story/knowledge/`，读取命中的相关片段。
+优先输出结构化搜索计划，不要直接拼接复杂 shell：
+
+```json
+{
+  "type": "api|table|field|mq|service|scenario|bug|test_case|text",
+  "keyword": "withdraw",
+  "target_paths": [".story/knowledge/indexes/api-index.md"],
+  "limit": 20
+}
+```
+
+如果当前执行环境还没有 Search Tool，可使用 `rg` 搜索 `.story/knowledge/`，但必须限制在 `.story/knowledge/` 内，并避免危险 shell 拼接。
 
 ### 3. Expand
 
 从命中的 scenario/service/table/bug/test seed ids 出发，读取 `product-context-graph.json` 扩展邻接关系。
 
 只选择与当前 story 和 target stage 相关的上下文。
+
+同时读取 `.story/knowledge/declarations/`，人工声明的核心链路、隐式依赖和特殊配置优先级高于 AI 推断。
 
 ### 4. Compose
 

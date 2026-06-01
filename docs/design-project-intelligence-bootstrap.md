@@ -57,6 +57,7 @@ Story Lifecycle 当前能编排一个 story 经过 design、implement、test、r
       bug-risk-index.md
       test-case-index.md
       by-domain/
+        <domain>.md
 
     graph/
       product-context-graph.json
@@ -66,6 +67,10 @@ Story Lifecycle 当前能编排一个 story 经过 design、implement、test、r
       regression-playbook.md
       production-troubleshooting-playbook.md
       release-review-playbook.md
+
+    declarations/
+      manual-context.yaml
+      critical-flows.yaml
 
     reviews/
       pending-review-items.md
@@ -104,6 +109,12 @@ Story Lifecycle 当前能编排一个 story 经过 design、implement、test、r
 - `cache/**`
 - `reviews/pending-review-items.md`
 
+索引目录规则：
+
+- `indexes/*.md` 是产品级全局事实索引，面向 AI 和精确检索。
+- `indexes/by-domain/<domain>.md` 是业务域视图，面向人读和测试回归。
+- 每个全局索引条目必须至少被一个 `by-domain` 文件引用，避免全局索引演进成不可读的超长列表。
+
 ## 触发方式
 
 显式命令：
@@ -111,6 +122,19 @@ Story Lifecycle 当前能编排一个 story 经过 design、implement、test、r
 ```bash
 story project init-knowledge
 ```
+
+增量更新命令：
+
+```bash
+story project sync-knowledge
+```
+
+`sync-knowledge` 是 P1 必须补齐的能力，避免知识包在代码日更后快速腐烂。P1 可以先做轻量版本：
+
+- 读取当前 Git commit、dirty 状态和 `.story/knowledge/manifest.yaml` 中的 source 信息。
+- 如果 commit 变化或关键源文件修改时间晚于知识包生成时间，标记知识包为 stale。
+- 基于 Git diff 或修改文件路径生成局部刷新任务。
+- 暂时无法可靠刷新时，生成强警告并写入 `reviews/pending-review-items.md`。
 
 首次创建 story 时，如果缺少 `.story/knowledge/manifest.yaml`，只提示，不自动生成：
 
@@ -219,6 +243,19 @@ P0/P1 不把 Retriever 做成 Python API，而是把以下四步写进 CLI promp
 
 ### 2. Search
 
+P0 可以让 CLI 直接使用 `rg`，但 P1 应该收敛成结构化 Search Tool，避免 LLM 自由拼 shell 或正则导致空转。工具接口可以先保持很小：
+
+```json
+{
+  "type": "api|table|field|mq|service|scenario|bug|test_case|text",
+  "keyword": "withdraw",
+  "target_paths": [".story/knowledge/indexes/api-index.md"],
+  "limit": 20
+}
+```
+
+工具内部负责转成安全的文件搜索、正则转义、结果截断和路径限制。CLI 仍然负责生成搜索计划，但不直接拼接 shell。
+
 根据检索计划执行精确搜索，优先使用符号、路径、表名、字段名、API path、MQ tag、bug 关键词。
 
 示例：
@@ -236,6 +273,8 @@ scenario -> service -> api -> table -> field -> mq -> bug -> test_case
 ```
 
 ### 4. Compose
+
+后续版本需要加入 token budget 控制：按 target stage 限制 context packet 大小，超预算时按 verified > extracted > proposed、scenario > bug > api/table > long explanation 的优先级裁剪，并记录被舍弃的节点。该能力不阻塞 P1，可放入 P2/P3。
 
 生成精简、可注入、可审计的 context packet。packet 必须包含：
 
@@ -356,6 +395,22 @@ Python 深度：
 - 定时任务
 - MCP tools
 
+## Manual Declarations
+
+Spring AOP、动态 Feign URL、运行时配置、反射、拦截器和隐式状态流转可能无法通过 Prompt/CLI 稳定发现。设计需要保留人工声明入口，作为扫描和推断的兜底。
+
+目录：
+
+```text
+.story/knowledge/declarations/
+  manual-context.yaml
+  critical-flows.yaml
+```
+
+`manual-context.yaml` 用于补充服务依赖、隐式切面、动态 URL、特殊配置和 owner 信息。`critical-flows.yaml` 用于声明必须被知识包覆盖的核心链路，例如注册、授信、提现、还款、账号合并、coolingoff。
+
+Context Builder 必须优先读取 declarations，并把其中内容标记为 `verified` 或 `manual` 来源。
+
 ## 与 Story Lifecycle 集成
 
 P1 集成点：
@@ -425,9 +480,11 @@ ys-agent
 ### P1：本地 Bootstrap
 
 - `story project init-knowledge` 命令。
+- `story project sync-knowledge` 轻量增量更新和 stale 检测。
 - 调 CLI headless 执行 bootstrap prompt。
 - 生成 `.story/knowledge`。
 - 校验关键产物和 done JSON。
+- 提供结构化 Search Tool 的最小版本，限制 LLM 直接拼 shell。
 
 ### P2：本地 Context Packet
 
@@ -439,6 +496,7 @@ ys-agent
 
 - 将高频稳定的 describe/search/expand/compose 沉淀成本地 helper。
 - 保留 CLI fallback。
+- 加入 context token budget、裁剪策略和丢弃节点记录。
 
 ### P4：远程化到 ys-agent
 
@@ -458,4 +516,7 @@ ys-agent
 - 所有关键结论都有 `source_refs` 或进入 pending review。
 - 对一个 story 可以生成 stage-specific knowledge context packet。
 - context packet 小而可读，包含证据来源和待确认项。
+- source commit 或关键源文件变化时，系统能识别 stale 并提示运行 `story project sync-knowledge`。
+- Search 阶段支持结构化参数，不要求 LLM 直接拼接 shell。
+- `indexes/by-domain` 能覆盖全局索引中的业务域条目。
 - 不修改业务代码。
