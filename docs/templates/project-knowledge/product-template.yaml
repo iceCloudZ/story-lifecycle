@@ -1,0 +1,36 @@
+product:
+  code: happycash-ph
+  name: HappyCash Philippines
+  description: 菲律宾消费金融产品
+  aliases:
+    - HC
+    - HappyCash
+
+owners:
+  business:
+    - QA
+  technical:
+    - backend-team
+
+domains:
+  - code: user
+    name: 用户域
+    description: 注册、登录、资料、证件、活体、账号找回、账号注销。
+  - code: credit
+    name: 授信/额度域
+    description: 授信申请、额度计算、风控审核、人审补件。
+  - code: order
+    name: 订单/借款域
+    description: 借款申请、提现、放款、coolingoff、订单取消和关闭。
+  - code: repayment
+    name: 还款域
+    description: 正常还款、提前还款、逾期、回调、对账。
+  - code: message
+    name: 消息域
+    description: OTP、短信、Push、工单、MQ 通知。
+  - code: marketing
+    name: 营销/券域
+    description: 优惠券、活动、邀请奖励。
+  - code: operations
+    name: 运营后台域
+    description: 审核后台、订单后台、用户后台、配置和发布评审。

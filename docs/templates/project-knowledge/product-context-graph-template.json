@@ -1,0 +1,38 @@
+{
+  "product": "happycash-ph",
+  "pack_version": "0.1.0",
+  "source_commit": "<commit-sha>",
+  "schema_version": "0.1",
+  "nodes": [
+    {
+      "id": "scenario:order.withdraw",
+      "type": "Scenario",
+      "name": "提现",
+      "domain": "order",
+      "status": "proposed",
+      "summary": "用户授信通过后发起借款提现。",
+      "source_refs": [
+        ".story/knowledge/scenarios/order/withdraw.md"
+      ]
+    },
+    {
+      "id": "service:hc-order",
+      "type": "Service",
+      "name": "hc-order",
+      "status": "extracted",
+      "source_refs": [
+        ".story/knowledge/indexes/service-index.md#hc-order"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "scenario:order.withdraw",
+      "to": "service:hc-order",
+      "type": "USES_SERVICE",
+      "source_refs": [
+        ".story/knowledge/scenarios/order/withdraw.md#涉及服务和模块"
+      ]
+    }
+  ]
+}

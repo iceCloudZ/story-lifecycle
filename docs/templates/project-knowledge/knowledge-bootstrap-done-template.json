@@ -1,0 +1,15 @@
+{
+  "knowledge_manifest": ".story/knowledge/manifest.yaml",
+  "product": ".story/knowledge/product.yaml",
+  "scenario_docs": [
+    ".story/knowledge/scenarios/order/withdraw.md"
+  ],
+  "index_docs": [
+    ".story/knowledge/indexes/api-index.md"
+  ],
+  "graph_json": ".story/knowledge/graph/product-context-graph.json",
+  "search_catalog": ".story/knowledge/search-catalog.md",
+  "pending_review": ".story/knowledge/reviews/pending-review-items.md",
+  "summary": "Generated initial project knowledge pack.",
+  "warnings": []
+}
