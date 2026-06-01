@@ -210,6 +210,16 @@ def create(key, title, prd, profile, workspace, no_start, dry_run):
     console.print(f"  Profile: [dim]{profile}[/]")
     console.print(f"  Workspace: [dim]{ws}[/]")
 
+    # 检查知识包是否存在
+    from ..knowledge.paths import manifest_path as _km
+
+    if not _km(ws).exists():
+        console.print(
+            "[yellow]当前项目尚未初始化项目知识包。建议先运行：[/]\n"
+            "  [bold]story project init-knowledge[/]\n"
+            "[dim]继续创建 story 也可以，但 AI 将缺少项目级业务/代码上下文。[/]\n"
+        )
+
     if dry_run:
         console.print("\n[bold]Dry Run — stage prompts:[/]\n")
         profile_data = load_profile(profile)

@@ -378,3 +378,25 @@ class TestSearch:
         self._setup_index(tmp_path, content)
         results = search_knowledge(str(tmp_path), keyword="withdraw", limit=5)
         assert len(results) <= 5
+
+
+class TestCreateStoryKnowledgeHint:
+    """创建 story 时，如果缺少知识包，应给出提示。"""
+
+    def test_create_without_knowledge_shows_hint(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("story_lifecycle.cli.main.init_db", lambda: None)
+        monkeypatch.setattr("story_lifecycle.cli.main.is_configured", lambda: True)
+        monkeypatch.setattr("story_lifecycle.cli.main.load_config_to_env", lambda: None)
+        monkeypatch.setattr(
+            "story_lifecycle.orchestrator.service.create_and_start_story",
+            lambda **kw: kw["story_key"],
+        )
+        monkeypatch.setattr(
+            "story_lifecycle.orchestrator.graph.start_story_async",
+            lambda key: None,
+        )
+
+        result = CliRunner().invoke(
+            cli, ["create", "TEST-001", "-t", "test", "-w", str(tmp_path), "--no-start"]
+        )
+        assert "init-knowledge" in result.output or "知识包" in result.output
