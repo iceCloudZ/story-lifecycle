@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.51] - 2026-06-02
+
+### Changed
+- Bootstrap prompt 改为 9 步交互式流程：项目概况 → 并行扫描规划 → 数据库 → 前端 → 测试 → CI/CD → 逐域扫描 → 汇总 → 并行写入+健康评估
+- 识别数据库、前端、测试、CI/CD 四个独立维度可并行扫描
+- 写入知识包产物和健康评估并行执行，评估结果落地到 `reviews/health-assessment.md`
+- AI 每步主动提问确认，不再一次性埋头执行
+
+### Added
+- 健康评估报告：测试覆盖缺口、代码坏味道（重复/硬编码/废弃代码/依赖风险）、架构建议、红黄绿优先级排序
+- 自动检测可用 AI CLI（claude/codex），多 CLI 时展示列表供选择
+- `init-knowledge` 默认交互模式（zellij/新终端），`--headless` 保留给 CI
+
 ## [0.5.50] - 2026-06-01
 
 ### Changed
