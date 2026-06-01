@@ -1,0 +1,14 @@
+# Product Overview
+product:
+  name: ""
+  description: ""
+  domains: []
+
+tech_stack:
+  backend: []
+  frontend: []
+  infrastructure: []
+
+repositories: []
+
+key_flows: []

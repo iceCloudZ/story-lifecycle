@@ -1,4 +1,6 @@
+import pytest
 from pathlib import Path
+from story_lifecycle.knowledge.templates import load_template
 from story_lifecycle.knowledge.paths import (
     knowledge_dir,
     manifest_path,
@@ -122,3 +124,36 @@ class TestScaffold:
         scaffold_knowledge_dir(tmp_path)
         scaffold_knowledge_dir(tmp_path)  # should not raise
         assert (tmp_path / ".story" / "knowledge").is_dir()
+
+
+class TestTemplates:
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "manifest.yaml",
+            "product.yaml",
+            "search-catalog.md",
+            "graph-schema.json",
+            "scenario.md",
+            "index.md",
+        ],
+    )
+    def test_template_exists_and_nonempty(self, name):
+        content = load_template(name)
+        assert len(content) > 50, f"{name} is too short"
+
+    def test_manifest_is_valid_yaml(self):
+        import yaml
+
+        content = load_template("manifest.yaml")
+        data = yaml.safe_load(content)
+        assert "version" in data
+        assert "product" in data
+
+    def test_graph_schema_is_valid_json(self):
+        import json
+
+        content = load_template("graph-schema.json")
+        data = json.loads(content)
+        assert "node_types" in data
+        assert "relation_types" in data

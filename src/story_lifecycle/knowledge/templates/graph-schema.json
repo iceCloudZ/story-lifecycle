@@ -1,0 +1,18 @@
+{
+  "node_types": [
+    "Product", "Domain", "Scenario", "Repository", "Service",
+    "Api", "Feign", "Table", "Field", "MqMessage",
+    "StateMachine", "State", "Bug", "TestCase", "Playbook",
+    "CodeSymbol", "Doc"
+  ],
+  "relation_types": [
+    "HAS_DOMAIN", "HAS_SCENARIO", "USES_SERVICE", "EXPOSES_API",
+    "CALLS_FEIGN", "READS_TABLE", "WRITES_TABLE", "HAS_FIELD",
+    "PUBLISHES_MQ", "CONSUMES_MQ", "HAS_STATE_MACHINE", "HAS_STATE",
+    "AFFECTS_SCENARIO", "COVERS_SCENARIO", "GUARDS_BUG",
+    "DESCRIBES", "SOURCE_REF"
+  ],
+  "nodes": [],
+  "edges": [],
+  "_schema_version": 1
+}
