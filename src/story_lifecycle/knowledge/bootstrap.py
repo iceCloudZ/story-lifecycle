@@ -132,3 +132,119 @@ def _parse_done(path: Path) -> dict:
     from ..orchestrator.nodes.json_helpers import robust_json_parse
 
     return robust_json_parse(path)
+
+
+def launch_interactive(
+    workspace: str | Path,
+    scan_profile: str = "java-spring-microservice",
+    adapter_name: str = "claude",
+) -> None:
+    """Launch interactive AI CLI session with bootstrap prompt injected.
+
+    Saves the prompt to .story/knowledge/bootstrap-prompt.md, then:
+    - zellij available: starts claude in zellij, injects prompt
+    - Windows (no zellij): opens new terminal with claude, copies to clipboard
+    - Unix (no zellij): prints instructions
+    """
+    import shutil
+    import sys
+
+    workspace = Path(workspace)
+    prompt = render_bootstrap_prompt(workspace, scan_profile)
+
+    # Save prompt to file for reference
+    prompt_file = workspace / ".story" / "knowledge" / "bootstrap-prompt.md"
+    prompt_file.write_text(prompt, encoding="utf-8")
+
+    has_zellij = shutil.which("zellij") is not None
+
+    if has_zellij:
+        _launch_with_zellij(workspace, prompt, adapter_name)
+    elif sys.platform == "win32":
+        _launch_windows_terminal(workspace, prompt, adapter_name)
+    else:
+        _launch_print_instructions(workspace, prompt, adapter_name)
+
+
+def _launch_with_zellij(workspace: Path, prompt: str, adapter_name: str) -> None:
+    """Launch claude in a zellij session and inject prompt."""
+    import time
+
+    session_name = "knowledge-bootstrap"
+
+    cmd = _get_adapter_launch_cmd(adapter_name)
+    subprocess.Popen(
+        ["zellij", "run", "--name", session_name, "--close-on-exit", "--"] + cmd,
+        cwd=str(workspace),
+    )
+
+    # Wait a moment for the pane to start, then inject prompt
+    time.sleep(3)
+
+    # Inject prompt via zellij action
+    # Truncate very long prompts to avoid terminal issues — inject a "read the file" instruction instead
+    inject_text = (
+        "请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。\n"
+    )
+    subprocess.run(
+        ["zellij", "action", "write-chars", inject_text],
+        cwd=str(workspace),
+    )
+
+
+def _launch_windows_terminal(workspace: Path, prompt: str, adapter_name: str) -> None:
+    """On Windows without zellij: open a new terminal window with claude."""
+    cmd = _get_adapter_launch_cmd(adapter_name)
+
+    # Copy a short instruction to clipboard
+    inject_text = (
+        "请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。\n"
+    )
+    _copy_to_clipboard(inject_text)
+
+    # Open new terminal window
+    subprocess.Popen(
+        ["cmd", "/c", "start", "", "cmd", "/k"] + cmd,
+        cwd=str(workspace),
+    )
+
+
+def _launch_print_instructions(workspace: Path, prompt: str, adapter_name: str) -> None:
+    """Fallback: print instructions for manual execution."""
+    cmd = " ".join(_get_adapter_launch_cmd(adapter_name))
+    print("\n提示词已保存到: .story/knowledge/bootstrap-prompt.md")
+    print("\n请手动执行:")
+    print(f"  cd {workspace}")
+    print(f"  {cmd}")
+    print("\n然后在 AI CLI 中输入:")
+    print(
+        "  请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。"
+    )
+
+
+def _get_adapter_launch_cmd(adapter_name: str) -> list[str]:
+    """Get the interactive launch command for the adapter."""
+    from ..adapters import get_adapter
+
+    adapter = get_adapter(adapter_name)
+    cmd_str = adapter.launch_cmd(model="sonnet")
+    return cmd_str.split() if isinstance(cmd_str, str) else [cmd_str]
+
+
+def _copy_to_clipboard(text: str) -> None:
+    """Copy text to system clipboard."""
+    import sys
+
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["clip"], input=text.encode("utf-8"), check=False)
+        elif sys.platform == "darwin":
+            subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=False)
+        else:
+            subprocess.run(
+                ["xclip", "-selection", "clipboard"],
+                input=text.encode("utf-8"),
+                check=False,
+            )
+    except Exception:
+        pass

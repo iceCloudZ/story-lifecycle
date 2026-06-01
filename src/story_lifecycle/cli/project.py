@@ -22,13 +22,17 @@ def project():
 )
 @click.option("--adapter", default="claude", help="AI CLI adapter（默认 claude）")
 @click.option(
-    "--timeout", default=1800, type=int, help="超时秒数（默认 1800 = 30 分钟）"
+    "--timeout", default=1800, type=int, help="headless 模式超时秒数（默认 1800）"
 )
 @click.option("--dry-run", is_flag=True, help="只创建目录结构，不执行 AI CLI")
-def init_knowledge(workspace, scan_profile, adapter, timeout, dry_run):
+@click.option(
+    "--headless", is_flag=True, help="使用 headless 模式执行（非交互，适合 CI）"
+)
+def init_knowledge(workspace, scan_profile, adapter, timeout, dry_run, headless):
     """初始化项目知识包。
 
     扫描项目代码库，生成 .story/knowledge/ 下的知识文件。
+    默认以交互模式启动 AI CLI（zellij/新终端），使用 --headless 可非交互执行。
     """
     from ..knowledge.scaffold import scaffold_knowledge_dir
     from ..knowledge.bootstrap import render_bootstrap_prompt
@@ -45,6 +49,7 @@ def init_knowledge(workspace, scan_profile, adapter, timeout, dry_run):
             console.print("[yellow]已取消。[/]")
             return
 
+    # Step 1: 创建目录结构
     console.print("\n[1/4] 创建目录结构...")
     scaffold_knowledge_dir(ws)
     console.print("  [green]done[/]")
@@ -53,29 +58,45 @@ def init_knowledge(workspace, scan_profile, adapter, timeout, dry_run):
         console.print("\n[dim]--dry-run 模式，不执行 AI CLI。目录已创建。[/]")
         return
 
+    # Step 2: 渲染 prompt
     console.print("\n[2/4] 渲染 bootstrap prompt...")
     prompt = render_bootstrap_prompt(ws, scan_profile=scan_profile)
     console.print(f"  prompt 长度: [dim]{len(prompt)} 字符[/]")
 
-    console.print(f"\n[3/4] 执行 {adapter} CLI (headless)...")
-    console.print("[dim]等待 AI 生成知识包（可能需要几分钟）...[/]")
-    try:
-        from ..knowledge.bootstrap import run_bootstrap
+    if headless:
+        # Headless 模式（原有逻辑）
+        console.print(f"\n[3/4] 执行 {adapter} CLI (headless)...")
+        console.print("[dim]等待 AI 生成知识包（可能需要几分钟）...[/]")
+        try:
+            from ..knowledge.bootstrap import run_bootstrap
 
-        result = run_bootstrap(
-            ws, scan_profile=scan_profile, adapter_name=adapter, timeout=timeout
-        )
-        console.print("  [green]AI CLI 完成[/]")
-        if result.get("summary"):
-            console.print(f"  摘要: {result['summary']}")
-    except FileNotFoundError as e:
-        console.print(f"\n[red]生成失败: {e}[/]")
-        console.print("[dim]请检查 AI CLI 输出或手动重试。[/]")
-        raise SystemExit(1)
-    except Exception as e:
-        console.print(f"\n[red]执行出错: {e}[/]")
-        raise SystemExit(1)
+            result = run_bootstrap(
+                ws, scan_profile=scan_profile, adapter_name=adapter, timeout=timeout
+            )
+            console.print("  [green]AI CLI 完成[/]")
+            if result.get("summary"):
+                console.print(f"  摘要: {result['summary']}")
+        except FileNotFoundError as e:
+            console.print(f"\n[red]生成失败: {e}[/]")
+            raise SystemExit(1)
+        except Exception as e:
+            console.print(f"\n[red]执行出错: {e}[/]")
+            raise SystemExit(1)
+    else:
+        # 交互模式（新默认行为）
+        console.print(f"\n[3/4] 启动交互式 {adapter} CLI...")
+        import shutil
 
+        if shutil.which("zellij"):
+            console.print("  [dim]使用 zellij 会话[/]")
+        else:
+            console.print("  [dim]使用系统终端[/]")
+        from ..knowledge.bootstrap import launch_interactive
+
+        launch_interactive(ws, scan_profile=scan_profile, adapter_name=adapter)
+        console.print("  [green]已启动[/]")
+
+    # Step 4: 校验
     console.print("\n[4/4] 校验知识包产物...")
     errors = validate_knowledge_pack(ws)
     if errors:
