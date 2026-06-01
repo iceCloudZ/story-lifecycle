@@ -1,4 +1,7 @@
+import json
+
 import pytest
+import yaml
 from pathlib import Path
 from story_lifecycle.knowledge.templates import load_template
 from story_lifecycle.knowledge.paths import (
@@ -21,6 +24,7 @@ from story_lifecycle.knowledge.paths import (
 )
 from story_lifecycle.knowledge.scaffold import scaffold_knowledge_dir
 from story_lifecycle.knowledge.bootstrap import render_bootstrap_prompt
+from story_lifecycle.knowledge.validator import validate_knowledge_pack
 
 
 def test_knowledge_dir():
@@ -182,3 +186,87 @@ class TestBootstrapPrompt:
         prompt = render_bootstrap_prompt(str(tmp_path))
         # Should contain either a commit hash or "unknown"
         assert "git_commit" in prompt or "unknown" in prompt.lower()
+
+
+class TestValidator:
+    def _make_pack(self, tmp_path, *, missing=None, empty_graph=False):
+        """Helper: create a minimal valid knowledge pack."""
+        from story_lifecycle.knowledge.scaffold import scaffold_knowledge_dir
+        from story_lifecycle.knowledge import paths as kp
+
+        scaffold_knowledge_dir(tmp_path)
+
+        # Create minimal content in scenarios/ and indexes/ to avoid warnings
+        (kp.scenarios_dir(tmp_path) / "order").mkdir(exist_ok=True)
+        (kp.indexes_dir(tmp_path) / "overview.md").write_text(
+            "# Overview\n", encoding="utf-8"
+        )
+
+        manifest = {
+            "version": 1,
+            "product": {"name": "Test", "description": "test"},
+            "status": "ready",
+            "domains": ["order"],
+        }
+        if missing != "manifest":
+            kp.manifest_path(tmp_path).write_text(yaml.dump(manifest), encoding="utf-8")
+
+        product = {"product": {"name": "Test"}}
+        if missing != "product":
+            kp.product_path(tmp_path).write_text(yaml.dump(product), encoding="utf-8")
+
+        catalog = "# Search Catalog\n"
+        if missing != "search_catalog":
+            kp.search_catalog_path(tmp_path).write_text(catalog, encoding="utf-8")
+
+        graph_data = {
+            "node_types": [],
+            "relation_types": [],
+            "nodes": [],
+            "edges": [],
+        }
+        if empty_graph:
+            graph_data = {}
+        if missing != "graph":
+            kp.graph_json_path(tmp_path).write_text(
+                json.dumps(graph_data), encoding="utf-8"
+            )
+
+    def test_valid_pack_passes(self, tmp_path):
+        self._make_pack(tmp_path)
+        errors = validate_knowledge_pack(tmp_path)
+        assert errors == []
+
+    def test_missing_manifest(self, tmp_path):
+        self._make_pack(tmp_path, missing="manifest")
+        errors = validate_knowledge_pack(tmp_path)
+        assert any("manifest" in e for e in errors)
+
+    def test_missing_product(self, tmp_path):
+        self._make_pack(tmp_path, missing="product")
+        errors = validate_knowledge_pack(tmp_path)
+        assert any("product" in e for e in errors)
+
+    def test_missing_graph(self, tmp_path):
+        self._make_pack(tmp_path, missing="graph")
+        errors = validate_knowledge_pack(tmp_path)
+        assert any("graph" in e for e in errors)
+
+    def test_empty_graph_passes(self, tmp_path):
+        """Empty graph (no nodes/edges) is valid — may not have data yet."""
+        self._make_pack(tmp_path, empty_graph=True)
+        errors = validate_knowledge_pack(tmp_path)
+        assert not any("graph" in e for e in errors)
+
+    def test_missing_search_catalog(self, tmp_path):
+        self._make_pack(tmp_path, missing="search_catalog")
+        errors = validate_knowledge_pack(tmp_path)
+        assert any("search-catalog" in e for e in errors)
+
+    def test_invalid_graph_json(self, tmp_path):
+        self._make_pack(tmp_path)
+        from story_lifecycle.knowledge import paths as kp
+
+        kp.graph_json_path(tmp_path).write_text("not json{{{", encoding="utf-8")
+        errors = validate_knowledge_pack(tmp_path)
+        assert any("graph" in e.lower() for e in errors)
