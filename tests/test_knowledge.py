@@ -20,6 +20,7 @@ from story_lifecycle.knowledge.paths import (
     knowledge_context_dir,
 )
 from story_lifecycle.knowledge.scaffold import scaffold_knowledge_dir
+from story_lifecycle.knowledge.bootstrap import render_bootstrap_prompt
 
 
 def test_knowledge_dir():
@@ -157,3 +158,27 @@ class TestTemplates:
         data = json.loads(content)
         assert "node_types" in data
         assert "relation_types" in data
+
+
+class TestBootstrapPrompt:
+    def test_render_contains_workspace(self, tmp_path):
+        prompt = render_bootstrap_prompt(str(tmp_path))
+        assert str(tmp_path) in prompt
+
+    def test_render_contains_graph_schema(self, tmp_path):
+        prompt = render_bootstrap_prompt(str(tmp_path))
+        assert "node_types" in prompt
+        assert "HAS_DOMAIN" in prompt
+
+    def test_render_default_scan_profile(self, tmp_path):
+        prompt = render_bootstrap_prompt(str(tmp_path))
+        assert "java-spring-microservice" in prompt
+
+    def test_render_custom_scan_profile(self, tmp_path):
+        prompt = render_bootstrap_prompt(str(tmp_path), scan_profile="python-service")
+        assert "python-service" in prompt
+
+    def test_render_reads_git_commit(self, tmp_path):
+        prompt = render_bootstrap_prompt(str(tmp_path))
+        # Should contain either a commit hash or "unknown"
+        assert "git_commit" in prompt or "unknown" in prompt.lower()
