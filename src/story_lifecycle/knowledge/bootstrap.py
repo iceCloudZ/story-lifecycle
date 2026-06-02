@@ -172,9 +172,7 @@ def _launch_with_zellij(workspace: Path, prompt: str, adapter_name: str) -> None
 
     cmd = _get_adapter_launch_cmd(adapter_name)
     full_cmd = " ".join(cmd)
-    inject_text = (
-        "请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。"
-    )
+    inject_text = "Please read .story/knowledge/bootstrap-prompt.md and follow the instructions to generate the project knowledge pack."
     _copy_to_clipboard(inject_text)
 
     if sys.platform == "win32":
@@ -218,10 +216,7 @@ def _launch_windows_terminal(workspace: Path, prompt: str, adapter_name: str) ->
     cmd = _get_adapter_launch_cmd(adapter_name)
     full_cmd = " ".join(cmd)
 
-    # Copy instruction to clipboard
-    inject_text = (
-        "请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。"
-    )
+    inject_text = "Please read .story/knowledge/bootstrap-prompt.md and follow the instructions to generate the project knowledge pack."
     _copy_to_clipboard(inject_text)
 
     # Launch claude in a new window, then auto-paste from clipboard after delay
@@ -249,7 +244,7 @@ def _launch_print_instructions(workspace: Path, prompt: str, adapter_name: str) 
     print(f"  {cmd}")
     print("\n然后在 AI CLI 中输入:")
     print(
-        "  请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。"
+        "  Please read .story/knowledge/bootstrap-prompt.md and follow the instructions."
     )
 
 
@@ -268,7 +263,19 @@ def _copy_to_clipboard(text: str) -> None:
 
     try:
         if sys.platform == "win32":
-            subprocess.run(["clip"], input=text.encode("utf-8"), check=False)
+            # Use PowerShell Set-Clipboard for proper Unicode support
+            # (clip.exe uses system codepage, garbles Chinese/Unicode)
+            escaped = text.replace("'", "''")
+            subprocess.run(
+                [
+                    "powershell",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    f"Set-Clipboard -Value '{escaped}'",
+                ],
+                check=False,
+            )
         elif sys.platform == "darwin":
             subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=False)
         else:
