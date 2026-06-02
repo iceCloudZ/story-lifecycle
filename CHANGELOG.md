@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.56] - 2026-06-02
+
+### Fixed
+- bootstrap 提示注入文本改回中文（PowerShell Set-Clipboard 已支持 Unicode，SendKeys 仅处理 ASCII）
+
 ## [0.5.55] - 2026-06-02
 
 ### Fixed
