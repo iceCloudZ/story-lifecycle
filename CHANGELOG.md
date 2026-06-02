@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.57] - 2026-06-02
+
+### Added
+- 后端服务架构加入并行扫描维度（Controller、FeignClient、MQ、域边界识别）
+
+### Fixed
+- zellij 同名会话冲突时提示用户选择 attach 或 kill，不再自动杀掉
+- Windows SendKeys 前先发 ESC 关闭输入法，避免中文候选窗干扰命令输入
+
 ## [0.5.56] - 2026-06-02
 
 ### Fixed
