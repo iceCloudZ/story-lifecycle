@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.52] - 2026-06-02
+
+### Fixed
+- 交互模式下不再误跑校验（AI 还没工作就报"6 个问题"并显示"初始化完成"）
+- Windows 弹窗启动修复：`start` 命令需要 `shell=True`
+- zellij `run` 只在已有 session 内使用（检查 `$ZELLIJ` 环境变量），否则走 Windows 弹窗分支
+
 ## [0.5.51] - 2026-06-02
 
 ### Changed
