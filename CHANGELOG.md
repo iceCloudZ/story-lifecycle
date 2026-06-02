@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.53] - 2026-06-02
+
+### Fixed
+- Zellij 自动创建新 session 并注入 prompt（不再要求在已有 session 内运行）
+- Windows 弹窗自动粘贴 prompt 到 claude 窗口（PowerShell SendKeys Ctrl+V + 回车）
+- 有 zellij 时直接使用，不再检查 `$ZELLIJ` 环境变量
+
 ## [0.5.52] - 2026-06-02
 
 ### Fixed
