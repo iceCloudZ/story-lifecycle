@@ -88,11 +88,15 @@ The project already has many useful assets. Without a registry, every later prom
 
 Turn registered assets into `.story/knowledge`, then use that knowledge during story execution.
 
+Scenario-level knowledge is a sub-workflow of this phase. `init-knowledge` creates the overview layer; user-confirmed business scenarios and deep scenario scans are defined in `07-scenario-knowledge-workflow-design.md`.
+
 ### Commands
 
 ```bash
 story project init-knowledge
 story project sync-knowledge
+story project scenarios review
+story project scenario scan <scenario-id>
 story context build <story_key> --stage <stage>
 ```
 

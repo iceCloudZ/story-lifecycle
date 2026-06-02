@@ -32,6 +32,14 @@ PRD / spec / plan / done / context / finding / pattern / test / code diff
    - Earlier roadmap note.
    - Kept as background; the current roadmap is `01-three-phase-roadmap.md`.
 
+5. [07-scenario-knowledge-workflow-design.md](07-scenario-knowledge-workflow-design.md)
+   - Scenario Knowledge Layer design.
+   - Explains how business scenarios become computable project context for Context Builder, Planner, Reviewer, test assistants, and regression selection.
+
+6. [08-init-knowledge-interaction-design.md](08-init-knowledge-interaction-design.md)
+   - Interactive `init-knowledge` design.
+   - Borrows CodeGraph-style scan summary and scope confirmation, while keeping `.story/knowledge` as the file-first knowledge body.
+
 ## Design Position
 
 Project Intelligence is local-first:
@@ -88,20 +96,19 @@ Phase 4: Remote Governance and Company Skill Platform
 
 ## Immediate Next Step
 
-Implement Phase 1:
+Implement scenario declaration and review workflow:
 
 ```text
-story project index-assets
+story project scenarios review
 ```
 
 It should generate:
 
 ```text
-.story/artifacts/registry.json
-.story/artifacts/by-story/<story_key>.json
+.story/knowledge/declarations/business-scenarios.yaml
 ```
 
-This gives `init-knowledge`, `sync-knowledge`, `seed-quality`, and Context Builder one stable source of local project assets.
+This gives `scenario scan <scenario-id>`, `sync-knowledge`, and Context Builder one stable source of user-confirmed business scenario boundaries.
 
 ## Templates
 

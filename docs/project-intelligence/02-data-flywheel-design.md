@@ -293,6 +293,8 @@ P1 可以先做规则扫描：
 
 然后再读代码和 docs。这样 CLI 不需要每次从零发现资产。
 
+`init-knowledge` only owns the overview bootstrap layer. Business scenario boundaries are confirmed through `story project scenarios review`, and complete scenario documents are generated through `story project scenario scan <scenario-id>`. The detailed scenario workflow, graph patch protocol, partial-success handling, and merge rules are defined in `07-scenario-knowledge-workflow-design.md`.
+
 ### story project sync-knowledge
 
 增量更新时检查：
