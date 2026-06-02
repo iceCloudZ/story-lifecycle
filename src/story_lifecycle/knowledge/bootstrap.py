@@ -170,6 +170,10 @@ def _launch_with_zellij(workspace: Path, prompt: str, adapter_name: str) -> None
     """Launch claude in a new zellij session and inject prompt via PowerShell SendKeys."""
     import sys
 
+    from rich.console import Console
+
+    console = Console()
+
     cmd = _get_adapter_launch_cmd(adapter_name)
     full_cmd = " ".join(cmd)
     inject_text = (
@@ -177,15 +181,39 @@ def _launch_with_zellij(workspace: Path, prompt: str, adapter_name: str) -> None
     )
     _copy_to_clipboard(inject_text)
 
+    # Check for existing session and let user decide
+    if _zellij_session_exists("knowledge-bootstrap"):
+        import click
+
+        console.print("\n[yellow]zellij 会话 'knowledge-bootstrap' 已存在[/]")
+        console.print("  1) 进入已有会话 (attach)")
+        console.print("  2) 关闭旧会话并重新创建")
+        choice = click.prompt("请选择", type=int, default=1)
+        if choice == 1:
+            _attach_zellij_session("knowledge-bootstrap", workspace)
+            return
+        else:
+            subprocess.run(
+                ["zellij", "kill-session", "knowledge-bootstrap"],
+                capture_output=True,
+            )
+
     if sys.platform == "win32":
         # Windows: open new terminal with zellij, type claude, then paste instruction
+        # SendKeys sequence:
+        #   1. {ESC} to dismiss any IME candidate window
+        #   2. Type 'claude' + Enter to launch the AI CLI
+        #   3. Wait 10s for CLI to start
+        #   4. Ctrl+V to paste instruction (already in clipboard) + Enter
         ps_script = (
             f"Start-Process cmd -ArgumentList '/k \"zellij -s knowledge-bootstrap\"' "
             f"-WorkingDirectory '{workspace}' | Out-Null; "
             f"Start-Sleep -Seconds 4; "
             f"Add-Type -AssemblyName System.Windows.Forms; "
+            f"[System.Windows.Forms.SendKeys]::SendWait('{{ESC}}'); "
+            f"Start-Sleep -Milliseconds 300; "
             f"[System.Windows.Forms.SendKeys]::SendWait('{full_cmd}~'); "
-            f"Start-Sleep -Seconds 8; "
+            f"Start-Sleep -Seconds 10; "
             f"[System.Windows.Forms.SendKeys]::SendWait('^v~')"
         )
         subprocess.Popen(
@@ -227,7 +255,7 @@ def _launch_windows_terminal(workspace: Path, prompt: str, adapter_name: str) ->
     ps_script = (
         f"$proc = Start-Process cmd -ArgumentList '/k \"{full_cmd}\"' "
         f"-WorkingDirectory '{workspace}' -PassThru; "
-        f"Start-Sleep -Seconds 5; "
+        f"Start-Sleep -Seconds 8; "
         f"Add-Type -AssemblyName System.Windows.Forms; "
         f"[System.Windows.Forms.SendKeys]::SendWait('^v'); "
         f"Start-Sleep -Milliseconds 500; "
@@ -257,6 +285,37 @@ def _get_adapter_launch_cmd(adapter_name: str) -> list[str]:
     adapter = get_adapter(adapter_name)
     cmd_str = adapter.launch_cmd(model="sonnet")
     return cmd_str.split() if isinstance(cmd_str, str) else [cmd_str]
+
+
+def _zellij_session_exists(name: str) -> bool:
+    """Check if a zellij session with the given name exists."""
+    try:
+        r = subprocess.run(
+            ["zellij", "list-sessions"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return name in r.stdout
+    except Exception:
+        return False
+
+
+def _attach_zellij_session(name: str, workspace: Path) -> None:
+    """Open a new terminal and attach to an existing zellij session."""
+    import sys
+
+    if sys.platform == "win32":
+        subprocess.Popen(
+            ["cmd", "/c", "start", "cmd", "/k", f"zellij attach {name}"],
+            cwd=str(workspace),
+        )
+    else:
+        subprocess.Popen(
+            ["zellij", "attach", name],
+            cwd=str(workspace),
+            start_new_session=True,
+        )
 
 
 def _copy_to_clipboard(text: str) -> None:
