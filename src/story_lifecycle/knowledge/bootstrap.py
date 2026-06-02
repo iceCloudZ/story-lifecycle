@@ -158,12 +158,19 @@ def launch_interactive(
 
     has_zellij = shutil.which("zellij") is not None
 
-    if has_zellij:
+    if has_zellij and _is_in_zellij_session():
         _launch_with_zellij(workspace, prompt, adapter_name)
     elif sys.platform == "win32":
         _launch_windows_terminal(workspace, prompt, adapter_name)
     else:
         _launch_print_instructions(workspace, prompt, adapter_name)
+
+
+def _is_in_zellij_session() -> bool:
+    """Check if we're running inside an active zellij session."""
+    import os
+
+    return bool(os.environ.get("ZELLIJ"))
 
 
 def _launch_with_zellij(workspace: Path, prompt: str, adapter_name: str) -> None:
