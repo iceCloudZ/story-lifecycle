@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.58] - 2026-06-02
+
+### Changed
+- bootstrap 扫描改为按业务域并行（每个域自包含扫服务+数据表+测试+域间依赖），不再按技术层拆开
+
 ## [0.5.57] - 2026-06-02
 
 ### Added
