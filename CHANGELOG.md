@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.54] - 2026-06-02
+
+### Fixed
+- 修复 zellij 启动语法错误：`zellij -s name -- claude` 无效，改为 `start cmd /k "zellij -s name"` 后通过 PowerShell SendKeys 注入 claude 命令和 prompt
+
 ## [0.5.53] - 2026-06-02
 
 ### Fixed
