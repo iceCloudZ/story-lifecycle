@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.55] - 2026-06-02
+
+### Fixed
+- 修复 Windows 中文乱码：注入指令改英文（SendKeys 不支持 Unicode）
+- 剪贴板改用 PowerShell `Set-Clipboard`（`clip.exe` 用 GBK 编码导致乱码）
+- 修复 zellij 启动后注入指令乱码问题
+
 ## [0.5.54] - 2026-06-02
 
 ### Fixed
