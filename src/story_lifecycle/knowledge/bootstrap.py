@@ -172,7 +172,9 @@ def _launch_with_zellij(workspace: Path, prompt: str, adapter_name: str) -> None
 
     cmd = _get_adapter_launch_cmd(adapter_name)
     full_cmd = " ".join(cmd)
-    inject_text = "Please read .story/knowledge/bootstrap-prompt.md and follow the instructions to generate the project knowledge pack."
+    inject_text = (
+        "请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。"
+    )
     _copy_to_clipboard(inject_text)
 
     if sys.platform == "win32":
@@ -216,7 +218,9 @@ def _launch_windows_terminal(workspace: Path, prompt: str, adapter_name: str) ->
     cmd = _get_adapter_launch_cmd(adapter_name)
     full_cmd = " ".join(cmd)
 
-    inject_text = "Please read .story/knowledge/bootstrap-prompt.md and follow the instructions to generate the project knowledge pack."
+    inject_text = (
+        "请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。"
+    )
     _copy_to_clipboard(inject_text)
 
     # Launch claude in a new window, then auto-paste from clipboard after delay
@@ -243,9 +247,7 @@ def _launch_print_instructions(workspace: Path, prompt: str, adapter_name: str) 
     print(f"  cd {workspace}")
     print(f"  {cmd}")
     print("\n然后在 AI CLI 中输入:")
-    print(
-        "  Please read .story/knowledge/bootstrap-prompt.md and follow the instructions."
-    )
+    print("  请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示操作。")
 
 
 def _get_adapter_launch_cmd(adapter_name: str) -> list[str]:
