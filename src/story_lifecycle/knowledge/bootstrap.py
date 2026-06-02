@@ -158,7 +158,7 @@ def launch_interactive(
 
     has_zellij = shutil.which("zellij") is not None
 
-    if has_zellij and _is_in_zellij_session():
+    if has_zellij:
         _launch_with_zellij(workspace, prompt, adapter_name)
     elif sys.platform == "win32":
         _launch_windows_terminal(workspace, prompt, adapter_name)
@@ -166,55 +166,56 @@ def launch_interactive(
         _launch_print_instructions(workspace, prompt, adapter_name)
 
 
-def _is_in_zellij_session() -> bool:
-    """Check if we're running inside an active zellij session."""
-    import os
-
-    return bool(os.environ.get("ZELLIJ"))
-
-
 def _launch_with_zellij(workspace: Path, prompt: str, adapter_name: str) -> None:
-    """Launch claude in a zellij session and inject prompt."""
+    """Launch claude in a new zellij session and inject prompt."""
     import time
 
     session_name = "knowledge-bootstrap"
-
     cmd = _get_adapter_launch_cmd(adapter_name)
+
+    # Start a new zellij session with claude running in it
     subprocess.Popen(
-        ["zellij", "run", "--name", session_name, "--close-on-exit", "--"] + cmd,
+        ["zellij", "-s", session_name, "--"] + cmd,
         cwd=str(workspace),
     )
 
-    # Wait a moment for the pane to start, then inject prompt
-    time.sleep(3)
+    # Wait for claude to start, then inject the instruction
+    time.sleep(5)
 
-    # Inject prompt via zellij action
-    # Truncate very long prompts to avoid terminal issues — inject a "read the file" instruction instead
     inject_text = (
         "请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。\n"
     )
     subprocess.run(
-        ["zellij", "action", "write-chars", inject_text],
+        ["zellij", "action", "-s", session_name, "write-chars", inject_text],
         cwd=str(workspace),
+        capture_output=True,
     )
 
 
 def _launch_windows_terminal(workspace: Path, prompt: str, adapter_name: str) -> None:
-    """On Windows without zellij: open a new terminal window with claude."""
+    """On Windows without zellij: open a new terminal window with claude and auto-paste prompt."""
     cmd = _get_adapter_launch_cmd(adapter_name)
+    full_cmd = " ".join(cmd)
 
-    # Copy a short instruction to clipboard
+    # Copy instruction to clipboard
     inject_text = (
-        "请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。\n"
+        "请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。"
     )
     _copy_to_clipboard(inject_text)
 
-    # Open new terminal window — needs shell=True for 'start' to work
-    full_cmd = " ".join(cmd)
+    # Launch claude in a new window, then auto-paste from clipboard after delay
+    ps_script = (
+        f"$proc = Start-Process cmd -ArgumentList '/k \"{full_cmd}\"' "
+        f"-WorkingDirectory '{workspace}' -PassThru; "
+        f"Start-Sleep -Seconds 5; "
+        f"Add-Type -AssemblyName System.Windows.Forms; "
+        f"[System.Windows.Forms.SendKeys]::SendWait('^v'); "
+        f"Start-Sleep -Milliseconds 500; "
+        f"[System.Windows.Forms.SendKeys]::SendWait('~')"
+    )
     subprocess.Popen(
-        f'cmd /c start "" cmd /k "{full_cmd}"',
+        ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
         cwd=str(workspace),
-        shell=True,
     )
 
 
