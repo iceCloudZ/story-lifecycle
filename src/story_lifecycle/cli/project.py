@@ -139,7 +139,7 @@ def init_knowledge(workspace, scan_profile, adapter, timeout, dry_run, headless)
             raise SystemExit(1)
     else:
         # 交互模式（新默认行为）
-        console.print(f"\n[3/4] 启动交互式 {adapter} CLI...")
+        console.print(f"\n[3/3] 启动交互式 {adapter} CLI...")
 
         if shutil.which("zellij"):
             console.print("  [dim]使用 zellij 会话[/]")
@@ -150,7 +150,13 @@ def init_knowledge(workspace, scan_profile, adapter, timeout, dry_run, headless)
         launch_interactive(ws, scan_profile=scan_profile, adapter_name=adapter)
         console.print("  [green]已启动[/]")
 
-    # Step 4: 校验
+        console.print(
+            "\n[dim]知识包将在 AI 完成交互式扫描后生成。"
+            "完成后可运行 story project sync-knowledge 检查状态。[/]"
+        )
+        return
+
+    # headless 模式才会走到这里的校验
     console.print("\n[4/4] 校验知识包产物...")
     errors = validate_knowledge_pack(ws)
     if errors:

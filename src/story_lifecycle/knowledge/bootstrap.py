@@ -202,10 +202,12 @@ def _launch_windows_terminal(workspace: Path, prompt: str, adapter_name: str) ->
     )
     _copy_to_clipboard(inject_text)
 
-    # Open new terminal window
+    # Open new terminal window — needs shell=True for 'start' to work
+    full_cmd = " ".join(cmd)
     subprocess.Popen(
-        ["cmd", "/c", "start", "", "cmd", "/k"] + cmd,
+        f'cmd /c start "" cmd /k "{full_cmd}"',
         cwd=str(workspace),
+        shell=True,
     )
 
 
