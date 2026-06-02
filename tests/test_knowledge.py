@@ -287,12 +287,13 @@ class TestProjectCLI:
         assert result.exit_code == 0
 
     def test_init_knowledge_dry_run_creates_dirs(self, tmp_path, monkeypatch):
-        """--dry-run should create directories without running AI CLI."""
+        """--dry-run should show detection results without writing files."""
         result = CliRunner().invoke(
-            cli, ["project", "init-knowledge", "-w", str(tmp_path), "--dry-run"]
+            cli,
+            ["project", "init-knowledge", "-w", str(tmp_path), "--dry-run", "--yes"],
         )
         assert result.exit_code == 0
-        assert (tmp_path / ".story" / "knowledge").is_dir()
+        assert "探测项目结构" in result.output
 
 
 class TestStale:

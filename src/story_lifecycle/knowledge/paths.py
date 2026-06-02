@@ -91,3 +91,11 @@ def knowledge_done_file(workspace: str | Path) -> Path:
 
 def knowledge_context_dir(workspace: str | Path, story_key: str) -> Path:
     return Path(workspace) / ".story" / "context" / story_key / "knowledge-context"
+
+
+def runs_dir(workspace: str | Path) -> Path:
+    return knowledge_dir(workspace) / "runs"
+
+
+def run_dir(workspace: str | Path, run_id: str) -> Path:
+    return runs_dir(workspace) / run_id

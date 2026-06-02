@@ -40,6 +40,10 @@ PRD / spec / plan / done / context / finding / pattern / test / code diff
    - Interactive `init-knowledge` design.
    - Borrows CodeGraph-style scan summary and scope confirmation, while keeping `.story/knowledge` as the file-first knowledge body.
 
+7. [09-simple-command-layer-design.md](09-simple-command-layer-design.md)
+   - Simple command layer design.
+   - Defines short user-facing commands such as `story init`, `story ask`, `story scan`, and maps them to the existing Project Intelligence internals.
+
 ## Design Position
 
 Project Intelligence is local-first:

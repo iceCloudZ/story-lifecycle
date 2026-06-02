@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.59] - 2026-06-02
+
+### Added
+- `init-knowledge` 重写为确定性探测模式：文件系统扫描 → 项目概览 → 范围确认 → 知识文件生成
+- 新增 `knowledge/detector.py`：自动识别 Java/Spring 服务、前端应用、文档/PRD/Bug 目录，过滤 node_modules/target 等生成目录
+- 新增 `knowledge/scope.py`：P0 范围推荐，核心业务服务默认纳入，审计/dms/网关/前端默认排除
+- 新增 `knowledge/wizard.py`：交互式向导（accept/include/exclude/frontend/dry-run/quit）
+- 新增 `knowledge/run_writer.py`：run artifacts 写入（detection-result.json、scope-decision.yaml）
+- 新增 `knowledge/generator.py`：生成 product.yaml、manifest.yaml、search-catalog.md、候选业务域、pending-review-items.md 等知识文件
+- `init-knowledge` 支持 `--yes`（非交互）、`--dry-run`、`--include`/`--exclude`、`--codegraph` 参数
+- 旧 AI CLI 扫描模式通过 `--legacy` 保留
+
+### Changed
+- `knowledge/paths.py` 新增 `runs_dir()` 和 `run_dir()` 路径 helper
+
 ## [0.5.58] - 2026-06-02
 
 ### Changed
