@@ -167,29 +167,50 @@ def launch_interactive(
 
 
 def _launch_with_zellij(workspace: Path, prompt: str, adapter_name: str) -> None:
-    """Launch claude in a new zellij session and inject prompt."""
-    import time
+    """Launch claude in a new zellij session and inject prompt via PowerShell SendKeys."""
+    import sys
 
-    session_name = "knowledge-bootstrap"
     cmd = _get_adapter_launch_cmd(adapter_name)
-
-    # Start a new zellij session with claude running in it
-    subprocess.Popen(
-        ["zellij", "-s", session_name, "--"] + cmd,
-        cwd=str(workspace),
-    )
-
-    # Wait for claude to start, then inject the instruction
-    time.sleep(5)
-
+    full_cmd = " ".join(cmd)
     inject_text = (
-        "请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。\n"
+        "请阅读 .story/knowledge/bootstrap-prompt.md 并按照其中的指示生成项目知识包。"
     )
-    subprocess.run(
-        ["zellij", "action", "-s", session_name, "write-chars", inject_text],
-        cwd=str(workspace),
-        capture_output=True,
-    )
+    _copy_to_clipboard(inject_text)
+
+    if sys.platform == "win32":
+        # Windows: open new terminal with zellij, type claude, then paste instruction
+        ps_script = (
+            f"Start-Process cmd -ArgumentList '/k \"zellij -s knowledge-bootstrap\"' "
+            f"-WorkingDirectory '{workspace}' | Out-Null; "
+            f"Start-Sleep -Seconds 4; "
+            f"Add-Type -AssemblyName System.Windows.Forms; "
+            f"[System.Windows.Forms.SendKeys]::SendWait('{full_cmd}~'); "
+            f"Start-Sleep -Seconds 8; "
+            f"[System.Windows.Forms.SendKeys]::SendWait('^v~')"
+        )
+        subprocess.Popen(
+            ["powershell", "-WindowStyle", "Hidden", "-Command", ps_script],
+            cwd=str(workspace),
+        )
+    else:
+        # Unix: open zellij in background, then inject via zellij action
+        import time
+
+        subprocess.Popen(
+            ["zellij", "-s", "knowledge-bootstrap"],
+            cwd=str(workspace),
+            start_new_session=True,
+        )
+        time.sleep(4)
+        subprocess.run(
+            ["zellij", "action", "write-chars", full_cmd + "\n"],
+            capture_output=True,
+        )
+        time.sleep(8)
+        subprocess.run(
+            ["zellij", "action", "write-chars", inject_text + "\n"],
+            capture_output=True,
+        )
 
 
 def _launch_windows_terminal(workspace: Path, prompt: str, adapter_name: str) -> None:
