@@ -39,6 +39,21 @@ from .prompt_renderer import (
     _render_prompt,
 )
 
+
+def _ws_notify(state: StoryState, status: str = ""):
+    """Push state change to WebSocket clients (web board)."""
+    try:
+        from ..api import notify_story_update_sync
+
+        notify_story_update_sync(
+            state["story_key"],
+            status=status or state.get("status", ""),
+            stage=state.get("current_stage", ""),
+        )
+    except Exception:
+        pass
+
+
 log = logging.getLogger("story-lifecycle.nodes")
 
 
@@ -774,6 +789,7 @@ def execute_stage_node(state: StoryState) -> dict:
     from ..tools import get_tool
 
     tool = get_tool(tool_name)
+    _ws_notify(state, "active")
     return tool.execute(state, tool_args)
 
 
@@ -1173,6 +1189,7 @@ def advance_node(state: StoryState) -> StoryState:
         db.log_stage(key, stage, "complete", "All stages done")
         state["status"] = "completed"
         notify("Story Lifecycle", f"Story {key}: 全部阶段完成")
+        _ws_notify(state, "completed")
 
         # Sync status to external source (P1)
         story = db.get_story(key)
@@ -1193,6 +1210,7 @@ def advance_node(state: StoryState) -> StoryState:
     db.log_stage(key, stage, "complete", f"Advanced to {next_stage}")
     db.update_story(key, current_stage=next_stage, status="active")
     notify("Story Lifecycle", f"Story {key}: {stage} 完成，进入 {next_stage}")
+    _ws_notify(state, "active")
 
     state["current_stage"] = next_stage
     state["status"] = "active"
@@ -1229,6 +1247,7 @@ def retry_node(state: StoryState) -> StoryState:
         "retry",
         f"Retry {state.get('execution_count', 0) + 1}",
     )
+    _ws_notify(state, "active")
     return state
 
 
@@ -1250,6 +1269,7 @@ def skip_node(state: StoryState) -> StoryState:
     db.update_story(state["story_key"], status="active")
     state["status"] = "active"
     state["last_error"] = None
+    _ws_notify(state, "active")
     return state
 
 
@@ -1268,6 +1288,7 @@ def fail_node(state: StoryState) -> StoryState:
     db.log_stage(key, stage, "fail", error)
     state["status"] = "blocked"
     notify("Story Lifecycle", f"Story {key}: {stage} 失败 — {error[:80]}")
+    _ws_notify(state, "blocked")
     return state
 
 
@@ -1332,6 +1353,7 @@ def wait_confirm_node(state: StoryState) -> StoryState:
 
     state["status"] = "paused"
     state["last_error"] = gd.human_message
+    _ws_notify(state, "paused")
 
     # Yield thread — Watchdog or user action will resume
     interrupt({"reason": "waiting_for_confirmation", "stage": stage})

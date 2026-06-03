@@ -146,9 +146,8 @@ async def notify_story_update(story_key: str, status: str = "", stage: str = "")
 def notify_story_update_sync(story_key: str, status: str = "", stage: str = ""):
     """Thread-safe version for calling from graph worker threads."""
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(notify_story_update(story_key, status, stage))
+        loop = asyncio.get_running_loop()
+        loop.create_task(notify_story_update(story_key, status, stage))
     except RuntimeError:
         pass
 
