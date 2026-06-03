@@ -1,0 +1,29 @@
+.terminal-container {
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+}
+
+.terminal-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #666;
+  font-size: 13px;
+}
+
+.spawn-btn {
+  padding: 8px 20px;
+  border: 1px solid #0f3460;
+  border-radius: 6px;
+  background: #1a2744;
+  color: #00d2ff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.spawn-btn:hover {
+  background: #253a5e;
+  border-color: #00d2ff;
+}

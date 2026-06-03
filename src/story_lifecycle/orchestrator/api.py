@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from ..db import models as db
 from ..db.models import init_db
 from ..terminal import ttyd
+from ..terminal.pty import get_pty, spawn_pty, kill_pty
 from .graph import start_story_async, recover_orphan_stories
 
 
@@ -150,6 +151,90 @@ def notify_story_update_sync(story_key: str, status: str = "", stage: str = ""):
         loop.create_task(notify_story_update(story_key, status, stage))
     except RuntimeError:
         pass
+
+
+# -------- PTY WebSocket --------
+
+
+@app.websocket("/ws/pty/{story_id}")
+async def pty_ws(ws: WebSocket, story_id: str):
+    """Bidirectional PTY stream: read output → push to xterm.js, recv input → write to PTY."""
+    await ws.accept()
+
+    pty = get_pty(story_id)
+    if not pty:
+        await ws.send_json({"type": "error", "message": "No PTY for this story"})
+        await ws.close(code=4044)
+        return
+
+    async def read_and_send():
+        while pty.alive:
+            try:
+                data = await asyncio.wait_for(pty._queue.get(), timeout=0.5)
+                await ws.send_bytes(data)
+            except asyncio.TimeoutError:
+                continue
+            except Exception:
+                break
+        # PTY exited
+        try:
+            await ws.send_json({"type": "exit"})
+        except Exception:
+            pass
+
+    async def recv_and_write():
+        while True:
+            try:
+                msg = await ws.receive()
+            except Exception:
+                break
+            if "bytes" in msg and msg["bytes"]:
+                pty.write(msg["bytes"])
+            elif "text" in msg and msg["text"]:
+                data = msg["text"]
+                if data.startswith('{"type":"resize"'):
+                    import json as _json
+
+                    try:
+                        r = _json.loads(data)
+                        pty.resize(r.get("cols", 120), r.get("rows", 30))
+                    except Exception:
+                        pass
+                    continue
+                pty.write(data.encode("utf-8"))
+            else:
+                break
+
+    try:
+        await asyncio.gather(read_and_send(), recv_and_write())
+    except Exception:
+        pass
+
+
+@app.post("/api/pty/{story_id}/spawn")
+def api_spawn_pty(story_id: str):
+    """Spawn a PTY for a story (e.g. to run Claude Code)."""
+    s = db.get_story(story_id)
+    if not s:
+        raise HTTPException(404, "Story not found")
+
+    workspace = s.get("workspace", "")
+    if not workspace or not Path(workspace).exists():
+        raise HTTPException(400, "Invalid workspace")
+
+    # Default: spawn a shell in the workspace
+    import sys
+
+    shell = "cmd.exe" if sys.platform == "win32" else "/bin/bash"
+    spawn_pty(story_id, [shell], cwd=workspace)
+    return {"ok": True}
+
+
+@app.delete("/api/pty/{story_id}")
+def api_kill_pty(story_id: str):
+    """Kill PTY for a story."""
+    kill_pty(story_id)
+    return {"ok": True}
 
 
 # -------- story CRUD --------
