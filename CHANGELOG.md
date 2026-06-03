@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] - 2026-06-03
+
+### Added
+- 跨平台 PTY 管理器 `terminal/pty.py`：Windows 用 pywinpty，Unix 用 stdlib pty，异步队列输出，atexit 清理防僵尸
+- WebSocket endpoint `/ws/pty/{story_id}`：双向 PTY 流，输出推 xterm.js，键盘输入写回 PTY，支持 resize
+- REST API `/api/pty/{story_id}/spawn` 和 `DELETE /api/pty/{story_id}`：按需启动/终止 PTY 进程
+- 前端新增 xterm.js 终端组件（TerminalPanel），详情/终端 tab 切换，"启动终端"按钮 spawn shell
+
 ## [0.6.1] - 2026-06-03
 
 ### Added
