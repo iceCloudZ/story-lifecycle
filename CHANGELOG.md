@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] - 2026-06-03
+
+### Added
+- Graph action nodes（advance/retry/skip/fail/pause/execute）自动广播状态变更到 WebSocket 客户端，Web Board 实时更新无需刷新
+- React 前端替代手写 HTML：Vite + React + TypeScript，组件化架构（StoryList、StoryDetail、useStories hook）
+- StoryDetail 支持操作按钮：根据状态动态显示继续/跳过/终止/删除，直接调 REST API
+- Vite 开发模式代理 API 到 FastAPI（`cd frontend && npm run dev`），支持 HMR 热更新
+- 前端构建产物自动输出到 `src/story_lifecycle/web/`，pip 安装即用
+
 ## [0.6.0] - 2026-06-03
 
 ### Added
