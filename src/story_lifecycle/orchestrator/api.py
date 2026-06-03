@@ -1,17 +1,36 @@
 """FastAPI server — REST API for story management and terminal access."""
 
+import asyncio
 import os
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..db import models as db
 from ..db.models import init_db
 from ..terminal import ttyd
 from .graph import start_story_async, recover_orphan_stories
+
+
+# -------- WebSocket broadcast --------
+
+_ws_clients: list[WebSocket] = []
+
+
+async def ws_broadcast(msg: dict):
+    """Broadcast a message to all connected WebSocket clients."""
+    dead = []
+    for ws in _ws_clients:
+        try:
+            await ws.send_json(msg)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        _ws_clients.remove(ws)
 
 
 # -------- request/response models --------
@@ -75,6 +94,63 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Story Lifecycle Manager", version="0.1.0", lifespan=lifespan)
+
+
+# -------- WebSocket endpoints --------
+
+
+@app.websocket("/ws/stories")
+async def ws_stories(ws: WebSocket):
+    await ws.accept()
+    _ws_clients.append(ws)
+    try:
+        await ws.send_json({"type": "stories", "data": _story_list_json()})
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        if ws in _ws_clients:
+            _ws_clients.remove(ws)
+
+
+def _story_list_json() -> list[dict]:
+    stories = db.list_active_stories()
+    return [
+        {
+            "storyKey": s["story_key"],
+            "title": s["title"],
+            "currentStage": s["current_stage"],
+            "status": s["status"],
+            "profile": s["profile"],
+            "executionCount": s["execution_count"],
+            "updatedAt": s["updated_at"],
+        }
+        for s in stories
+    ]
+
+
+async def notify_story_update(story_key: str, status: str = "", stage: str = ""):
+    """Call from graph nodes to push state changes to WS clients."""
+    await ws_broadcast(
+        {
+            "type": "story_update",
+            "data": {"storyKey": story_key, "status": status, "currentStage": stage},
+        }
+    )
+    await ws_broadcast({"type": "stories", "data": _story_list_json()})
+
+
+def notify_story_update_sync(story_key: str, status: str = "", stage: str = ""):
+    """Thread-safe version for calling from graph worker threads."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(notify_story_update(story_key, status, stage))
+    except RuntimeError:
+        pass
 
 
 # -------- story CRUD --------
@@ -485,3 +561,10 @@ def api_approvals():
     findings = db.get_all_pending_findings()
     db.enrich_findings_with_evidence(findings)
     return {"findings": findings}
+
+
+# -------- static frontend (must be last — catch-all mount) --------
+
+_WEB_DIR = Path(__file__).parent.parent / "web"
+if _WEB_DIR.is_dir() and any(_WEB_DIR.iterdir()):
+    app.mount("/", StaticFiles(directory=str(_WEB_DIR), html=True), name="web")

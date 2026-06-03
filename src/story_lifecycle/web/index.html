@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Story Lifecycle</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; background: #1a1a2e; color: #e0e0e0; }
+.header { padding: 12px 20px; background: #16213e; border-bottom: 1px solid #0f3460; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-size: 16px; color: #00d2ff; }
+.header .status { font-size: 12px; color: #888; }
+.container { display: flex; height: calc(100vh - 48px); }
+.story-list { flex: 1; overflow-y: auto; padding: 12px; }
+.story-list h2 { font-size: 13px; color: #888; margin-bottom: 8px; padding: 0 4px; }
+.story-card { background: #16213e; border: 1px solid #0f3460; border-radius: 6px; padding: 12px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.2s; }
+.story-card:hover { border-color: #00d2ff; }
+.story-card.selected { border-color: #00d2ff; background: #1a2744; }
+.story-card .key { font-size: 14px; color: #00d2ff; font-weight: bold; }
+.story-card .title { font-size: 13px; color: #ccc; margin-top: 2px; }
+.story-card .meta { display: flex; gap: 12px; margin-top: 6px; font-size: 12px; color: #888; }
+.badge { padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+.badge-active { background: #1b4332; color: #52b788; }
+.badge-paused { background: #4a3728; color: #f0a050; }
+.badge-blocked { background: #4a2828; color: #e05050; }
+.badge-completed { background: #1b4332; color: #40916c; }
+.badge-failed { background: #4a2828; color: #c04040; }
+.badge-waiting_subtasks { background: #3a284a; color: #b070d0; }
+.detail-panel { width: 380px; border-left: 1px solid #0f3460; padding: 16px; overflow-y: auto; background: #16213e; }
+.detail-panel h3 { font-size: 14px; color: #00d2ff; margin-bottom: 12px; }
+.detail-panel .field { margin-bottom: 8px; font-size: 13px; }
+.detail-panel .field .label { color: #888; display: inline-block; width: 80px; }
+.empty { text-align: center; padding: 60px 20px; color: #666; }
+.empty p { margin-top: 8px; font-size: 13px; }
+.ws-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+.ws-dot.connected { background: #52b788; }
+.ws-dot.disconnected { background: #e05050; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Story Lifecycle</h1>
+  <div class="status">
+    <span class="ws-dot disconnected" id="ws-dot"></span>
+    <span id="ws-status">connecting...</span>
+  </div>
+</div>
+
+<div class="container">
+  <div class="story-list" id="story-list">
+    <div class="empty">
+      <div style="font-size:24px">&#9889;</div>
+      <p>Waiting for stories...</p>
+    </div>
+  </div>
+  <div class="detail-panel" id="detail-panel">
+    <h3>Select a story</h3>
+    <div class="field"><span class="label">Stage:</span> -</div>
+    <div class="field"><span class="label">Status:</span> -</div>
+  </div>
+</div>
+
+<script>
+const storyListEl = document.getElementById('story-list');
+const detailEl = document.getElementById('detail-panel');
+const wsDot = document.getElementById('ws-dot');
+const wsStatus = document.getElementById('ws-status');
+
+let stories = [];
+let selectedKey = null;
+
+function badgeClass(status) {
+  return 'badge badge-' + status;
+}
+
+function stageBar(stages, current) {
+  if (!stages || !stages.length) return current || '';
+  return stages.map(s => s === current ? '◉ ' + s : '○ ' + s).join(' → ');
+}
+
+function renderStories(data) {
+  stories = data;
+  if (!data.length) {
+    storyListEl.innerHTML = '<div class="empty"><div style="font-size:24px">&#9889;</div><p>No active stories. Use <code>story create</code> to add one.</p></div>';
+    return;
+  }
+  storyListEl.innerHTML = '<h2>Active Stories</h2>' + data.map(s => {
+    const sel = s.storyKey === selectedKey ? ' selected' : '';
+    return `<div class="story-card${sel}" data-key="${s.storyKey}" onclick="selectStory('${s.storyKey}')">
+      <div class="key">${s.storyKey}</div>
+      <div class="title">${s.title || '(untitled)'}</div>
+      <div class="meta">
+        <span class="${badgeClass(s.status)}">${s.status}</span>
+        <span>${s.currentStage || '-'}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function selectStory(key) {
+  selectedKey = key;
+  fetch('/api/story/' + key).then(r => r.json()).then(s => {
+    detailEl.innerHTML = `
+      <h3>${s.storyKey}</h3>
+      <div class="field"><span class="label">Title:</span> ${s.title || '-'}</div>
+      <div class="field"><span class="label">Stage:</span> ${s.currentStage || '-'}</div>
+      <div class="field"><span class="label">Status:</span> <span class="${badgeClass(s.status)}">${s.status}</span></div>
+      <div class="field"><span class="label">Profile:</span> ${s.profile || '-'}</div>
+      <div class="field"><span class="label">Retries:</span> ${s.executionCount || 0}</div>
+      <div class="field"><span class="label">Updated:</span> ${s.updatedAt || '-'}</div>
+      ${s.lastError ? '<div class="field" style="color:#e05050"><span class="label">Error:</span> ' + s.lastError.substring(0, 120) + '</div>' : ''}
+      ${s.subs && s.subs.length ? '<div class="field"><span class="label">Subs:</span> ' + s.subs.map(sub => '<span class="' + badgeClass(sub.status) + '">' + sub.storyKey + '</span>').join(' ') + '</div>' : ''}
+    `;
+    // re-render list to update selection
+    renderStories(stories);
+  }).catch(() => {});
+}
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(proto + '//' + location.host + '/ws/stories');
+
+  ws.onopen = () => {
+    wsDot.className = 'ws-dot connected';
+    wsStatus.textContent = 'connected';
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'stories') {
+        renderStories(msg.data);
+      } else if (msg.type === 'story_update') {
+        // incremental update — refresh from API
+        fetch('/api/story').then(r => r.json()).then(renderStories).catch(() => {});
+        if (msg.data && msg.data.storyKey === selectedKey) {
+          selectStory(selectedKey);
+        }
+      }
+    } catch(e) {}
+  };
+
+  ws.onclose = () => {
+    wsDot.className = 'ws-dot disconnected';
+    wsStatus.textContent = 'disconnected — retrying...';
+    setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+}
+
+// Initial load
+fetch('/api/story').then(r => r.json()).then(renderStories).catch(() => {});
+connectWS();
+</script>
+</body>
+</html>

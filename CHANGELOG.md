@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-06-03
+
+### Added
+- `story --web` 启动浏览器端 Web Board，自动打开浏览器，实时显示 Story 列表和详情
+- FastAPI 新增 `/ws/stories` WebSocket endpoint，支持 Story 状态实时推送
+- 新增 `notify_story_update_sync()` 供 graph worker 线程安全地广播状态变更
+- 新增手写 HTML 前端（`src/story_lifecycle/web/index.html`），暗色主题，支持 Story 选择、状态 badge、详情面板
+- FastAPI 新增 StaticFiles mount，自动 serve `web/` 目录下的前端文件
+- pip wheel 打包包含前端静态文件（`pyproject.toml` artifacts 新增 `web/**`）
+- 新增设计文档 `docs/design-web-board.md`：Web Board 渐进式升级方案（Phase 1-4）
+
 ## [0.5.59] - 2026-06-02
 
 ### Added

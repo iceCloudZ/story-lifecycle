@@ -104,13 +104,14 @@ def _get_version():
 @click.group(invoke_without_command=True)
 @click.version_option(version=_get_version(), message="%(prog)s %(version)s")
 @click.option("--serve", is_flag=True, help="Start API server instead of board")
+@click.option("--web", "web_board", is_flag=True, help="Launch web board in browser")
 @click.option("--host", default="127.0.0.1", help="Server bind address")
 @click.option("--port", default=8180, help="Server bind port")
 @click.option(
     "--fix", "fix_deps", is_flag=True, help="Auto-install missing dependencies"
 )
 @click.pass_context
-def cli(ctx, serve, host, port, fix_deps):
+def cli(ctx, serve, web_board, host, port, fix_deps):
     """Story Lifecycle Manager — AI-powered development workflow orchestrator."""
     _cleanup_broken_dists()
     _protect_config()
@@ -143,6 +144,10 @@ def cli(ctx, serve, host, port, fix_deps):
 
     if fix_deps:
         run_doctor_fix(interactive=True)
+        return
+
+    if web_board:
+        _run_web_board(host, port)
         return
 
     if serve:
@@ -408,6 +413,38 @@ def _run_board():
                     s.get("status", ""),
                 )
             console.print(table)
+
+
+def _run_web_board(host, port):
+    """Start FastAPI server with web frontend and open browser."""
+    import uvicorn
+    import webbrowser
+    import threading
+
+    from ..db import models as db
+
+    web_dir = Path(__file__).parent.parent / "web"
+    if not (web_dir / "index.html").exists():
+        console.print(
+            "[red]Web frontend not found. Build it first or install from PyPI.[/]"
+        )
+        raise SystemExit(1)
+
+    url = f"http://{host}:{port}"
+    console.print(f"[green]Starting Story Lifecycle web board on {url}[/]")
+    console.print(f"[dim]Data directory: {db.get_db_path().parent}[/]")
+    console.print("[dim]Press Ctrl+C to stop.[/]")
+
+    def open_browser():
+        import time
+
+        time.sleep(1.5)
+        webbrowser.open(url)
+
+    threading.Thread(target=open_browser, daemon=True).start()
+    uvicorn.run(
+        "story_lifecycle.orchestrator.api:app", host=host, port=port, reload=False
+    )
 
 
 def _run_server(host, port):

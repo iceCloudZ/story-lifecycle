@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "story-lifecycle"
-version = "0.5.59"
+version = "0.6.0"
 description = "AI-powered development workflow orchestrator — from TAPD/Jira story to production"
 readme = "README.md"
 license = {text = "MIT"}
@@ -59,4 +59,4 @@ testpaths = ["tests"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/story_lifecycle"]
-artifacts = ["src/story_lifecycle/profiles/**", "src/story_lifecycle/prompts/**"]
+artifacts = ["src/story_lifecycle/profiles/**", "src/story_lifecycle/prompts/**", "src/story_lifecycle/web/**"]
