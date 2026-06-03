@@ -68,7 +68,9 @@ class ManagedPty:
 
         self._process = winpty.PTY(cols=120, rows=30)
         cmdline = " ".join(self.command[1:]) if len(self.command) > 1 else None
-        self._process.spawn(self.command[0], cmdline=cmdline, cwd=self.cwd, env=env)
+        # winpty requires env as null-terminated string, not dict
+        env_str = "".join(f"{k}={v}\0" for k, v in env.items()) + "\0"
+        self._process.spawn(self.command[0], cmdline=cmdline, cwd=self.cwd, env=env_str)
         self._mode = "winpty"
 
     def _spawn_unix(self, env: dict):
