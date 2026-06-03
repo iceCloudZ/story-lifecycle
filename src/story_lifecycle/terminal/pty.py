@@ -1,7 +1,8 @@
 """Cross-platform PTY management for Web Board terminal sessions.
 
-Windows: pywinpty (used by VS Code)
+Windows: pywinpty (optional, used by VS Code)
 Unix: stdlib pty + subprocess
+Fallback: subprocess.Popen (no PTY, but output captured via pipe)
 """
 
 import asyncio
@@ -12,6 +13,19 @@ import subprocess
 import sys
 import threading
 from typing import Optional
+
+
+def _has_winpty() -> bool:
+    try:
+        import importlib.util
+
+        return importlib.util.find_spec("winpty") is not None
+    except Exception:
+        return False
+
+
+def _has_unix_pty() -> bool:
+    return sys.platform not in ("win32", "emscripten") and hasattr(os, "fork")
 
 
 class ManagedPty:
@@ -31,19 +45,19 @@ class ManagedPty:
         merge_env = dict(os.environ)
         if env:
             merge_env.update(env)
-        # Ensure UTF-8 on Windows
         if sys.platform == "win32":
             merge_env.setdefault("PYTHONIOENCODING", "utf-8")
 
         self._spawn(merge_env)
 
     def _spawn(self, env: dict):
-        if sys.platform == "win32":
+        if sys.platform == "win32" and _has_winpty():
             self._spawn_winpty(env)
-        else:
+        elif _has_unix_pty():
             self._spawn_unix(env)
+        else:
+            self._spawn_subprocess(env)
 
-        # Start background reader thread
         self._read_thread = threading.Thread(
             target=self._read_loop, daemon=True, name=f"pty-read-{self.story_id}"
         )
@@ -52,21 +66,17 @@ class ManagedPty:
     def _spawn_winpty(self, env: dict):
         import winpty
 
-        self._process = winpty.PTY(
-            cols=120,
-            rows=30,
-        )
-        # winpty spawn needs the program and args separately
+        self._process = winpty.PTY(cols=120, rows=30)
         program = self.command[0]
         args = self.command[1:] if len(self.command) > 1 else []
         self._process.spawn(program, args=args, cwd=self.cwd, env=env)
+        self._mode = "winpty"
 
     def _spawn_unix(self, env: dict):
         import pty as _pty
 
         master, slave = _pty.openpty()
         self._master_fd = master
-
         proc = subprocess.Popen(
             self.command,
             stdin=slave,
@@ -79,20 +89,31 @@ class ManagedPty:
         os.close(slave)
         self._process = proc
         self._unix_pid = proc.pid
+        self._mode = "unix"
+
+    def _spawn_subprocess(self, env: dict):
+        """Fallback: plain subprocess with pipes (no PTY)."""
+        proc = subprocess.Popen(
+            self.command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=self.cwd,
+            env=env,
+        )
+        self._process = proc
+        self._mode = "subprocess"
 
     def _read_loop(self):
-        """Background thread: blocking read from PTY, push to async queue."""
         try:
             while self._alive:
                 data = self._blocking_read(4096)
                 if not data:
                     self._alive = False
                     break
-                # Push to queue — try_put to avoid blocking the thread
                 try:
                     self._queue.put_nowait(data)
                 except asyncio.QueueFull:
-                    # Drop oldest to avoid memory blowup
                     try:
                         self._queue.get_nowait()
                     except asyncio.QueueEmpty:
@@ -102,58 +123,67 @@ class ManagedPty:
             self._alive = False
 
     def _blocking_read(self, size: int) -> bytes:
-        if sys.platform == "win32":
-            return self._process.read(size, timeout=100)  # 100ms timeout
-        else:
+        if self._mode == "winpty":
+            return self._process.read(size, timeout=100)
+        elif self._mode == "unix":
             return os.read(self._master_fd, size)
+        else:
+            # subprocess fallback
+            data = self._process.stdout.read(size)
+            return data if data else b""
 
     @property
     def alive(self) -> bool:
-        if sys.platform == "win32":
+        if self._mode == "winpty":
             return self._process is not None and self._alive
+        elif self._mode == "unix":
+            return self._process is not None and self._process.poll() is None
         else:
             return self._process is not None and self._process.poll() is None
 
     def write(self, data: bytes):
-        """Write user input to PTY stdin."""
         if not self._process:
             return
         try:
-            if sys.platform == "win32":
+            if self._mode == "winpty":
                 self._process.write(data.decode("utf-8", errors="replace"))
+            elif self._mode == "subprocess":
+                self._process.stdin.write(data)
+                self._process.stdin.flush()
             else:
                 os.write(self._master_fd, data)
         except Exception:
             pass
 
     def resize(self, cols: int, rows: int):
-        """Resize PTY."""
-        try:
-            if sys.platform == "win32":
+        if self._mode == "winpty":
+            try:
                 self._process.set_size(cols, rows)
-            else:
+            except Exception:
+                pass
+        elif self._mode == "unix":
+            try:
                 import fcntl
-                import termios
                 import struct
+                import termios
 
                 winsize = struct.pack("HHHH", rows, cols, 0, 0)
                 fcntl.ioctl(self._master_fd, termios.TIOCSWINSZ, winsize)
-        except Exception:
-            pass
+            except Exception:
+                pass
 
     def kill(self):
-        """Terminate the PTY process."""
         self._alive = False
         try:
-            if sys.platform == "win32":
-                # winpty doesn't have a direct kill; close signals exit
-                pass
-            else:
+            if self._mode == "subprocess":
+                self._process.terminate()
+            elif self._mode == "unix":
                 os.killpg(self._unix_pid, signal.SIGTERM)
+            # winpty: no direct kill, process exits on close
         except Exception:
             pass
         try:
-            if sys.platform != "win32":
+            if self._mode == "unix":
                 os.close(self._master_fd)
         except Exception:
             pass
@@ -179,13 +209,11 @@ def spawn_pty(
 
 
 def get_pty(story_id: str) -> Optional[ManagedPty]:
-    """Get existing PTY for a story."""
     with _lock:
         return _ptys.get(story_id)
 
 
 def kill_pty(story_id: str):
-    """Kill and remove PTY for a story."""
     with _lock:
         pty = _ptys.pop(story_id, None)
         if pty:
@@ -193,7 +221,6 @@ def kill_pty(story_id: str):
 
 
 def cleanup_all():
-    """Kill all PTY processes. Called on server shutdown."""
     with _lock:
         for pty in _ptys.values():
             pty.kill()

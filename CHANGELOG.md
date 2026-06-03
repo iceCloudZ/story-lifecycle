@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.1] - 2026-06-03
+
+### Fixed
+- PTY spawn 500 错误：pywinpty 不可用时自动降级到 subprocess fallback
+- pywinpty 检测改为 `importlib.util.find_spec`，避免 lint 误报
+
 ## [0.7.0] - 2026-06-03
 
 ### Added
