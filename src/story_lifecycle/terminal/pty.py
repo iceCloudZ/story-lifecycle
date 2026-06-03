@@ -67,9 +67,8 @@ class ManagedPty:
         import winpty
 
         self._process = winpty.PTY(cols=120, rows=30)
-        program = self.command[0]
-        args = self.command[1:] if len(self.command) > 1 else []
-        self._process.spawn(program, args=args, cwd=self.cwd, env=env)
+        cmdline = " ".join(self.command[1:]) if len(self.command) > 1 else None
+        self._process.spawn(self.command[0], cmdline=cmdline, cwd=self.cwd, env=env)
         self._mode = "winpty"
 
     def _spawn_unix(self, env: dict):
