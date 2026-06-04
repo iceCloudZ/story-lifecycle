@@ -1,114 +1,160 @@
-# Phase 2: AI 规划层 — 路线图生成 + Issue 自动创建
+# Phase 2: AI 规划层 — 自适应项目启动
 
 ## 概述
 
-在 Phase 1（数据源 + 双写）基础上，将 AI 介入点从"执行阶段"前移到"规划阶段"：
-1. **路线图生成**：AI 读取项目需求，生成 phased roadmap，人确认
-2. **里程碑拆解**：AI 将 roadmap item 拆解成具体 GitHub Issue，人确认
-3. **Issue 批量创建**：用 `gh issue create` 自动创建，人确认后提交
-
-使 story-lifecycle 成为真正的"全生命周期"管理工具——从项目出生到完成。
+将 AI 介入点前移到项目规划阶段。根据项目当前状态自适应：可能只是一个 idea，可能是已有仓库但没有路线图，也可能是做了一半需要重新规划。AI 在每个节点先提案，人做判断题。
 
 ## 完整生命周期视图
 
 ```
-  ┌─────────────────────────────────────────────────────────┐
-  │                  Phase 2: AI 规划层                      │
-  │                                                         │
-  │  requirements.md                                        │
-  │       ↓ AI 生成，人确认                                  │
-  │  roadmap.md（phased）                                    │
-  │       ↓ AI 拆解，人确认                                  │
-  │  Issue 草稿列表                                          │
-  │       ↓ 批量创建                                         │
-  │  GitHub Issues (lifecycle:idea / lifecycle:accepted)     │
-  │                                                         │
-  ├─────────────────────────────────────────────────────────┤
-  │                  Phase 1: 执行层                         │
-  │                                                         │
-  │  lifecycle:accepted Issue → Story                       │
-  │       ↓ 自动执行                                        │
-  │  design → implement → test                              │
-  │       ↓ 双写同步                                        │
-  │  Issue comment + labels 更新                            │
-  │       ↓ 完成                                            │
-  │  lifecycle:done                                          │
-  └─────────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────────────────────────────┐
+  │                  Phase 2: AI 规划层（自适应起点）             │
+  │                                                             │
+  │  ┌─ 起点探测 ─┐                                             │
+  │  │ 当前状态？  │                                             │
+  │  └──┬───┬───┬─┘                                             │
+  │     │   │   │                                               │
+  │  只有 idea  有仓库+需求    做了一部分                         │
+  │     │   没路线图          没路线图                            │
+  │     ↓   ↓               ↓                                   │
+  │  Step 0a  Step 1       Step 1                               │
+  │  idea →   roadmap生成   分析现状                             │
+  │  requirements             + roadmap生成                      │
+  │     ↓   ↓               ↓                                   │
+  │     └───┴───────────────┘                                   │
+  │              ↓                                               │
+  │         roadmap.md                                           │
+  │              ↓ AI 拆解，人确认                                │
+  │         Issue 草稿列表                                       │
+  │              ↓ 批量创建                                       │
+  │         GitHub Issues                                        │
+  │                                                             │
+  ├─────────────────────────────────────────────────────────────┤
+  │                  Phase 1: 执行层                             │
+  │                                                             │
+  │  lifecycle:accepted → design → implement → test → done      │
+  └─────────────────────────────────────────────────────────────┘
 ```
+
+## 起点：项目状态探测
+
+`story plan` 命令首先探测项目状态：
+
+```bash
+story plan init
+```
+
+AI 检查当前目录，判断项目处于哪个阶段：
+
+| 状态 | 探测信号 | AI 建议的下一步 |
+|------|---------|---------------|
+| **空项目（只有 idea）** | 无 Git 仓库、无代码、无 docs/ | 从 Step 0a 开始：idea → requirements |
+| **有仓库，无规划** | 有代码结构，但没有 roadmap.md / requirements.md | 从 Step 1 开始：生成 requirements + roadmap |
+| **有需求，无路线图** | 有 requirements.md，但没有 roadmap.md | 从 Step 1 开始：requirements → roadmap |
+| **有路线图，未拆解** | 有 roadmap.md，但没有对应 Issues | 从 Step 2 开始：拆解 phase → issues |
+| **已有 Issues** | roadmap + issues 都有 | 直接进 Phase 1 执行，或补充缺失的 issues |
+
+AI 向用户确认判断是否正确，然后进入对应步骤。
+
+## 流程步骤
+
+### Step 0a：idea → requirements（空项目专属）
+
+**触发条件**：无 Git 仓库、无任何文档，用户只有一个 idea
+
+**AI 做什么**：
+1. 与用户对话式澄清：目标用户、核心功能、技术偏好、约束条件
+2. 生成 `docs/requirements.md`
+
+**人的角色**：回答 AI 提问，审查生成的需求文档
+
+```bash
+story plan init
+# AI: "检测到这是一个空项目。请描述你的 idea："
+# 用户: "我想做一个股票研究平台，帮助个人投资者分析财务数据"
+# AI: 追问澄清问题...
+# AI: 生成 requirements.md 草稿 → 人确认
+```
+
+### Step 0b：项目初始化（可选，Step 0a 之后）
+
+**触发条件**：Step 0a 完成，用户选择让 AI 初始化项目
+
+**AI 做什么**：
+1. 根据技术方案生成目录结构
+2. 初始化 Git 仓库
+3. 生成基础配置（.gitignore、CI、Issue 模板等）
+4. 提交初始结构
+
+**人的角色**：确认技术选型，审查生成的结构
+
+**注**：这一步可能直接调用 AI CLI（Claude Code）执行，相当于 Phase 1 的一个特殊 Story。
+
+### Step 1：roadmap 生成
+
+**触发条件**：有 requirements（Step 0a 生成或已存在），需要路线图
+
+**输入**：requirements.md + 现有代码结构（如果有的话）
+**输出**：roadmap.md（草稿）
+
+```bash
+story plan roadmap                    # 自动找 requirements.md
+story plan roadmap --from <file>      # 指定输入文件
+```
+
+**AI 做什么**：
+1. 读取需求文档
+2. 扫描现有代码结构（如果有）
+3. 生成 phased roadmap
+4. 每个 phase：名称、目标、功能列表、依赖、验证标准
+
+**人的角色**：审查每个 phase，可修改、删除、重排
+
+### Step 2：里程碑拆解
+
+**触发条件**：有 roadmap.md，需要拆成 Issue
+
+**输入**：roadmap.md + 选中某个 phase
+**输出**：Issue 草稿列表
+
+```bash
+story plan decompose                  # 拆解当前 phase
+story plan decompose --phase 3        # 拆解指定 phase
+```
+
+**AI 做什么**：
+1. 读取 phase 内容
+2. 检查项目中已有的 Issue 模板（`.github/ISSUE_TEMPLATE/`）
+3. 拆解成 Issue 列表，每个包含：title、body、labels、template_type、dependencies
+4. 复杂功能 → design Issue，明确任务 → implementation Issue
+
+**人的角色**：审查每个 Issue 草稿，调整粒度，标记哪些直接 `lifecycle:accepted`
+
+### Step 3：Issue 批量创建
+
+**触发条件**：Issue 草稿确认完毕
+
+```bash
+story plan publish                    # 创建 Issues
+story plan publish --dry-run          # 预览不创建
+```
+
+**做什么**：
+1. 逐个调用 `gh issue create`
+2. 输出 Issue number 列表
+3. 更新 roadmap.md 关联 Issue number
+
+**人的角色**：确认创建结果
 
 ## 决策记录
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
+| 起点假设 | 不假设，自适应探测 | 项目状态千差万别，不能固定起点 |
 | AI 介入方式 | 每步 AI 提案 + 人确认 | 人做判断题，不做问答题 |
-| 路线图输入 | requirements.md + 现有代码结构 | 需求文档是源头，代码结构提供约束 |
-| Issue 模板 | 复用项目已有模板 | stock-research 已有 idea/design/implementation 模板 |
-| 交互方式 | TUI 内嵌交互 | 复用现有 TUI，不新增 UI |
-| LLM 调用 | 复用 story-lifecycle 现有 LLM 配置 | STORY_LLM_API_KEY / STORY_LLM_MODEL |
-
-## 三步流程
-
-### Step 1：路线图生成
-
-**输入**：`docs/requirements.md`（或用户指定文件）+ 仓库代码结构
-**输出**：`docs/roadmap.md`（草稿）
-
-```bash
-story plan roadmap --from docs/requirements.md
-```
-
-**AI 做什么**：
-1. 读取 requirements.md
-2. 扫描现有代码结构（已有什么模块、什么阶段）
-3. 生成 phased roadmap（参考 stock-research 的 6-phase 结构）
-4. 每个 phase 包含：名称、目标、功能列表、依赖关系、验证标准
-
-**人的角色**：
-- TUI 展示生成的 roadmap
-- 人审查每个 phase，可修改、删除、重新排序
-- 确认后写入 `docs/roadmap.md`
-
-### Step 2：里程碑拆解
-
-**输入**：`docs/roadmap.md` + 选中某个 phase
-**输出**：Issue 草稿列表
-
-```bash
-story plan decompose --phase 3
-```
-
-**AI 做什么**：
-1. 读取指定 phase 的功能列表
-2. 根据项目 Issue 模板，拆解成具体 Issue：
-   - 复杂功能 → design Issue（`type:design`, `lifecycle:draft`）
-   - 明确任务 → implementation Issue（`type:implementation`, `lifecycle:implementing`）
-   - 已有设计 → 直接 implementation Issue（`lifecycle:accepted`）
-3. 每个 Issue 填写模板字段（Tasks、Verification 等）
-4. 标注 Issue 间依赖关系
-
-**人的角色**：
-- TUI 展示 Issue 草稿列表
-- 人审查每个 Issue：调整粒度、增删、修改字段
-- 标记哪些 Issue 直接 `lifecycle:accepted`（可以立即开发）
-
-### Step 3：Issue 批量创建
-
-**输入**：确认后的 Issue 草稿列表
-**输出**：GitHub Issues（已创建）
-
-```bash
-story plan publish
-```
-
-**做什么**：
-1. 逐个调用 `gh issue create` 创建 Issue
-2. 自动填写 title、body、labels
-3. 创建完成后输出 Issue number 列表
-4. 更新 roadmap.md 中对应 item 关联 Issue number
-
-**人的角色**：
-- 确认创建结果
-- 后续可在 GitHub 上继续调整
+| 交互方式 | CLI 对话式 | 先做最简方案，TUI 集成后续考虑 |
+| LLM 调用 | 复用 story-lifecycle 现有配置 | STORY_LLM_API_KEY / STORY_LLM_MODEL |
+| 项目初始化 | 可选，Step 0a 之后由用户决定 | 不是所有项目都需要 AI 初始化 |
 
 ## 文件结构
 
@@ -116,23 +162,31 @@ story plan publish
 src/story_lifecycle/
 ├── planner/                  # 新增模块
 │   ├── __init__.py
-│   ├── roadmap.py            # 路线图生成（LLM 调用）
-│   ├── decomposer.py         # 里程碑拆解（LLM 调用）
+│   ├── probe.py              # 项目状态探测
+│   ├── idea_expander.py      # idea → requirements（LLM 对话）
+│   ├── roadmap.py            # 路线图生成（LLM）
+│   ├── decomposer.py         # 里程碑拆解（LLM）
 │   └── publisher.py          # Issue 批量创建（gh CLI）
 ├── cli/
-│   └── plan_cmd.py           # 新增 `story plan` 命令
+│   └── plan_cmd.py           # 新增 `story plan` 命令组
 └── sources/
-    └── github_cli.py         # Phase 1 已有，新增 create_issue 方法
+    └── github_cli.py         # Phase 1 已有，create_issue 方法
 ```
 
 ## CLI 命令
 
 ```bash
-story plan roadmap --from <file>          # 生成路线图草稿
-story plan decompose --phase <n>          # 拆解指定 phase 为 Issue 列表
-story plan publish                        # 批量创建 Issue
-story plan publish --dry-run              # 预览不实际创建
+story plan init                        # 探测项目状态，引导进入对应步骤
+story plan roadmap [--from <file>]     # 生成路线图
+story plan decompose [--phase <n>]     # 拆解 phase → Issue 草稿
+story plan publish [--dry-run]         # 批量创建 Issue
 ```
+
+`story plan init` 是入口命令，它会：
+1. 探测项目状态
+2. 告诉用户"你现在到哪了"
+3. 建议下一步应该跑哪个子命令
+4. 如果是空项目，直接进入 idea → requirements 对话
 
 ## 配置
 
@@ -145,68 +199,26 @@ story_source:
     # Phase 1 配置...
 
 planning:
-  roadmap_template: "docs/templates/roadmap-template.md"   # 可选，路线图模板
-  issue_templates_dir: ".github/ISSUE_TEMPLATE"            # 可选，读取项目 Issue 模板
-  default_phase: "current"                                  # 可选，默认拆解哪个 phase
-```
-
-## AI Prompt 设计（概要）
-
-### 路线图生成 Prompt
-
-```
-你是项目规划师。根据以下需求文档和现有代码结构，生成 phased roadmap。
-
-要求：
-1. 每个阶段有明确的目标和交付物
-2. 阶段之间有合理的依赖关系
-3. 先基础设施后业务功能
-4. 每个 phase 列出具体功能点
-
-输入：
-- 需求文档：{requirements_content}
-- 现有代码结构：{code_structure}
-
-输出格式：
-- phase 名称、目标、功能列表、依赖、验证标准
-```
-
-### 里程碑拆解 Prompt
-
-```
-你是项目拆解师。将以下 roadmap phase 拆解成 GitHub Issues。
-
-要求：
-1. 复杂功能先用 design Issue，再 implementation Issue
-2. 每个 Issue 有明确的 Tasks 和 Verification
-3. 标注 Issue 间依赖
-4. 使用项目已有 Issue 模板
-
-输入：
-- Phase 内容：{phase_content}
-- 项目 Issue 模板：{templates}
-- 现有 docs/ 内容：{existing_docs}
-
-输出格式：
-- Issue 列表，每个包含：title, body, labels, template_type, dependencies
+  issue_templates_dir: ".github/ISSUE_TEMPLATE"  # 可选
 ```
 
 ## 与 Phase 1 的关系
 
-- Phase 2 创建的 Issue 最终进入 Phase 1 的数据源
-- Phase 2 使用 Phase 1 的 `GithubCli.create_issue()` 方法
-- Phase 2 的 `story plan` 命令独立于 Phase 1 的 `story serve`，不依赖服务器运行
-- Phase 2 的 LLM 调用复用现有 `STORY_LLM_API_KEY` / `STORY_LLM_MODEL` 配置
+- Phase 2 创建的 Issue 进入 Phase 1 数据源
+- Phase 2 使用 Phase 1 的 `GithubCli.create_issue()`
+- `story plan` 独立于 `story serve`，不依赖服务器
+- LLM 配置复用
 
 ## 不做什么
 
-- 自动推进 Issue 生命周期（idea → accepted 仍由人手动改标签）
+- 自动推进 Issue 生命周期（idea → accepted 由人决定）
 - 自动更新 docs/ 文件（人负责同步）
-- 替代 GitHub Projects 看板（不涉及 project board 自动化）
-- 多项目路线图（先支持单项目）
+- TUI 集成（Phase 2 先用 CLI 对话式，跑通后再考虑 TUI）
+- 替代 GitHub Projects 看板
+- 多项目路线图
 
 ## 依赖
 
-- Phase 1 的 `github_cli.py`（create_issue 方法）
-- 项目已有 Issue 模板
+- Phase 1 的 `github_cli.py`（create_issue）
+- 项目 Issue 模板（可选，没有则用默认模板）
 - LLM API 配置（复用现有）
