@@ -40,6 +40,17 @@ from .prompt_renderer import (
 )
 
 
+def _try_sync_context(source, source_id: str, stage: str, context: dict):
+    """Best-effort sync_context for sources that support it (currently GithubSource)."""
+    try:
+        from ...sources.github_source import GithubSource
+
+        if isinstance(source, GithubSource):
+            source.sync_context(source_id, stage, context)
+    except Exception as e:
+        log.warning(f"sync_context failed for {source_id}: {e}")
+
+
 def _ws_notify(state: StoryState, status: str = ""):
     """Push state change to WebSocket clients (web board)."""
     try:
@@ -527,6 +538,26 @@ def review_stage_node(state: StoryState) -> StoryState:
             state["context"]["review_path"] = str(rf.relative_to(workspace))
             state["context"]["review_summary"] = review.get("summary", "")
 
+            # Sync review summary to source (dual-write)
+            try:
+                _story_rec = db.get_story(story_key)
+                if _story_rec:
+                    _src_type = _story_rec.get("source_type")
+                    _src_id = _story_rec.get("source_id")
+                    if _src_type and _src_id:
+                        from ...sources import get_source
+
+                        _src = get_source(_src_type)
+                        if _src:
+                            _try_sync_context(
+                                _src,
+                                _src_id,
+                                stage,
+                                {"review_summary": review.get("summary", "")},
+                            )
+            except Exception as e:
+                log.warning(f"Failed to sync review to source: {e}")
+
             repair_path = review.get("repair_packet_path")
             if repair_path:
                 state["context"]["repair_packet_path"] = (
@@ -634,6 +665,26 @@ def review_stage_node(state: StoryState) -> StoryState:
         state["trajectory_score"] = review.get("trajectory_score")
         state["context"]["review_path"] = str(rf.relative_to(workspace))
         state["context"]["review_summary"] = review.get("summary", "")
+
+        # Sync review summary to source (dual-write)
+        try:
+            _story_rec = db.get_story(story_key)
+            if _story_rec:
+                _src_type = _story_rec.get("source_type")
+                _src_id = _story_rec.get("source_id")
+                if _src_type and _src_id:
+                    from ...sources import get_source
+
+                    _src = get_source(_src_type)
+                    if _src:
+                        _try_sync_context(
+                            _src,
+                            _src_id,
+                            stage,
+                            {"review_summary": review.get("summary", "")},
+                        )
+        except Exception as e:
+            log.warning(f"Failed to sync review to source: {e}")
 
         # Maintain knowledge base
         _update_knowledge(workspace, story_key, stage, review, stage_output)
@@ -1203,11 +1254,63 @@ def advance_node(state: StoryState) -> StoryState:
                     source = get_source(source_type)
                     if source:
                         source.sync_status(source_id, "completed")
+                        # Final sync_context with completion data
+                        _final_ctx = {}
+                        _final_ws = state.get("workspace", "")
+                        _done_path = (
+                            Path(_final_ws) / ".story-done" / f"{stage}.json"
+                            if _final_ws
+                            else None
+                        )
+                        if _done_path and _done_path.exists():
+                            try:
+                                raw = _done_path.read_text(encoding="utf-8")
+                                done_data = robust_json_parse(raw)
+                                if done_data:
+                                    _final_ctx["done_data"] = done_data
+                            except Exception:
+                                pass
+                        _try_sync_context(source, source_id, stage, _final_ctx)
                 except Exception as e:
                     log.warning(f"Failed to sync status to {source_type}: {e}")
         return state
 
     db.log_stage(key, stage, "complete", f"Advanced to {next_stage}")
+    # Sync context to source on stage advance (dual-write)
+    _adv_story = db.get_story(key)
+    if _adv_story:
+        _adv_src_type = _adv_story.get("source_type")
+        _adv_src_id = _adv_story.get("source_id")
+        if _adv_src_type and _adv_src_id:
+            try:
+                from ...sources import get_source
+
+                _adv_source = get_source(_adv_src_type)
+                if _adv_source:
+                    _stage_ctx = {}
+                    if state.get("context", {}).get("plan_summary"):
+                        _stage_ctx["plan_summary"] = state["context"]["plan_summary"]
+                    if state.get("context", {}).get("review_summary"):
+                        _stage_ctx["review_summary"] = state["context"][
+                            "review_summary"
+                        ]
+                    workspace = state.get("workspace", "")
+                    done_path = (
+                        Path(workspace) / ".story-done" / f"{stage}.json"
+                        if workspace
+                        else None
+                    )
+                    if done_path and done_path.exists():
+                        try:
+                            raw = done_path.read_text(encoding="utf-8")
+                            done_data = robust_json_parse(raw)
+                            if done_data:
+                                _stage_ctx["done_data"] = done_data
+                        except Exception:
+                            pass
+                    _try_sync_context(_adv_source, _adv_src_id, stage, _stage_ctx)
+            except Exception as e:
+                log.warning(f"Failed to sync context on stage advance: {e}")
     db.update_story(key, current_stage=next_stage, status="active")
     notify("Story Lifecycle", f"Story {key}: {stage} 完成，进入 {next_stage}")
     _ws_notify(state, "active")
