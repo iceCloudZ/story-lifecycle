@@ -83,3 +83,13 @@ def test_fetch_bug_content_aggregation():
     assert ctx.description == "登录后页面空白"
     assert ctx.source_type == "aggregated"
     assert ctx.raw_markdown != ""
+
+
+def test_derive_story_key_github():
+    from story_lifecycle.sources.base import SourceItem
+    from story_lifecycle.orchestrator.service import _derive_story_key
+
+    gh_item = SourceItem(
+        id="42", source="github", item_type="requirement", title="", description=""
+    )
+    assert _derive_story_key(gh_item) == "GH-42"

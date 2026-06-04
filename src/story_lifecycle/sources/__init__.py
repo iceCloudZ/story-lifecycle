@@ -37,3 +37,10 @@ try:
     register_source("tapd", lambda cfg: TapdSource(cfg))
 except ImportError:
     pass
+
+try:
+    from .github_source import GithubSource
+
+    register_source("github", lambda cfg: GithubSource(cfg))
+except ImportError:
+    pass

@@ -422,6 +422,8 @@ def create_story_from_source(
 
 
 def _derive_story_key(item) -> str:
+    if item.source == "github":
+        return f"GH-{item.id}"
     return (
         f"TAPD-{item.id[-7:]}"
         if item.source == "tapd"
