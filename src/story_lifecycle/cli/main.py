@@ -473,5 +473,9 @@ from .diagnostics import diagnostics  # noqa: E402
 
 cli.add_command(diagnostics)
 
+from .plan_cmd import plan  # noqa: E402
+
+cli.add_command(plan)
+
 if __name__ == "__main__":
     cli()

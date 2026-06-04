@@ -23,9 +23,9 @@
   │     ↓   ↓               ↓                                   │
   │     └───┴───────────────┘                                   │
   │              ↓                                               │
-  │         roadmap.md                                           │
+  │     .story/planning/roadmap.md                               │
   │              ↓ AI 拆解，人确认                                │
-  │         Issue 草稿列表                                       │
+  │     .story/planning/issues.json                              │
   │              ↓ 批量创建                                       │
   │         GitHub Issues                                        │
   │                                                             │
@@ -48,13 +48,39 @@ AI 检查当前目录，判断项目处于哪个阶段：
 
 | 状态 | 探测信号 | AI 建议的下一步 |
 |------|---------|---------------|
-| **空项目（只有 idea）** | 无 Git 仓库、无代码、无 docs/ | 从 Step 0a 开始：idea → requirements |
-| **有仓库，无规划** | 有代码结构，但没有 roadmap.md / requirements.md | 从 Step 1 开始：生成 requirements + roadmap |
-| **有需求，无路线图** | 有 requirements.md，但没有 roadmap.md | 从 Step 1 开始：requirements → roadmap |
+| **空项目（只有 idea）** | 无 `.story/` 目录、无 Git 仓库、无代码文件 | 从 Step 0a 开始：idea → requirements |
+| **有仓库，无规划** | 有 `.story/` 或 Git 仓库，有代码文件（`**/*.{py,ts,java,go}`），但无 `.story/planning/roadmap.md` | 从 Step 1 开始：生成 requirements + roadmap |
+| **有需求，无路线图** | 有 `.story/planning/requirements.md`，但无 roadmap.md | 从 Step 1 开始：requirements → roadmap |
 | **有路线图，未拆解** | 有 roadmap.md，但没有对应 Issues | 从 Step 2 开始：拆解 phase → issues |
 | **已有 Issues** | roadmap + issues 都有 | 直接进 Phase 1 执行，或补充缺失的 issues |
 
+探测信号优先级：`.story/` 存在 → Git 仓库存在 → 代码文件存在 → 文档文件存在。以 `.story/` 和 Git 状态为主信号，文档目录为辅助信号。
+
 AI 向用户确认判断是否正确，然后进入对应步骤。
+
+## 断点续传
+
+规划流程可能被中断（LLM 报错、用户 Ctrl+C）。每完成一个步骤，往 `.story/planning/state.json` 写入进度：
+
+```json
+{
+  "current_step": "step_2",
+  "completed_steps": ["step_0a", "step_1"],
+  "last_updated": "2026-06-05T10:30:00",
+  "context": {
+    "requirements_file": ".story/planning/requirements.md",
+    "roadmap_file": ".story/planning/roadmap.md",
+    "selected_phase": 1
+  }
+}
+```
+
+下次运行 `story plan init` 时：
+1. 读取 `state.json`，发现未完成的规划流程
+2. 提示用户："上次你完成了 Step 1（roadmap 生成），要继续 Step 2（里程碑拆解）吗？"
+3. 用户确认后跳到对应步骤，已完成的文件直接复用
+
+`story plan` 各子命令也检查 `state.json`，防止跳步执行。
 
 ## 流程步骤
 
@@ -64,7 +90,7 @@ AI 向用户确认判断是否正确，然后进入对应步骤。
 
 **AI 做什么**：
 1. 与用户对话式澄清：目标用户、核心功能、技术偏好、约束条件
-2. 生成 `docs/requirements.md`
+2. 生成 `.story/planning/requirements.md`
 
 **人的角色**：回答 AI 提问，审查生成的需求文档
 
@@ -73,7 +99,7 @@ story plan init
 # AI: "检测到这是一个空项目。请描述你的 idea："
 # 用户: "我想做一个股票研究平台，帮助个人投资者分析财务数据"
 # AI: 追问澄清问题...
-# AI: 生成 requirements.md 草稿 → 人确认
+# AI: 生成 .story/planning/requirements.md 草稿 → 人确认
 ```
 
 ### Step 0b：项目初始化（可选，Step 0a 之后）
@@ -94,28 +120,28 @@ story plan init
 
 **触发条件**：有 requirements（Step 0a 生成或已存在），需要路线图
 
-**输入**：requirements.md + 现有代码结构（如果有的话）
-**输出**：roadmap.md（草稿）
+**输入**：`.story/planning/requirements.md` + 现有代码结构（如果有的话）
+**输出**：`.story/planning/roadmap.md`（草稿）
 
 ```bash
-story plan roadmap                    # 自动找 requirements.md
+story plan roadmap                    # 自动找 .story/planning/requirements.md
 story plan roadmap --from <file>      # 指定输入文件
 ```
 
 **AI 做什么**：
 1. 读取需求文档
 2. 扫描现有代码结构（如果有）
-3. 生成 phased roadmap
+3. 生成 phased roadmap（写入 `.story/planning/roadmap.md`）
 4. 每个 phase：名称、目标、功能列表、依赖、验证标准
 
 **人的角色**：审查每个 phase，可修改、删除、重排
 
 ### Step 2：里程碑拆解
 
-**触发条件**：有 roadmap.md，需要拆成 Issue
+**触发条件**：有 `.story/planning/roadmap.md`，需要拆成 Issue
 
-**输入**：roadmap.md + 选中某个 phase
-**输出**：Issue 草稿列表
+**输入**：`.story/planning/roadmap.md` + 选中某个 phase
+**输出**：`.story/planning/issues.json`（Issue 草稿列表）
 
 ```bash
 story plan decompose                  # 拆解当前 phase
@@ -142,7 +168,7 @@ story plan publish --dry-run          # 预览不创建
 **做什么**：
 1. 逐个调用 `gh issue create`
 2. 输出 Issue number 列表
-3. 更新 roadmap.md 关联 Issue number
+3. 更新 `.story/planning/roadmap.md` 关联 Issue number
 
 **人的角色**：确认创建结果
 
@@ -155,6 +181,8 @@ story plan publish --dry-run          # 预览不创建
 | 交互方式 | CLI 对话式 | 先做最简方案，TUI 集成后续考虑 |
 | LLM 调用 | 复用 story-lifecycle 现有配置 | STORY_LLM_API_KEY / STORY_LLM_MODEL |
 | 项目初始化 | 可选，Step 0a 之后由用户决定 | 不是所有项目都需要 AI 初始化 |
+| 规划文件路径 | 统一收敛到 `.story/planning/` | 避免污染业务仓库；`.story/` 已在 .gitignore 中或用户可控；与 Phase 1 的 `.story/` 约定一致 |
+| CLI 职能边界 | `story setup` = 运行时配置（LLM key、数据源），`story plan` = 项目级规划 | 两者目标用户和生命周期不同：setup 全局配置一次，plan 按项目/阶段反复使用 |
 
 ## 文件结构
 
@@ -166,27 +194,39 @@ src/story_lifecycle/
 │   ├── idea_expander.py      # idea → requirements（LLM 对话）
 │   ├── roadmap.py            # 路线图生成（LLM）
 │   ├── decomposer.py         # 里程碑拆解（LLM）
-│   └── publisher.py          # Issue 批量创建（gh CLI）
+│   ├── publisher.py          # Issue 批量创建（gh CLI）
+│   └── state.py              # 断点续传状态管理
 ├── cli/
 │   └── plan_cmd.py           # 新增 `story plan` 命令组
 └── sources/
     └── github_cli.py         # Phase 1 已有，create_issue 方法
 ```
 
+项目运行时生成的文件：
+
+```
+.story/planning/
+├── state.json              # 断点续传进度
+├── requirements.md         # Step 0a 生成
+├── roadmap.md              # Step 1 生成
+└── issues.json             # Step 2 生成，Step 3 消费
+```
+
 ## CLI 命令
 
 ```bash
-story plan init                        # 探测项目状态，引导进入对应步骤
+story plan init                        # 探测项目状态，引导进入对应步骤（含断点续传检测）
 story plan roadmap [--from <file>]     # 生成路线图
 story plan decompose [--phase <n>]     # 拆解 phase → Issue 草稿
 story plan publish [--dry-run]         # 批量创建 Issue
 ```
 
 `story plan init` 是入口命令，它会：
-1. 探测项目状态
-2. 告诉用户"你现在到哪了"
-3. 建议下一步应该跑哪个子命令
-4. 如果是空项目，直接进入 idea → requirements 对话
+1. 检查 `.story/planning/state.json` 是否有未完成的规划流程
+2. 如有，提示用户从断点续传
+3. 如无，探测项目状态，告诉用户"你现在到哪了"
+4. 建议下一步应该跑哪个子命令
+5. 如果是空项目，直接进入 idea → requirements 对话
 
 ## 配置
 
@@ -212,10 +252,10 @@ planning:
 ## 不做什么
 
 - 自动推进 Issue 生命周期（idea → accepted 由人决定）
-- 自动更新 docs/ 文件（人负责同步）
 - TUI 集成（Phase 2 先用 CLI 对话式，跑通后再考虑 TUI）
 - 替代 GitHub Projects 看板
 - 多项目路线图
+- 将规划文件写到 `.story/` 之外的目录（用户可手动移动，工具只管 `.story/planning/`）
 
 ## 依赖
 

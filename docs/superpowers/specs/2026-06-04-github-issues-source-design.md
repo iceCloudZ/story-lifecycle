@@ -12,6 +12,7 @@
 |------|------|------|
 | API 交互方式 | gh CLI 代理 | 零配置复用认证、Windows 原生支持、无新依赖 |
 | 同步方向 | 双向（数据源拉取 + 状态/内容回写） | Story 推进时自动回写 GitHub Issue 状态和内容 |
+| sync_context 不入基类 | 留在 GithubSource 内，isinstance 判断 | YAGNI — 只有 GitHub 需要双写，过早抽象会增加无意义的多态分支；接入 GitLab/Jira 时再抽接口 |
 | Issue 映射 | 1 Issue = 1 Story | 不做 parent-child，YAGNI |
 | PRD 策略 | 现有 FallbackPrdProvider 兜底 | GitHub Issue body 天然 Markdown，质量足够 |
 | 拉取范围 | `lifecycle:accepted` 标签的 open Issue | 只拉人审核过的、准备开发的 Issue |
@@ -84,6 +85,16 @@ class GithubCli:
 ```
 
 所有调用通过 `subprocess.run(["gh", ...], capture_output=True, text=True)` 执行。统一异常 `GithubCliError`。
+
+## 异常约定
+
+**核心原则：文件协议是 source of truth，Issue 双写是 best-effort 仪表盘。**
+
+1. **gh 未安装或未认证** — `story serve` 启动时 `test_connection()` fail-fast，报错退出，不进入双写流程
+2. **网络超时 / rate limit** — `GithubCli` 内部统一 catch `subprocess.CalledProcessError`，包装为 `GithubCliError` 抛出
+3. **双写失败不阻断 Story 流转** — `sync_status()` 和 `sync_context()` 外层 try/except，失败时 `logging.warning` 记录后继续。理由：Story 的进度已持久化在 `.story/` 和 DB 中，Issue 只是可视化
+4. **拉取失败** — `fetch_pending()` 失败时返回空列表 + warning，不阻塞其他数据源
+5. **重试策略** — 暂不做自动重试。避免在 Story 流转中引入延迟。用户可在 `.story-done/` 中看到真实状态，手动触发同步
 
 ## GithubSource 核心逻辑 (`github_source.py`)
 
