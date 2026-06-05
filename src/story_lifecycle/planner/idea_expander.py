@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 
 from .llm import call_llm
-from .state import update_step
 
 log = logging.getLogger(__name__)
 
@@ -57,14 +56,14 @@ def expand_idea_to_requirements(
 直接输出 Markdown 格式的需求文档，不要包含额外的解释。"""
 
     content = call_llm(prompt, system=SYSTEM_PROMPT, temperature=0.3)
-    _save_requirements(content, cwd=cwd)
-    update_step("step_0a", {"requirements_generated": True}, cwd=cwd)
     return content
 
 
 def analyze_codebase_to_requirements(
     *,
     cwd: str | None = None,
+    previous_draft: str | None = None,
+    feedback: str | None = None,
 ) -> str:
     """Analyze existing codebase and generate requirements.md via LLM.
 
@@ -118,17 +117,19 @@ def analyze_codebase_to_requirements(
 3. 核心功能列表（每个功能一行，用 - 开头，按优先级排序）— 基于已有代码推断已实现的功能
 4. 非功能性需求（性能、安全、可用性等）
 5. 技术约束（基于现有技术栈）
-6. 已完成功能 vs 待开发功能的判断（如果能从代码推断）
+6. 已完成功能 vs 待开发功能的判断（如果能从代码推断）"""
 
-直接输出 Markdown 格式的需求文档，不要包含额外的解释。"""
+    if previous_draft and feedback:
+        prompt += f"""
+
+以下是上一版草稿：
+{previous_draft}
+
+请根据用户反馈修改：{feedback}"""
+
+    prompt += "\n\n直接输出 Markdown 格式的需求文档，不要包含额外的解释。"
 
     content = call_llm(prompt, system=SYSTEM_PROMPT, temperature=0.2)
-    _save_requirements(content, cwd=cwd)
-    update_step(
-        "step_0a",
-        {"requirements_generated": True, "source": "codebase_analysis"},
-        cwd=cwd,
-    )
     return content
 
 
@@ -147,16 +148,6 @@ def start_idea_dialog() -> list[dict]:
     if isinstance(result, list):
         return result
     return [{"question": "请描述你的项目 idea", "field": "idea"}]
-
-
-def _save_requirements(content: str, *, cwd: str | None = None) -> Path:
-    """Save requirements to .story/planning/requirements.md."""
-    root = Path(cwd) if cwd else Path.cwd()
-    planning_dir = root / ".story" / "planning"
-    planning_dir.mkdir(parents=True, exist_ok=True)
-    path = planning_dir / "requirements.md"
-    path.write_text(content, encoding="utf-8")
-    return path
 
 
 def _scan_tree(root: Path, max_lines: int = 80) -> str | None:
