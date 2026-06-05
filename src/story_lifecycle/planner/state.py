@@ -10,7 +10,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 STATE_FILE = "state.json"
-PLANNING_DIR = ".story" / "planning"
+PLANNING_DIR = Path(".story") / "planning"
 
 
 def _state_path(cwd: str | Path | None = None) -> Path:
