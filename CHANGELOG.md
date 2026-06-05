@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.4] - 2026-06-05
+
+### Added
+- 交互式确认流程：展示草稿 → 确认或补充修改 → 带反馈重新生成，遵循 brainstorming 交互模式
+- Rich Status spinner 动效：LLM 调用时显示"AI 正在思考..."
+
+### Changed
+- 生成与保存分离：LLM 只生成内容，用户确认后才写入磁盘
+
 ## [0.8.3] - 2026-06-05
 
 ### Added
