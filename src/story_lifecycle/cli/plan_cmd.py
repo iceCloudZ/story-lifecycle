@@ -108,44 +108,34 @@ def idea(idea: str | None, cwd: str):
 def _interactive_requirements(*, idea_text: str | None = None, cwd: str) -> None:
     """Generate requirements with interactive review loop.
 
-    Flow: generate → display full content → (Y)保存 / (e)编辑 / (r)重试 / (q)退出
+    Flow: generate → display → ask if OK → save or refine
     """
     content = _generate_requirements(idea_text=idea_text, cwd=cwd)
     if content is None:
         return
 
     while True:
-        # Show full content
         console.print()
         console.print(
             Panel(Markdown(content), title="requirements.md 草稿", border_style="green")
         )
 
-        console.print(
-            "\n[bold](Y)[/] 确认保存  [bold](e)[/] 补充修改  [bold](r)[/] 重新生成  [bold](q)[/] 退出"
-        )
-        choice = click.prompt("选择", default="Y").strip().lower()
-
-        if choice in ("y", ""):
+        if click.confirm("\n确认保存？", default=True):
             _save_planning_file(content, "requirements.md", cwd=cwd)
             console.print(
                 "\n需求文档已保存到 [bold].story/planning/requirements.md[/]\n"
                 "下一步: [bold]story plan roadmap[/]"
             )
             return
-        elif choice == "e":
-            feedback = click.prompt("补充或修改什么")
-            content = _generate_requirements(
-                idea_text=idea_text, cwd=cwd, previous_draft=content, feedback=feedback
-            )
-            if content is None:
-                return
-        elif choice == "r":
-            content = _generate_requirements(idea_text=idea_text, cwd=cwd)
-            if content is None:
-                return
-        elif choice == "q":
+
+        feedback = click.prompt("需要补充或修改什么")
+        if not feedback.strip():
             console.print("[dim]已取消[/]")
+            return
+        content = _generate_requirements(
+            idea_text=idea_text, cwd=cwd, previous_draft=content, feedback=feedback
+        )
+        if content is None:
             return
 
 
@@ -299,10 +289,7 @@ def _interactive_review(
     console.print()
     console.print(Panel(Markdown(content), title=title, border_style="green"))
 
-    console.print("\n[bold](Y)[/] 确认保存  [bold](q)[/] 退出不保存")
-    choice = click.prompt("选择", default="Y").strip().lower()
-
-    if choice in ("y", ""):
+    if click.confirm("\n确认保存？", default=True):
         save_data = raw_content if raw_content else content
         _save_planning_file(save_data, filename, cwd=cwd)
         console.print(
