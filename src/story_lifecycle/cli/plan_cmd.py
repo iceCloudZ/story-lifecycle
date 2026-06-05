@@ -82,11 +82,14 @@ def init(cwd: str):
         )
     )
 
-    # If empty or no requirements, enter idea dialog
-    if phase in ("empty", "has_code_no_plan"):
-        console.print("\n[bold]开始 idea → requirements 流程：[/]\n")
-        idea = click.prompt("请描述你的 idea（或项目目标）")
+    # If empty or no requirements, generate requirements
+    if phase == "empty":
+        console.print("\n[bold]检测到空项目。请描述你的 idea：[/]\n")
+        idea = click.prompt("你的 idea")
         _run_idea_expander(idea, cwd=cwd)
+    elif phase == "has_code_no_plan":
+        console.print("\n[bold]检测到已有代码，正在用 AI 分析项目...[/]\n")
+        _run_codebase_analysis(cwd=cwd)
 
 
 @plan.command()
@@ -117,6 +120,27 @@ def _run_idea_expander(idea_text: str, *, cwd: str):
     except Exception as e:
         console.print(f"[red]生成需求文档失败: {e}[/]")
         console.print("[dim]请确认已配置 LLM API key (运行 story setup)[/]")
+
+
+def _run_codebase_analysis(*, cwd: str):
+    from ..planner.idea_expander import analyze_codebase_to_requirements
+
+    console.print("[dim]正在分析代码库并生成需求文档...[/]")
+    try:
+        content = analyze_codebase_to_requirements(cwd=cwd)
+        console.print(
+            Panel.fit(
+                content[:800] + ("..." if len(content) > 800 else ""),
+                title="基于代码分析的需求文档",
+                border_style="green",
+            )
+        )
+        console.print("\n需求文档已保存到 [bold].story/planning/requirements.md[/]")
+        console.print("下一步: [bold]story plan roadmap[/]")
+    except Exception as e:
+        console.print(f"[red]分析失败: {e}[/]")
+        console.print("[dim]请确认已配置 LLM API key (运行 story setup)[/]")
+        console.print("[dim]或手动运行 story plan idea -i '你的项目描述'[/]")
 
 
 @plan.command()
