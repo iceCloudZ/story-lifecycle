@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.1] - 2026-06-05
+
+### Fixed
+- planner/state.py PLANNING_DIR 类型错误：字符串不能直接用 `/` 拼接 Path
+
 ## [0.8.0] - 2026-06-05
 
 ### Added
