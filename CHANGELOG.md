@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.3] - 2026-06-05
+
+### Added
+- LLM 驱动的代码库分析：已有代码的项目自动扫描目录结构、README、pyproject.toml、关键源文件，由 AI 生成需求文档
+
+### Fixed
+- has_code_no_plan 探测结果引导错误：应先运行 story plan idea 生成需求文档，再生成路线图
+
 ## [0.8.2] - 2026-06-05
 
 ### Fixed
