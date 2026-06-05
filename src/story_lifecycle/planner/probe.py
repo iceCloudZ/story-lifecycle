@@ -44,7 +44,7 @@ def probe_project(cwd: str | Path | None = None) -> dict:
         return _result(ProjectPhase.HAS_ROADMAP, signals, "step_2")
     if signals["has_requirements"]:
         return _result(ProjectPhase.HAS_REQUIREMENTS, signals, "step_1")
-    return _result(ProjectPhase.HAS_CODE_NO_PLAN, signals, "step_1")
+    return _result(ProjectPhase.HAS_CODE_NO_PLAN, signals, "step_0a")
 
 
 def _result(phase: str, signals: dict, suggested_step: str) -> dict:

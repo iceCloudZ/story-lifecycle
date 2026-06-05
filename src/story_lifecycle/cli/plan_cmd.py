@@ -82,10 +82,10 @@ def init(cwd: str):
         )
     )
 
-    # If empty project, enter idea dialog
-    if phase == "empty":
-        console.print("\n[bold]检测到空项目。开始 idea → requirements 流程：[/]\n")
-        idea = click.prompt("请描述你的 idea")
+    # If empty or no requirements, enter idea dialog
+    if phase in ("empty", "has_code_no_plan"):
+        console.print("\n[bold]开始 idea → requirements 流程：[/]\n")
+        idea = click.prompt("请描述你的 idea（或项目目标）")
         _run_idea_expander(idea, cwd=cwd)
 
 
