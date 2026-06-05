@@ -8,7 +8,6 @@ from pathlib import Path
 
 from .llm import call_llm_json
 from .roadmap import load_roadmap, parse_phases
-from .state import update_step
 
 log = logging.getLogger(__name__)
 
@@ -36,23 +35,27 @@ def decompose_phase(
     phase_number: int | None = None,
     *,
     cwd: str | None = None,
+    previous_draft: str | None = None,
+    feedback: str | None = None,
 ) -> list[dict]:
     """Decompose a roadmap phase into Issue drafts.
 
     Args:
         phase_number: Phase number to decompose. If None, uses the first phase.
         cwd: Working directory.
+        previous_draft: Previous issues JSON string for refinement.
+        feedback: User feedback on previous draft.
 
     Returns:
         List of Issue draft dicts.
     """
     root = Path(cwd) if cwd else Path.cwd()
 
-    roadmap = load_roadmap(cwd=cwd)
-    if not roadmap:
+    roadmap_content = load_roadmap(cwd=cwd)
+    if not roadmap_content:
         raise FileNotFoundError("No roadmap.md found. Run 'story plan roadmap' first.")
 
-    phases = parse_phases(roadmap)
+    phases = parse_phases(roadmap_content)
     if not phases:
         raise ValueError("No phases found in roadmap.md")
 
@@ -63,7 +66,6 @@ def decompose_phase(
     else:
         phase = phases[0]
 
-    # Load Issue templates if available
     templates = _load_issue_templates(root)
 
     prompt = f"""## 路线图 Phase
@@ -78,10 +80,17 @@ def decompose_phase(
 {templates}
 """
 
-    prompt += f"""
-请将以上 Phase 拆解为 GitHub Issue 列表。
+    if previous_draft and feedback:
+        prompt += f"""
+## 上一版 Issue 草稿
 
-{ISSUE_SCHEMA}
+{previous_draft}
+
+请根据用户反馈修改：{feedback}
+"""
+    else:
+        prompt += """
+请将以上 Phase 拆解为 GitHub Issue 列表。
 
 确保：
 - 每个 Issue 标题简洁明了
@@ -89,18 +98,13 @@ def decompose_phase(
 - 标签使用英文小写
 - 复杂功能先拆 design Issue，再拆 implementation Issue"""
 
+    prompt += f"\n\n{ISSUE_SCHEMA}"
+
     result = call_llm_json(prompt, system=SYSTEM_PROMPT, temperature=0.2)
     if result is None:
         raise RuntimeError("LLM failed to generate Issue drafts")
 
-    issues = result if isinstance(result, list) else [result]
-    _save_issues(issues, cwd=cwd)
-    update_step(
-        "step_2",
-        {"decomposed_phase": phase["number"], "issues_count": len(issues)},
-        cwd=cwd,
-    )
-    return issues
+    return result if isinstance(result, list) else [result]
 
 
 def load_issues(*, cwd: str | None = None) -> list[dict] | None:
@@ -126,12 +130,3 @@ def _load_issue_templates(root: Path) -> str | None:
         if content:
             parts.append(f"### {f.stem}\n{content[:500]}")
     return "\n\n".join(parts) if parts else None
-
-
-def _save_issues(issues: list[dict], *, cwd: str | None = None) -> Path:
-    root = Path(cwd) if cwd else Path.cwd()
-    planning_dir = root / ".story" / "planning"
-    planning_dir.mkdir(parents=True, exist_ok=True)
-    path = planning_dir / "issues.json"
-    path.write_text(json.dumps(issues, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path

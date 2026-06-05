@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 
 from .llm import call_llm
-from .state import update_step
 
 log = logging.getLogger(__name__)
 
@@ -29,12 +28,16 @@ def generate_roadmap(
     requirements_path: str | Path | None = None,
     *,
     cwd: str | None = None,
+    previous_draft: str | None = None,
+    feedback: str | None = None,
 ) -> str:
     """Generate a phased roadmap from requirements using LLM.
 
     Args:
         requirements_path: Path to requirements.md. If None, auto-finds .story/planning/requirements.md
         cwd: Working directory. Defaults to cwd.
+        previous_draft: Previous roadmap draft for refinement.
+        feedback: User feedback on previous draft.
 
     Returns:
         The roadmap markdown content.
@@ -51,7 +54,6 @@ def generate_roadmap(
 
     requirements = req_file.read_text(encoding="utf-8")
 
-    # Optional: scan existing code structure
     code_summary = _scan_code_structure(root)
 
     prompt = f"""## 需求文档
@@ -66,7 +68,16 @@ def generate_roadmap(
 {code_summary}
 """
 
-    prompt += """
+    if previous_draft and feedback:
+        prompt += f"""
+## 上一版路线图草稿
+
+{previous_draft}
+
+请根据用户反馈修改：{feedback}
+"""
+    else:
+        prompt += """
 请基于以上需求（和现有代码结构），生成一份分阶段的开发路线图。
 
 格式要求：
@@ -76,13 +87,11 @@ def generate_roadmap(
   - **功能列表**: 用 - 开头的列表
   - **依赖**: 依赖哪些前置 phase
   - **验证标准**: 如何判断这个 phase 完成
+"""
 
-直接输出 Markdown 格式。"""
+    prompt += "\n直接输出 Markdown 格式，不要包含额外的解释。"
 
-    content = call_llm(prompt, system=SYSTEM_PROMPT, temperature=0.2)
-    _save_roadmap(content, cwd=cwd)
-    update_step("step_1", {"roadmap_generated": True}, cwd=cwd)
-    return content
+    return call_llm(prompt, system=SYSTEM_PROMPT, temperature=0.2)
 
 
 def load_roadmap(*, cwd: str | None = None) -> str | None:
@@ -145,12 +154,3 @@ def _scan_code_structure(root: Path) -> str | None:
     if not lines:
         return None
     return "```\n" + "\n".join(lines[:30]) + "\n```"
-
-
-def _save_roadmap(content: str, *, cwd: str | None = None) -> Path:
-    root = Path(cwd) if cwd else Path.cwd()
-    planning_dir = root / ".story" / "planning"
-    planning_dir.mkdir(parents=True, exist_ok=True)
-    path = planning_dir / "roadmap.md"
-    path.write_text(content, encoding="utf-8")
-    return path

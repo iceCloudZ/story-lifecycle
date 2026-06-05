@@ -184,19 +184,46 @@ def _generate_requirements(
 def roadmap(from_file: str | None, cwd: str):
     """Generate a phased roadmap from requirements."""
     from ..planner.roadmap import generate_roadmap
+    from ..planner.state import update_step
 
     try:
-        with Status(
-            "[bold green]AI 正在生成路线图...", console=console, spinner="dots"
-        ):
-            content = generate_roadmap(requirements_path=from_file, cwd=cwd)
-        _interactive_review(
-            content,
-            filename="roadmap.md",
-            title="roadmap.md 草稿",
-            next_step="story plan decompose",
-            cwd=cwd,
-        )
+        content = None
+        feedback = None
+        while True:
+            with Status(
+                "[bold green]AI 正在生成路线图...", console=console, spinner="dots"
+            ):
+                if content and feedback:
+                    content = generate_roadmap(
+                        requirements_path=from_file,
+                        cwd=cwd,
+                        previous_draft=content,
+                        feedback=feedback,
+                    )
+                else:
+                    content = generate_roadmap(
+                        requirements_path=from_file,
+                        cwd=cwd,
+                    )
+
+            console.print()
+            console.print(
+                Panel(Markdown(content), title="roadmap.md 草稿", border_style="green")
+            )
+
+            if click.confirm("\n确认保存？", default=True):
+                _save_planning_file(content, "roadmap.md", cwd=cwd)
+                update_step("step_1", {"roadmap_generated": True}, cwd=cwd)
+                console.print(
+                    "\n已保存到 [bold].story/planning/roadmap.md[/]\n"
+                    "下一步: [bold]story plan decompose[/]"
+                )
+                return
+
+            feedback = click.prompt("需要补充或修改什么")
+            if not feedback.strip():
+                console.print("[dim]已取消[/]")
+                return
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/]")
         console.print("[dim]请先运行 story plan idea 生成需求文档[/]")
@@ -210,28 +237,59 @@ def roadmap(from_file: str | None, cwd: str):
 def decompose(phase: int | None, cwd: str):
     """Decompose a roadmap phase into Issue drafts."""
     from ..planner.decomposer import decompose_phase
+    from ..planner.state import update_step
 
     try:
-        with Status(
-            "[bold green]AI 正在拆解 Issue 草稿...", console=console, spinner="dots"
-        ):
-            issues = decompose_phase(phase_number=phase, cwd=cwd)
-        console.print(f"\n[green]生成了 {len(issues)} 个 Issue 草稿[/]\n")
+        issues = None
+        feedback = None
+        while True:
+            with Status(
+                "[bold green]AI 正在拆解 Issue 草稿...", console=console, spinner="dots"
+            ):
+                if issues and feedback:
+                    issues = decompose_phase(
+                        phase_number=phase,
+                        cwd=cwd,
+                        previous_draft=_serialize_issues(issues),
+                        feedback=feedback,
+                    )
+                else:
+                    issues = decompose_phase(phase_number=phase, cwd=cwd)
 
-        for i, issue in enumerate(issues, 1):
-            console.print(f"  {i}. [bold]{issue.get('title', 'Untitled')}[/]")
-            labels = issue.get("labels", [])
-            if labels:
-                console.print(f"     labels: {', '.join(labels)}")
+            console.print(f"\n[green]生成了 {len(issues)} 个 Issue 草稿[/]\n")
 
-        _interactive_review(
-            _format_issues_display(issues),
-            filename="issues.json",
-            title="Issue 草稿",
-            next_step="story plan publish --dry-run",
-            cwd=cwd,
-            raw_content=_serialize_issues(issues),
-        )
+            for i, issue in enumerate(issues, 1):
+                console.print(f"  {i}. [bold]{issue.get('title', 'Untitled')}[/]")
+                labels = issue.get("labels", [])
+                if labels:
+                    console.print(f"     labels: {', '.join(labels)}")
+
+            console.print()
+            console.print(
+                Panel(
+                    Markdown(_format_issues_display(issues)),
+                    title="Issue 草稿",
+                    border_style="green",
+                )
+            )
+
+            if click.confirm("\n确认保存？", default=True):
+                _save_planning_file(_serialize_issues(issues), "issues.json", cwd=cwd)
+                update_step(
+                    "step_2",
+                    {"decomposed_phase": phase or 1, "issues_count": len(issues)},
+                    cwd=cwd,
+                )
+                console.print(
+                    "\n已保存到 [bold].story/planning/issues.json[/]\n"
+                    "下一步: [bold]story plan publish --dry-run[/]"
+                )
+                return
+
+            feedback = click.prompt("需要补充或修改什么")
+            if not feedback.strip():
+                console.print("[dim]已取消[/]")
+                return
     except (FileNotFoundError, ValueError) as e:
         console.print(f"[red]{e}[/]")
     except Exception as e:
@@ -274,30 +332,6 @@ def publish(repo: str, dry_run: bool, cwd: str):
         console.print(f"[red]{e}[/]")
     except Exception as e:
         console.print(f"[red]发布失败: {e}[/]")
-
-
-def _interactive_review(
-    content: str,
-    *,
-    filename: str,
-    title: str,
-    next_step: str,
-    cwd: str,
-    raw_content: str | None = None,
-) -> None:
-    """Show generated content and ask for confirmation before saving."""
-    console.print()
-    console.print(Panel(Markdown(content), title=title, border_style="green"))
-
-    if click.confirm("\n确认保存？", default=True):
-        save_data = raw_content if raw_content else content
-        _save_planning_file(save_data, filename, cwd=cwd)
-        console.print(
-            f"\n已保存到 [bold].story/planning/{filename}[/]\n"
-            f"下一步: [bold]{next_step}[/]"
-        )
-    else:
-        console.print("[dim]已取消，未保存[/]")
 
 
 def _save_planning_file(content: str, filename: str, *, cwd: str) -> Path:

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.5] - 2026-06-06
+
+### Changed
+- roadmap 和 decompose 命令支持反馈循环：拒绝后可输入修改意见，AI 带着上一版草稿+反馈重新生成
+- generate_roadmap / decompose_phase 不再内部自动保存，由 CLI 层在用户确认后统一写入
+
 ## [0.8.4] - 2026-06-05
 
 ### Added
