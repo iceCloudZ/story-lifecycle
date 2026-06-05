@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.2] - 2026-06-05
+
+### Fixed
+- has_code_no_plan 探测结果引导错误：应先运行 story plan idea 生成需求文档，再生成路线图
+
 ## [0.8.1] - 2026-06-05
 
 ### Fixed
