@@ -32,8 +32,14 @@ class GithubCli:
         return result.stdout.strip()
 
     def list_issues(self, state: str = "open", label: str | None = None) -> list[dict]:
-        args = ["issue", "list", "--state", state, "--json",
-                "number,title,labels,body,assignees,state,milestone"]
+        args = [
+            "issue",
+            "list",
+            "--state",
+            state,
+            "--json",
+            "number,title,labels,body,assignees,state,milestone",
+        ]
         if label:
             args.extend(["--label", label])
         output = self._run(args)
@@ -41,12 +47,19 @@ class GithubCli:
 
     def get_issue(self, number: int) -> dict:
         output = self._run(
-            ["issue", "view", str(number), "--json",
-             "number,title,body,labels,assignees,state,milestone"]
+            [
+                "issue",
+                "view",
+                str(number),
+                "--json",
+                "number,title,body,labels,assignees,state,milestone",
+            ]
         )
         return json.loads(output)
 
-    def create_issue(self, title: str, body: str, label: list[str] | None = None) -> int:
+    def create_issue(
+        self, title: str, body: str, label: list[str] | None = None
+    ) -> int:
         args = ["issue", "create", "--title", title, "--body", body]
         if label:
             for lb in label:

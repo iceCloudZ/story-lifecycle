@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0] - 2026-06-05
+
+### Added
+- GitHub Issues 数据源适配器：通过 gh CLI 拉取 `lifecycle:accepted` 标签的 Issue 创建 Story
+- 双写同步：Story 阶段推进时自动回写 Issue comment/labels，GitHub Issue 作为可视化仪表盘
+- 异常约定：双写失败仅 log warning 不阻断 Story 流转，gh 未认证启动时 fail-fast
+- AI 规划层：项目状态自适应探测（空项目/有代码无规划/有路线图/已有 Issue）
+- 断点续传：规划流程中断后 `story plan init` 自动检测续传（`.story/planning/state.json`）
+- 共享 LLM helper：OpenAI 兼容 API 封装，复用 `STORY_LLM_*` 环境变量
+- `story plan idea`：idea → 需求文档（LLM 生成）
+- `story plan roadmap`：需求 → 分阶段路线图（LLM 生成）
+- `story plan decompose`：路线图 → Issue 草稿（LLM 拆解）
+- `story plan publish`：Issue 批量创建（gh CLI），支持 `--dry-run` 预览
+
 ## [0.7.3] - 2026-06-03
 
 ### Fixed
