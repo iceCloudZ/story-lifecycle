@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.6] - 2026-06-07
+
+### Added
+- `story plan` 一键自动跑完整个规划流程（探测→需求→路线图→拆解→发布），跳过已完成步骤，无需记多个子命令
+
+### Changed
+- 交互确认改为"按回车确认保存，或输入修改意见"，避免 click.confirm 的 Y/n 校验阻断用户反馈
+- JSON 解析支持 `[]` 数组格式，修复 decompose 拆解结果无法解析的问题
+- LLM 调用不再限制 max_tokens，由模型自身控制输出长度
+
 ## [0.8.5] - 2026-06-06
 
 ### Changed

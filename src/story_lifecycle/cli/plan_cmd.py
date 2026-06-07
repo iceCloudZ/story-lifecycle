@@ -14,10 +14,66 @@ from rich.table import Table
 console = Console()
 
 
-@click.group()
-def plan():
-    """AI-assisted project planning."""
-    pass
+@click.group(invoke_without_command=True)
+@click.option("--cwd", default=".", help="Working directory")
+@click.pass_context
+def plan(ctx: click.Context, cwd: str):
+    """AI-assisted project planning — auto-runs full flow when no subcommand given."""
+    if ctx.invoked_subcommand is not None:
+        return
+    _run_full_plan(cwd=cwd)
+
+
+def _run_full_plan(*, cwd: str) -> None:
+    """Auto-detect project state and run through each missing planning step."""
+    from ..planner.probe import probe_project
+
+    result = probe_project(cwd=cwd)
+    phase = result["phase"]
+    signals = result["signals"]
+
+    # Show status
+    table = Table(title="项目状态")
+    table.add_column("步骤", style="cyan")
+    table.add_column("状态", style="green")
+    checks = [
+        ("requirements.md", signals.get("has_requirements")),
+        ("roadmap.md", signals.get("has_roadmap")),
+        ("issues.json", signals.get("has_issues_json")),
+    ]
+    for label, done in checks:
+        table.add_row(label, "[green]✓[/]" if done else "[dim]—[/]")
+    console.print(table)
+
+    # Step 1: requirements
+    if not signals["has_requirements"]:
+        if phase == "empty":
+            console.print("\n[bold]检测到空项目。请描述你的 idea：[/]")
+            idea = click.prompt("你的 idea")
+            _interactive_requirements(idea_text=idea, cwd=cwd)
+        else:
+            console.print("\n[bold]正在用 AI 分析项目生成需求文档...[/]")
+            _interactive_requirements(cwd=cwd)
+        if not (Path(cwd) / ".story" / "planning" / "requirements.md").is_file():
+            return
+        console.print()
+
+    # Step 2: roadmap
+    if not signals["has_roadmap"]:
+        _run_roadmap(cwd=cwd)
+        if not (Path(cwd) / ".story" / "planning" / "roadmap.md").is_file():
+            return
+        console.print()
+
+    # Step 3: decompose
+    if not signals["has_issues_json"]:
+        _run_decompose(cwd=cwd)
+        if not (Path(cwd) / ".story" / "planning" / "issues.json").is_file():
+            return
+        console.print()
+
+    # Step 4: publish
+    _run_publish(cwd=cwd)
 
 
 @plan.command()
@@ -108,7 +164,7 @@ def idea(idea: str | None, cwd: str):
 def _interactive_requirements(*, idea_text: str | None = None, cwd: str) -> None:
     """Generate requirements with interactive review loop.
 
-    Flow: generate → display → ask if OK → save or refine
+    Flow: generate → display → ask for feedback → save if empty
     """
     content = _generate_requirements(idea_text=idea_text, cwd=cwd)
     if content is None:
@@ -120,7 +176,10 @@ def _interactive_requirements(*, idea_text: str | None = None, cwd: str) -> None
             Panel(Markdown(content), title="requirements.md 草稿", border_style="green")
         )
 
-        if click.confirm("\n确认保存？", default=True):
+        feedback = click.prompt(
+            "\n按回车确认保存，或输入修改意见", default="", show_default=False
+        )
+        if not feedback.strip():
             _save_planning_file(content, "requirements.md", cwd=cwd)
             console.print(
                 "\n需求文档已保存到 [bold].story/planning/requirements.md[/]\n"
@@ -128,10 +187,6 @@ def _interactive_requirements(*, idea_text: str | None = None, cwd: str) -> None
             )
             return
 
-        feedback = click.prompt("需要补充或修改什么")
-        if not feedback.strip():
-            console.print("[dim]已取消[/]")
-            return
         content = _generate_requirements(
             idea_text=idea_text, cwd=cwd, previous_draft=content, feedback=feedback
         )
@@ -183,6 +238,33 @@ def _generate_requirements(
 @click.option("--cwd", default=".", help="Working directory")
 def roadmap(from_file: str | None, cwd: str):
     """Generate a phased roadmap from requirements."""
+    _run_roadmap(from_file=from_file, cwd=cwd)
+
+
+@plan.command()
+@click.option("--phase", type=int, help="Phase number to decompose")
+@click.option("--cwd", default=".", help="Working directory")
+def decompose(phase: int | None, cwd: str):
+    """Decompose a roadmap phase into Issue drafts."""
+    _run_decompose(phase=phase, cwd=cwd)
+
+
+@plan.command()
+@click.option("--repo", required=True, help="GitHub repo (owner/repo)")
+@click.option("--dry-run", is_flag=True, help="Preview without creating")
+@click.option("--cwd", default=".", help="Working directory")
+def publish(repo: str, dry_run: bool, cwd: str):
+    """Batch create GitHub Issues from drafts."""
+    _run_publish(repo=repo, dry_run=dry_run, cwd=cwd)
+
+
+# ── Internal flow runners ──────────────────────────────────────────
+
+
+def _run_roadmap(
+    *, from_file: str | None = None, cwd: str = ".", exit_on_error: bool = False
+) -> None:
+    """Generate roadmap with interactive feedback loop."""
     from ..planner.roadmap import generate_roadmap
     from ..planner.state import update_step
 
@@ -211,31 +293,27 @@ def roadmap(from_file: str | None, cwd: str):
                 Panel(Markdown(content), title="roadmap.md 草稿", border_style="green")
             )
 
-            if click.confirm("\n确认保存？", default=True):
+            feedback = click.prompt(
+                "\n按回车确认保存，或输入修改意见", default="", show_default=False
+            )
+            if not feedback.strip():
                 _save_planning_file(content, "roadmap.md", cwd=cwd)
                 update_step("step_1", {"roadmap_generated": True}, cwd=cwd)
-                console.print(
-                    "\n已保存到 [bold].story/planning/roadmap.md[/]\n"
-                    "下一步: [bold]story plan decompose[/]"
-                )
-                return
-
-            feedback = click.prompt("需要补充或修改什么")
-            if not feedback.strip():
-                console.print("[dim]已取消[/]")
+                console.print("\n[green]✓[/] roadmap.md 已保存")
                 return
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/]")
         console.print("[dim]请先运行 story plan idea 生成需求文档[/]")
+    except click.Abort:
+        console.print("[dim]已取消[/]")
     except Exception as e:
         console.print(f"[red]生成路线图失败: {e}[/]")
 
 
-@plan.command()
-@click.option("--phase", type=int, help="Phase number to decompose")
-@click.option("--cwd", default=".", help="Working directory")
-def decompose(phase: int | None, cwd: str):
-    """Decompose a roadmap phase into Issue drafts."""
+def _run_decompose(
+    *, phase: int | None = None, cwd: str = ".", exit_on_error: bool = False
+) -> None:
+    """Decompose roadmap phase into Issue drafts with interactive feedback loop."""
     from ..planner.decomposer import decompose_phase
     from ..planner.state import update_step
 
@@ -256,7 +334,7 @@ def decompose(phase: int | None, cwd: str):
                 else:
                     issues = decompose_phase(phase_number=phase, cwd=cwd)
 
-            console.print(f"\n[green]生成了 {len(issues)} 个 Issue 草稿[/]\n")
+            console.print(f"\n[green]生成了 {len(issues)} 个 Issue 草稿[/]")
 
             for i, issue in enumerate(issues, 1):
                 console.print(f"  {i}. [bold]{issue.get('title', 'Untitled')}[/]")
@@ -273,36 +351,34 @@ def decompose(phase: int | None, cwd: str):
                 )
             )
 
-            if click.confirm("\n确认保存？", default=True):
+            feedback = click.prompt(
+                "\n按回车确认保存，或输入修改意见", default="", show_default=False
+            )
+            if not feedback.strip():
                 _save_planning_file(_serialize_issues(issues), "issues.json", cwd=cwd)
                 update_step(
                     "step_2",
                     {"decomposed_phase": phase or 1, "issues_count": len(issues)},
                     cwd=cwd,
                 )
-                console.print(
-                    "\n已保存到 [bold].story/planning/issues.json[/]\n"
-                    "下一步: [bold]story plan publish --dry-run[/]"
-                )
-                return
-
-            feedback = click.prompt("需要补充或修改什么")
-            if not feedback.strip():
-                console.print("[dim]已取消[/]")
+                console.print(f"\n[green]✓[/] issues.json 已保存 ({len(issues)} 个)")
                 return
     except (FileNotFoundError, ValueError) as e:
         console.print(f"[red]{e}[/]")
+    except click.Abort:
+        console.print("[dim]已取消[/]")
     except Exception as e:
         console.print(f"[red]拆解失败: {e}[/]")
 
 
-@plan.command()
-@click.option("--repo", required=True, help="GitHub repo (owner/repo)")
-@click.option("--dry-run", is_flag=True, help="Preview without creating")
-@click.option("--cwd", default=".", help="Working directory")
-def publish(repo: str, dry_run: bool, cwd: str):
-    """Batch create GitHub Issues from drafts."""
+def _run_publish(
+    *, repo: str | None = None, dry_run: bool = False, cwd: str = "."
+) -> None:
+    """Publish issues to GitHub. If repo not given, ask interactively."""
     from ..planner.publisher import publish_issues
+
+    if not repo:
+        repo = click.prompt("GitHub repo (owner/repo)")
 
     if dry_run:
         console.print("[yellow]DRY RUN — 不会实际创建 Issue[/]\n")
@@ -326,7 +402,7 @@ def publish(repo: str, dry_run: bool, cwd: str):
 
         if not dry_run and created:
             console.print(
-                "\nIssue 已添加 [bold]lifecycle:accepted[/] 标签，可被 Phase 1 自动拉取"
+                "\nIssue 已添加 [bold]lifecycle:accepted[/] 标签，可被 [bold]story serve[/] 自动拉取"
             )
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/]")

@@ -21,17 +21,51 @@ def _api_config() -> tuple[str, str, str]:
 
 
 def _extract_json(text: str) -> str | None:
-    depth = 0
-    start = None
+    pairs = {"{": "}", "[": "]"}
+    # Find the first opener character outside strings
+    in_string = False
+    escape_next = False
+    first_pos = None
     for i, ch in enumerate(text):
-        if ch == "{":
-            if depth == 0:
-                start = i
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if not in_string and ch in pairs:
+            first_pos = i
+            break
+    if first_pos is None:
+        return None
+
+    opener = text[first_pos]
+    closer = pairs[opener]
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i in range(first_pos, len(text)):
+        ch = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == opener:
             depth += 1
-        elif ch == "}":
+        elif ch == closer:
             depth -= 1
-            if depth == 0 and start is not None:
-                return text[start : i + 1]
+            if depth == 0:
+                return text[first_pos : i + 1]
     return None
 
 
@@ -56,7 +90,11 @@ def _parse_json_response(content: str) -> dict | list | None:
 
 
 def call_llm(
-    prompt: str, *, system: str = "", temperature: float = 0.1, max_tokens: int = 4096
+    prompt: str,
+    *,
+    system: str = "",
+    temperature: float = 0.1,
+    max_tokens: int | None = None,
 ) -> str:
     """Call LLM and return the text response."""
     api_key, base_url, model = _api_config()
@@ -68,15 +106,18 @@ def call_llm(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
+    body = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
+
     resp = httpx.post(
         f"{base_url}/v1/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        },
+        json=body,
         timeout=120,
     )
     resp.raise_for_status()
