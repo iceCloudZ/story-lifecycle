@@ -378,12 +378,10 @@ def _run_publish(
     from ..planner.publisher import publish_issues
 
     if not repo:
-        default_repo = _detect_github_repo(cwd)
-        prompt_text = "发布到哪个 GitHub 仓库"
-        if default_repo:
-            repo = click.prompt(prompt_text, default=default_repo)
-        else:
-            repo = click.prompt(f"{prompt_text} (格式: owner/repo)")
+        repo = _detect_github_repo(cwd)
+    if not repo:
+        repo = click.prompt("发布到哪个 GitHub 仓库 (格式: owner/repo)")
+    console.print(f"\n发布到 [bold]{repo}[/]")
 
     if dry_run:
         console.print("[yellow]DRY RUN — 不会实际创建 Issue[/]\n")
@@ -411,6 +409,8 @@ def _run_publish(
             )
     except FileNotFoundError as e:
         console.print(f"[red]{e}[/]")
+    except click.Abort:
+        console.print("[dim]已取消[/]")
     except Exception as e:
         console.print(f"[red]发布失败: {e}[/]")
 

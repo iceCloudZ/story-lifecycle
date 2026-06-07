@@ -37,6 +37,8 @@ def publish_issues(
         )
 
     cli = GithubCli(repo)
+    # Ensure lifecycle:accepted label exists before creating issues
+    cli.ensure_label(accept_label, color="0e8a16")
     results = []
 
     for i, issue in enumerate(issues):

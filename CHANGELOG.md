@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.8] - 2026-06-07
+
+### Added
+- `GithubCli.ensure_label()` 自动创建不存在的 label，publish 不再因 label 缺失而失败
+
+### Changed
+- `story plan` 发布步骤自动从 git remote 检测 repo，不再手动输入
+
 ## [0.8.7] - 2026-06-07
 
 ### Fixed

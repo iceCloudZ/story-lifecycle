@@ -82,6 +82,18 @@ class GithubCli:
     def comment_issue(self, number: int, body: str) -> None:
         self._run(["issue", "comment", str(number), "--body", body])
 
+    def ensure_label(self, name: str, color: str = "0075ca") -> None:
+        """Create a label if it doesn't already exist."""
+        try:
+            subprocess.run(
+                ["gh", "label", "create", name, "--color", color, "-R", self.repo],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            pass
+
     def test_auth(self) -> bool:
         try:
             subprocess.run(
