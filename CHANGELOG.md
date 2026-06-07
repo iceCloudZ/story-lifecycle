@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.7] - 2026-06-07
+
+### Fixed
+- publish 不再因自定义 label 不存在而失败：先创建 Issue，label 逐个添加、失败静默跳过
+- `story plan` 发布步骤自动从 git remote 检测默认 repo，无需手动输入
+
 ## [0.8.6] - 2026-06-07
 
 ### Added

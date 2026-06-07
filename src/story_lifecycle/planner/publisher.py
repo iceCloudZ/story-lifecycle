@@ -51,11 +51,16 @@ def publish_issues(
             continue
 
         try:
-            # Add lifecycle:accepted label so Phase 1 data source picks them up
-            all_labels = list(labels)
-            all_labels.append(accept_label)
+            # Create issue with lifecycle:accepted label only
+            number = cli.create_issue(title, body, label=[accept_label])
 
-            number = cli.create_issue(title, body, label=all_labels)
+            # Try to add custom labels, skip if they don't exist in the repo
+            for lb in labels:
+                try:
+                    cli.add_label(number, lb)
+                except GithubCliError:
+                    log.debug("Skipped label '%s' for #%d (not in repo)", lb, number)
+
             url = f"https://github.com/{repo}/issues/{number}"
             log.info("Created #%d: %s", number, title)
             results.append({"number": number, "title": title, "url": url})

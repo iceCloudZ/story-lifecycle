@@ -378,7 +378,12 @@ def _run_publish(
     from ..planner.publisher import publish_issues
 
     if not repo:
-        repo = click.prompt("GitHub repo (owner/repo)")
+        default_repo = _detect_github_repo(cwd)
+        prompt_text = "发布到哪个 GitHub 仓库"
+        if default_repo:
+            repo = click.prompt(prompt_text, default=default_repo)
+        else:
+            repo = click.prompt(f"{prompt_text} (格式: owner/repo)")
 
     if dry_run:
         console.print("[yellow]DRY RUN — 不会实际创建 Issue[/]\n")
@@ -418,6 +423,27 @@ def _save_planning_file(content: str, filename: str, *, cwd: str) -> Path:
     path = planning_dir / filename
     path.write_text(content, encoding="utf-8")
     return path
+
+
+def _detect_github_repo(cwd: str) -> str | None:
+    """Try to detect owner/repo from git remote."""
+    import re
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=5,
+        )
+        url = result.stdout.strip()
+        # https://github.com/owner/repo.git  or  git@github.com:owner/repo.git
+        m = re.search(r"[:/]([^/]+/[^/]+?)(?:\.git)?$", url)
+        return m.group(1) if m else None
+    except Exception:
+        return None
 
 
 def _format_issues_display(issues: list[dict]) -> str:
