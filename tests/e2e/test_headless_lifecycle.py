@@ -99,16 +99,14 @@ class TestSubStoryWaitResume:
     """Parent story delegates to sub-stories, parent enters waiting_subtasks."""
 
     def test_parent_waits_for_children(self, isolated_story_home, e2e_workspace):
-        """Test subtask delegation via plan_stage_node returning Send objects.
+        """Test subtask delegation via _delegate_subtasks.
 
-        After the 5-node refactor, plan_stage_node returns a list of Send
-        objects for fan-out subtask delegation instead of using interrupt().
-        We call plan_stage_node directly to test the delegation behavior,
-        since the compiled graph's invoke() cannot handle Send returns from
-        a regular node (only conditional edges can).
+        When the planner returns a split decision, plan_stage_node calls
+        _delegate_subtasks which creates DB records and sets parent status
+        to waiting_subtasks. interrupt() is NOT called directly here —
+        the delegation happens synchronously in the node.
         """
         from story_lifecycle.orchestrator.nodes.graph_nodes import plan_stage_node
-        from langgraph.types import Send
 
         scenario = _load("sub_story_wait_resume")
         key = scenario.story_key
@@ -130,7 +128,7 @@ class TestSubStoryWaitResume:
             patch("story_lifecycle.orchestrator.nodes.graph_nodes.ttyd") as mock_ttyd,
             patch("story_lifecycle.orchestrator.nodes.graph_nodes.notify"),
             patch(
-                "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
+                "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
                 return_value={
                     "cli": "claude",
                     "stages": {
@@ -206,13 +204,16 @@ class TestSubStoryWaitResume:
             }
             result = plan_stage_node(state)
 
-        # plan_stage_node returns list of Send objects for fan-out
-        assert isinstance(result, list), f"Expected list of Send, got {type(result)}"
-        assert len(result) == 1, "Only auth (no deps) should produce a Send"
-        assert isinstance(result[0], Send)
-        assert result[0].node == "plan_stage"
+        # plan_stage_node returns updated state (dict), not Send objects
+        assert isinstance(result, dict), f"Expected dict, got {type(result)}"
+        assert result["status"] == "waiting_subtasks"
 
-        # Verify parent is waiting_subtasks
+        # Verify _pending_sub_keys contains the active sub-story keys
+        pending_keys = result.get("_pending_sub_keys", [])
+        assert len(pending_keys) == 1, "Only auth (no deps) should be active"
+        assert pending_keys[0] == f"{key}-auth"
+
+        # Verify parent is waiting_subtasks in DB
         parent = db.get_story(key)
         assert parent is not None
         assert parent["status"] == "waiting_subtasks"

@@ -68,7 +68,7 @@ def _disable_adversarial_for_legacy_node_tests():
             return_value=profile,
         ),
         patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
+            "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
             return_value=profile,
         ),
     ):
@@ -215,8 +215,12 @@ class TestReviewStageNode:
         )
         # Need stage config with expected_outputs
         with patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
-            return_value={"expected_outputs": ["output"]},
+            "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
+            return_value={
+                "cli": "claude",
+                "stages": {"design": {"expected_outputs": ["output"]}},
+                "adversarial": {"enabled": False},
+            },
         ):
             result = review_stage_node(state)
 
@@ -234,8 +238,12 @@ class TestReviewStageNode:
             context={"output": "some data"},
         )
         with patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
-            return_value={"expected_outputs": ["output"]},
+            "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
+            return_value={
+                "cli": "claude",
+                "stages": {"design": {"expected_outputs": ["output"]}},
+                "adversarial": {"enabled": False},
+            },
         ):
             result = review_stage_node(state)
 
@@ -265,8 +273,12 @@ class TestReviewStageNode:
                 context={"prd_path": "prd/TEST-001.md"},
             )
             with patch(
-                "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
-                return_value={"expected_outputs": ["prd_path"]},
+                "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
+                return_value={
+                    "cli": "claude",
+                    "stages": {"design": {"expected_outputs": ["prd_path"]}},
+                    "adversarial": {"enabled": False},
+                },
             ):
                 result = review_stage_node(state)
 
@@ -300,8 +312,12 @@ class TestReviewStageNode:
                 context={"prd_path": "prd/TEST-001.md"},
             )
             with patch(
-                "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
-                return_value={"expected_outputs": ["prd_path"]},
+                "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
+                return_value={
+                    "cli": "claude",
+                    "stages": {"design": {"expected_outputs": ["prd_path"]}},
+                    "adversarial": {"enabled": False},
+                },
             ):
                 result = review_stage_node(state)
 
@@ -327,8 +343,12 @@ class TestReviewStageNode:
                 context={"prd_path": "prd/TEST-001.md"},
             )
             with patch(
-                "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
-                return_value={"expected_outputs": ["prd_path"]},
+                "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
+                return_value={
+                    "cli": "claude",
+                    "stages": {"design": {"expected_outputs": ["prd_path"]}},
+                    "adversarial": {"enabled": False},
+                },
             ):
                 result = review_stage_node(state)
 
@@ -343,8 +363,12 @@ class TestRouterNode:
     def test_happy_path_advance(self):
         state = _make_state(last_error=None)
         with patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
-            return_value={"confirm": False},
+            "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
+            return_value={
+                "cli": "claude",
+                "stages": {"design": {"confirm": False}},
+                "adversarial": {"enabled": False},
+            },
         ):
             result_state = router_node(state)
         assert route_from_router(result_state) == "advance"
@@ -354,8 +378,12 @@ class TestRouterNode:
         state = _make_state(last_error=None)
         with (
             patch(
-                "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
-                return_value={"confirm": True},
+                "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
+                return_value={
+                    "cli": "claude",
+                    "stages": {"design": {"confirm": True}},
+                    "adversarial": {"enabled": False},
+                },
             ),
             patch(
                 "story_lifecycle.orchestrator.nodes.graph_nodes.interrupt",
@@ -582,12 +610,16 @@ class TestAdvanceNode:
         )
         with (
             patch(
-                "story_lifecycle.orchestrator.nodes.resolve_next_stage",
+                "story_lifecycle.orchestrator.nodes.graph_nodes.resolve_next_stage",
                 return_value="implement",
             ),
             patch(
-                "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
-                return_value={"expected_outputs": ["prd_path"]},
+                "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
+                return_value={
+                    "cli": "claude",
+                    "stages": {"design": {"expected_outputs": ["prd_path"]}},
+                    "adversarial": {"enabled": False},
+                },
             ),
             patch(
                 "story_lifecycle.orchestrator.validation.get_stage_config",
@@ -595,10 +627,6 @@ class TestAdvanceNode:
             ),
             patch(
                 "story_lifecycle.orchestrator.nodes.load_profile",
-                return_value={"stages": {"design": {"expected_outputs": ["prd_path"]}}},
-            ),
-            patch(
-                "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
                 return_value={"stages": {"design": {"expected_outputs": ["prd_path"]}}},
             ),
         ):
@@ -696,19 +724,10 @@ class TestSubStoryDelegation:
             state = _make_state(story_key="PARENT-001", workspace=tmp)
             result = plan_stage_node(state)
 
-            # plan_stage_node returns list[Send] for active subtasks
-            from langgraph.types import Send
-
-            assert isinstance(result, list)
-            assert all(isinstance(s, Send) for s in result)
-            assert len(result) == 1  # only auth is active (api is blocked)
-
-            # The Send targets "plan_stage" with sub-state
-            send = result[0]
-            sub_state = send.arg
-            assert sub_state["story_key"] == "PARENT-001-auth"
-            assert sub_state["title"] == "Auth module"
-            assert sub_state["status"] == "active"
+            # plan_stage_node delegates subtasks via _delegate_subtasks
+            assert isinstance(result, dict)  # state dict, not Send list
+            assert result["status"] == "waiting_subtasks"
+            assert "PARENT-001-auth" in result.get("_pending_sub_keys", [])
 
             # Verify sub-stories in DB
             sub_auth = db.get_story("PARENT-001-auth")

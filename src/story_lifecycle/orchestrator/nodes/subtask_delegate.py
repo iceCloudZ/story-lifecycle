@@ -1,9 +1,7 @@
-"""Sub-story delegation — split parent story into sub-stories via LangGraph Send."""
+"""Sub-story delegation — split parent story into sub-stories."""
 
 import shutil
 from pathlib import Path
-
-from langgraph.types import Send
 
 from ...db import models as db
 from ..paths import context_dir
@@ -84,98 +82,9 @@ def _create_subtask_records(state: StoryState, plan: dict) -> list[dict]:
     return active_subs
 
 
-def build_subtask_sends(state: StoryState, plan: dict) -> list[Send]:
-    """Build Send objects for fan-out subtask delegation via LangGraph.
-
-    Creates DB records for each subtask, then returns a list of Send
-    objects targeting "plan_stage" with sub-state for each active subtask.
-    """
-    parent_key = state["story_key"]
-    stage = state["current_stage"]
-    subtasks = plan["subtasks"]
-
-    active_subs = _create_subtask_records(state, plan)
-
-    # Mark parent as waiting and log the split event
-    db.update_story(parent_key, status="waiting_subtasks")
-    db.log_event(
-        parent_key,
-        stage,
-        "split",
-        {
-            "subtask_count": len(subtasks),
-            "sub_keys": [f"{parent_key}-{s['key_suffix']}" for s in subtasks],
-        },
-    )
-
-    sends = []
-    for sub_info in active_subs:
-        # Build sub-state: copy parent state with overridden fields
-        sub_state: StoryState = {
-            "story_key": sub_info["sub_key"],
-            "title": sub_info["title"],
-            "workspace": state["workspace"],
-            "profile": state.get("profile", "minimal"),
-            "current_stage": stage,
-            "status": "active",
-            "complexity": state.get("complexity", ""),
-            "context": dict(state.get("context", {})),
-            "execution_count": 0,
-            "last_error": None,
-            "stage_start_time": 0.0,
-            "plan_summary": sub_info["summary"],
-            "review_summary": None,
-            "trajectory_score": None,
-            "plan": None,
-            "_next_action": None,
-            "_epoch": 0,
-            "_cancelled": False,
-        }
-        sends.append(Send("plan_stage", sub_state))
-
-    return sends
-
-
-def merge_subtask_results(states: list[StoryState]) -> dict:
-    """Merge results from fanned-in subtask states into a parent state update.
-
-    Called after all subtasks complete to produce a single state update dict
-    for the parent story.
-    """
-    if not states:
-        return {}
-
-    merged = {
-        "status": "active",
-        "plan_summary": None,
-        "last_error": None,
-        "context": {},
-    }
-
-    summaries = []
-    errors = []
-    for s in states:
-        if s.get("plan_summary"):
-            summaries.append(s["plan_summary"])
-        if s.get("last_error"):
-            errors.append(f"{s.get('story_key', '?')}: {s['last_error']}")
-        # Merge context from each subtask
-        for k, v in s.get("context", {}).items():
-            merged["context"][k] = v
-
-    if summaries:
-        merged["plan_summary"] = "; ".join(summaries)
-    if errors:
-        merged["last_error"] = "; ".join(errors)
-
-    return merged
-
-
 def _delegate_subtasks(state: StoryState, plan: dict) -> StoryState:
     """Split a parent story into sub-stories. Updates state to reflect
-    delegation. The graph_nodes layer should use build_subtask_sends() for
-    the actual Send-based fan-out; this function is kept for backward
-    compatibility and test support.
+    delegation.
     """
     parent_key = state["story_key"]
     stage = state["current_stage"]

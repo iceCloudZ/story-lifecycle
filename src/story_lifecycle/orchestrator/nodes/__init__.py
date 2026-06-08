@@ -52,9 +52,10 @@ from .routing import (
 # ---- Subtask delegation ----
 from .subtask_delegate import (
     _delegate_subtasks as _delegate_subtasks,
-    build_subtask_sends as build_subtask_sends,
-    merge_subtask_results as merge_subtask_results,
 )
+
+# ---- Error handling ----
+from .errors import NodeError as NodeError
 
 # ---- Knowledge management ----
 from .knowledge import (

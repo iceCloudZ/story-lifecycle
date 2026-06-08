@@ -97,7 +97,7 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
             return_value=_profile_without_adversarial(),
         ),
         patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
+            "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
             return_value=_profile_without_adversarial(),
         ),
         patch("story_lifecycle.orchestrator.graph.emit_plan_done"),

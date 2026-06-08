@@ -296,12 +296,14 @@ def detect_no_progress(
 
 
 def _get_stage_config_from_state(state: dict) -> dict:
-    """Resolve stage config from state's profile and current_stage."""
+    """Resolve stage config from state's resolved profile."""
+    rp = state.get("_resolved_profile")
+    stage = state.get("current_stage", "")
+    if rp:
+        return rp.get("stages", {}).get(stage, {})
     from .nodes import get_stage_config
 
-    profile = state.get("profile", "minimal")
-    stage = state.get("current_stage", "")
-    return get_stage_config(profile, stage)
+    return get_stage_config(state.get("profile", "minimal"), stage)
 
 
 def run_plan_loop(

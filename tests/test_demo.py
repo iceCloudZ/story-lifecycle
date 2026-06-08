@@ -27,7 +27,7 @@ def _run_demo_with_db(tmp_path: Path):
             side_effect=lambda x: None,
         ),
         patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
+            "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
             return_value={
                 "cli": "claude",
                 "stages": {

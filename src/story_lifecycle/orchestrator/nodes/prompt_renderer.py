@@ -46,7 +46,11 @@ def _strip_planner_contract_duplicates(plan_content: str) -> str:
 
 def _build_stage_contract(stage: str, state: StoryState) -> str:
     key = state["story_key"]
-    cfg = get_stage_config(state.get("profile", "minimal"), stage)
+    rp = state.get("_resolved_profile")
+    if rp:
+        cfg = rp.get("stages", {}).get(stage, {})
+    else:
+        cfg = get_stage_config(state.get("profile", "minimal"), stage)
     expected = cfg.get("expected_outputs", [])
     expected_lines = "\n".join(f"- {name}" for name in expected) or "- none"
     done_path = f".story/done/{key}/{stage}.json"
@@ -315,8 +319,11 @@ Story: {state["story_key"]}
     has_prd = bool(ctx.get("prd_path"))
 
     # Get stage skill from profile
-    profile_name = state.get("profile", "minimal")
-    stage_cfg = get_stage_config(profile_name, stage)
+    rp = state.get("_resolved_profile")
+    if rp:
+        stage_cfg = rp.get("stages", {}).get(stage, {})
+    else:
+        stage_cfg = get_stage_config(state.get("profile", "minimal"), stage)
     skill = stage_cfg.get("skill", "")
 
     vars_map = {

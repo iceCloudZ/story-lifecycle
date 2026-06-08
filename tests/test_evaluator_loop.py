@@ -1094,15 +1094,15 @@ def _enabled_adversarial_profile():
 
 
 def _patch_load_profile(return_value):
-    """Context manager that patches all three load_profile import paths."""
+    """Context manager that patches all load_profile import paths + _load_raw."""
     from contextlib import ExitStack
     from unittest.mock import patch
 
     stack = ExitStack()
     targets = [
         "story_lifecycle.orchestrator.nodes.load_profile",
-        "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
         "story_lifecycle.orchestrator.nodes.profile_loader.load_profile",
+        "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
     ]
     for t in targets:
         stack.enter_context(patch(t, return_value=return_value))
@@ -1110,7 +1110,7 @@ def _patch_load_profile(return_value):
 
 
 def test_plan_stage_node_uses_loop_when_enabled(isolated_story_home):
-    """When adversarial plan_loop is enabled, plan_stage_node calls run_adversarial_subgraph."""
+    """When adversarial plan_loop is enabled, plan_stage_node calls run_plan_loop."""
     from story_lifecycle.orchestrator.nodes import plan_stage_node
     from story_lifecycle.db import models as db
     from unittest.mock import patch
@@ -1145,7 +1145,7 @@ def test_plan_stage_node_uses_loop_when_enabled(isolated_story_home):
             return_value=None,
         ):
             with patch(
-                "story_lifecycle.orchestrator.adversarial_graph.run_adversarial_subgraph",
+                "story_lifecycle.orchestrator.evaluator_loop.run_plan_loop",
                 return_value=loop_result,
             ) as mock_loop:
                 result = plan_stage_node(state)
@@ -1188,7 +1188,7 @@ def test_plan_stage_node_skips_loop_when_disabled(isolated_story_home):
             return_value={},
         ),
         patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.load_profile",
+            "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
             return_value={},
         ),
     ):
@@ -1201,7 +1201,7 @@ def test_plan_stage_node_skips_loop_when_disabled(isolated_story_home):
                 return_value=plan_result,
             ):
                 with patch(
-                    "story_lifecycle.orchestrator.adversarial_graph.run_adversarial_subgraph"
+                    "story_lifecycle.orchestrator.evaluator_loop.run_plan_loop"
                 ) as mock_loop:
                     result = plan_stage_node(state)
 
@@ -1247,7 +1247,7 @@ def test_review_stage_node_uses_loop_when_enabled(isolated_story_home):
 
     with _patch_load_profile(_enabled_adversarial_profile()):
         with patch(
-            "story_lifecycle.orchestrator.adversarial_graph.run_adversarial_subgraph",
+            "story_lifecycle.orchestrator.evaluator_loop.run_code_review_loop",
             return_value=loop_result,
         ) as mock_loop:
             result = review_stage_node(state)
@@ -1289,7 +1289,7 @@ def test_review_stage_node_skips_loop_when_disabled(isolated_story_home):
             return_value=review_result,
         ):
             with patch(
-                "story_lifecycle.orchestrator.adversarial_graph.run_adversarial_subgraph"
+                "story_lifecycle.orchestrator.evaluator_loop.run_code_review_loop"
             ) as mock_loop:
                 result = review_stage_node(state)
 

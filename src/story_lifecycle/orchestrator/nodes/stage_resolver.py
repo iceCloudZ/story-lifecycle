@@ -38,7 +38,11 @@ def _block_for_planner(state: StoryState, reason: str) -> StoryState:
 
 def resolve_next_stage(state: StoryState) -> Optional[str]:
     """Determine next stage from profile config + complexity."""
-    cfg = get_stage_config(state.get("profile", "minimal"), state["current_stage"])
+    rp = state.get("_resolved_profile")
+    if rp:
+        cfg = rp.get("stages", {}).get(state["current_stage"], {})
+    else:
+        cfg = get_stage_config(state.get("profile", "minimal"), state["current_stage"])
     next_map = cfg.get("next_default", {})
 
     if isinstance(next_map, list):

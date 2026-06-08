@@ -34,15 +34,32 @@ from ..paths import (
 )
 
 from .state import StoryState, STORY_HOME, MAX_REVIEW_RETRIES
-from .profile_loader import load_profile, get_stage_config
 from .stage_resolver import _is_cancelled, _block_for_planner, resolve_next_stage
-from .subtask_delegate import build_subtask_sends
+from .errors import NodeError
+from .subtask_delegate import _delegate_subtasks
 from .knowledge import _check_pattern_recurrence, _update_knowledge
 from .json_helpers import robust_json_parse
 from .prompt_renderer import (
     _build_plan_executor_prompt,
     _render_prompt,
 )
+
+
+def _rp(state: StoryState) -> dict:
+    """Get resolved profile from state, or load it as fallback."""
+    rp = state.get("_resolved_profile")
+    if rp is None:
+        from .profile_loader import resolve_profile
+
+        rp = resolve_profile(state.get("profile", "minimal")).to_dict()
+        state["_resolved_profile"] = rp
+    return rp
+
+
+def _stage_cfg(state: StoryState, stage: str) -> dict:
+    """Get resolved stage config from state's resolved profile."""
+    rp = _rp(state)
+    return rp.get("stages", {}).get(stage, {})
 
 
 def _try_sync_context(source, source_id: str, stage: str, context: dict):
@@ -81,8 +98,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
         return state
 
     stage = state["current_stage"]
-    profile = state.get("profile", "minimal")
-    cfg = get_stage_config(profile, stage)
+    cfg = _stage_cfg(state, stage)
     workspace = state["workspace"]
     story_key = state["story_key"]
 
@@ -110,21 +126,14 @@ def plan_stage_node(state: StoryState) -> StoryState:
 
     # --- Adversarial plan loop ---
     try:
-        profile_cfg = load_profile(profile)
+        profile_cfg = _rp(state)
         adv_cfg = AdversarialConfig.from_profile(profile_cfg)
         if adv_cfg.plan_loop_enabled(stage):
             from ...orchestrator.graph import emit_plan_done
-            from ..adversarial_graph import run_adversarial_subgraph
+            from ..evaluator_loop import run_plan_loop
 
             adapters = ["claude"]
-            reviewer_model = adv_cfg.resolve_reviewer_model("plan")
-            loop_result = run_adversarial_subgraph(
-                story_state=dict(state),
-                loop_type="plan",
-                max_rounds=adv_cfg.plan_loop.max_rounds,
-                adapters=adapters,
-                reviewer_model=reviewer_model,
-            )
+            loop_result = run_plan_loop(state, adv_cfg, adapters)
 
             # Skip path
             if (
@@ -241,15 +250,10 @@ def plan_stage_node(state: StoryState) -> StoryState:
             )
             return state
 
-        # Split into sub-stories via LangGraph Send fan-out
+        # Split into sub-stories
         if plan.get("split") and plan.get("subtasks"):
-            sends = build_subtask_sends(state, plan)
-            if sends:
-                state["status"] = "waiting_subtasks"
-                state["plan_summary"] = f"拆分为 {len(plan['subtasks'])} 个子任务"
-                emit_plan_done(story_key, f"拆分为 {len(plan['subtasks'])} 个子任务")
-                return sends
-            # No active subtasks — treat as normal plan
+            _delegate_subtasks(state, plan)
+            emit_plan_done(story_key, state.get("plan_summary", ""))
             return state
 
         # Write plan task file
@@ -312,17 +316,14 @@ def plan_stage_node(state: StoryState) -> StoryState:
             f"Planner error for {story_key}:\n{traceback.format_exc()}",
             encoding="utf-8",
         )
-        log_node_error(
-            story_key,
-            stage,
+        NodeError(
             "plan_stage_node",
-            type(e).__name__,
-            str(e)[:200],
-            execution_count=state.get("execution_count", 0),
-            recoverable=True,
+            stage,
+            f"Planner failed: {type(e).__name__}: {e}",
+            error_type=type(e).__name__,
             action="block_for_planner",
-            file_hint=str(STORY_HOME / "planner_error.log"),
-        )
+            meta={"file_hint": str(STORY_HOME / "planner_error.log")},
+        ).apply(state)
         from ...orchestrator.graph import emit_plan_done
 
         emit_plan_done(
@@ -348,7 +349,6 @@ def execute_and_wait_node(state: StoryState) -> dict:
     stage = state["current_stage"]
     workspace = state["workspace"]
     key = state["story_key"]
-    profile = state.get("profile", "minimal")
 
     # Clear stale CLI exit marker
     _exit_marker = Path(_tf.gettempdir()) / f"story-exit-{key}"
@@ -367,11 +367,9 @@ def execute_and_wait_node(state: StoryState) -> dict:
         return state
 
     # --- Phase 2: Dispatch tool execution ---
-    cfg = get_stage_config(profile, stage)
+    cfg = _stage_cfg(state, stage)
     plan = state.get("plan") or {}
-    adapter_name = plan.get("adapter") or cfg.get(
-        "cli", load_profile(profile).get("cli", "claude")
-    )
+    adapter_name = plan.get("adapter") or cfg.get("cli", "claude")
     provider = plan.get("provider") or state.get("context", {}).get(
         "_provider", cfg.get("provider", "deepseek")
     )
@@ -390,7 +388,7 @@ def execute_and_wait_node(state: StoryState) -> dict:
     if not prompt:
         prompt, prompt_meta = _render_prompt(stage, state)
 
-    stage_cfg = get_stage_config(profile, stage)
+    stage_cfg = _stage_cfg(state, stage)
     tool_args = {
         "adapter": adapter_name,
         "provider": provider,
@@ -464,18 +462,14 @@ def _consume_done_file(
             _shutil.move(str(done_file), str(malformed))
         except Exception:
             pass
-        state["last_error"] = f"Failed to parse done file: {parse_exc}"
-        log_node_error(
-            key,
-            stage,
+        NodeError(
             "execute_and_wait_node",
-            "JSONParseError",
-            f"Failed to parse {done_file}: {parse_exc}",
-            execution_count=state.get("execution_count", 0),
-            recoverable=True,
+            stage,
+            f"Failed to parse done file: {parse_exc}",
+            error_type="JSONParseError",
             action="set_last_error",
-            file_hint=str(done_file),
-        )
+            meta={"file_hint": str(done_file)},
+        ).apply(state)
         return None
 
     # Snapshot before consuming
@@ -499,7 +493,7 @@ def _consume_done_file(
 
 def _sync_done_outputs(state: StoryState, key: str, stage: str, data: dict):
     """Write done file outputs to DB context."""
-    cfg = get_stage_config(state.get("profile", "minimal"), stage)
+    cfg = _stage_cfg(state, stage)
     for field in cfg.get("expected_outputs", []):
         if field in data:
             db.update_context(key, field, str(data[field]))
@@ -520,17 +514,13 @@ def _poll_done_file(
     # Check session exit (mplex-launched only)
     session = ttyd.session_name(key)
     if key in ttyd._mplex_launched and not ttyd.session_alive(session):
-        state["last_error"] = ""
-        log_node_error(
-            key,
-            stage,
+        NodeError(
             "execute_and_wait_node",
-            "SessionClosed",
+            stage,
             f"Session {session} closed, no done file yet — keeping story active",
-            execution_count=state.get("execution_count", 0),
-            recoverable=True,
+            error_type="SessionClosed",
             action="keep_active",
-        )
+        ).apply(state)
         return state
 
     # Check CLI exit marker
@@ -541,34 +531,26 @@ def _poll_done_file(
             exit_marker.unlink(missing_ok=True)
         except Exception:
             ec = "?"
-        state["last_error"] = ""
-        log_node_error(
-            key,
-            stage,
+        NodeError(
             "execute_and_wait_node",
-            "TerminalClosed",
+            stage,
             f"Terminal closed (exit: {ec}), stage {stage} still in progress",
-            execution_count=state.get("execution_count", 0),
-            recoverable=True,
+            error_type="TerminalClosed",
             action="keep_active",
-        )
+        ).apply(state)
         return state
 
     # Headless mode — CLI finished without producing done file
     from ...orchestrator.graph import _tui_app
 
     if _tui_app is None:
-        state["last_error"] = "Headless CLI completed without producing .done file"
-        log_node_error(
-            key,
-            stage,
+        NodeError(
             "execute_and_wait_node",
-            "HeadlessNoDoneFile",
-            f"Headless CLI finished but no .story/done for stage {stage}",
-            execution_count=state.get("execution_count", 0),
-            recoverable=True,
+            stage,
+            "Headless CLI completed without producing .done file",
+            error_type="HeadlessNoDoneFile",
             action="set_last_error",
-        )
+        ).apply(state)
         return state
 
     # TUI mode — yield thread via interrupt
@@ -590,7 +572,7 @@ def review_stage_node(state: StoryState) -> StoryState:
         return state
 
     stage = state["current_stage"]
-    cfg = get_stage_config(state.get("profile", "minimal"), stage)
+    cfg = _stage_cfg(state, stage)
 
     if not cfg.get("review", True):
         return state
@@ -608,7 +590,7 @@ def review_stage_node(state: StoryState) -> StoryState:
     execution_count = state.get("execution_count", 0)
 
     try:
-        profile_cfg = load_profile(state.get("profile", "minimal"))
+        profile_cfg = _rp(state)
         adv_cfg = AdversarialConfig.from_profile(profile_cfg)
         retry_limit = (
             adv_cfg.code_loop.max_rounds
@@ -684,21 +666,14 @@ def review_stage_node(state: StoryState) -> StoryState:
     # --- Adversarial code review loop ---
     try:
         if adv_cfg.code_loop_enabled(stage):
-            from ..adversarial_graph import run_adversarial_subgraph
+            from ..evaluator_loop import run_code_review_loop
 
             new_round = increment_review_round_count(state["context"], stage)
             db.update_context(
                 state["story_key"], f"review_round_count_{stage}", str(new_round)
             )
 
-            reviewer_model = adv_cfg.resolve_reviewer_model("code")
-            loop_result = run_adversarial_subgraph(
-                story_state=dict(state),
-                loop_type="code",
-                max_rounds=adv_cfg.code_loop.max_rounds,
-                reviewer_model=reviewer_model,
-                stage_output=stage_output,
-            )
+            loop_result = run_code_review_loop(state, adv_cfg, stage_output)
 
             if loop_result.decision == "fail":
                 gd = GateDecision(
@@ -925,7 +900,7 @@ def router_node(state: StoryState) -> dict:
 
     key = state["story_key"]
     stage = state["current_stage"]
-    cfg = get_stage_config(state.get("profile", "minimal"), stage)
+    cfg = _stage_cfg(state, stage)
 
     # Pre-routed decision (adversarial exhaustion, gate decisions)
     pre_routed = state.pop("_pre_routed_action", None)
@@ -982,7 +957,7 @@ def router_node(state: StoryState) -> dict:
 
         count = get_review_round_count(state.get("context", {}), stage)
         try:
-            profile_cfg = load_profile(state.get("profile", "minimal"))
+            profile_cfg = _rp(state)
             adv_cfg = AdversarialConfig.from_profile(profile_cfg)
             retry_limit = (
                 adv_cfg.code_loop.max_rounds
@@ -1087,7 +1062,7 @@ def _execute_action(state: StoryState, action: str, cfg: dict) -> dict:
             return state
 
         case "skip":
-            cfg = get_stage_config(state.get("profile", "minimal"), stage)
+            cfg = _stage_cfg(state, stage)
             for field in cfg.get("expected_outputs", []):
                 if field not in state.get("context", {}):
                     state["context"][field] = "SKIPPED"
@@ -1207,7 +1182,7 @@ def advance_node(state: StoryState) -> StoryState:
     # Validation
     from ..validation import validate_stage_outputs
 
-    profile_data = load_profile(state.get("profile", "minimal"))
+    profile_data = _rp(state)
     result = validate_stage_outputs(state, profile_config=profile_data)
     if not result.ok:
         state["last_error"] = result.reason
@@ -1222,16 +1197,13 @@ def advance_node(state: StoryState) -> StoryState:
                 "execution_count": state.get("execution_count", 0),
             },
         )
-        log_node_error(
-            key,
-            stage,
+        NodeError(
             "advance_node",
-            "ValidationFailed",
+            stage,
             result.reason,
-            execution_count=state.get("execution_count", 0),
-            recoverable=True,
+            error_type="ValidationFailed",
             action="set_last_error",
-        )
+        ).apply(state)
         return state
 
     # DoD gate
@@ -1254,17 +1226,14 @@ def advance_node(state: StoryState) -> StoryState:
             state["last_error"] = f"DoD gate failed: {dod['blocking']}"
             return state
     except Exception as e:
-        log_node_error(
-            key,
-            stage,
+        NodeError(
             "advance_node",
-            type(e).__name__,
-            str(e)[:200],
-            execution_count=state.get("execution_count", 0),
+            stage,
+            f"DoD check failed: {e}",
+            error_type=type(e).__name__,
             recoverable=False,
             action="do_not_silently_pass",
-        )
-        state["last_error"] = f"DoD check failed: {e}"
+        ).apply(state)
         return state
 
     next_stage = resolve_next_stage(state)

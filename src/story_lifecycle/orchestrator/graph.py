@@ -316,11 +316,31 @@ def _run_story_impl(story_key: str, epoch: int = 0):
         "_next_action": None,
         "_epoch": epoch,
         "_cancelled": False,
+        "_resolved_profile": None,
     }
+
+    # Resolve profile once at start
+    try:
+        from .nodes.profile_loader import resolve_profile
+
+        rp = resolve_profile(story.get("profile", "minimal"))
+        initial_state["_resolved_profile"] = rp.to_dict()
+    except Exception:
+        pass
 
     config = {"configurable": {"thread_id": story_key}}
     compiled = get_compiled_graph()
     compiled.invoke(initial_state, config)
+
+    # Start any pending sub-stories
+    try:
+        snapshot = compiled.get_state(config)
+        if snapshot and snapshot.values:
+            pending = snapshot.values.get("_pending_sub_keys") or []
+            for sub_key in pending:
+                start_story_async(sub_key)
+    except Exception:
+        pass
 
 
 def _restore_epoch_from_checkpoint(story_key: str) -> int:

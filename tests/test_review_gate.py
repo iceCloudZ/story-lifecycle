@@ -224,8 +224,12 @@ class TestReviewStageFatigue:
         )
 
         with patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
-            return_value={"review": True},
+            "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
+            return_value={
+                "cli": "claude",
+                "stages": {"design": {"review": True}},
+                "adversarial": {"enabled": False},
+            },
         ):
             result = nodes.review_stage_node(state)
         assert result.get("last_error")
@@ -254,8 +258,12 @@ class TestReviewStageFatigue:
         )
 
         with patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
-            return_value={"review": True},
+            "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
+            return_value={
+                "cli": "claude",
+                "stages": {"design": {"review": True}},
+                "adversarial": {"enabled": False},
+            },
         ):
             result = nodes.review_stage_node(state)
         assert result.get("last_error")

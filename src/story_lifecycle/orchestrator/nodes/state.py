@@ -32,3 +32,7 @@ class StoryState(TypedDict, total=False):
     # Cancellation
     _epoch: int
     _cancelled: bool
+    _pending_sub_keys: Optional[list]
+
+    # Resolved profile (parsed once at start)
+    _resolved_profile: Optional[dict]
