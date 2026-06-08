@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.0] - 2026-06-09
+
+### Added
+- `ResolvedProfile` + `StageConfig` dataclass：Profile 在故事启动时一次性解析为不可变对象，存入 `state["_resolved_profile"]`，消除节点内重复的 `load_profile`/`get_stage_config` 调用
+- `NodeError` 统一错误 dataclass（`errors.py`），提供 `.apply(state)` 方法，替代散落在各节点的 `state["last_error"] = ...` + `log_node_error(...)` 模式
+- `_rp()`/`_stage_cfg()` 辅助函数，所有 profile 读取收敛为这两个入口
+
+### Changed
+- 子任务分发回退为 `interrupt()` + `_pending_sub_keys` 模式，删除 Send API fan-out（LangGraph Send 不支持并行终端启动）
+- 对抗循环回退为 `evaluator_loop.run_plan_loop()`/`run_code_review_loop()` while 循环，删除 `adversarial_graph.py` 子图（子图仅支持 LLM API 调用，无法处理不同 CLI 间的 done-file 轮询）
+- 所有测试 patch 路径从 `graph_nodes.load_profile`/`get_stage_config` 统一为 `profile_loader._load_raw`，消除 import 路径耦合
+
+### Removed
+- `adversarial_graph.py`（633 行）— LangGraph 子图方案不可行，回退到 while 循环
+- `build_subtask_sends()`/`merge_subtask_results()` — Send API 代码一并移除
+
 ## [0.8.9] - 2026-06-08
 
 ### Added
