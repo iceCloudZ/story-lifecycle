@@ -1,7 +1,7 @@
-"""LangGraph node implementations — plan, execute, poll, review, advance, skip, retry, fail.
+"""LangGraph node implementations — 5-node architecture.
 
-This package re-exports everything from sub-modules for backward compatibility.
-All existing ``from .nodes import X`` imports continue to work.
+Nodes: plan_stage, execute_and_wait, review_stage, router, advance.
+retry/skip/fail/wait_confirm are handled inside router_node.
 """
 
 # ---- Module-level attributes (tests access nodes.planner, nodes.ttyd, etc.) ----
@@ -44,13 +44,17 @@ from .stage_resolver import (
 # ---- Routing functions (used by graph.py) ----
 from .routing import (
     route_after_plan as route_after_plan,
-    route_after_poll as route_after_poll,
+    route_after_execute as route_after_execute,
     route_from_router as route_from_router,
     route_after_advance as route_after_advance,
 )
 
 # ---- Subtask delegation ----
-from .subtask_delegate import _delegate_subtasks as _delegate_subtasks
+from .subtask_delegate import (
+    _delegate_subtasks as _delegate_subtasks,
+    build_subtask_sends as build_subtask_sends,
+    merge_subtask_results as merge_subtask_results,
+)
 
 # ---- Knowledge management ----
 from .knowledge import (
@@ -71,13 +75,8 @@ from .prompt_renderer import (
 # ---- Graph node functions (used by graph.py) ----
 from .graph_nodes import (
     plan_stage_node as plan_stage_node,
-    execute_stage_node as execute_stage_node,
-    poll_completion_node as poll_completion_node,
+    execute_and_wait_node as execute_and_wait_node,
     review_stage_node as review_stage_node,
     router_node as router_node,
     advance_node as advance_node,
-    retry_node as retry_node,
-    skip_node as skip_node,
-    fail_node as fail_node,
-    wait_confirm_node as wait_confirm_node,
 )

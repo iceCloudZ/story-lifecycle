@@ -3,16 +3,17 @@
 Role-based prompts:
 - Planner = 架构师/PM (plan_stage)
 - Reviewer = QA/评审员 (review_stage)
+
+All LLM calls delegate to LLMClient.
 """
 
 import json
-import os
 import logging
-import re
 import time
 from pathlib import Path
 
-import httpx
+from ..llm_client import get_llm
+from ..schemas import PlanResult, ReviewResult, PlanReviewResult
 
 log = logging.getLogger("story-lifecycle.planner")
 
@@ -20,17 +21,7 @@ STORY_HOME = Path.home() / ".story-lifecycle"
 MAX_REVIEW_RETRIES = 3
 
 
-def _api_config() -> tuple[str, str, str]:
-    """Return (api_key, base_url, model)."""
-    return (
-        os.environ.get("STORY_LLM_API_KEY", ""),
-        os.environ.get("STORY_LLM_BASE_URL", "https://api.deepseek.com"),
-        os.environ.get("STORY_LLM_MODEL", "deepseek-v4-pro"),
-    )
-
-
 def _load_team_knowledge() -> str:
-    """加载团队记忆（~/.story-lifecycle/knowledge/）。"""
     knowledge_dir = STORY_HOME / "knowledge"
     parts = []
     if knowledge_dir.exists():
@@ -41,7 +32,6 @@ def _load_team_knowledge() -> str:
 
 
 def _load_story_knowledge(workspace: str, story_key: str) -> str:
-    """加载 Story 级知识库。"""
     knowledge_dir = Path(workspace) / ".story-knowledge" / story_key
     parts = []
     if knowledge_dir.exists():
@@ -57,7 +47,6 @@ def plan_stage(
     adapters: list[str],
 ) -> dict:
     """架构师/PM 角色：为当前阶段生成执行计划。"""
-    api_key, base_url, model = _api_config()
     workspace = state.get("workspace", "")
     story_key = state.get("story_key", "")
 
@@ -133,23 +122,35 @@ depends_on 填写其他 subtask 的 key_suffix，控制执行顺序（有依赖�
 - 如果发现当前阶段不必要，可以 skip: true
 - 如果路径评分持续低于 0.5，考虑建议回滚或切换工具"""
 
-    return _call_llm(
-        base_url,
-        api_key,
-        model,
-        prompt,
-        story_key=state.get("story_key", ""),
-        stage=state.get("current_stage", ""),
-    )
+    llm = get_llm()
+    t0 = time.monotonic()
+    try:
+        result = llm.invoke_structured(prompt, PlanResult, temperature=0.1, timeout=90)
+        _trace_llm(
+            model=llm.model,
+            usage={},
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            story_key=story_key,
+            stage=state.get("current_stage", ""),
+        )
+        return result.model_dump()
+    except Exception as exc:
+        _trace_llm(
+            model=llm.model,
+            usage={},
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            success=False,
+            error=type(exc).__name__,
+            story_key=story_key,
+            stage=state.get("current_stage", ""),
+        )
+        raise
 
 
 def review_stage(
     state: dict, stage_config: dict, stage_output: dict, *, reviewer_model: str = ""
 ) -> dict:
     """QA/评审员角色：结构化审查阶段产出质量。"""
-    api_key, base_url, model = _api_config()
-    if reviewer_model:
-        model = reviewer_model
     execution_count = state.get("execution_count", 0)
     workspace = state.get("workspace", "")
     story_key = state.get("story_key", "")
@@ -222,14 +223,31 @@ def review_stage(
   - 0.5-0.8: 有小问题但方向正确
   - <0.5: 方向跑偏或质量问题严重，需要重新规划"""
 
-    return _call_llm(
-        base_url,
-        api_key,
-        model,
-        prompt,
-        story_key=state.get("story_key", ""),
-        stage=state.get("current_stage", ""),
-    )
+    llm = get_llm()
+    t0 = time.monotonic()
+    try:
+        result = llm.invoke_structured(
+            prompt, ReviewResult, temperature=0.1, timeout=90
+        )
+        _trace_llm(
+            model=llm.model,
+            usage={},
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            story_key=story_key,
+            stage=state.get("current_stage", ""),
+        )
+        return result.model_dump()
+    except Exception as exc:
+        _trace_llm(
+            model=llm.model,
+            usage={},
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            success=False,
+            error=type(exc).__name__,
+            story_key=story_key,
+            stage=state.get("current_stage", ""),
+        )
+        raise
 
 
 def review_plan(
@@ -239,10 +257,6 @@ def review_plan(
     reviewer_model: str = "",
 ) -> dict:
     """Plan Reviewer 角色：对执行计划进行对抗性审查。"""
-    api_key, base_url, model = _api_config()
-    if reviewer_model:
-        model = reviewer_model
-
     workspace = state.get("workspace", "")
     story_key = state.get("story_key", "")
 
@@ -293,14 +307,31 @@ def review_plan(
 - 不要因为风格偏好或非关键细节而触发 revise
 - 优先检查：adapter 是否有效、extra_instructions 是否具体可操作、是否遗漏 stage_config 要求的步骤"""
 
-    return _call_llm(
-        base_url,
-        api_key,
-        model,
-        prompt,
-        story_key=state.get("story_key", ""),
-        stage=state.get("current_stage", ""),
-    )
+    llm = get_llm()
+    t0 = time.monotonic()
+    try:
+        result = llm.invoke_structured(
+            prompt, PlanReviewResult, temperature=0.1, timeout=90
+        )
+        _trace_llm(
+            model=llm.model,
+            usage={},
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            story_key=story_key,
+            stage=state.get("current_stage", ""),
+        )
+        return result.model_dump()
+    except Exception as exc:
+        _trace_llm(
+            model=llm.model,
+            usage={},
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            success=False,
+            error=type(exc).__name__,
+            story_key=story_key,
+            stage=state.get("current_stage", ""),
+        )
+        raise
 
 
 def compress_context(workspace: str, story_key: str, current_stage: str) -> str | None:
@@ -316,8 +347,8 @@ def compress_context(workspace: str, story_key: str, current_stage: str) -> str 
     if len(files) <= 4:
         return None
 
-    api_key, base_url, model = _api_config()
-    if not api_key:
+    llm = get_llm()
+    if not llm.api_key:
         return None
 
     history_parts = []
@@ -337,7 +368,7 @@ def compress_context(workspace: str, story_key: str, current_stage: str) -> str 
 - 已完成产出的摘要
 - 未解决的问题（如有）"""
 
-    compressed = _call_llm_for_text(base_url, api_key, model, prompt)
+    compressed = llm.invoke(prompt, temperature=0.2)
 
     compressed_file = Path(workspace) / ".story-knowledge" / story_key / "compressed.md"
     compressed_file.parent.mkdir(parents=True, exist_ok=True)
@@ -356,56 +387,7 @@ def compress_context(workspace: str, story_key: str, current_stage: str) -> str 
     return str(compressed_file.relative_to(workspace))
 
 
-def _call_llm(
-    base_url: str,
-    api_key: str,
-    model: str,
-    prompt: str,
-    *,
-    story_key: str = "",
-    stage: str = "",
-) -> dict:
-    """调用 LLM 并解析 JSON 响应。"""
-    t0 = time.monotonic()
-    try:
-        resp = httpx.post(
-            f"{base_url}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1,
-            },
-            timeout=90,
-        )
-        resp.raise_for_status()
-        body = resp.json()
-        msg = body["choices"][0]["message"]
-        content = msg.get("content", "") or msg.get("reasoning_content", "")
-        usage = body.get("usage", {})
-        _trace_llm(
-            model=model,
-            usage=usage,
-            duration_ms=int((time.monotonic() - t0) * 1000),
-            story_key=story_key,
-            stage=stage,
-        )
-        if not content.strip():
-            raise RuntimeError(
-                "LLM returned empty content — reasoning model may have exhausted tokens."
-            )
-        return _parse_llm_response(content)
-    except Exception as exc:
-        _trace_llm(
-            model=model,
-            usage={},
-            duration_ms=int((time.monotonic() - t0) * 1000),
-            success=False,
-            error=type(exc).__name__,
-            story_key=story_key,
-            stage=stage,
-        )
-        raise
+# ── tracing ──
 
 
 def _trace_llm(
@@ -419,7 +401,6 @@ def _trace_llm(
     success: bool = True,
     error: str = "",
 ):
-    """Record LLM call trace to DB."""
     try:
         from ..db.models import log_llm_trace
 
@@ -437,85 +418,3 @@ def _trace_llm(
         )
     except Exception:
         pass
-
-
-def _parse_llm_response(content: str) -> dict:
-    m = re.search(r"\{.*\}", content, re.DOTALL)
-    if m:
-        return json.loads(m.group())
-    return json.loads(content)
-
-
-def _stream_llm(
-    base_url: str,
-    api_key: str,
-    model: str,
-    prompt: str,
-    on_chunk,
-) -> dict:
-    """流式调用 LLM，实时回调 on_chunk，返回解析后的 JSON。"""
-    full: list[str] = []
-    with httpx.stream(
-        "POST",
-        f"{base_url}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-            "stream": True,
-        },
-        timeout=90,
-    ) as resp:
-        resp.raise_for_status()
-        for raw_line in resp.iter_lines():
-            line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
-            if not line.startswith("data: "):
-                continue
-            data = line[6:]
-            if data == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data)
-                delta = chunk["choices"][0]["delta"].get("content", "")
-                if delta:
-                    full.append(delta)
-                    on_chunk(delta)
-            except (json.JSONDecodeError, KeyError):
-                pass
-    return _parse_llm_response("".join(full))
-
-
-def _call_llm_for_text(base_url: str, api_key: str, model: str, prompt: str) -> str:
-    """调用 LLM 获取文本响应（用于 Condenser）。"""
-    t0 = time.monotonic()
-    try:
-        resp = httpx.post(
-            f"{base_url}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-            },
-            timeout=90,
-        )
-        resp.raise_for_status()
-        body = resp.json()
-        msg = body["choices"][0]["message"]
-        usage = body.get("usage", {})
-        _trace_llm(
-            model=model,
-            usage=usage,
-            duration_ms=int((time.monotonic() - t0) * 1000),
-        )
-        return msg.get("content", "") or msg.get("reasoning_content", "")
-    except Exception as exc:
-        _trace_llm(
-            model=model,
-            usage={},
-            duration_ms=int((time.monotonic() - t0) * 1000),
-            success=False,
-            error=type(exc).__name__,
-        )
-        raise

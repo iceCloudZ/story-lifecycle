@@ -25,11 +25,10 @@ class StoryState(TypedDict, total=False):
     review_summary: Optional[str]
     trajectory_score: Optional[float]
     plan: Optional[dict]
-    _next_action: Optional[str]
-    _pending_sub_keys: Optional[list]
-    _router_decision: Optional[dict]
-    _pre_routed_action: Optional[str]
 
-    # Run epoch — for stale-thread cancellation
+    # Routing — single output field for conditional edges
+    _next_action: Optional[str]
+
+    # Cancellation
     _epoch: int
     _cancelled: bool

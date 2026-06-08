@@ -16,16 +16,13 @@ from story_lifecycle.db import models as db
 from story_lifecycle.orchestrator.nodes import (
     StoryState,
     plan_stage_node,
-    execute_stage_node,
+    execute_and_wait_node,
     review_stage_node,
     router_node,
     route_from_router,
     advance_node,
-    skip_node,
-    fail_node,
-    retry_node,
     route_after_plan,
-    route_after_poll,
+    route_after_execute,
     MAX_REVIEW_RETRIES,
 )
 
@@ -107,21 +104,21 @@ def _make_state(**overrides) -> StoryState:
 class TestRouteAfterPlan:
     def test_execute_when_not_skipping(self):
         state = _make_state(status="active")
-        assert route_after_plan(state) == "execute_stage"
+        assert route_after_plan(state) == "execute_and_wait"
 
-    def test_skip_when_skipping(self):
+    def test_router_when_skipping(self):
         state = _make_state(status="skipping")
-        assert route_after_plan(state) == "skip_stage"
+        assert route_after_plan(state) == "router"
 
 
-class TestRouteAfterPoll:
+class TestRouteAfterExecute:
     def test_review_when_no_error(self):
         state = _make_state(last_error=None)
-        assert route_after_poll(state) == "review_stage"
+        assert route_after_execute(state) == "review_stage"
 
     def test_router_when_error(self):
         state = _make_state(last_error="crashed")
-        assert route_after_poll(state) == "router"
+        assert route_after_execute(state) == "router"
 
 
 # -------- plan_stage_node --------
@@ -353,13 +350,21 @@ class TestRouterNode:
         assert route_from_router(result_state) == "advance"
 
     def test_happy_path_wait_confirm(self):
+        db.upsert_story("TEST-001", title="Test", workspace="/tmp")
         state = _make_state(last_error=None)
-        with patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
-            return_value={"confirm": True},
+        with (
+            patch(
+                "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
+                return_value={"confirm": True},
+            ),
+            patch(
+                "story_lifecycle.orchestrator.nodes.graph_nodes.interrupt",
+                side_effect=lambda x: None,
+            ),
         ):
             result_state = router_node(state)
-        assert route_from_router(result_state) == "wait_confirm"
+        # After wait_confirm + interrupt, router routes back to plan_stage
+        assert route_from_router(result_state) == "plan_stage"
 
     def test_retry_fatigue_fail(self):
         state = _make_state(
@@ -367,7 +372,7 @@ class TestRouterNode:
             review_summary="达到重试上限 (3 次)",
         )
         result_state = router_node(state)
-        assert route_from_router(result_state) == "fail"
+        assert route_from_router(result_state) == "__end__"
 
     def test_low_trajectory_score_kill(self):
         state = _make_state(
@@ -375,7 +380,7 @@ class TestRouterNode:
             trajectory_score=0.2,
         )
         result_state = router_node(state)
-        assert route_from_router(result_state) == "fail"
+        assert route_from_router(result_state) == "__end__"
 
     def test_review_driven_retry(self):
         state = _make_state(
@@ -384,7 +389,7 @@ class TestRouterNode:
             execution_count=1,
         )
         result_state = router_node(state)
-        assert route_from_router(result_state) == "retry"
+        assert route_from_router(result_state) == "plan_stage"
 
     def test_review_driven_exhausted_fail(self):
         """Router should fail when review_round_count >= retry_limit."""
@@ -395,7 +400,7 @@ class TestRouterNode:
             context={"review_round_count_design": MAX_REVIEW_RETRIES},
         )
         result_state = router_node(state)
-        assert route_from_router(result_state) == "fail"
+        assert route_from_router(result_state) == "__end__"
 
     def test_review_driven_retry_below_limit(self):
         """Router should retry when review_round_count < retry_limit."""
@@ -406,7 +411,7 @@ class TestRouterNode:
             context={"review_round_count_design": 1},
         )
         result_state = router_node(state)
-        assert route_from_router(result_state) == "retry"
+        assert route_from_router(result_state) == "plan_stage"
 
     def test_llm_router_fallback_on_error(self):
         state = _make_state(
@@ -421,51 +426,55 @@ class TestRouterNode:
                 "provider_override": "openai",
             }
             result_state = router_node(state)
-        assert route_from_router(result_state) == "retry"
+        assert route_from_router(result_state) == "plan_stage"
         assert state["context"]["_provider"] == "openai"
 
 
-# -------- execute_stage_node --------
+# -------- execute_and_wait_node --------
 
 
-class TestExecuteStageNode:
+class TestExecuteAndWaitNode:
     def _mock_tool(self):
         tool = MagicMock()
-        tool.execute.side_effect = lambda state, args: {
-            **state,
-            "execution_count": state.get("execution_count", 0) + 1,
-            "stage_start_time": 1.0,
-            "last_error": None,
-        }
+
+        def _execute(state, args):
+            state["execution_count"] = state.get("execution_count", 0) + 1
+            state["stage_start_time"] = 1.0
+            state["last_error"] = None
+
+        tool.execute.side_effect = _execute
         return tool
 
+    @patch("story_lifecycle.orchestrator.graph._tui_app", None)
     @patch("story_lifecycle.orchestrator.tools.get_tool")
     def test_reads_adapter_from_plan(self, mock_get_tool):
         mock_tool = self._mock_tool()
         mock_get_tool.return_value = mock_tool
 
+        # No done file + headless mode → sets last_error about headless
         state = _make_state(
             plan={"adapter": "claude", "provider": "deepseek", "model": "opus"},
         )
-        result = execute_stage_node(state)
+        execute_and_wait_node(state)
 
         mock_get_tool.assert_called_with("stage_tool")
         tool_args = mock_tool.execute.call_args[0][1]
         assert tool_args["adapter"] == "claude"
         assert tool_args["provider"] == "deepseek"
         assert tool_args["model"] == "opus"
-        assert result["execution_count"] == 1
 
+    @patch("story_lifecycle.orchestrator.graph._tui_app", None)
     @patch("story_lifecycle.orchestrator.tools.get_tool")
     def test_falls_back_to_profile_config(self, mock_get_tool):
         mock_tool = self._mock_tool()
         mock_get_tool.return_value = mock_tool
 
         state = _make_state(plan=None)
-        result = execute_stage_node(state)
+        execute_and_wait_node(state)
 
-        assert result["execution_count"] == 1
+        mock_tool.execute.assert_called_once()
 
+    @patch("story_lifecycle.orchestrator.graph._tui_app", None)
     @patch("story_lifecycle.orchestrator.tools.get_tool")
     def test_prepends_plan_file_to_prompt(self, mock_get_tool):
         mock_tool = self._mock_tool()
@@ -481,11 +490,12 @@ class TestExecuteStageNode:
                 workspace=tmp,
                 context={"plan_path": ".story/context/TEST-001/plan_design.md"},
             )
-            execute_stage_node(state)
+            execute_and_wait_node(state)
 
             tool_args = mock_tool.execute.call_args[0][1]
             assert "Task: Build API" in tool_args["prompt"]
 
+    @patch("story_lifecycle.orchestrator.graph._tui_app", None)
     @patch("story_lifecycle.orchestrator.tools.get_tool")
     def test_dispatches_skill_tool(self, mock_get_tool):
         mock_tool = self._mock_tool()
@@ -494,12 +504,12 @@ class TestExecuteStageNode:
         state = _make_state(
             plan={"tool": "skill_tool", "adapter": "claude", "model": "sonnet"},
         )
-        execute_stage_node(state)
+        execute_and_wait_node(state)
 
         mock_get_tool.assert_called_with("skill_tool")
 
     @patch("story_lifecycle.orchestrator.tools.get_tool")
-    def test_existing_done_file_is_left_for_poll_completion(self, mock_get_tool):
+    def test_existing_done_file_consumed_early(self, mock_get_tool):
         with tempfile.TemporaryDirectory() as tmp:
             done_dir = Path(tmp) / ".story" / "done" / "TEST-001"
             done_dir.mkdir(parents=True)
@@ -516,14 +526,51 @@ class TestExecuteStageNode:
             )
 
             state = _make_state(workspace=tmp)
-            result = execute_stage_node(state)
+            result = execute_and_wait_node(state)
 
-            assert done_file.exists()
-            assert result["context"] == {}
+            # Done file is consumed (deleted) by execute_and_wait_node
+            assert not done_file.exists()
+            assert result["context"].get("spec_path") == "docs/design.md"
             mock_get_tool.assert_not_called()
 
 
-# -------- action nodes --------
+# -------- router action tests (retry/skip/fail now inside router_node) --------
+
+
+class TestRouterRetryAction:
+    def test_retry_clears_error(self):
+        state = _make_state(
+            last_error="Review: fixable issue",
+            review_summary="Minor issues found",
+            execution_count=1,
+            context={"review_round_count_design": 1},
+        )
+        result = router_node(state)
+        assert result["_next_action"] == "plan_stage"
+        assert result["last_error"] is None
+
+
+class TestRouterSkipAction:
+    def test_skip_fills_expected_outputs(self):
+        db.upsert_story("TEST-001", title="Test", workspace="/tmp")
+        state = _make_state(
+            last_error="Some error",
+            review_summary="达到重试上限 (3 次)",
+        )
+        result = router_node(state)
+        assert result["_next_action"] == "__end__"
+
+
+class TestRouterFailAction:
+    def test_marks_blocked(self):
+        db.upsert_story("TEST-001", title="Test", workspace="/tmp")
+        state = _make_state(last_error="Something broke")
+        with patch(
+            "story_lifecycle.orchestrator.nodes.graph_nodes.llm_router"
+        ) as mock_router:
+            mock_router.route.return_value = {"action": "fail", "reasoning": "Bad"}
+            result = router_node(state)
+        assert result["status"] == "blocked"
 
 
 class TestAdvanceNode:
@@ -559,36 +606,6 @@ class TestAdvanceNode:
 
         assert result["current_stage"] == "implement"
         assert result["execution_count"] == 0
-
-
-class TestRetryNode:
-    def test_clears_error(self):
-        state = _make_state(last_error="Previous error")
-        result = retry_node(state)
-        assert result["last_error"] is None
-
-
-class TestSkipNode:
-    def test_fills_expected_outputs(self):
-        db.upsert_story("TEST-001", title="Test", workspace="/tmp")
-        state = _make_state()
-        with patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.get_stage_config",
-            return_value={"expected_outputs": ["prd_path", "spec_path"]},
-        ):
-            result = skip_node(state)
-
-        assert result["context"]["prd_path"] == "SKIPPED"
-        assert result["context"]["spec_path"] == "SKIPPED"
-        assert result["last_error"] is None
-
-
-class TestFailNode:
-    def test_marks_blocked(self):
-        db.upsert_story("TEST-001", title="Test", workspace="/tmp")
-        state = _make_state(last_error="Something broke")
-        result = fail_node(state)
-        assert result["status"] == "blocked"
 
 
 # -------- event_log --------
@@ -634,15 +651,10 @@ class TestGraphCompilation:
         g = build_graph()
         expected = {
             "plan_stage",
-            "execute_stage",
-            "poll_completion",
+            "execute_and_wait",
             "review_stage",
             "router",
             "advance",
-            "retry",
-            "skip_stage",
-            "fail_stage",
-            "wait_confirm",
         }
         assert set(g.nodes) == expected
 
@@ -656,13 +668,7 @@ class TestSubStoryDelegation:
         "story_lifecycle.orchestrator.nodes.graph_nodes.interrupt",
         side_effect=lambda x: None,
     )
-    @patch(
-        "story_lifecycle.orchestrator.nodes.subtask_delegate.interrupt",
-        side_effect=lambda x: None,
-    )
-    def test_split_creates_sub_stories(
-        self, mock_sub_interrupt, mock_interrupt, mock_planner
-    ):
+    def test_split_creates_sub_stories(self, mock_interrupt, mock_planner):
         mock_planner.compress_context.return_value = None
         mock_planner.plan_stage.return_value = {
             "split": True,
@@ -690,9 +696,19 @@ class TestSubStoryDelegation:
             state = _make_state(story_key="PARENT-001", workspace=tmp)
             result = plan_stage_node(state)
 
-            assert result["status"] == "waiting_subtasks"
-            assert "拆分为 2 个子任务" in result["plan_summary"]
-            assert "PARENT-001-auth" in result.get("_pending_sub_keys", [])
+            # plan_stage_node returns list[Send] for active subtasks
+            from langgraph.types import Send
+
+            assert isinstance(result, list)
+            assert all(isinstance(s, Send) for s in result)
+            assert len(result) == 1  # only auth is active (api is blocked)
+
+            # The Send targets "plan_stage" with sub-state
+            send = result[0]
+            sub_state = send.arg
+            assert sub_state["story_key"] == "PARENT-001-auth"
+            assert sub_state["title"] == "Auth module"
+            assert sub_state["status"] == "active"
 
             # Verify sub-stories in DB
             sub_auth = db.get_story("PARENT-001-auth")
@@ -703,6 +719,10 @@ class TestSubStoryDelegation:
             sub_api = db.get_story("PARENT-001-api")
             assert sub_api is not None
             assert sub_api["status"] == "blocked"  # depends on auth
+
+            # Verify parent is marked as waiting
+            parent = db.get_story("PARENT-001")
+            assert parent["status"] == "waiting_subtasks"
 
     def test_route_after_plan_does_not_route_waiting_subtasks(self):
         state = _make_state(status="waiting_subtasks")

@@ -98,7 +98,17 @@ def _get_version():
     try:
         return __import__("importlib.metadata").metadata.version("story-lifecycle")
     except Exception:
-        return "unknown"
+        pass
+    # Fallback: read __version__ from the package (works for editable installs
+    # where importlib.metadata may not be populated)
+    try:
+        from .. import __version__
+
+        if __version__ and __version__ != "0.1.0":
+            return __version__
+    except Exception:
+        pass
+    return "unknown"
 
 
 @click.group(invoke_without_command=True)

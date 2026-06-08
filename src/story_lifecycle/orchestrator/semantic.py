@@ -1,18 +1,24 @@
 """LLM Semantic Extraction Layer.
 
-Provides unified LLM structured-output calls for semantic tasks.
+Provides unified structured-output calls for semantic tasks.
 Each function returns SemanticResult with mode/confidence/fallback.
+Now uses LLMClient + Pydantic models instead of raw httpx + manual JSON parsing.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import logging
-import re
 from typing import Literal, TypedDict
 
-import httpx
+from ..llm_client import get_llm
+from ..schemas import (
+    BugContextResult,
+    PatternRecurrenceResult,
+    RerankResult,
+    ReviewSummaryResult,
+    RecoveryRecommendation,
+)
 
 log = logging.getLogger("story-lifecycle.semantic")
 
@@ -23,21 +29,6 @@ class SemanticResult(TypedDict):
     confidence: Literal["high", "medium", "low"]
     data: dict
     warnings: list[str]
-
-
-# ── internal helpers ──
-
-
-def _get_api_key() -> str:
-    return os.environ.get("STORY_LLM_API_KEY", "")
-
-
-def _get_base_url() -> str:
-    return os.environ.get("STORY_LLM_BASE_URL", "https://api.deepseek.com")
-
-
-def _get_model() -> str:
-    return os.environ.get("STORY_LLM_MODEL", "deepseek-v4-pro")
 
 
 def _ok_result(data: dict, confidence: str = "high") -> SemanticResult:
@@ -60,147 +51,31 @@ def _error_result(error: str) -> SemanticResult:
     )
 
 
-def _extract_json_object(text: str) -> str | None:
-    """Extract first complete JSON object via bracket counting."""
-    depth = 0
-    start = None
-    for i, ch in enumerate(text):
-        if ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0 and start is not None:
-                return text[start : i + 1]
-    return None
-
-
-def _parse_llm_json(content: str) -> dict | None:
-    """Parse LLM response as JSON with markdown fence + bracket fallback."""
-    # Direct parse
+def _invoke_structured(
+    prompt: str, schema, *, temperature: float = 0.1
+) -> SemanticResult:
+    """Call LLM with structured output, return SemanticResult."""
     try:
-        return json.loads(content)
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    # Markdown code fence
-    m = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", content, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # Bracket counting
-    extracted = _extract_json_object(content)
-    if extracted:
-        try:
-            return json.loads(extracted)
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    return None
-
-
-def _validate_schema(data: dict, schema: dict) -> tuple[dict, list[str]]:
-    """Lightweight schema validation. Returns (data, warnings).
-
-    Only validates enum constraints on top-level fields and truncates
-    string fields to 2000 chars. Sets defaults for missing required fields.
-    """
-    warnings: list[str] = []
-    props = schema.get("properties", {})
-    required = schema.get("required", [])
-
-    # Add defaults for missing required fields
-    for field in required:
-        if field not in data:
-            if field in props:
-                if "enum" in props[field]:
-                    data[field] = props[field]["enum"][
-                        -1
-                    ]  # default to last (usually low)
-                    warnings.append(
-                        f"missing required field '{field}', defaulted to '{data[field]}'"
-                    )
-
-    # Validate enum constraints
-    for field, rules in props.items():
-        if field in data and "enum" in rules:
-            if data[field] not in rules["enum"]:
-                old = data[field]
-                data[field] = rules["enum"][-1]  # fallback to last enum value
-                warnings.append(
-                    f"invalid '{field}' value '{old}', defaulted to '{data[field]}'"
-                )
-
-    # Truncate long strings
-    for field, value in data.items():
-        if isinstance(value, str) and len(value) > 2000:
-            data[field] = value[:2000]
-            warnings.append(f"field '{field}' truncated to 2000 chars")
-
-    return data, warnings
-
-
-def _call_semantic_llm(prompt: str, schema: dict) -> SemanticResult:
-    """Call LLM with prompt, parse JSON response, validate against schema."""
-    try:
-        resp = httpx.post(
-            f"{_get_base_url()}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {_get_api_key()}"},
-            json={
-                "model": _get_model(),
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1,
-            },
-            timeout=30,
+        result = get_llm().invoke_structured(
+            prompt, schema, temperature=temperature, timeout=30
         )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
+        data = result.model_dump()
+        confidence = data.pop("confidence", "medium")
+        if confidence not in ("high", "medium", "low"):
+            confidence = "low"
+        return SemanticResult(
+            ok=True,
+            mode="llm",
+            confidence=confidence,  # type: ignore[arg-type]
+            data=data,
+            warnings=[],
+        )
     except Exception as exc:
         log.warning(f"Semantic LLM call failed: {exc}")
         return _error_result(str(exc))
 
-    parsed = _parse_llm_json(content)
-    if parsed is None:
-        return _error_result("LLM response not valid JSON")
-
-    if schema:
-        parsed, warnings = _validate_schema(parsed, schema)
-    else:
-        warnings = []
-
-    confidence = parsed.get("confidence", "medium")
-    if confidence not in ("high", "medium", "low"):
-        confidence = "low"
-
-    return SemanticResult(
-        ok=True,
-        mode="llm",
-        confidence=confidence,  # type: ignore[arg-type]
-        data=parsed,
-        warnings=warnings,
-    )
-
 
 # ── Bug Context Extraction ──
-
-BUG_CONTEXT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "description": {"type": "string"},
-        "steps_to_reproduce": {"type": "string"},
-        "expected_behavior": {"type": "string"},
-        "actual_behavior": {"type": "string"},
-        "environment": {"type": "string"},
-        "logs": {"type": "string"},
-        "missing_fields": {"type": "array"},
-        "confidence": {"enum": ["high", "medium", "low"]},
-    },
-    "required": ["description", "confidence"],
-}
 
 
 def extract_bug_context(markdown: str, title: str = "") -> SemanticResult:
@@ -226,27 +101,13 @@ def extract_bug_context(markdown: str, title: str = "") -> SemanticResult:
 
 如果某个字段在正文中找不到，加入 missing_fields。confidence 根据信息完整度判断。"""
 
-    llm_result = _call_semantic_llm(prompt, BUG_CONTEXT_SCHEMA)
-
-    if llm_result["ok"]:
-        llm_result["data"]["raw_markdown"] = markdown
-        return llm_result
-
-    return llm_result
+    result = _invoke_structured(prompt, BugContextResult)
+    if result["ok"]:
+        result["data"]["raw_markdown"] = markdown
+    return result
 
 
 # ── Pattern Recurrence Matching ──
-
-PATTERN_RECURRENCE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "matches": {
-            "type": "array",
-        },
-        "confidence": {"enum": ["high", "medium", "low"]},
-    },
-    "required": ["matches"],
-}
 
 
 def match_pattern_recurrence(issue: dict, patterns: list[dict]) -> SemanticResult:
@@ -287,18 +148,15 @@ Candidate Patterns:
 
 只输出 confidence 为 high 或 medium 的匹配。low confidence 的标记 matched=false。"""
 
-    llm_result = _call_semantic_llm(prompt, PATTERN_RECURRENCE_SCHEMA)
-
-    if llm_result["ok"] and llm_result["mode"] == "llm":
-        # Filter: only keep high/medium confidence matches
-        filtered = []
-        for m in llm_result["data"].get("matches", []):
-            if m.get("matched") and m.get("confidence") in ("high", "medium"):
-                filtered.append(m)
-        llm_result["data"]["matches"] = filtered
-        return llm_result
-
-    return llm_result
+    result = _invoke_structured(prompt, PatternRecurrenceResult)
+    if result["ok"] and result["mode"] == "llm":
+        filtered = [
+            m
+            for m in result["data"].get("matches", [])
+            if m.get("matched") and m.get("confidence") in ("high", "medium")
+        ]
+        result["data"]["matches"] = filtered
+    return result
 
 
 # ── Quality Packet Pattern Rerank ──
@@ -351,37 +209,13 @@ Candidates:
 
 只选择真正能帮助当前 story 避免重蹈覆辙的 pattern。最多选 {limit} 个。"""
 
-    schema = {
-        "type": "object",
-        "properties": {
-            "selected": {"type": "array"},
-            "rejected": {"type": "array"},
-        },
-        "required": ["selected"],
-    }
-
-    llm_result = _call_semantic_llm(prompt, schema)
-
-    if llm_result["ok"]:
-        llm_result["data"]["selected"] = llm_result["data"].get("selected", [])[:limit]
-        return llm_result
-
-    return _error_result("rerank failed: no LLM result")
+    result = _invoke_structured(prompt, RerankResult)
+    if result["ok"]:
+        result["data"]["selected"] = result["data"].get("selected", [])[:limit]
+    return result
 
 
 # ── Review Summary for Learning ──
-
-REVIEW_SUMMARY_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "quality": {"enum": ["pass", "revise", "fail", "unknown"]},
-        "key_issues": {"type": "array"},
-        "useful_for_learning": {"type": "boolean"},
-        "summary": {"type": "string"},
-        "confidence": {"enum": ["high", "medium", "low"]},
-    },
-    "required": ["quality", "summary"],
-}
 
 
 def summarize_review_for_learning(review_markdown: str) -> SemanticResult:
@@ -422,61 +256,24 @@ Review 内容:
   "confidence": "high|medium|low"
 }}"""
 
-    llm_result = _call_semantic_llm(prompt, REVIEW_SUMMARY_SCHEMA)
-
-    if llm_result["ok"] and llm_result["mode"] == "llm":
-        return llm_result
-
-    return llm_result
+    return _invoke_structured(prompt, ReviewSummaryResult)
 
 
 # ── Debug Recovery Recommendation ──
 
-RECOVERY_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "failure_type": {
-            "enum": [
-                "done_file_parse_error",
-                "missing_expected_outputs",
-                "dor_blocked",
-                "dod_blocked",
-                "tool_crash",
-                "review_retry_exhausted",
-                "unknown",
-            ]
-        },
-        "likely_cause": {"type": "string"},
-        "recommended_action": {
-            "enum": [
-                "retry",
-                "retry_with_prompt",
-                "fix_input",
-                "ask_human",
-                "defer",
-                "fail",
-            ]
-        },
-        "safe_to_retry": {"type": "boolean"},
-        "confidence": {"enum": ["high", "medium", "low"]},
-        "evidence": {"type": "array"},
-        "human_message": {"type": "string"},
-    },
-    "required": ["failure_type", "recommended_action", "safe_to_retry"],
+
+FALLBACK_RECOVERY = {
+    "failure_type": "unknown",
+    "recommended_action": "ask_human",
+    "safe_to_retry": False,
+    "confidence": "low",
+    "evidence": [],
+    "human_message": "LLM 不可用，建议人工检查",
 }
 
 
 def recommend_recovery(debug_packet: dict) -> SemanticResult:
     """Recommend recovery action for a failed story based on debug data."""
-    fallback_data = {
-        "failure_type": "unknown",
-        "recommended_action": "ask_human",
-        "safe_to_retry": False,
-        "confidence": "low",
-        "evidence": [],
-        "human_message": "LLM 不可用，建议人工检查",
-    }
-
     packet_str = json.dumps(debug_packet, ensure_ascii=False, default=str)[:3000]
 
     prompt = f"""分析以下 story debug 数据，判断失败类型并推荐恢复动作。只输出 JSON。
@@ -500,25 +297,25 @@ Debug 数据:
 - safe_to_retry=false 时，不能建议 retry 或 retry_with_prompt
 - 只基于输入数据推断，不要编造证据"""
 
-    llm_result = _call_semantic_llm(prompt, RECOVERY_SCHEMA)
-
-    if llm_result["ok"] and llm_result["mode"] == "llm":
+    result = _invoke_structured(prompt, RecoveryRecommendation)
+    if result["ok"] and result["mode"] == "llm":
         # Enforce safety rules
-        data = llm_result["data"]
+        data = result["data"]
         if data.get("failure_type") == "unknown":
             data["recommended_action"] = "ask_human"
             data["safe_to_retry"] = False
         if not data.get("safe_to_retry", True):
             if data.get("recommended_action") in ("retry", "retry_with_prompt"):
                 data["recommended_action"] = "ask_human"
-        llm_result["data"] = data
-        return llm_result
+        result["data"] = data
+        return result
 
-    fallback_data["human_message"] = "LLM 调用失败，建议人工检查"
+    fallback = dict(FALLBACK_RECOVERY)
+    fallback["human_message"] = "LLM 调用失败，建议人工检查"
     return SemanticResult(
         ok=False,
         mode="error",  # type: ignore[arg-type]
         confidence="low",  # type: ignore[arg-type]
-        data=fallback_data,
+        data=fallback,
         warnings=["LLM call failed"],
     )

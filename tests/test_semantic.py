@@ -1,28 +1,27 @@
-"""Tests for orchestrator/semantic.py — LLM semantic extraction layer."""
+"""Tests for orchestrator/semantic.py -- LLM semantic extraction layer."""
 
-import json
 from unittest.mock import patch, MagicMock
+
+from story_lifecycle.schemas import (
+    BugContextResult,
+    PatternMatch,
+    PatternRecurrenceResult,
+    SelectedPattern,
+    RejectedPattern,
+    RerankResult,
+    ReviewSummaryResult,
+    RecoveryRecommendation,
+)
+
+
+def _mock_invoke_structured(return_model):
+    """Build a mock LLM client whose invoke_structured returns the given Pydantic model."""
+    mock_client = MagicMock()
+    mock_client.invoke_structured.return_value = return_model
+    return mock_client
 
 
 # ── SemanticResult construction ──
-
-
-def _make_fake_llm_response(json_obj: dict) -> MagicMock:
-    """Build a fake httpx.Response that returns json_obj as LLM content."""
-    mock = MagicMock()
-    mock.raise_for_status = MagicMock()
-    mock.json.return_value = {
-        "choices": [{"message": {"content": json.dumps(json_obj, ensure_ascii=False)}}]
-    }
-    return mock
-
-
-def _make_fake_llm_response_raw(raw: str) -> MagicMock:
-    """Build a fake httpx.Response with raw content (e.g. markdown-wrapped)."""
-    mock = MagicMock()
-    mock.raise_for_status = MagicMock()
-    mock.json.return_value = {"choices": [{"message": {"content": raw}}]}
-    return mock
 
 
 def test_semantic_result_llm_mode():
@@ -46,95 +45,70 @@ def test_semantic_result_error_mode():
     assert "test error" in r["warnings"]
 
 
-def test_call_semantic_llm_no_api_key():
-    """Returns unavailable result when no API key configured."""
-    from story_lifecycle.orchestrator.semantic import _call_semantic_llm
-
-    with patch.dict("os.environ", {}, clear=True):
-        result = _call_semantic_llm("test prompt", {})
-    assert result["mode"] == "error"
-    assert result["ok"] is False
+# ── _invoke_structured ──
 
 
-def test_call_semantic_llm_success():
-    """Returns parsed JSON on successful LLM call."""
-    from story_lifecycle.orchestrator.semantic import _call_semantic_llm
+def test_invoke_structured_success():
+    """_invoke_structured returns SemanticResult with model data on success."""
+    from story_lifecycle.orchestrator.semantic import _invoke_structured
 
-    fake = _make_fake_llm_response({"answer": 42})
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake) as mock_post:
-            result = _call_semantic_llm("test prompt", {})
+    model = BugContextResult(
+        description="test",
+        steps_to_reproduce="1. step",
+        expected_behavior="works",
+        actual_behavior="broken",
+        confidence="high",
+    )
+    mock_client = _mock_invoke_structured(model)
 
-    assert result["mode"] == "llm"
-    assert result["data"] == {"answer": 42}
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = _invoke_structured("test prompt", BugContextResult)
+
     assert result["ok"] is True
-    mock_post.assert_called_once()
-
-
-def test_call_semantic_llm_markdown_wrapped():
-    """Handles markdown code-fenced JSON response."""
-    from story_lifecycle.orchestrator.semantic import _call_semantic_llm
-
-    raw = '```json\n{"answer": 42}\n```'
-    fake = _make_fake_llm_response_raw(raw)
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
-            result = _call_semantic_llm("test prompt", {})
-
     assert result["mode"] == "llm"
-    assert result["data"] == {"answer": 42}
+    assert result["confidence"] == "high"
+    assert result["data"]["description"] == "test"
 
 
-def test_call_semantic_llm_invalid_json():
-    """Returns error on unparseable LLM response."""
-    from story_lifecycle.orchestrator.semantic import _call_semantic_llm
+def test_invoke_structured_exception():
+    """_invoke_structured returns error result on exception."""
+    from story_lifecycle.orchestrator.semantic import _invoke_structured
 
-    fake = _make_fake_llm_response_raw("not json at all")
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
-            result = _call_semantic_llm("test prompt", {})
+    mock_client = MagicMock()
+    mock_client.invoke_structured.side_effect = RuntimeError("LLM unavailable")
 
-    assert result["mode"] == "error"
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = _invoke_structured("test prompt", BugContextResult)
+
     assert result["ok"] is False
-
-
-def test_call_semantic_llm_http_error():
-    """Returns error on httpx exception."""
-    import httpx
-
-    from story_lifecycle.orchestrator.semantic import _call_semantic_llm
-
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch(
-            "httpx.post",
-            side_effect=httpx.HTTPStatusError(
-                "503", request=MagicMock(), response=MagicMock()
-            ),
-        ):
-            result = _call_semantic_llm("test prompt", {})
-
     assert result["mode"] == "error"
-    assert result["ok"] is False
 
 
-def test_call_semantic_llm_schema_validation():
-    """Validates response against provided schema and rejects invalid values."""
-    from story_lifecycle.orchestrator.semantic import _call_semantic_llm
+def test_invoke_structured_invalid_confidence():
+    """_invoke_structured normalizes invalid confidence to 'low'."""
+    from story_lifecycle.orchestrator.semantic import _invoke_structured
 
-    schema = {
-        "type": "object",
-        "properties": {"confidence": {"enum": ["high", "medium", "low"]}},
-        "required": ["confidence"],
+    mock_client = MagicMock()
+    # Return a mock model whose model_dump returns an invalid confidence.
+    # This tests the normalization fallback in _invoke_structured.
+    corrupted_model = MagicMock()
+    corrupted_model.model_dump.return_value = {
+        "description": "test",
+        "confidence": "invalid",
     }
-    fake = _make_fake_llm_response({"confidence": "invalid_value"})
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
-            result = _call_semantic_llm("test prompt", schema)
+    mock_client.invoke_structured.return_value = corrupted_model
 
-    # Should still return data but with default confidence
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = _invoke_structured("test prompt", BugContextResult)
+
     assert result["ok"] is True
-    assert result["data"]["confidence"] == "low"  # default on invalid
-    assert any("confidence" in w for w in result["warnings"])
+    assert result["confidence"] == "low"
 
 
 # ── extract_bug_context ──
@@ -144,23 +118,25 @@ def test_extract_bug_context_llm_success():
     """LLM extracts structured bug context from markdown."""
     from story_lifecycle.orchestrator.semantic import extract_bug_context
 
-    llm_output = {
-        "description": "登录页面崩溃",
-        "steps_to_reproduce": "1. 打开登录页\n2. 输入特殊字符",
-        "expected_behavior": "正常登录",
-        "actual_behavior": "页面白屏",
-        "environment": "Chrome 120, Windows 11",
-        "logs": "Uncaught TypeError at login.js:42",
-        "missing_fields": [],
-        "confidence": "high",
-    }
-    fake = _make_fake_llm_response(llm_output)
+    model = BugContextResult(
+        description="登录页面崩溃",
+        steps_to_reproduce="1. 打开登录页\n2. 输入特殊字符",
+        expected_behavior="正常登录",
+        actual_behavior="页面白屏",
+        environment="Chrome 120, Windows 11",
+        logs="Uncaught TypeError at login.js:42",
+        missing_fields=[],
+        confidence="high",
+    )
+    mock_client = _mock_invoke_structured(model)
 
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
-            result = extract_bug_context(
-                "## 现象\n页面白屏\n\n## 复现步骤\n输入特殊字符", "登录页面崩溃"
-            )
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = extract_bug_context(
+            "## 现象\n页面白屏\n\n## 复现步骤\n输入特殊字符",
+            "登录页面崩溃",
+        )
 
     assert result["ok"] is True
     assert result["mode"] == "llm"
@@ -169,23 +145,16 @@ def test_extract_bug_context_llm_success():
 
 
 def test_extract_bug_context_error():
-    """Without LLM, returns error result."""
+    """LLM failure returns error result."""
     from story_lifecycle.orchestrator.semantic import extract_bug_context
 
-    with patch.dict("os.environ", {}, clear=True):
-        result = extract_bug_context("## 复现步骤\n点按钮\n\n## 预期结果\n成功", "标题")
+    mock_client = MagicMock()
+    mock_client.invoke_structured.side_effect = RuntimeError("timeout")
 
-    assert result["mode"] == "error"
-    assert not result["ok"]
-
-
-def test_extract_bug_context_llm_error():
-    """LLM error returns error result, no fallback."""
-    from story_lifecycle.orchestrator.semantic import extract_bug_context
-
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", side_effect=Exception("timeout")):
-            result = extract_bug_context("## 复现步骤\n点按钮", "标题")
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = extract_bug_context("## 复现步骤\n点按钮", "标题")
 
     assert result["mode"] == "error"
     assert not result["ok"]
@@ -198,18 +167,18 @@ def test_match_pattern_recurrence_llm_match():
     """LLM identifies semantic match between issue and pattern."""
     from story_lifecycle.orchestrator.semantic import match_pattern_recurrence
 
-    llm_output = {
-        "matches": [
-            {
-                "pattern_id": "p-001",
-                "matched": True,
-                "confidence": "high",
-                "reasoning": "issue 描述缺少降级路径与 pattern 规则一致",
-                "evidence": ["issue.description", "pattern.rule"],
-            }
+    model = PatternRecurrenceResult(
+        matches=[
+            PatternMatch(
+                pattern_id="p-001",
+                matched=True,
+                confidence="high",
+                reasoning="issue 描述缺少降级路径与 pattern 规则一致",
+                evidence=["issue.description", "pattern.rule"],
+            )
         ]
-    }
-    fake = _make_fake_llm_response(llm_output)
+    )
+    mock_client = _mock_invoke_structured(model)
 
     issue = {
         "description": "接口没有 fallback 机制，一旦服务挂了就全完了",
@@ -219,9 +188,10 @@ def test_match_pattern_recurrence_llm_match():
         {"id": "p-001", "pattern": "缺少回滚方案", "rule": "变更必须有回滚或降级路径"}
     ]
 
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
-            result = match_pattern_recurrence(issue, patterns)
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = match_pattern_recurrence(issue, patterns)
 
     assert result["ok"] is True
     assert result["mode"] == "llm"
@@ -229,17 +199,11 @@ def test_match_pattern_recurrence_llm_match():
     assert result["data"]["matches"][0]["pattern_id"] == "p-001"
 
 
-def test_match_pattern_recurrence_error():
-    """Without LLM, returns error result."""
+def test_match_pattern_recurrence_no_patterns():
+    """Returns error when no candidate patterns provided."""
     from story_lifecycle.orchestrator.semantic import match_pattern_recurrence
 
-    issue = {"description": "缺少回滚方案导致无法恢复", "category": "error_handling"}
-    patterns = [
-        {"id": "p-001", "pattern": "缺少回滚方案", "rule": "变更必须有回滚路径"}
-    ]
-
-    with patch.dict("os.environ", {}, clear=True):
-        result = match_pattern_recurrence(issue, patterns)
+    result = match_pattern_recurrence({"description": "test"}, [])
 
     assert result["mode"] == "error"
     assert not result["ok"]
@@ -249,26 +213,27 @@ def test_match_pattern_recurrence_no_match():
     """LLM returns no matches when issue is unrelated to patterns."""
     from story_lifecycle.orchestrator.semantic import match_pattern_recurrence
 
-    llm_output = {
-        "matches": [
-            {
-                "pattern_id": "p-001",
-                "matched": False,
-                "confidence": "high",
-                "reasoning": "unrelated",
-            }
+    model = PatternRecurrenceResult(
+        matches=[
+            PatternMatch(
+                pattern_id="p-001",
+                matched=False,
+                confidence="high",
+                reasoning="unrelated",
+            )
         ]
-    }
-    fake = _make_fake_llm_response(llm_output)
+    )
+    mock_client = _mock_invoke_structured(model)
 
     issue = {"description": "UI button color wrong", "category": "ui"}
     patterns = [
         {"id": "p-001", "pattern": "缺少回滚方案", "rule": "变更必须有回滚路径"}
     ]
 
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
-            result = match_pattern_recurrence(issue, patterns)
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = match_pattern_recurrence(issue, patterns)
 
     assert result["ok"] is True
     assert len([m for m in result["data"]["matches"] if m.get("matched")]) == 0
@@ -278,25 +243,26 @@ def test_match_pattern_recurrence_filters_low_confidence():
     """LLM matches with low confidence are excluded from results."""
     from story_lifecycle.orchestrator.semantic import match_pattern_recurrence
 
-    llm_output = {
-        "matches": [
-            {
-                "pattern_id": "p-001",
-                "matched": True,
-                "confidence": "low",
-                "reasoning": "weak signal",
-                "evidence": [],
-            }
-        ]
-    }
-    fake = _make_fake_llm_response(llm_output)
-
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
-            result = match_pattern_recurrence(
-                {"description": "test", "category": ""},
-                [{"id": "p-001", "pattern": "test", "rule": "test"}],
+    model = PatternRecurrenceResult(
+        matches=[
+            PatternMatch(
+                pattern_id="p-001",
+                matched=True,
+                confidence="low",
+                reasoning="weak signal",
+                evidence=[],
             )
+        ]
+    )
+    mock_client = _mock_invoke_structured(model)
+
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = match_pattern_recurrence(
+            {"description": "test", "category": ""},
+            [{"id": "p-001", "pattern": "test", "rule": "test"}],
+        )
 
     high_conf = [
         m
@@ -313,24 +279,27 @@ def test_rerank_relevant_patterns_llm():
     """LLM reranks patterns by relevance to story context."""
     from story_lifecycle.orchestrator.semantic import rerank_relevant_patterns
 
-    llm_output = {
-        "selected": [
-            {
-                "pattern_id": "p-001",
-                "relevance": "high",
-                "reasoning": "story involves DB migration",
-            },
-            {
-                "pattern_id": "p-003",
-                "relevance": "medium",
-                "reasoning": "related to error handling",
-            },
+    model = RerankResult(
+        selected=[
+            SelectedPattern(
+                pattern_id="p-001",
+                relevance="high",
+                reasoning="story involves DB migration",
+            ),
+            SelectedPattern(
+                pattern_id="p-003",
+                relevance="medium",
+                reasoning="related to error handling",
+            ),
         ],
-        "rejected": [
-            {"pattern_id": "p-002", "reasoning": "unrelated to current story"},
+        rejected=[
+            RejectedPattern(
+                pattern_id="p-002",
+                reasoning="unrelated to current story",
+            ),
         ],
-    }
-    fake = _make_fake_llm_response(llm_output)
+    )
+    mock_client = _mock_invoke_structured(model)
 
     story_ctx = {
         "title": "Add user table migration",
@@ -361,9 +330,10 @@ def test_rerank_relevant_patterns_llm():
         },
     ]
 
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
-            result = rerank_relevant_patterns(story_ctx, candidates, limit=5)
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = rerank_relevant_patterns(story_ctx, candidates, limit=5)
 
     assert result["ok"] is True
     assert result["mode"] == "llm"
@@ -371,9 +341,24 @@ def test_rerank_relevant_patterns_llm():
     assert result["data"]["selected"][0]["pattern_id"] == "p-001"
 
 
-def test_rerank_relevant_patterns_fallback():
-    """Without LLM, returns error result."""
+def test_rerank_relevant_patterns_no_candidates():
+    """Returns error when no candidate patterns provided."""
     from story_lifecycle.orchestrator.semantic import rerank_relevant_patterns
+
+    story_ctx = {"title": "test", "stage": "implement", "type": "feature"}
+
+    result = rerank_relevant_patterns(story_ctx, [], limit=5)
+
+    assert result["mode"] == "error"
+    assert not result["ok"]
+
+
+def test_rerank_relevant_patterns_llm_error():
+    """LLM failure returns error result."""
+    from story_lifecycle.orchestrator.semantic import rerank_relevant_patterns
+
+    mock_client = MagicMock()
+    mock_client.invoke_structured.side_effect = RuntimeError("LLM down")
 
     story_ctx = {"title": "test", "stage": "implement", "type": "feature"}
     candidates = [
@@ -386,7 +371,9 @@ def test_rerank_relevant_patterns_fallback():
         },
     ]
 
-    with patch.dict("os.environ", {}, clear=True):
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
         result = rerank_relevant_patterns(story_ctx, candidates, limit=5)
 
     assert result["mode"] == "error"
@@ -400,9 +387,9 @@ def test_summarize_review_llm_success():
     """LLM produces structured review summary."""
     from story_lifecycle.orchestrator.semantic import summarize_review_for_learning
 
-    llm_output = {
-        "quality": "revise",
-        "key_issues": [
+    model = ReviewSummaryResult(
+        quality="revise",
+        key_issues=[
             {
                 "severity": "high",
                 "description": "missing error handling",
@@ -410,29 +397,52 @@ def test_summarize_review_llm_success():
                 "recommendation": "add try/except",
             },
         ],
-        "useful_for_learning": True,
-        "summary": "Review found missing error handling in API layer",
-    }
-    fake = _make_fake_llm_response(llm_output)
+        useful_for_learning=True,
+        summary="Review found missing error handling in API layer",
+        confidence="high",
+    )
+    mock_client = _mock_invoke_structured(model)
 
     review_md = "## Review\nquality: revise\n\n### Issues\n- missing error handling at api.py:42"
 
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
-            result = summarize_review_for_learning(review_md)
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = summarize_review_for_learning(review_md)
 
     assert result["ok"] is True
     assert result["data"]["quality"] == "revise"
     assert result["data"]["useful_for_learning"] is True
 
 
-def test_summarize_review_error():
-    """Without LLM, returns error result."""
+def test_summarize_review_structured_json_passthrough():
+    """When review is already valid JSON with 'quality', parses directly without LLM."""
+    import json
+
     from story_lifecycle.orchestrator.semantic import summarize_review_for_learning
+
+    review_data = {"quality": "pass", "issues": [{"desc": "minor style issue"}]}
+    review_json = json.dumps(review_data)
+
+    # No LLM mock needed -- should not call LLM
+    result = summarize_review_for_learning(review_json)
+
+    assert result["ok"] is True
+    assert result["data"]["quality"] == "pass"
+
+
+def test_summarize_review_error():
+    """LLM failure returns error result."""
+    from story_lifecycle.orchestrator.semantic import summarize_review_for_learning
+
+    mock_client = MagicMock()
+    mock_client.invoke_structured.side_effect = RuntimeError("timeout")
 
     review_md = "## Review\nquality: pass\n\n### Issues\n- minor style issue"
 
-    with patch.dict("os.environ", {}, clear=True):
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
         result = summarize_review_for_learning(review_md)
 
     assert result["mode"] == "error"
@@ -446,16 +456,16 @@ def test_recommend_recovery_llm():
     """LLM provides recovery recommendation for a debug packet."""
     from story_lifecycle.orchestrator.semantic import recommend_recovery
 
-    llm_output = {
-        "failure_type": "done_file_parse_error",
-        "likely_cause": "AI 输出格式不符合 .story/done schema",
-        "recommended_action": "retry_with_prompt",
-        "safe_to_retry": True,
-        "confidence": "high",
-        "evidence": ["node_error: JSONDecodeError"],
-        "human_message": "AI 输出的 JSON 格式有问题，建议重试并在 prompt 中强调 JSON 格式要求",
-    }
-    fake = _make_fake_llm_response(llm_output)
+    model = RecoveryRecommendation(
+        failure_type="done_file_parse_error",
+        likely_cause="AI 输出格式不符合 .story/done schema",
+        recommended_action="retry_with_prompt",
+        safe_to_retry=True,
+        confidence="high",
+        evidence=["node_error: JSONDecodeError"],
+        human_message="AI 输出的 JSON 格式有问题，建议重试并在 prompt 中强调 JSON 格式要求",
+    )
+    mock_client = _mock_invoke_structured(model)
 
     debug_packet = {
         "story": {
@@ -466,9 +476,10 @@ def test_recommend_recovery_llm():
         "nodeErrors": [{"payload": {"error": "Expecting value: line 1 column 1"}}],
     }
 
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
-            result = recommend_recovery(debug_packet)
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = recommend_recovery(debug_packet)
 
     assert result["ok"] is True
     assert result["data"]["failure_type"] == "done_file_parse_error"
@@ -480,20 +491,21 @@ def test_recommend_recovery_unknown_defaults_to_ask_human():
     """When LLM returns unknown failure type, action must be ask_human."""
     from story_lifecycle.orchestrator.semantic import recommend_recovery
 
-    llm_output = {
-        "failure_type": "unknown",
-        "likely_cause": "unclear",
-        "recommended_action": "ask_human",
-        "safe_to_retry": False,
-        "confidence": "medium",
-        "evidence": [],
-        "human_message": "无法确定失败原因，建议人工检查",
-    }
-    fake = _make_fake_llm_response(llm_output)
+    model = RecoveryRecommendation(
+        failure_type="unknown",
+        likely_cause="unclear",
+        recommended_action="ask_human",
+        safe_to_retry=False,
+        confidence="medium",
+        evidence=[],
+        human_message="无法确定失败原因，建议人工检查",
+    )
+    mock_client = _mock_invoke_structured(model)
 
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
-            result = recommend_recovery({"story": {"status": "error"}})
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = recommend_recovery({"story": {"status": "error"}})
 
     assert result["data"]["recommended_action"] == "ask_human"
 
@@ -502,29 +514,35 @@ def test_recommend_recovery_enforces_unknown_ask_human():
     """If LLM returns unknown failure_type but action != ask_human, override to ask_human."""
     from story_lifecycle.orchestrator.semantic import recommend_recovery
 
-    llm_output = {
-        "failure_type": "unknown",
-        "likely_cause": "unclear",
-        "recommended_action": "retry",
-        "safe_to_retry": True,
-        "confidence": "low",
-        "evidence": [],
-        "human_message": "test",
-    }
-    fake = _make_fake_llm_response(llm_output)
+    model = RecoveryRecommendation(
+        failure_type="unknown",
+        likely_cause="unclear",
+        recommended_action="retry",
+        safe_to_retry=True,
+        confidence="low",
+        evidence=[],
+        human_message="test",
+    )
+    mock_client = _mock_invoke_structured(model)
 
-    with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
-            result = recommend_recovery({"story": {"status": "error"}})
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
+        result = recommend_recovery({"story": {"status": "error"}})
 
     assert result["data"]["recommended_action"] == "ask_human"
 
 
 def test_recommend_recovery_error():
-    """Without LLM, returns error result."""
+    """LLM failure returns error result with fallback recovery data."""
     from story_lifecycle.orchestrator.semantic import recommend_recovery
 
-    with patch.dict("os.environ", {}, clear=True):
+    mock_client = MagicMock()
+    mock_client.invoke_structured.side_effect = RuntimeError("LLM down")
+
+    with patch(
+        "story_lifecycle.orchestrator.semantic.get_llm", return_value=mock_client
+    ):
         result = recommend_recovery({"story": {"status": "error"}})
 
     assert result["mode"] == "error"

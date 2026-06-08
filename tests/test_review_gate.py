@@ -315,7 +315,7 @@ class TestReviewStageFatigue:
 
 
 # ---------------------------------------------------------------------------
-# wait_confirm_node tests
+# wait_confirm tests (now inside router_node via _do_wait_confirm)
 # ---------------------------------------------------------------------------
 
 
@@ -337,8 +337,9 @@ class TestWaitConfirmNode:
     def test_writes_last_error_and_gate_decision(
         self, isolated_story_home, monkeypatch
     ):
-        """wait_confirm_node should write last_error and gate_decision event."""
+        """wait_confirm should write last_error and gate_decision event."""
         from story_lifecycle.orchestrator import nodes
+        from story_lifecycle.orchestrator.nodes.graph_nodes import _do_wait_confirm
         from story_lifecycle.orchestrator.gate import GateDecision
         from story_lifecycle.db import models as db
         from story_lifecycle.orchestrator import graph as graph_mod
@@ -364,7 +365,7 @@ class TestWaitConfirmNode:
         monkeypatch.setattr(nodes.graph_nodes, "interrupt", _fake_interrupt)
         monkeypatch.setattr(graph_mod, "is_story_running", lambda k: False)
 
-        result = nodes.wait_confirm_node(state)
+        result = _do_wait_confirm(state, "WAIT-01", "design")
 
         # interrupt was called
         assert len(interrupted) == 1
@@ -387,6 +388,7 @@ class TestWaitConfirmNode:
     ):
         """When _gate_decision is not in state, construct one from state fields."""
         from story_lifecycle.orchestrator import nodes
+        from story_lifecycle.orchestrator.nodes.graph_nodes import _do_wait_confirm
         from story_lifecycle.db import models as db
         from story_lifecycle.orchestrator import graph as graph_mod
 
@@ -404,7 +406,7 @@ class TestWaitConfirmNode:
         )
         monkeypatch.setattr(graph_mod, "is_story_running", lambda k: False)
 
-        result = nodes.wait_confirm_node(state)
+        result = _do_wait_confirm(state, "WAIT-02", "design")
         assert result["last_error"]
         assert "manual" in result["last_error"].lower()
         assert result["context"].get("last_gate_decision_id")
@@ -412,6 +414,7 @@ class TestWaitConfirmNode:
     def test_writes_gate_report(self, isolated_story_home, tmp_path, monkeypatch):
         """Gate report should be written to .story/context/{key}/gages/."""
         from story_lifecycle.orchestrator import nodes
+        from story_lifecycle.orchestrator.nodes.graph_nodes import _do_wait_confirm
         from story_lifecycle.orchestrator.gate import GateDecision
         from story_lifecycle.db import models as db
         from story_lifecycle.orchestrator import graph as graph_mod
@@ -445,7 +448,7 @@ class TestWaitConfirmNode:
         )
         monkeypatch.setattr(graph_mod, "is_story_running", lambda k: False)
 
-        result = nodes.wait_confirm_node(state)
+        result = _do_wait_confirm(state, "WAIT-03", "design")
         report_rel = result["context"].get("last_gate_report_path", "")
         assert report_rel
         report_path = tmp_path / report_rel

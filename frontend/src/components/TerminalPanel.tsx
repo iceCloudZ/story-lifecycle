@@ -73,6 +73,14 @@ export default function TerminalPanel({ storyKey }: Props) {
       }
     })
 
+    // Copy selection to clipboard
+    term.onSelectionChange(() => {
+      const selection = term.getSelection()
+      if (selection) {
+        navigator.clipboard.writeText(selection).catch(() => {})
+      }
+    })
+
     // Resize → PTY
     term.onResize(({ cols, rows }) => {
       if (ws.readyState === WebSocket.OPEN) {

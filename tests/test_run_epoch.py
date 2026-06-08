@@ -13,11 +13,11 @@ from story_lifecycle.orchestrator.graph import (
 from story_lifecycle.orchestrator.nodes import (
     StoryState,
     _is_cancelled,
-    poll_completion_node,
+    execute_and_wait_node,
     advance_node,
-    fail_node,
+    router_node,
     route_after_plan,
-    route_after_poll,
+    route_after_execute,
     route_from_router,
     route_after_advance,
 )
@@ -390,10 +390,10 @@ class TestIsCancelled:
 # -------- cancelled nodes skip DB writes --------
 
 
-class TestPollCompletionCancelled:
+class TestExecuteAndWaitCancelled:
     def test_returns_early_when_cancelled(self):
         state = _make_state(_cancelled=True)
-        result = poll_completion_node(state)
+        result = execute_and_wait_node(state)
         # Should return unchanged — no error set, no interrupt
         assert result.get("last_error") is None
 
@@ -423,11 +423,9 @@ class TestFailCancelled:
         db.upsert_story("EPOCH-001", title="T", workspace=str(tmp_path))
 
         state = _make_state(_cancelled=True, last_error="boom")
-        result = fail_node(state)
-        # No DB write — status stays "active", not "blocked"
-        story = db.get_story("EPOCH-001")
-        assert story["status"] == "active"
-        assert result.get("status") == "active"
+        result = router_node(state)
+        # Cancelled → __end__, no DB write
+        assert result["_next_action"] == "__end__"
 
 
 # -------- cancelled routing --------
@@ -438,9 +436,9 @@ class TestCancelledRouting:
         state = _make_state(_cancelled=True)
         assert route_after_plan(state) == "__end__"
 
-    def test_route_after_poll_goes_to_end(self):
+    def test_route_after_execute_goes_to_end(self):
         state = _make_state(_cancelled=True)
-        assert route_after_poll(state) == "__end__"
+        assert route_after_execute(state) == "__end__"
 
     def test_route_from_router_goes_to_end(self):
         state = _make_state(_cancelled=True, _next_action="advance")
@@ -452,6 +450,6 @@ class TestCancelledRouting:
 
     def test_normal_routing_unaffected(self):
         state = _make_state()
-        assert route_after_plan(state) == "execute_stage"
-        assert route_after_poll(state) == "review_stage"
+        assert route_after_plan(state) == "execute_and_wait"
+        assert route_after_execute(state) == "review_stage"
         assert route_after_advance(state) == "plan_stage"

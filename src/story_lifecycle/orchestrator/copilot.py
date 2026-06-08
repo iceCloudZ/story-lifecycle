@@ -9,13 +9,10 @@ Never auto-executes state-changing operations.
 from __future__ import annotations
 
 import json
-import os
-import re
-import time
 import logging
+import re
 
-import httpx
-
+from ..llm_client import get_llm
 from .debug_packet import build_debug_packet, redact_mapping
 
 log = logging.getLogger("story-lifecycle.copilot")
@@ -33,14 +30,6 @@ VALID_ACTIONS: dict[str, str] = {
 }
 
 
-def _api_config() -> tuple[str, str, str]:
-    return (
-        os.environ.get("STORY_LLM_API_KEY", ""),
-        os.environ.get("STORY_LLM_BASE_URL", "https://api.deepseek.com"),
-        os.environ.get("STORY_LLM_MODEL", "deepseek-v4-pro"),
-    )
-
-
 def ask_copilot(story_key: str, question: str) -> dict:
     """Ask the Copilot a question about a story.
 
@@ -49,8 +38,8 @@ def ask_copilot(story_key: str, question: str) -> dict:
       - questions: list of follow-up questions (optional)
       - error: present only on failure
     """
-    api_key, base_url, model = _api_config()
-    if not api_key:
+    llm = get_llm()
+    if not llm.api_key:
         return {
             "error": "LLM 未配置，请先运行 story setup",
             "suggestions": [],
@@ -70,7 +59,7 @@ def ask_copilot(story_key: str, question: str) -> dict:
     prompt = _build_prompt(redacted, question)
 
     try:
-        raw = _call_llm(base_url, api_key, model, prompt, story_key=story_key)
+        raw = llm.invoke(prompt, temperature=0.1, timeout=90)
         result = _parse_copilot_response(raw)
         # P3: wrap actions with policy engine evaluation
         raw_actions = result.get("actions", [])
@@ -143,74 +132,6 @@ def _build_prompt(packet: dict, question: str) -> str:
 - read_only 操作在任何诊断场景下都可以推荐
 - actions 为空数组时表示当前不需要系统操作
 - 优先关注 stuck_reason、done_state、session_state 中的异常信号"""
-
-
-def _call_llm(
-    base_url: str,
-    api_key: str,
-    model: str,
-    prompt: str,
-    *,
-    story_key: str = "",
-) -> str:
-    """Call LLM and return raw content string."""
-    t0 = time.monotonic()
-    resp = httpx.post(
-        f"{base_url}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-        },
-        timeout=90,
-    )
-    resp.raise_for_status()
-    body = resp.json()
-    msg = body["choices"][0]["message"]
-    content = msg.get("content", "") or msg.get("reasoning_content", "")
-    usage = body.get("usage", {})
-
-    _trace_llm(
-        model=model,
-        usage=usage,
-        duration_ms=int((time.monotonic() - t0) * 1000),
-        story_key=story_key,
-    )
-
-    if not content.strip():
-        raise RuntimeError("LLM returned empty content")
-
-    return content
-
-
-def _trace_llm(
-    *,
-    model: str,
-    usage: dict,
-    duration_ms: int,
-    story_key: str = "",
-    success: bool = True,
-    error: str = "",
-):
-    """Record LLM call trace to DB."""
-    try:
-        from ..db.models import log_llm_trace
-
-        log_llm_trace(
-            story_key=story_key,
-            stage="",
-            operation="ask_copilot",
-            model=model,
-            prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=usage.get("completion_tokens", 0),
-            total_tokens=usage.get("total_tokens", 0),
-            duration_ms=duration_ms,
-            success=success,
-            error=error,
-        )
-    except Exception:
-        pass
 
 
 def _parse_copilot_response(content: str) -> dict:

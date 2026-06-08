@@ -13,11 +13,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import re
-import httpx
 
 from ..db import models as db
+from ..llm_client import get_llm
 
 log = logging.getLogger("story-lifecycle.review_feedback")
 
@@ -248,9 +246,7 @@ def extract_candidate_findings(
 
 def _llm_extract(content: str) -> list[dict] | None:
     """Call LLM to extract candidate findings. Returns list or None on failure."""
-    api_key = os.environ.get("STORY_LLM_API_KEY", "")
-    base_url = os.environ.get("STORY_LLM_BASE_URL", "https://api.deepseek.com")
-    model = os.environ.get("STORY_LLM_MODEL", "deepseek-v4-pro")
+    llm = get_llm()
 
     prompt = _EXTRACTION_PROMPT.format(
         review_content=content[:6000],
@@ -258,63 +254,11 @@ def _llm_extract(content: str) -> list[dict] | None:
         categories=", ".join(sorted(VALID_CATEGORIES)),
     )
 
-    resp = httpx.post(
-        f"{base_url}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-        },
-        timeout=60,
-    )
-    resp.raise_for_status()
-    body = resp.json()
-    raw_content = body["choices"][0]["message"].get("content", "")
-
-    if not raw_content.strip():
-        return None
-
-    # Parse JSON from LLM response
-    parsed = _parse_llm_json(raw_content)
-    if parsed is None:
-        return None
-
-    return parsed.get("candidate_findings", [])
-
-
-def _parse_llm_json(content: str) -> dict | None:
-    """Parse LLM response as JSON, handling markdown fences."""
-    # Direct parse
     try:
-        return json.loads(content)
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    # Markdown code fence
-    m = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", content, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # Bracket counting
-    depth = 0
-    start = None
-    for i, ch in enumerate(content):
-        if ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0 and start is not None:
-                try:
-                    return json.loads(content[start : i + 1])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-    return None
+        data = llm.invoke_json(prompt, temperature=0.1, timeout=60)
+        return data.get("candidate_findings", [])
+    except (ValueError, RuntimeError):
+        return None
 
 
 # ── Import (write to DB) ──

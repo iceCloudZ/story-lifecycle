@@ -57,7 +57,6 @@ def log_route_decision(
     router_mode: str,
     extra: dict | None = None,
 ) -> None:
-    decision = state.get("_router_decision") or {}
     stage = state.get("current_stage", "")
     execution_count = state.get("execution_count", 0)
 
@@ -70,10 +69,6 @@ def log_route_decision(
         "trajectory_score": state.get("trajectory_score"),
         "review_summary": state.get("review_summary"),
         "router_mode": router_mode,
-        "provider_override": decision.get("provider_override"),
-        "provider_override_reason": decision.get("provider_override_reason"),
-        "llm_reasoning": decision.get("reasoning"),
-        "raw_action": decision.get("action"),
         **(extra or {}),
     }
     db.log_event(state.get("story_key", ""), stage, "route_decision", payload)

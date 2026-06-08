@@ -19,10 +19,19 @@ class TestListIssues:
     def test_returns_list_of_issues(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout=json.dumps([
-                {"number": 1, "title": "Fix bug", "labels": [{"name": "bug"}],
-                 "body": "desc", "assignees": [], "state": "open", "milestone": None}
-            ]),
+            stdout=json.dumps(
+                [
+                    {
+                        "number": 1,
+                        "title": "Fix bug",
+                        "labels": [{"name": "bug"}],
+                        "body": "desc",
+                        "assignees": [],
+                        "state": "open",
+                        "milestone": None,
+                    }
+                ]
+            ),
         )
         cli = GithubCli("owner/repo")
         issues = cli.list_issues(state="open", label="lifecycle:accepted")

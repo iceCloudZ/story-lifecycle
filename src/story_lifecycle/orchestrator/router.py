@@ -1,23 +1,15 @@
 """LLM Router — handles unhappy path decisions (retry/skip/fail).
-Requires an LLM API key. Uses OpenAI-compatible API for intelligent routing."""
+
+Delegates LLM calls to LLMClient. Uses Pydantic RouteDecision for structured output.
+"""
 
 import json
-import os
 import logging
 
+from ..llm_client import get_llm
+from ..schemas import RouteDecision
+
 log = logging.getLogger("story-lifecycle.router")
-
-
-def _get_api_key():
-    return os.environ.get("STORY_LLM_API_KEY", "")
-
-
-def _get_base_url():
-    return os.environ.get("STORY_LLM_BASE_URL", "https://api.deepseek.com")
-
-
-def _get_model():
-    return os.environ.get("STORY_LLM_MODEL", "deepseek-v4-pro")
 
 
 def route(state: dict, stage_config: dict) -> dict:
@@ -26,62 +18,6 @@ def route(state: dict, stage_config: dict) -> dict:
     Returns:
         {"action": "retry|skip|fail", "reasoning": "...", "provider_override": "..."}
     """
-    if not _get_api_key():
-        raise RuntimeError("LLM API key not configured. Run 'story setup' first.")
-
-    return _llm_route(state, stage_config)
-
-
-def _extract_json_object(text: str) -> str | None:
-    """Extract the first complete JSON object using bracket counting."""
-    depth = 0
-    start = None
-    for i, ch in enumerate(text):
-        if ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0 and start is not None:
-                return text[start : i + 1]
-    return None
-
-
-def _parse_llm_json(content: str) -> dict:
-    """Parse LLM response as JSON with tolerance for truncation and markdown wrapping."""
-    # Direct parse
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        pass
-
-    # Extract from markdown code fence
-    import re
-
-    m = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", content, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except json.JSONDecodeError:
-            pass
-
-    # Bracket-counting extraction (handles truncated output)
-    extracted = _extract_json_object(content)
-    if extracted:
-        try:
-            return json.loads(extracted)
-        except json.JSONDecodeError:
-            pass
-
-    log.warning(f"Failed to parse LLM router response: {content[:200]}")
-    return {"action": "fail", "reasoning": "LLM response not valid JSON"}
-
-
-def _llm_route(state: dict, stage_config: dict) -> dict:
-    """Call LLM to make routing decision."""
-    import httpx
-
     prompt = f"""You are a workflow orchestrator. A development stage has encountered an error.
 
 Story: {state.get("story_key")}
@@ -100,17 +36,16 @@ Decide the next action:
 Respond with a JSON object:
 {{"action": "retry|skip|fail", "reasoning": "why", "provider_override": "provider_name or null"}}"""
 
-    resp = httpx.post(
-        f"{_get_base_url()}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {_get_api_key()}"},
-        json={
-            "model": _get_model(),
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-            "max_tokens": 200,
-        },
-        timeout=30,
-    )
-    resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
-    return _parse_llm_json(content)
+    llm = get_llm()
+    try:
+        result = llm.invoke_structured(
+            prompt, RouteDecision, temperature=0.1, timeout=30, max_tokens=200
+        )
+    except Exception as exc:
+        log.warning("LLM router call failed: %s", exc)
+        return {"action": "fail", "reasoning": f"LLM error: {type(exc).__name__}"}
+
+    decision = {"action": result.action, "reasoning": result.reasoning}
+    if result.provider_override:
+        decision["provider_override"] = result.provider_override
+    return decision

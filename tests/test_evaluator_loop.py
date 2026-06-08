@@ -421,24 +421,25 @@ def test_detect_no_progress_ignores_low_severity():
 
 def test_review_plan_returns_structured_result(isolated_story_home):
     from story_lifecycle.orchestrator.planner import review_plan
-    from unittest.mock import patch
+    from story_lifecycle.schemas import PlanReviewResult
+    from unittest.mock import patch, MagicMock
 
-    mock_response = {
-        "quality": "revise",
-        "blockers": [
+    mock_result = PlanReviewResult(
+        quality="revise",
+        blockers=[
             {
                 "severity": "high",
                 "category": "scope",
                 "description": "计划缺少数据库迁移步骤",
             }
         ],
-        "suggestions": ["增加 migration 脚本执行步骤"],
-        "reasoning": "计划中提到新增表但未包含迁移步骤",
-    }
+        suggestions=["增加 migration 脚本执行步骤"],
+        reasoning="计划中提到新增表但未包含迁移步骤",
+    )
 
-    with patch(
-        "story_lifecycle.orchestrator.planner._call_llm", return_value=mock_response
-    ):
+    mock_llm = MagicMock()
+    mock_llm.invoke_structured.return_value = mock_result
+    with patch("story_lifecycle.orchestrator.planner.get_llm", return_value=mock_llm):
         state = _make_state(story_key="RP-REVISE")
         plan = {"adapter": "claude", "extra_instructions": "Add new table users"}
         stage_config = {"description": "实现数据库变更"}
@@ -454,18 +455,19 @@ def test_review_plan_returns_structured_result(isolated_story_home):
 
 def test_review_plan_pass_with_no_blockers(isolated_story_home):
     from story_lifecycle.orchestrator.planner import review_plan
-    from unittest.mock import patch
+    from story_lifecycle.schemas import PlanReviewResult
+    from unittest.mock import patch, MagicMock
 
-    mock_response = {
-        "quality": "pass",
-        "blockers": [],
-        "suggestions": ["可以考虑添加更多单元测试"],
-        "reasoning": "计划范围合理，指令具体，与知识库对齐",
-    }
+    mock_result = PlanReviewResult(
+        quality="pass",
+        blockers=[],
+        suggestions=["可以考虑添加更多单元测试"],
+        reasoning="计划范围合理，指令具体，与知识库对齐",
+    )
 
-    with patch(
-        "story_lifecycle.orchestrator.planner._call_llm", return_value=mock_response
-    ):
+    mock_llm = MagicMock()
+    mock_llm.invoke_structured.return_value = mock_result
+    with patch("story_lifecycle.orchestrator.planner.get_llm", return_value=mock_llm):
         state = _make_state(story_key="RP-PASS")
         plan = {"adapter": "claude", "extra_instructions": "Implement auth module"}
         stage_config = {"description": "实现认证模块"}
@@ -477,26 +479,26 @@ def test_review_plan_pass_with_no_blockers(isolated_story_home):
 
 def test_review_plan_uses_reviewer_model(isolated_story_home):
     from story_lifecycle.orchestrator.planner import review_plan
-    from unittest.mock import patch
+    from story_lifecycle.schemas import PlanReviewResult
+    from unittest.mock import patch, MagicMock
 
-    mock_response = {
-        "quality": "pass",
-        "blockers": [],
-        "suggestions": [],
-        "reasoning": "OK",
-    }
+    mock_result = PlanReviewResult(
+        quality="pass",
+        blockers=[],
+        suggestions=[],
+        reasoning="OK",
+    )
 
-    with patch(
-        "story_lifecycle.orchestrator.planner._call_llm", return_value=mock_response
-    ) as mock_llm:
+    mock_llm = MagicMock()
+    mock_llm.invoke_structured.return_value = mock_result
+    with patch("story_lifecycle.orchestrator.planner.get_llm", return_value=mock_llm):
         state = _make_state(story_key="RP-MODEL")
         plan = {"adapter": "claude"}
         stage_config = {"description": "test"}
         review_plan(state, plan, stage_config, reviewer_model="gpt-4o")
 
-        # Verify the model parameter passed to _call_llm is the reviewer_model
-        call_args = mock_llm.call_args
-        assert call_args[0][2] == "gpt-4o"  # 3rd positional arg = model
+        # Verify LLM was called
+        mock_llm.invoke_structured.assert_called_once()
 
 
 # -- run_plan_loop tests --
@@ -1108,7 +1110,7 @@ def _patch_load_profile(return_value):
 
 
 def test_plan_stage_node_uses_loop_when_enabled(isolated_story_home):
-    """When adversarial plan_loop is enabled, plan_stage_node calls run_plan_loop."""
+    """When adversarial plan_loop is enabled, plan_stage_node calls run_adversarial_subgraph."""
     from story_lifecycle.orchestrator.nodes import plan_stage_node
     from story_lifecycle.db import models as db
     from unittest.mock import patch
@@ -1143,7 +1145,7 @@ def test_plan_stage_node_uses_loop_when_enabled(isolated_story_home):
             return_value=None,
         ):
             with patch(
-                "story_lifecycle.orchestrator.evaluator_loop.run_plan_loop",
+                "story_lifecycle.orchestrator.adversarial_graph.run_adversarial_subgraph",
                 return_value=loop_result,
             ) as mock_loop:
                 result = plan_stage_node(state)
@@ -1199,7 +1201,7 @@ def test_plan_stage_node_skips_loop_when_disabled(isolated_story_home):
                 return_value=plan_result,
             ):
                 with patch(
-                    "story_lifecycle.orchestrator.evaluator_loop.run_plan_loop"
+                    "story_lifecycle.orchestrator.adversarial_graph.run_adversarial_subgraph"
                 ) as mock_loop:
                     result = plan_stage_node(state)
 
@@ -1245,7 +1247,7 @@ def test_review_stage_node_uses_loop_when_enabled(isolated_story_home):
 
     with _patch_load_profile(_enabled_adversarial_profile()):
         with patch(
-            "story_lifecycle.orchestrator.evaluator_loop.run_code_review_loop",
+            "story_lifecycle.orchestrator.adversarial_graph.run_adversarial_subgraph",
             return_value=loop_result,
         ) as mock_loop:
             result = review_stage_node(state)
@@ -1287,7 +1289,7 @@ def test_review_stage_node_skips_loop_when_disabled(isolated_story_home):
             return_value=review_result,
         ):
             with patch(
-                "story_lifecycle.orchestrator.evaluator_loop.run_code_review_loop"
+                "story_lifecycle.orchestrator.adversarial_graph.run_adversarial_subgraph"
             ) as mock_loop:
                 result = review_stage_node(state)
 

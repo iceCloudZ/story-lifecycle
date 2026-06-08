@@ -197,8 +197,8 @@ def test_dod_check_exception_writes_node_error(isolated_story_home):
 # ── node_error tests ──
 
 
-def test_poll_completion_json_parse_error(isolated_story_home):
-    """poll_completion_node writes node_error on done file JSON parse failure."""
+def test_execute_and_wait_json_parse_error(isolated_story_home):
+    """execute_and_wait_node writes node_error on done file JSON parse failure."""
     from pathlib import Path
 
     from story_lifecycle.db import models as db
@@ -212,9 +212,9 @@ def test_poll_completion_json_parse_error(isolated_story_home):
     done_file = done_dir / "design.json"
     done_file.write_text("not json {{{", encoding="utf-8")
 
-    from story_lifecycle.orchestrator.nodes import poll_completion_node
+    from story_lifecycle.orchestrator.nodes import execute_and_wait_node
 
-    poll_completion_node(state)
+    execute_and_wait_node(state)
 
     try:
         if done_file.exists():
@@ -227,7 +227,7 @@ def test_poll_completion_json_parse_error(isolated_story_home):
     node_errors = _get_events_by_type("TEST-006", "node_error")
     assert len(node_errors) >= 1
     payload = _parse_payload(node_errors[-1])
-    assert payload["node"] == "poll_completion_node"
+    assert payload["node"] == "execute_and_wait_node"
     assert "design.json" in payload.get("file_hint", "")
 
 
@@ -307,13 +307,8 @@ def test_debug_api_respects_recent_limit(isolated_story_home):
 # ── route_decision observability helper tests (direct payload validation) ──
 
 
-def test_route_decision_payload_includes_provider_fields(isolated_story_home):
-    """route_decision payload constructed from _router_decision includes provider fields.
-
-    Verifies the payload assembly by intercepting the db.log_event call that
-    log_route_decision makes. The actual DB write path is tested via
-    test_route_decision_happy_path_advance (router_node integration).
-    """
+def test_route_decision_payload_includes_core_fields(isolated_story_home):
+    """route_decision payload includes core routing fields."""
     from story_lifecycle.db import models as db
     from story_lifecycle.orchestrator.observability import log_route_decision
 
@@ -327,19 +322,11 @@ def test_route_decision_payload_includes_provider_fields(isolated_story_home):
 
     with patch.object(db, "log_event", side_effect=_capture):
         state = _make_state(stage="design")
-        state["_router_decision"] = {
-            "action": "retry",
-            "reasoning": "Switch provider for reliability",
-            "provider_override": "deepseek",
-            "provider_override_reason": "previous provider failed",
-        }
         log_route_decision(state, "retry", "llm_router", router_mode="llm")
 
     assert captured_payload["router_mode"] == "llm"
-    assert captured_payload["provider_override"] == "deepseek"
-    assert captured_payload["provider_override_reason"] == "previous provider failed"
-    assert captured_payload["llm_reasoning"] == "Switch provider for reliability"
-    assert captured_payload["raw_action"] == "retry"
+    assert captured_payload["action"] == "retry"
+    assert captured_payload["reason"] == "llm_router"
     assert captured_payload["attempt_id"] == "design:0"
 
 

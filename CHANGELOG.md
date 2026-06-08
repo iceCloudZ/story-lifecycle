@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.9] - 2026-06-08
+
+### Added
+- `LLMClient` 统一 LLM 调用层（`llm_client.py`），提供 invoke/invoke_json/invoke_structured/stream 四个方法，消除 7 个文件中重复的 httpx 调用和 JSON 解析
+- Pydantic 模型替代手写 JSON schema 验证（`schemas.py`），覆盖 Plan/Review/Route/Semantic 等全部 LLM 输出结构
+- 对抗循环 LangGraph 子图（`adversarial_graph.py`），3 节点 planner→reviewer→judge，每轮独立 checkpoint
+- Send API fan-out 子任务分发，替代 interrupt + ThreadPoolExecutor 手动启动
+
+### Changed
+- Layer 1 图从 11 节点精简到 5 节点：plan_stage → execute_and_wait → review_stage → router → advance
+- retry/skip/fail/wait_confirm 合并进 router_node 内部，不再作为独立节点
+- execute_stage + poll_completion 合并为 execute_and_wait_node
+- `observability.log_route_decision` 移除 `_router_decision` 字段依赖
+
+### Removed
+- 6+ 处重复的 `_call_llm`/`_api_config`/`_parse_llm_json` 等函数，统一到 `LLMClient`
+- 6 个独立 action 节点（execute_stage, poll_completion, retry, skip, fail, wait_confirm）
+
 ## [0.8.8] - 2026-06-07
 
 ### Added

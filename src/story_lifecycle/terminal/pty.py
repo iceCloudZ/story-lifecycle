@@ -64,13 +64,14 @@ class ManagedPty:
         self._read_thread.start()
 
     def _spawn_winpty(self, env: dict):
-        import winpty
+        from winpty import PtyProcess
 
-        self._process = winpty.PTY(cols=120, rows=30)
-        cmdline = " ".join(self.command[1:]) if len(self.command) > 1 else None
-        # winpty requires env as null-terminated string, not dict
-        env_str = "".join(f"{k}={v}\0" for k, v in env.items()) + "\0"
-        self._process.spawn(self.command[0], cmdline=cmdline, cwd=self.cwd, env=env_str)
+        self._process = PtyProcess.spawn(
+            self.command,
+            cwd=self.cwd,
+            env=env,
+            dimensions=(30, 120),
+        )
         self._mode = "winpty"
 
     def _spawn_unix(self, env: dict):
@@ -125,7 +126,11 @@ class ManagedPty:
 
     def _blocking_read(self, size: int) -> bytes:
         if self._mode == "winpty":
-            return self._process.read(size, timeout=100)
+            try:
+                data = self._process.read(size)
+                return data.encode("utf-8", errors="replace")
+            except EOFError:
+                return b""
         elif self._mode == "unix":
             return os.read(self._master_fd, size)
         else:
@@ -136,7 +141,7 @@ class ManagedPty:
     @property
     def alive(self) -> bool:
         if self._mode == "winpty":
-            return self._process is not None and self._alive
+            return self._process is not None and self._process.isalive()
         elif self._mode == "unix":
             return self._process is not None and self._process.poll() is None
         else:
@@ -159,7 +164,7 @@ class ManagedPty:
     def resize(self, cols: int, rows: int):
         if self._mode == "winpty":
             try:
-                self._process.set_size(cols, rows)
+                self._process.setwinsize(rows, cols)
             except Exception:
                 pass
         elif self._mode == "unix":
@@ -176,11 +181,12 @@ class ManagedPty:
     def kill(self):
         self._alive = False
         try:
-            if self._mode == "subprocess":
+            if self._mode == "winpty":
+                self._process.terminate(force=True)
+            elif self._mode == "subprocess":
                 self._process.terminate()
             elif self._mode == "unix":
                 os.killpg(self._unix_pid, signal.SIGTERM)
-            # winpty: no direct kill, process exits on close
         except Exception:
             pass
         try:
