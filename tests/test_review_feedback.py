@@ -137,11 +137,15 @@ def test_extract_candidates_llm_success():
         ],
         "summary": "发现空指针风险和测试缺口",
     }
-    fake = _make_fake_llm_response(llm_output)
 
     review_md = "## Review\n\n### Issues\n- api.py:42 缺少空指针检查\n- 缺少边界测试"
+    mock_llm = MagicMock()
+    mock_llm.invoke_json.return_value = llm_output
     with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
+        with patch(
+            "story_lifecycle.orchestrator.review_feedback.get_llm",
+            return_value=mock_llm,
+        ):
             result = extract_candidate_findings(review_md, "S1")
 
     assert result["mode"] == "llm"
@@ -301,11 +305,15 @@ def test_import_review_creates_candidate_findings(tmp_path):
         ],
         "summary": "test",
     }
-    fake = _make_fake_llm_response(llm_output)
 
     review_md = "## Review\n\n- api.py:42 缺少空指针检查"
+    mock_llm = MagicMock()
+    mock_llm.invoke_json.return_value = llm_output
     with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
-        with patch("httpx.post", return_value=fake):
+        with patch(
+            "story_lifecycle.orchestrator.review_feedback.get_llm",
+            return_value=mock_llm,
+        ):
             result = import_review("S1", review_md)
 
     assert result["imported"] == 1

@@ -363,6 +363,8 @@ def execute_and_wait_node(state: StoryState) -> dict:
             state["context"].update(data)
             _sync_done_outputs(state, key, stage, data)
             return state
+        # Parse failed — error already logged, don't proceed to dispatch
+        return state
 
     # --- Phase 2: Dispatch tool execution ---
     cfg = get_stage_config(profile, stage)
