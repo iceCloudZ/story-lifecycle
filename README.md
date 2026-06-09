@@ -34,7 +34,7 @@ STORY-123 "Add dark mode"
 
 ## 对抗循环（v0.5.0+）
 
-v0.5.2 的编排引擎内置双层对抗循环，是质量保证的核心机制：
+编排引擎内置双层对抗循环（`evaluator_loop.py`），是质量保证的核心机制：
 
 ### Plan ↔ Review 循环
 
@@ -65,7 +65,7 @@ execute → review → revise → review → pass
 - `no_progress`：连续无改善，自动终止等人工
 - `max_rounds`：达到上限，自动终止等人工
 
-完整对抗循环的设计文档见 `docs/superpowers/specs/2026-05-24-evaluator-optimizer-loop-design.md`。
+完整对抗循环的设计文档见 `docs/superpowers/specs/2026-05-24-evaluator-optimizer-loop-design.md`。对抗循环以 `evaluator_loop.run_plan_loop()` / `run_code_review_loop()` 的 while 循环实现，支持不同 CLI 间通过 done-file 协议轮询。
 
 ## 质量飞轮
 
@@ -178,19 +178,22 @@ my-tool:
 ## 架构
 
 ```
-┌──────────────────────────────────────────────────┐
-│                   story serve                     │
-│              (FastAPI + LangGraph)                │
-│                                                   │
-│  plan ──→ execute ──→ poll ──→ review ──→ router  │
-│    │                                       │      │
-│    │    adversarial loop:                  │      │
-│    │    plan↔review / code↔review          │      │
-│    │                                       │      │
-│    └── advance / retry / skip / fail ──────┘      │
-│                                                   │
-│  LLM 必填 — 无 fallback，不可用时报错暂停          │
-└──────────┬───────────┬──────────────┬─────────────┘
+┌───────────────────────────────────────────────────┐
+│                    story serve                      │
+│               (FastAPI + LangGraph)                 │
+│                                                     │
+│  plan_stage → execute_and_wait → review_stage → router → advance
+│       │              │                │            │
+│       │   adversarial while loop:     │            │
+│       │   evaluator_loop.run_plan_loop /            │
+│       │   run_code_review_loop        │            │
+│       │                               │            │
+│       └── retry / skip / fail / wait_confirm ──────┘
+│                                                     │
+│  ResolvedProfile (v0.9.0) — 启动时解析一次，只读     │
+│  NodeError (v0.9.0) — 统一错误处理                   │
+│  LLM 必填 — 无 fallback，不可用时报错暂停             │
+└──────────┬───────────┬──────────────┬───────────────┘
            │           │              │
      ┌─────┴──┐  ┌─────┴──┐   ┌─────┴──┐
      │Claude  │  │Codex   │   │Aider   │   ← Adapters
