@@ -491,7 +491,7 @@ def compute_shadow_stats(story_key: str = "") -> ShadowStats:
         trigger_counts[trigger] = trigger_counts.get(trigger, 0) + 1
 
     stats.by_trigger = trigger_counts
-    labeled = stats.proposed_correct + stats.incorrect + stats.proposed_partial
+    labeled = stats.proposed_correct + stats.proposed_incorrect + stats.proposed_partial
     if labeled > 0:
         stats.match_rate = stats.proposed_correct / labeled
 

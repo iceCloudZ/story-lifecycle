@@ -11,11 +11,15 @@ Design doc: idea-dual-flywheel-domain-and-engine.md
 from .domain import DomainAsset, DomainOutcome, TraceMaturity, record_domain_outcome
 from .engine import EngineTrace, EvalEvidence, StrategyRecord, record_engine_trace
 from .promotion import (
+    ItemSource,
     PromotionItem,
     PromotionQueue,
     PromotionStage,
+    propose_item,
     promote_item,
     reject_item,
+    load_promotion_queue,
+    arbitrate_priority,
 )
 
 __all__ = [
@@ -27,9 +31,13 @@ __all__ = [
     "EvalEvidence",
     "StrategyRecord",
     "record_engine_trace",
+    "ItemSource",
     "PromotionItem",
     "PromotionQueue",
     "PromotionStage",
+    "propose_item",
     "promote_item",
     "reject_item",
+    "load_promotion_queue",
+    "arbitrate_priority",
 ]
