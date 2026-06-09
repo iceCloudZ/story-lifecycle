@@ -12,18 +12,17 @@ import story_lifecycle.orchestrator.nodes.profile_loader as _pl
 def _reset_graph_globals():
     """Clear in-process graph state before and after every test."""
     graph._workspace_locks.clear()
-    graph._plan_done.clear()
-    graph._terminal_opened.clear()
     with graph._running_lock:
         graph._running_stories.clear()
         graph._story_epochs.clear()
+    # Reset compiled graph cache to avoid stale state leaking between tests
+    graph._compiled_graph = None
     yield
     graph._workspace_locks.clear()
-    graph._plan_done.clear()
-    graph._terminal_opened.clear()
     with graph._running_lock:
         graph._running_stories.clear()
         graph._story_epochs.clear()
+    graph._compiled_graph = None
 
 
 @pytest.fixture

@@ -20,12 +20,6 @@ def _run_demo_with_db(tmp_path: Path):
         patch("story_lifecycle.orchestrator.tools.get_tool") as mock_get_tool,
         patch("story_lifecycle.orchestrator.nodes.ttyd") as mock_ttyd,
         patch("story_lifecycle.orchestrator.nodes.notify"),
-        patch("story_lifecycle.orchestrator.graph.emit_plan_done"),
-        patch("story_lifecycle.orchestrator.graph.emit_terminal_opened"),
-        patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.interrupt",
-            side_effect=lambda x: None,
-        ),
         patch(
             "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
             return_value={

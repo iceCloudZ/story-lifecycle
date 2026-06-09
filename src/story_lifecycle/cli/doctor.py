@@ -60,16 +60,6 @@ CLI_TOOLS = {
 }
 
 INFRA_TOOLS = {
-    "textual": {
-        "name": "Textual (TUI)",
-        "check": lambda: _check_module("textual"),
-        "install_hint": "pip install textual",
-        "install_cmds": {
-            "pip": ["pip", "install", "textual"],
-            "pip3": ["pip3", "install", "textual"],
-        },
-        "required": False,
-    },
     "zellij": {
         "name": "Zellij",
         "check": lambda: _which("zellij"),
@@ -227,21 +217,6 @@ def run_doctor():
                 f"Change with: [bold]story setup[/] or edit [bold]~/.story-lifecycle/config.yaml[/]\n\n"
                 f"[dim]只需一个 CLI 工具即可运行，其余为可选项。[/]",
                 border_style="green",
-            )
-        )
-
-    # Textual check
-    has_textual = INFRA_TOOLS["textual"]["check"]()
-    if not has_textual:
-        console.print()
-        console.print(
-            Panel(
-                "[yellow]Textual (TUI) not installed.[/]\n\n"
-                "pip install textual\n\n"
-                "TUI board 需要此组件。\n"
-                "Run [bold]story --fix[/] to auto-install.",
-                title="Warning",
-                border_style="yellow",
             )
         )
 

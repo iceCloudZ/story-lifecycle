@@ -31,15 +31,6 @@ checkpoint_db = STORY_HOME / "checkpoint.db"
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
-# TUI reference for cross-thread notifications (set by StoryBoardApp.on_mount)
-_tui_app: object | None = None
-
-# In-memory status bus — thread-safe, no file I/O
-_status_lock = threading.Lock()
-_plan_done: dict[str, tuple[str, bool]] = {}
-_plan_activity: dict[str, str] = {}
-_terminal_opened: set[str] = set()
-_terminal_requests: dict[str, list[str]] = {}
 
 # Execution guard — prevent double submission.
 _running_stories: dict[str, int] = {}
@@ -76,54 +67,6 @@ def release_workspace(workspace: str, story_key: str = "", epoch: int = 0):
             return
     if entry["lock"].locked():
         entry["lock"].release()
-
-
-def set_tui_app(app: object) -> None:
-    global _tui_app
-    _tui_app = app
-
-
-def emit_plan_done(story_key: str, summary: str, ok: bool = True) -> None:
-    with _status_lock:
-        _plan_done[story_key] = (summary, ok)
-
-
-def emit_plan_activity(story_key: str, activity: str) -> None:
-    with _status_lock:
-        _plan_activity[story_key] = activity
-
-
-def take_plan_activity(story_key: str) -> str | None:
-    with _status_lock:
-        return _plan_activity.pop(story_key, None)
-
-
-def take_plan_done(story_key: str) -> tuple[str, bool] | None:
-    with _status_lock:
-        return _plan_done.pop(story_key, None)
-
-
-def emit_terminal_opened(story_key: str) -> None:
-    with _status_lock:
-        _terminal_opened.add(story_key)
-
-
-def emit_terminal_request(story_key: str, args: list[str]) -> None:
-    with _status_lock:
-        _terminal_requests[story_key] = args
-
-
-def take_terminal_request(story_key: str) -> list[str] | None:
-    with _status_lock:
-        return _terminal_requests.pop(story_key, None)
-
-
-def take_terminal_opened(story_key: str) -> bool:
-    with _status_lock:
-        if story_key in _terminal_opened:
-            _terminal_opened.discard(story_key)
-            return True
-        return False
 
 
 def is_story_running(story_key: str) -> bool:

@@ -10,8 +10,7 @@ from .. import router as llm_router  # noqa: F401
 from ...terminal import ttyd as ttyd
 from ..notify import send as notify  # noqa: F401
 from ..evaluator_loop import AdversarialConfig as AdversarialConfig
-from langgraph.types import interrupt as interrupt
-from langgraph.errors import GraphInterrupt as GraphInterrupt
+from langgraph.errors import GraphInterrupt as GraphInterrupt  # noqa: F401
 
 # ---- State & constants ----
 from .state import (
@@ -63,7 +62,7 @@ from .knowledge import (
     _update_knowledge as _update_knowledge,
 )
 
-# ---- Prompt rendering (used by tui.py, main.py) ----
+# ---- Prompt rendering (used by main.py) ----
 from .prompt_renderer import (
     _strip_planner_contract_duplicates as _strip_planner_contract_duplicates,
     _build_stage_contract as _build_stage_contract,

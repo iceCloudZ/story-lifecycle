@@ -346,7 +346,6 @@ class TestWaitConfirmNode:
         self, isolated_story_home, monkeypatch
     ):
         """wait_confirm should write last_error and gate_decision event."""
-        from story_lifecycle.orchestrator import nodes
         from story_lifecycle.orchestrator.nodes.graph_nodes import _do_wait_confirm
         from story_lifecycle.orchestrator.gate import GateDecision
         from story_lifecycle.db import models as db
@@ -363,20 +362,10 @@ class TestWaitConfirmNode:
         )
         state = self._make_state(_gate_decision=gd.to_dict())
 
-        # Mock the interrupt to avoid actually yielding
-        interrupted = []
-
-        def _fake_interrupt(payload):
-            interrupted.append(payload)
-
-        monkeypatch.setattr(nodes, "interrupt", _fake_interrupt)
-        monkeypatch.setattr(nodes.graph_nodes, "interrupt", _fake_interrupt)
         monkeypatch.setattr(graph_mod, "is_story_running", lambda k: False)
 
         result = _do_wait_confirm(state, "WAIT-01", "design")
 
-        # interrupt was called
-        assert len(interrupted) == 1
         assert result["status"] == "paused"
         assert result["last_error"] == gd.human_message
         assert result["context"].get("last_gate_decision_id") == gd.decision_id
@@ -395,7 +384,6 @@ class TestWaitConfirmNode:
         self, isolated_story_home, monkeypatch
     ):
         """When _gate_decision is not in state, construct one from state fields."""
-        from story_lifecycle.orchestrator import nodes
         from story_lifecycle.orchestrator.nodes.graph_nodes import _do_wait_confirm
         from story_lifecycle.db import models as db
         from story_lifecycle.orchestrator import graph as graph_mod
@@ -407,11 +395,6 @@ class TestWaitConfirmNode:
             context={"review_round_count_design": 0},
         )
 
-        interrupted = []
-        monkeypatch.setattr(nodes, "interrupt", lambda p: interrupted.append(p))
-        monkeypatch.setattr(
-            nodes.graph_nodes, "interrupt", lambda p: interrupted.append(p)
-        )
         monkeypatch.setattr(graph_mod, "is_story_running", lambda k: False)
 
         result = _do_wait_confirm(state, "WAIT-02", "design")
@@ -421,7 +404,6 @@ class TestWaitConfirmNode:
 
     def test_writes_gate_report(self, isolated_story_home, tmp_path, monkeypatch):
         """Gate report should be written to .story/context/{key}/gages/."""
-        from story_lifecycle.orchestrator import nodes
         from story_lifecycle.orchestrator.nodes.graph_nodes import _do_wait_confirm
         from story_lifecycle.orchestrator.gate import GateDecision
         from story_lifecycle.db import models as db
@@ -449,11 +431,6 @@ class TestWaitConfirmNode:
             "_gate_decision": gd.to_dict(),
         }
 
-        interrupted = []
-        monkeypatch.setattr(nodes, "interrupt", lambda p: interrupted.append(p))
-        monkeypatch.setattr(
-            nodes.graph_nodes, "interrupt", lambda p: interrupted.append(p)
-        )
         monkeypatch.setattr(graph_mod, "is_story_running", lambda k: False)
 
         result = _do_wait_confirm(state, "WAIT-03", "design")

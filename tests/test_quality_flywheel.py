@@ -431,8 +431,8 @@ def test_dor_check(tmp_path):
     assert "title" in result2["missing"]
 
 
-def test_tui_quality_data_queryable(tmp_path):
-    """Quality data should be queryable for TUI display."""
+def test_quality_data_queryable(tmp_path):
+    """Quality data should be queryable for display."""
     import os
 
     os.environ["STORY_HOME"] = str(tmp_path)
@@ -452,7 +452,7 @@ def test_tui_quality_data_queryable(tmp_path):
         },
     )
 
-    # Verify data is queryable for TUI
+    # Verify data is queryable
     findings = db.get_open_findings("S1")
     assert len(findings) == 1
     assert findings[0]["severity"] == "high"

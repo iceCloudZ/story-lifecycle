@@ -10,7 +10,6 @@ import tempfile as _tf
 from pathlib import Path
 
 from langgraph.errors import GraphInterrupt
-from langgraph.types import interrupt
 
 from ...db import models as db
 from ...terminal import ttyd
@@ -129,7 +128,6 @@ def plan_stage_node(state: StoryState) -> StoryState:
         profile_cfg = _rp(state)
         adv_cfg = AdversarialConfig.from_profile(profile_cfg)
         if adv_cfg.plan_loop_enabled(stage):
-            from ...orchestrator.graph import emit_plan_done
             from ..evaluator_loop import run_plan_loop
 
             adapters = ["claude"]
@@ -145,7 +143,6 @@ def plan_stage_node(state: StoryState) -> StoryState:
                 state["plan_summary"] = (
                     f"跳过: {loop_result.final_plan.get('reasoning', '')}"
                 )
-                emit_plan_done(story_key, state["plan_summary"])
                 return state
 
             # Pass with plan
@@ -210,33 +207,21 @@ def plan_stage_node(state: StoryState) -> StoryState:
                         "loop_decision": loop_result.decision,
                     },
                 )
-                summary = plan.get("summary", "")
-                tool_info = (
-                    f"{plan.get('adapter', 'claude')} / {plan.get('model', 'sonnet')}"
-                )
-                plan_text = f"✓ {summary}  [dim]({tool_info})[/]"
-                emit_plan_done(story_key, plan_text)
                 return state
 
             # Non-pass decisions: route to wait_confirm
             if loop_result.decision in ("no_progress", "max_rounds", "fail"):
-                from ...orchestrator.graph import emit_plan_done
-
                 reason = f"Plan loop {loop_result.decision}: {loop_result.reason}"
                 state["plan_summary"] = reason
                 state["last_error"] = reason
                 state["_pre_routed_action"] = "wait_confirm"
-                emit_plan_done(story_key, f"⚠ {reason}", ok=False)
                 return state
     except Exception as e:
         log.warning(f"Adversarial plan loop failed, falling back to normal: {e}")
     # --- End adversarial plan loop ---
 
     try:
-        from ...orchestrator.graph import emit_plan_done, emit_plan_activity
-
         adapters = ["claude"]
-        emit_plan_activity(story_key, "正在分析需求，生成执行计划...")
         plan = planner.plan_stage(state, cfg, adapters)
 
         if plan.get("skip"):
@@ -253,7 +238,6 @@ def plan_stage_node(state: StoryState) -> StoryState:
         # Split into sub-stories
         if plan.get("split") and plan.get("subtasks"):
             _delegate_subtasks(state, plan)
-            emit_plan_done(story_key, state.get("plan_summary", ""))
             return state
 
         # Write plan task file
@@ -300,10 +284,6 @@ def plan_stage_node(state: StoryState) -> StoryState:
                 "trajectory_score": plan.get("trajectory_score"),
             },
         )
-        summary = plan.get("summary", "")
-        tool_info = f"{plan.get('adapter', 'claude')} / {plan.get('model', 'sonnet')}"
-        plan_text = f"✓ {summary}  [dim]({tool_info})[/]"
-        emit_plan_done(story_key, plan_text)
         return state
     except GraphInterrupt:
         return state
@@ -324,13 +304,6 @@ def plan_stage_node(state: StoryState) -> StoryState:
             action="block_for_planner",
             meta={"file_hint": str(STORY_HOME / "planner_error.log")},
         ).apply(state)
-        from ...orchestrator.graph import emit_plan_done
-
-        emit_plan_done(
-            story_key,
-            f"⚠ 规划失败 [{type(e).__name__}]",
-            ok=False,
-        )
         return _block_for_planner(
             state,
             f"Planner failed: {type(e).__name__}: {e}",
@@ -502,7 +475,7 @@ def _sync_done_outputs(state: StoryState, key: str, stage: str, data: dict):
 def _poll_done_file(
     state: StoryState, done_file: Path, key: str, stage: str, workspace: str
 ) -> dict:
-    """Poll for done file, check session/exit status, or interrupt."""
+    """Poll for done file, check session/exit status."""
     # Check done file
     if done_file.exists():
         data = _consume_done_file(done_file, state, key, stage)
@@ -541,20 +514,13 @@ def _poll_done_file(
         return state
 
     # Headless mode — CLI finished without producing done file
-    from ...orchestrator.graph import _tui_app
-
-    if _tui_app is None:
-        NodeError(
-            "execute_and_wait_node",
-            stage,
-            "Headless CLI completed without producing .done file",
-            error_type="HeadlessNoDoneFile",
-            action="set_last_error",
-        ).apply(state)
-        return state
-
-    # TUI mode — yield thread via interrupt
-    interrupt({"reason": "waiting_for_done_file", "stage": stage})
+    NodeError(
+        "execute_and_wait_node",
+        stage,
+        "Headless CLI completed without producing .done file",
+        error_type="HeadlessNoDoneFile",
+        action="set_last_error",
+    ).apply(state)
     return state
 
 
@@ -894,7 +860,7 @@ def _apply_review(
 
 def router_node(state: StoryState) -> dict:
     """Route to next action: advance, retry (→plan_stage), skip (→advance),
-    fail (→END), or wait_confirm (interrupt + →plan_stage)."""
+    fail (→END), or wait_confirm (→plan_stage)."""
     if _is_cancelled(state):
         return {"_next_action": "__end__"}
 
@@ -1095,7 +1061,11 @@ def _execute_action(state: StoryState, action: str, cfg: dict) -> dict:
 
 
 def _do_wait_confirm(state: StoryState, key: str, stage: str) -> dict:
-    """Pause for human confirmation with gate report + interrupt."""
+    """Pause for human confirmation with gate report.
+
+    Writes paused status to DB and returns — the API server or watchdog
+    will detect the paused state and wait for user action to resume.
+    """
     from ..gate import GateDecision, write_gate_report, gate_decision_from_state
 
     gd_dict = state.pop("_gate_decision", None)
@@ -1142,26 +1112,7 @@ def _do_wait_confirm(state: StoryState, key: str, stage: str) -> dict:
     state["last_error"] = gd.human_message
     _ws_notify(state, "paused")
 
-    # Yield thread — Watchdog or user action will resume
-    interrupt({"reason": "waiting_for_confirmation", "stage": stage})
-
-    # Resumed — check if user set status back to active
-    s = db.get_story(key)
-    if s and s["status"] == "active":
-        state["status"] = "active"
-        state["execution_count"] = 0
-        ctx = {}
-        try:
-            ctx = json.loads(s.get("context_json") or "{}")
-        except Exception:
-            pass
-        override = ctx.get("gate_override")
-        if override == "accept_risk_advance":
-            db.update_context(key, "gate_override", "")
-            state.pop("last_error", None)
-            state["_next_action"] = "advance"
-            return state
-
+    # Set next action so router sends story to plan_stage on resume
     state["_next_action"] = "plan_stage"
     return state
 
