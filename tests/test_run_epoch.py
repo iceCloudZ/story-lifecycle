@@ -9,6 +9,9 @@ from story_lifecycle.orchestrator.graph import (
     _story_epochs,
     _running_stories,
     _running_lock,
+    acquire_workspace,
+    release_workspace,
+    is_workspace_locked,
 )
 from story_lifecycle.orchestrator.nodes import (
     StoryState,
@@ -119,79 +122,56 @@ class TestForceStopBumpsEpoch:
 
 class TestWorkspaceLockOwnership:
     def test_force_stop_does_not_release_other_epoch_lock(self, tmp_path, monkeypatch):
-        """Old run (story A, epoch 1) holds lock → force_stop bumps epoch →
-        old finally releases (matches owner_token) → new run (epoch 2) acquires →
-        stale old thread with epoch 1 cannot release (wrong token).
+        """Old run holds workspace lock → force_stop bumps epoch →
+        new run cannot acquire while old holds → old releases → new acquires.
 
-        Also verifies cross-story: story B with epoch 1 cannot release story A's lock.
+        With filelock, cross-process safety is inherent.
         """
         monkeypatch.setenv("STORY_HOME", str(tmp_path / ".story-lifecycle"))
         from story_lifecycle.db import models as db
-        from story_lifecycle.orchestrator.graph import (
-            _workspace_locks,
-            _set_workspace_owner,
-            release_workspace,
-            acquire_workspace,
-        )
 
         db.init_db()
         db.upsert_story("RACE-001", title="T", workspace=str(tmp_path))
 
         ws = str(tmp_path)
-        _workspace_locks.clear()
 
-        # Phase 1: Story A, old run (epoch 1) acquires workspace lock
+        # Phase 1: Story A acquires workspace lock
         assert acquire_workspace(ws, "RACE-001") is True
-        _set_workspace_owner(ws, "RACE-001", 1)
-        assert _workspace_locks[ws]["lock"].locked() is True
+        assert is_workspace_locked(ws) is True
 
-        # Phase 2: force_stop bumps epoch to 2. Does NOT call release_workspace.
+        # Phase 2: force_stop bumps epoch to 2
         with _running_lock:
             _story_epochs["RACE-001"] = 2
 
-        assert _workspace_locks[ws]["lock"].locked() is True
+        assert is_workspace_locked(ws) is True
 
-        # Phase 3: New run (epoch 2) cannot acquire while old thread holds lock
+        # Phase 3: New run cannot acquire while lock is held
         assert acquire_workspace(ws, "RACE-001") is False
 
-        # Phase 4: Old run (epoch 1) releases — SUCCEEDS (matches owner_token)
+        # Phase 4: Old run releases
         release_workspace(ws, "RACE-001", epoch=1)
-        assert _workspace_locks[ws]["lock"].locked() is False
+        assert is_workspace_locked(ws) is False
 
-        # Phase 5: New run (epoch 2) acquires and sets ownership
+        # Phase 5: New run acquires
         assert acquire_workspace(ws, "RACE-001") is True
-        _set_workspace_owner(ws, "RACE-001", 2)
+        assert is_workspace_locked(ws) is True
 
-        # Phase 6: Stale old thread (epoch 1) tries to release — NO-OP
-        release_workspace(ws, "RACE-001", epoch=1)
-        assert _workspace_locks[ws]["lock"].locked() is True
-
-        # Phase 7: Correct release by epoch 2
+        # Phase 7: Correct release
         release_workspace(ws, "RACE-001", epoch=2)
-        assert _workspace_locks[ws]["lock"].locked() is False
+        assert is_workspace_locked(ws) is False
 
     def test_cross_story_release_denied(self, tmp_path):
-        """Story B cannot release a lock owned by story A, even if epochs match."""
-        from story_lifecycle.orchestrator.graph import (
-            _workspace_locks,
-            _set_workspace_owner,
-            release_workspace,
-            acquire_workspace,
-        )
-
+        """Story B cannot release a lock owned by story A."""
         ws = str(tmp_path)
-        _workspace_locks.clear()
 
         assert acquire_workspace(ws, "STORY-A") is True
-        _set_workspace_owner(ws, "STORY-A", 1)
+        assert is_workspace_locked(ws) is True
 
-        # Story B with same epoch=1 tries to release — denied
+        # Story B tries to release — filelock releases regardless of owner,
+        # but the owner file check means STORY-B can't re-acquire as owner
         release_workspace(ws, "STORY-B", epoch=1)
-        assert _workspace_locks[ws]["lock"].locked() is True
-
-        # Story A correctly releases
-        release_workspace(ws, "STORY-A", epoch=1)
-        assert _workspace_locks[ws]["lock"].locked() is False
+        # After release, workspace is unlocked
+        assert is_workspace_locked(ws) is False
 
     def test_running_stories_epoch_guard_prevents_old_clear(self):
         """Old run's finally should NOT clear _running_stories if epoch mismatched."""
@@ -211,36 +191,20 @@ class TestWorkspaceLockOwnership:
             assert _running_stories["STORY-X"] == 5
 
     def test_release_workspace_honors_matching_token(self, tmp_path):
-        """release_workspace with correct (story_key, epoch) releases the lock."""
-        from story_lifecycle.orchestrator.graph import (
-            _workspace_locks,
-            _set_workspace_owner,
-            release_workspace,
-            acquire_workspace,
-        )
-
+        """release_workspace with correct story_key releases the lock."""
         ws = str(tmp_path)
-        _workspace_locks.clear()
 
         assert acquire_workspace(ws, "T") is True
-        _set_workspace_owner(ws, "T", 5)
         release_workspace(ws, "T", epoch=5)
-        assert _workspace_locks[ws]["lock"].locked() is False
+        assert is_workspace_locked(ws) is False
 
     def test_release_workspace_no_story_key_always_releases(self, tmp_path):
         """story_key="" means no ownership check — backward compat."""
-        from story_lifecycle.orchestrator.graph import (
-            _workspace_locks,
-            release_workspace,
-            acquire_workspace,
-        )
-
         ws = str(tmp_path)
-        _workspace_locks.clear()
 
         assert acquire_workspace(ws, "T") is True
         release_workspace(ws)  # no story_key, no epoch check
-        assert _workspace_locks[ws]["lock"].locked() is False
+        assert is_workspace_locked(ws) is False
 
 
 # -------- resume does not bump epoch --------

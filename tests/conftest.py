@@ -11,14 +11,44 @@ import story_lifecycle.orchestrator.nodes.profile_loader as _pl
 @pytest.fixture(autouse=True)
 def _reset_graph_globals():
     """Clear in-process graph state before and after every test."""
-    graph._workspace_locks.clear()
+    # Release any file locks held by this process
+    import glob as glob_mod
+
+    for lock_file in glob_mod.glob(str(graph._workspace_locks_dir / "*.lock")):
+        try:
+            from filelock import FileLock
+
+            lock = FileLock(lock_file, timeout=0)
+            if lock.is_locked:
+                lock.release()
+        except Exception:
+            pass
+    # Clear in-process workspace locks
+    for ws, lock in list(graph._ws_inproc_locks.items()):
+        if lock.locked():
+            lock.release()
+    graph._ws_inproc_locks.clear()
+    graph._ws_file_locks.clear()
     with graph._running_lock:
         graph._running_stories.clear()
         graph._story_epochs.clear()
     # Reset compiled graph cache to avoid stale state leaking between tests
     graph._compiled_graph = None
     yield
-    graph._workspace_locks.clear()
+    for lock_file in glob_mod.glob(str(graph._workspace_locks_dir / "*.lock")):
+        try:
+            from filelock import FileLock
+
+            lock = FileLock(lock_file, timeout=0)
+            if lock.is_locked:
+                lock.release()
+        except Exception:
+            pass
+    for ws, lock in list(graph._ws_inproc_locks.items()):
+        if lock.locked():
+            lock.release()
+    graph._ws_inproc_locks.clear()
+    graph._ws_file_locks.clear()
     with graph._running_lock:
         graph._running_stories.clear()
         graph._story_epochs.clear()
