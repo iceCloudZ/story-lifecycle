@@ -1,70 +1,58 @@
-import { useState } from 'react'
-import { useStories } from './hooks/useWebSocket'
-import StoryList from './components/StoryList'
-import StoryDetail from './components/StoryDetail'
-import TerminalPanel from './components/TerminalPanel'
+import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useStoryWebSocket } from './hooks/useWebSocket'
+import Dashboard from './pages/Dashboard'
+import StoryDetailPage from './pages/StoryDetailPage'
+import QualityDashboard from './pages/QualityDashboard'
+import DiagnosticsPage from './pages/DiagnosticsPage'
 import './App.css'
 
-type Tab = 'detail' | 'terminal'
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5000,
+      retry: 1,
+    },
+  },
+})
 
-function App() {
-  const { stories, connected } = useStories()
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('detail')
-
-  function handleSelect(key: string) {
-    setSelectedKey(key)
-    setTab('detail')
-  }
+function AppContent() {
+  useStoryWebSocket()
 
   return (
     <div className="app">
       <header className="header">
-        <h1>Story Lifecycle</h1>
-        <div className="header-status">
-          <span className={`ws-dot ${connected ? 'connected' : 'disconnected'}`} />
-          <span>{connected ? '已连接' : '断开连接'}</span>
-          <span className="story-count">{stories.length} 个 Story</span>
-        </div>
+        <h1 className="header-title">Story Lifecycle</h1>
+        <nav className="header-nav">
+          <NavLink to="/" end className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+            Dashboard
+          </NavLink>
+          <NavLink to="/quality" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+            Quality
+          </NavLink>
+          <NavLink to="/diagnostics" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+            Diagnostics
+          </NavLink>
+        </nav>
       </header>
       <main className="main">
-        <StoryList
-          stories={stories}
-          selectedKey={selectedKey}
-          onSelect={handleSelect}
-        />
-        <aside className="right-panel">
-          {selectedKey && (
-            <div className="panel-tabs">
-              <button
-                className={`tab ${tab === 'detail' ? 'active' : ''}`}
-                onClick={() => setTab('detail')}
-              >
-                详情
-              </button>
-              <button
-                className={`tab ${tab === 'terminal' ? 'active' : ''}`}
-                onClick={() => setTab('terminal')}
-              >
-                终端
-              </button>
-            </div>
-          )}
-          <div className="panel-content">
-            {tab === 'detail' && selectedKey && (
-              <StoryDetail key={selectedKey} storyKey={selectedKey} />
-            )}
-            {tab === 'terminal' && (
-              <TerminalPanel storyKey={selectedKey} />
-            )}
-            {!selectedKey && (
-              <div className="no-selection">选择一个 Story 查看详情</div>
-            )}
-          </div>
-        </aside>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/story/:key" element={<StoryDetailPage />} />
+          <Route path="/quality" element={<QualityDashboard />} />
+          <Route path="/diagnostics" element={<DiagnosticsPage />} />
+        </Routes>
       </main>
     </div>
   )
 }
 
-export default App
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AppContent />
+      </BrowserRouter>
+    </QueryClientProvider>
+  )
+}

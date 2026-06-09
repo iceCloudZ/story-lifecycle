@@ -1,4 +1,4 @@
-import type { StorySummary } from '../hooks/useWebSocket'
+import type { StorySummary } from '../store/storyStore'
 import './StoryList.css'
 
 const STATUS_LABELS: Record<string, string> = {

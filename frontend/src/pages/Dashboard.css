@@ -1,0 +1,157 @@
+.dashboard {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.dashboard-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.dashboard-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.create-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+}
+
+.create-form input,
+.create-form select {
+  padding: 6px 12px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  color: #e6edf3;
+  font-size: 13px;
+}
+
+.create-form input:focus,
+.create-form select:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+
+.story-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.empty-state {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 40px;
+  color: #8b949e;
+}
+
+.empty-state .hint {
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.empty-state code {
+  background: #21262d;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+/* Story Card v2 */
+.story-card-v2 {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.1s;
+}
+
+.story-card-v2:hover {
+  border-color: #58a6ff;
+  transform: translateY(-1px);
+}
+
+.card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.card-key {
+  font-weight: 600;
+  font-size: 14px;
+  color: #58a6ff;
+}
+
+.card-title {
+  color: #e6edf3;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.card-progress {
+  margin-bottom: 4px;
+}
+
+.progress-bar {
+  height: 4px;
+  background: #21262d;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #238636;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.progress-label {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.stage-done {
+  color: #3fb950;
+}
+
+.stage-pending {
+  color: #484f58;
+}
+
+.card-meta {
+  font-size: 12px;
+  color: #8b949e;
+}
+
+.card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.card-actions {
+  display: flex;
+  gap: 4px;
+}
