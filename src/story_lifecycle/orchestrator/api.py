@@ -437,6 +437,58 @@ def api_resume_parent(parent_key: str, req: ResumeParentRequest = None):
     return {"ok": True}
 
 
+# -------- Per-Story WebSocket --------
+
+
+_per_story_ws: dict[str, list[WebSocket]] = {}
+
+
+@app.websocket("/ws/story/{story_key}")
+async def ws_story(ws: WebSocket, story_key: str):
+    """Per-story WebSocket — granular real-time events for a single story."""
+    await ws.accept()
+    _per_story_ws.setdefault(story_key, []).append(ws)
+    try:
+        # Send initial state
+        s = db.get_story(story_key)
+        if s:
+            await ws.send_json(
+                {
+                    "type": "story_state",
+                    "data": {
+                        "storyKey": s["story_key"],
+                        "status": s["status"],
+                        "currentStage": s["current_stage"],
+                        "lastError": s.get("last_error"),
+                        "executionCount": s["execution_count"],
+                    },
+                }
+            )
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        clients = _per_story_ws.get(story_key, [])
+        if ws in clients:
+            clients.remove(ws)
+
+
+async def notify_per_story(story_key: str, msg: dict):
+    """Send a message to all WebSocket clients subscribed to a specific story."""
+    clients = _per_story_ws.get(story_key, [])
+    dead = []
+    for ws in clients:
+        try:
+            await ws.send_json(msg)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        clients.remove(ws)
+
+
 # -------- session / terminal --------
 
 
@@ -461,7 +513,295 @@ def health():
     return {"status": "ok", "version": "0.1.0"}
 
 
-# -------- observability / debug --------
+# -------- Timeline API (Task 3.1) --------
+
+
+@app.get("/api/story/{story_key}/timeline")
+def get_story_timeline(story_key: str):
+    """Return the complete stage timeline for a story.
+
+    Aggregates from stage_log + event_log to produce per-stage
+    status, duration, plan/review summaries, gate decisions,
+    loop rounds, and trajectory score.
+    """
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+
+    stage_logs = db.get_stage_logs(story_key, limit=200)
+    events = db.get_story_events(story_key)
+
+    # Group events by stage
+    events_by_stage: dict[str, list[dict]] = {}
+    for ev in events:
+        stage = ev.get("stage", "")
+        events_by_stage.setdefault(stage, []).append(ev)
+
+    # Build per-stage timeline entries
+    stages_seen: dict[str, dict] = {}
+    for sl in stage_logs:
+        stage = sl.get("stage", "")
+        if stage not in stages_seen:
+            stages_seen[stage] = {
+                "stage": stage,
+                "status": "",
+                "started_at": None,
+                "completed_at": None,
+                "duration_ms": None,
+                "plan_summary": "",
+                "review_summary": "",
+                "gate_decisions": [],
+                "loop_rounds": 0,
+                "trajectory_score": None,
+                "events": [],
+            }
+        entry = stages_seen[stage]
+        action = sl.get("action", "")
+        if action == "complete":
+            entry["status"] = "completed"
+            entry["completed_at"] = sl.get("created_at")
+        elif action == "retry":
+            entry["status"] = "retrying"
+        elif action == "skip":
+            entry["status"] = "skipped"
+            entry["completed_at"] = sl.get("created_at")
+        elif action == "fail":
+            entry["status"] = "failed"
+            entry["completed_at"] = sl.get("created_at")
+        elif action == "pause":
+            entry["status"] = "paused"
+        if not entry["started_at"]:
+            entry["started_at"] = sl.get("created_at")
+
+    # Fill from events
+    for stage, stage_events in events_by_stage.items():
+        if stage not in stages_seen:
+            stages_seen[stage] = {
+                "stage": stage,
+                "status": "active",
+                "started_at": None,
+                "completed_at": None,
+                "duration_ms": None,
+                "plan_summary": "",
+                "review_summary": "",
+                "gate_decisions": [],
+                "loop_rounds": 0,
+                "trajectory_score": None,
+                "events": [],
+            }
+        entry = stages_seen[stage]
+        for ev in stage_events:
+            ev_type = ev.get("event_type", "")
+            import json as _json
+
+            payload = ev.get("payload")
+            if isinstance(payload, str):
+                try:
+                    payload = _json.loads(payload)
+                except Exception:
+                    payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            if ev_type == "plan":
+                if payload.get("summary"):
+                    entry["plan_summary"] = payload["summary"]
+                if payload.get("trajectory_score") is not None:
+                    entry["trajectory_score"] = payload["trajectory_score"]
+                if payload.get("loop_rounds"):
+                    entry["loop_rounds"] = max(
+                        entry["loop_rounds"], payload["loop_rounds"]
+                    )
+            elif ev_type == "review":
+                if payload.get("summary"):
+                    entry["review_summary"] = payload["summary"]
+            elif ev_type == "gate_decision":
+                entry["gate_decisions"].append(payload)
+
+            # Key events summary
+            if ev_type in (
+                "plan",
+                "review",
+                "gate_decision",
+                "route_decision",
+                "node_error",
+                "validation_failure",
+            ):
+                entry["events"].append(
+                    {
+                        "event_type": ev_type,
+                        "created_at": ev.get("created_at"),
+                        "summary": payload.get("summary", payload.get("reason", ""))[
+                            :100
+                        ],
+                    }
+                )
+
+    # Compute duration for completed stages
+    for entry in stages_seen.values():
+        if entry["started_at"] and entry["completed_at"]:
+            try:
+                from datetime import datetime
+
+                start = datetime.fromisoformat(entry["started_at"])
+                end = datetime.fromisoformat(entry["completed_at"])
+                entry["duration_ms"] = int((end - start).total_seconds() * 1000)
+            except Exception:
+                pass
+
+    # Order stages by their first appearance in stage_logs
+    stage_order = []
+    for sl in reversed(stage_logs):
+        stage = sl.get("stage", "")
+        if stage and stage not in stage_order:
+            stage_order.append(stage)
+    stage_order.reverse()
+
+    # Add any stages only in events
+    for stage in stages_seen:
+        if stage and stage not in stage_order:
+            stage_order.append(stage)
+
+    result_stages = [stages_seen[s] for s in stage_order if s in stages_seen]
+
+    # Mark current stage
+    for entry in result_stages:
+        if entry["stage"] == s["current_stage"] and not entry["status"]:
+            entry["status"] = s["status"]
+
+    return {"story_key": story_key, "stages": result_stages}
+
+
+# -------- Gate History API (Task 3.2) --------
+
+
+@app.get("/api/story/{story_key}/gate-history")
+def get_gate_history(story_key: str):
+    """Return the gate decision chain for a story."""
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+
+    events = db.get_story_events(story_key)
+    decisions = []
+    for ev in events:
+        if ev.get("event_type") != "gate_decision":
+            continue
+        import json as _json
+
+        payload = ev.get("payload")
+        if isinstance(payload, str):
+            try:
+                payload = _json.loads(payload)
+            except Exception:
+                continue
+        if not isinstance(payload, dict):
+            continue
+        decisions.append(
+            {
+                "decision_id": payload.get("decision_id", ""),
+                "stage": ev.get("stage", ""),
+                "decision": payload.get("decision", ""),
+                "reason_code": payload.get("reason_code", ""),
+                "human_message": payload.get("human_message", ""),
+                "evidence": payload.get("evidence", {}),
+                "allowed_actions": payload.get("allowed_actions", []),
+                "created_at": ev.get("created_at", ""),
+            }
+        )
+
+    # Also include gate_result table entries
+    gate_results = db.get_gate_results(story_key, limit=100)
+    for gr in gate_results:
+        detail = gr.get("detail", "")
+        import json as _json2
+
+        try:
+            detail_data = _json2.loads(detail) if detail else {}
+        except Exception:
+            detail_data = {}
+        decisions.append(
+            {
+                "decision_id": detail_data.get("decision_id", ""),
+                "stage": gr.get("stage", ""),
+                "decision": gr.get("result", ""),
+                "reason_code": detail_data.get("reason_code", ""),
+                "human_message": "",
+                "evidence": {},
+                "allowed_actions": [],
+                "created_at": gr.get("created_at", ""),
+            }
+        )
+
+    return {"decisions": decisions}
+
+
+# -------- Loop Trace API (Task 3.3) --------
+
+
+@app.get("/api/story/{story_key}/loop-trace")
+def get_loop_trace(story_key: str):
+    """Return adversarial loop trace for a story."""
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+
+    events = db.get_story_events(story_key)
+
+    plan_rounds = []
+    code_rounds = []
+
+    for ev in events:
+        import json as _json
+
+        payload = ev.get("payload")
+        if isinstance(payload, str):
+            try:
+                payload = _json.loads(payload)
+            except Exception:
+                continue
+        if not isinstance(payload, dict):
+            continue
+
+        ev_type = ev.get("event_type", "")
+        stage = ev.get("stage", "")
+
+        # Plan loop rounds
+        if ev_type == "plan" and payload.get("adversarial_loop"):
+            plan_rounds.append(
+                {
+                    "stage": stage,
+                    "loop_rounds": payload.get("loop_rounds", 0),
+                    "loop_decision": payload.get("loop_decision", ""),
+                    "summary": payload.get("summary", "")[:200],
+                    "trajectory_score": payload.get("trajectory_score"),
+                    "created_at": ev.get("created_at", ""),
+                }
+            )
+
+        # Code review loop rounds
+        if ev_type == "review" and payload.get("adversarial_loop"):
+            code_rounds.append(
+                {
+                    "stage": stage,
+                    "loop_rounds": payload.get("loop_rounds", 0),
+                    "loop_decision": payload.get("loop_decision", ""),
+                    "quality": payload.get("quality", ""),
+                    "summary": payload.get("summary", "")[:200],
+                    "issues_count": payload.get("issues_count", 0),
+                    "trajectory_score": payload.get("trajectory_score"),
+                    "created_at": ev.get("created_at", ""),
+                }
+            )
+
+    return {
+        "story_key": story_key,
+        "plan_loop": {"rounds": plan_rounds},
+        "code_loop": {"rounds": code_rounds},
+    }
+
+
+# -------- Findings API enhancement (Task 3.4) --------
 
 
 @app.get("/api/story/{story_key}/debug")
@@ -487,8 +827,34 @@ def debug_story(story_key: str, limit: int = 50, event_type: str = ""):
 
 
 @app.get("/api/story/{story_key}/findings")
-async def get_findings(story_key: str):
+async def get_findings(
+    story_key: str,
+    status: str = "",
+    min_severity: str = "",
+):
+    """Return quality findings for a story with optional filters.
+
+    Query params:
+        status: Filter by finding status (open, accepted, fixed, verified, etc.)
+        min_severity: Minimum severity threshold (high, medium, low)
+    """
     findings = db.get_open_findings(story_key)
+
+    # If status filter is specified, get all findings not just open
+    if status and status != "open":
+        findings = db.get_findings_by_story(story_key)
+        findings = [f for f in findings if f.get("status") == status]
+
+    # Severity filter
+    severity_order = {"high": 3, "medium": 2, "low": 1}
+    if min_severity:
+        min_level = severity_order.get(min_severity, 0)
+        findings = [
+            f
+            for f in findings
+            if severity_order.get(f.get("severity", "low"), 0) >= min_level
+        ]
+
     return {"findings": findings}
 
 
@@ -556,7 +922,108 @@ async def reject_pattern_endpoint(pattern_id: str):
     return {"status": "rejected"}
 
 
-# -------- review feedback endpoints --------
+# -------- Dependency Graph API (Task 3.5) --------
+
+
+@app.get("/api/story/{story_key}/dependency-graph")
+def get_dependency_graph(story_key: str):
+    """Return sub-story DAG for a parent story."""
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+
+    nodes = []
+    edges = []
+
+    # Add parent node
+    nodes.append(
+        {
+            "key": story_key,
+            "status": s["status"],
+            "stage": s["current_stage"],
+            "title": s.get("title", ""),
+        }
+    )
+
+    # Add sub-story nodes
+    subs = db.get_sub_stories(story_key) or []
+    for sub in subs:
+        sub_key = sub["story_key"]
+        nodes.append(
+            {
+                "key": sub_key,
+                "status": sub["status"],
+                "stage": sub["current_stage"],
+                "title": sub.get("title", ""),
+                "sub_type": sub.get("sub_type", ""),
+            }
+        )
+        # Edge from parent to sub
+        edges.append({"from": story_key, "to": sub_key})
+
+    # Check for deeper sub-stories (2 levels)
+    for sub in subs:
+        sub_key = sub["story_key"]
+        deeper_subs = db.get_sub_stories(sub_key) or []
+        for ds in deeper_subs:
+            ds_key = ds["story_key"]
+            # Avoid duplicate nodes
+            if not any(n["key"] == ds_key for n in nodes):
+                nodes.append(
+                    {
+                        "key": ds_key,
+                        "status": ds["status"],
+                        "stage": ds["current_stage"],
+                        "title": ds.get("title", ""),
+                        "sub_type": ds.get("sub_type", ""),
+                    }
+                )
+            edges.append({"from": sub_key, "to": ds_key})
+
+    return {"nodes": nodes, "edges": edges}
+
+
+# -------- Patterns API enhancement (Task 3.7) --------
+
+
+@app.post("/api/patterns/{pattern_id}/approve")
+async def approve_pattern_endpoint_post(pattern_id: str):
+    """Approve and activate a proposed pattern."""
+    from .quality import approve_pattern, activate_pattern
+
+    p = db.get_learned_pattern(pattern_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail=f"Pattern not found: {pattern_id}")
+    if p["status"] != "proposed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pattern {pattern_id} is '{p['status']}', must be 'proposed'",
+        )
+
+    approve_pattern(pattern_id)
+    activate_pattern(pattern_id)
+    return {"status": "active"}
+
+
+@app.post("/api/patterns/{pattern_id}/reject")
+async def reject_pattern_endpoint_post(pattern_id: str):
+    """Reject a proposed pattern."""
+    from .quality import reject_pattern
+
+    p = db.get_learned_pattern(pattern_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail=f"Pattern not found: {pattern_id}")
+    if p["status"] != "proposed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pattern {pattern_id} is '{p['status']}', must be 'proposed'",
+        )
+
+    reject_pattern(pattern_id)
+    return {"status": "rejected"}
+
+
+# -------- observability / debug --------
 
 
 @app.post("/api/story/{story_key}/review-feedback")
