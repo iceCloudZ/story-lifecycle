@@ -120,16 +120,6 @@ def log_dod_check(state: dict, dod: dict) -> None:
     )
 
 
-def log_gate_decision(gate_decision: dict) -> None:
-    """Record a gate decision to event_log."""
-    db.log_event(
-        gate_decision.get("story_key", ""),
-        gate_decision.get("stage", ""),
-        "gate_decision",
-        gate_decision,
-    )
-
-
 # -------- debug query helpers (read-only) --------
 
 OBSERVABILITY_EVENT_TYPES = frozenset(

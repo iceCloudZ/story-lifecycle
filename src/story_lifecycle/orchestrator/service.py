@@ -143,11 +143,6 @@ def get_story_cli_model(story_key: str) -> dict:
         return {"cli": "claude", "model": "sonnet"}
 
 
-def pause_story(story_key: str):
-    """Pause an active story."""
-    db.update_story(story_key, status="paused")
-
-
 def fail_story(story_key: str, reason: str = "Manual fail"):
     """Mark a story as blocked."""
     db.update_story(story_key, status="blocked", last_error=reason)

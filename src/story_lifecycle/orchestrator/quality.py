@@ -151,8 +151,11 @@ def build_quality_packet(
                 selected_ids = [
                     s["pattern_id"] for s in rerank["data"].get("selected", [])
                 ]
-                patterns = [p for p in candidates if p["id"] in selected_ids]
-                pattern_mode = "llm_rerank"
+                reranked = [p for p in candidates if p["id"] in selected_ids]
+                # Fallback to tag overlap if LLM returns empty selection
+                if reranked:
+                    patterns = reranked
+                    pattern_mode = "llm_rerank"
             # else: keep tag overlap order
         except Exception:
             pass  # keep candidates as-is
@@ -235,11 +238,6 @@ def approve_pattern(pattern_id: str) -> None:
 def activate_pattern(pattern_id: str) -> None:
     """Activate an approved pattern. approved -> active."""
     db.update_learned_pattern(pattern_id, status="active")
-
-
-def deprecate_pattern(pattern_id: str) -> None:
-    """Deprecate an active pattern. active -> deprecated."""
-    db.update_learned_pattern(pattern_id, status="deprecated")
 
 
 def reject_pattern(pattern_id: str) -> None:

@@ -145,19 +145,3 @@ class RecoveryRecommendation(BaseModel):
     confidence: Literal["high", "medium", "low"] = "low"
     evidence: list[str] = Field(default_factory=list)
     human_message: str = ""
-
-
-# ── Review Feedback ──
-
-
-class CandidateFinding(BaseModel):
-    severity: Literal["high", "medium", "low"] = "medium"
-    category: str = "unknown"
-    description: str = ""
-    location: str = ""
-    recommendation: str = ""
-    confidence: Literal["high", "medium", "low"] = "medium"
-
-
-class FeedbackExtractionResult(BaseModel):
-    candidate_findings: list[CandidateFinding] = Field(default_factory=list)
