@@ -97,6 +97,7 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
     }
 
     _mock_targets = [
+        "story_lifecycle.orchestrator.nodes.graph_nodes.planner",
         "story_lifecycle.orchestrator.nodes.planner",
         "story_lifecycle.orchestrator.planner",
     ]
@@ -105,12 +106,11 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
         patch("story_lifecycle.orchestrator.tools.get_tool") as mock_get_tool,
         patch("story_lifecycle.orchestrator.nodes.ttyd") as mock_ttyd,
         patch("story_lifecycle.orchestrator.nodes.notify"),
-        patch("story_lifecycle.orchestrator.graph.emit_plan_done"),
-        patch("story_lifecycle.orchestrator.graph.emit_terminal_opened"),
-        patch(
-            "story_lifecycle.orchestrator.nodes.interrupt", side_effect=lambda x: None
-        ),
         patch.object(llm_router, "route", _demo_route),
+        patch(
+            "story_lifecycle.orchestrator.nodes.graph_nodes.llm_router.route",
+            _demo_route,
+        ),
     ):
         # Mock planner at both import sites
         mock_planners = []

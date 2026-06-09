@@ -390,9 +390,8 @@ def resume_story(story_key: str):
         if workspace:
             acquired = acquire_workspace(workspace, story_key)
 
-        config = {"configurable": {"thread_id": story_key}}
-        compiled = get_compiled_graph()
-        compiled.invoke(None, config)
+        # Use _run_story_impl which builds proper initial_state from DB
+        _run_story_impl(story_key, epoch)
     except Exception:
         log.exception(f"resume_story failed for {story_key}")
     finally:
