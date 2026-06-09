@@ -1,18 +1,8 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
+import { useStoryStore } from '../store/storyStore'
 
-export interface StorySummary {
-  storyKey: string
-  title: string
-  currentStage: string
-  status: string
-  profile: string
-  executionCount: number
-  updatedAt: string
-}
-
-export function useStories() {
-  const [stories, setStories] = useState<StorySummary[]>([])
-  const [connected, setConnected] = useState(false)
+export function useStoryWebSocket() {
+  const { setStories, setConnected, updateStory } = useStoryStore()
   const wsRef = useRef<WebSocket | null>(null)
 
   const connect = useCallback(() => {
@@ -32,22 +22,27 @@ export function useStories() {
         if (msg.type === 'stories') {
           setStories(msg.data)
         } else if (msg.type === 'story_update') {
-          // Refresh full list on incremental update
+          const d = msg.data
+          updateStory(d.storyKey, {
+            status: d.status,
+            currentStage: d.currentStage,
+          })
+          // Also refresh full list for consistency
           fetch('/api/story')
-            .then(r => r.json())
+            .then((r) => r.json())
             .then(setStories)
             .catch(() => {})
         }
-      } catch {}
+      } catch {
+        /* ignore parse errors */
+      }
     }
 
     wsRef.current = ws
-  }, [])
+  }, [setStories, setConnected, updateStory])
 
   useEffect(() => {
     connect()
     return () => wsRef.current?.close()
   }, [connect])
-
-  return { stories, connected }
 }

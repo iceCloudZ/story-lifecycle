@@ -1,4 +1,4 @@
-"""Tests for TUI entry decision logic — .done helpers, action decider."""
+"""Tests for entry decision logic — .done helpers, action decider."""
 
 import tempfile
 import time
@@ -515,12 +515,11 @@ class TestEntryActionNotice:
 class TestBaseToolLaunchConstraint:
     """Lock down the constraint that _launch_in_session never calls
     ttyd.create_session and always falls back to launch_cli when no
-    healthy session exists."""
+    healthy session exists (adapter without headless support)."""
 
     def test_no_create_session_no_healthy_session(self, monkeypatch, tmp_path):
-        """When no session exists and TUI active, must call launch_cli — never create_session."""
+        """When no session exists and adapter has no headless, must call launch_cli."""
         import story_lifecycle.terminal.ttyd as ttyd_mod
-        import story_lifecycle.orchestrator.graph as graph_mod
         import story_lifecycle.orchestrator.tools.base as base_mod
         from story_lifecycle.orchestrator.tools.base import BaseTool
         from story_lifecycle.db import models as db_mod
@@ -543,9 +542,6 @@ class TestBaseToolLaunchConstraint:
         monkeypatch.setattr(ttyd_mod, "_MPLEX", None)
         monkeypatch.setattr(ttyd_mod, "zellij_execution_args", lambda *a, **kw: None)
 
-        # Simulate TUI mode so headless path is not taken
-        monkeypatch.setattr(graph_mod, "_tui_app", object())
-
         class FakeAdapter:
             def launch_cmd(self, model):
                 return "echo fake"
@@ -555,8 +551,6 @@ class TestBaseToolLaunchConstraint:
 
         monkeypatch.setattr(base_mod, "get_adapter", lambda n: FakeAdapter())
 
-        monkeypatch.setattr(graph_mod, "emit_terminal_opened", lambda k: None)
-        monkeypatch.setattr(graph_mod, "emit_terminal_request", lambda k, a: None)
         monkeypatch.setattr(db_mod, "log_event", lambda *a, **kw: None)
         monkeypatch.setattr(db_mod, "update_story", lambda *a, **kw: None)
 
@@ -574,60 +568,33 @@ class TestBaseToolLaunchConstraint:
         assert create_calls == [], "create_session must NOT be called"
         assert len(launch_cli_calls) == 1, "launch_cli must be called exactly once"
 
-    def test_zellij_foreground_request_when_available(self, monkeypatch, tmp_path):
-        """When Zellij available but no session, must emit terminal request."""
+    def test_headless_path_preferred_when_available(self, monkeypatch, tmp_path):
+        """When adapter supports headless, must use subprocess.run — never ttyd."""
         import story_lifecycle.terminal.ttyd as ttyd_mod
-        import story_lifecycle.orchestrator.graph as graph_mod
         import story_lifecycle.orchestrator.tools.base as base_mod
         from story_lifecycle.orchestrator.tools.base import BaseTool
         from story_lifecycle.db import models as db_mod
 
-        create_calls = []
-        launch_cli_calls = []
-        request_calls = []
+        ttyd_calls = []
 
         monkeypatch.setattr(ttyd_mod, "session_alive", lambda n: False)
         monkeypatch.setattr(
-            ttyd_mod, "create_session", lambda *a, **kw: create_calls.append(a)
-        )
-        monkeypatch.setattr(
-            ttyd_mod, "launch_cli", lambda *a, **kw: launch_cli_calls.append(a)
+            ttyd_mod, "launch_cli", lambda *a, **kw: ttyd_calls.append(a)
         )
         monkeypatch.setattr(ttyd_mod, "session_name", lambda k: f"s-{k}")
-        monkeypatch.setattr(ttyd_mod, "send_keys", lambda *a, **kw: None)
-        monkeypatch.setattr(ttyd_mod, "paste_text", lambda *a, **kw: None)
         monkeypatch.setattr(ttyd_mod, "_mplex_launched", set())
-        monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
-        monkeypatch.setattr(
-            ttyd_mod,
-            "zellij_execution_args",
-            lambda *a, **kw: [
-                "zellij",
-                "--session",
-                "s-T-3",
-                "--new-session-with-layout",
-                "/tmp/x.kdl",
-            ],
-        )
 
         class FakeAdapter:
             def launch_cmd(self, model):
                 return "echo fake"
 
+            def headless_launch_cmd(self, model, prompt):
+                return ["echo", "headless"]
+
             def switch_provider(self, p):
                 pass
 
         monkeypatch.setattr(base_mod, "get_adapter", lambda n: FakeAdapter())
-
-        # Simulate TUI running — _tui_app must be non-None
-        monkeypatch.setattr(graph_mod, "_tui_app", object())
-
-        monkeypatch.setattr(graph_mod, "emit_terminal_opened", lambda k: None)
-        monkeypatch.setattr(
-            graph_mod,
-            "emit_terminal_request",
-            lambda k, a: request_calls.append((k, a)),
-        )
         monkeypatch.setattr(db_mod, "log_event", lambda *a, **kw: None)
         monkeypatch.setattr(db_mod, "update_story", lambda *a, **kw: None)
 
@@ -638,19 +605,18 @@ class TestBaseToolLaunchConstraint:
             "current_stage": "design",
             "execution_count": 0,
         }
-        tool._launch_in_session(
+        result = tool._launch_in_session(
             state, {"adapter": "claude", "model": "sonnet"}, "prompt"
         )
 
-        assert create_calls == [], "create_session must NOT be called"
-        assert launch_cli_calls == [], "launch_cli must NOT be called with Zellij"
-        assert len(request_calls) == 1, "emit_terminal_request must be called"
-        assert request_calls[0][0] == "T-3"
+        assert ttyd_calls == [], "ttyd.launch_cli must NOT be called in headless mode"
+        assert result["last_error"] is None or "Headless CLI" in (
+            result.get("last_error") or ""
+        )
 
-    def test_injects_into_healthy_session(self, monkeypatch, tmp_path):
-        """When a healthy session exists, must inject via send_keys — no launch_cli."""
+    def test_injects_into_healthy_session_as_fallback(self, monkeypatch, tmp_path):
+        """When a healthy session exists and no headless, must inject via send_keys."""
         import story_lifecycle.terminal.ttyd as ttyd_mod
-        import story_lifecycle.orchestrator.graph as graph_mod
         import story_lifecycle.orchestrator.tools.base as base_mod
         from story_lifecycle.orchestrator.tools.base import BaseTool
         from story_lifecycle.db import models as db_mod
@@ -681,8 +647,6 @@ class TestBaseToolLaunchConstraint:
 
         monkeypatch.setattr(base_mod, "get_adapter", lambda n: FakeAdapter())
 
-        monkeypatch.setattr(graph_mod, "emit_terminal_opened", lambda k: None)
-        monkeypatch.setattr(graph_mod, "emit_terminal_request", lambda k, a: None)
         monkeypatch.setattr(db_mod, "log_event", lambda *a, **kw: None)
         monkeypatch.setattr(db_mod, "update_story", lambda *a, **kw: None)
 

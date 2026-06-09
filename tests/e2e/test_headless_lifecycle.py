@@ -154,7 +154,6 @@ class TestSubStoryWaitResume:
                     "adversarial": {"enabled": False},
                 },
             ),
-            patch("story_lifecycle.orchestrator.graph.emit_plan_done"),
         ):
             # Planner returns a split decision
             mock_planner.compress_context.return_value = None

@@ -43,11 +43,6 @@ dev = [
     "ruff>=0.11.0",
     "build>=1.0",
     "twine>=6.0",
-    "textual>=3.0",
-]
-
-tui = [
-    "textual>=3.0",
 ]
 
 [project.scripts]

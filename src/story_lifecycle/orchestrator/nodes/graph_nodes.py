@@ -10,7 +10,6 @@ import tempfile as _tf
 from pathlib import Path
 
 from langgraph.errors import GraphInterrupt
-from langgraph.types import interrupt
 
 from ...db import models as db
 from ...terminal import ttyd
@@ -45,6 +44,72 @@ from .prompt_renderer import (
 )
 
 
+def _apply_gate_decision(
+    state: StoryState,
+    gd,  # GateDecision
+    stage: str,
+    *,
+    review_summary: str = "",
+    write_report: bool = True,
+    pre_route: bool = False,
+) -> StoryState:
+    """Apply a GateDecision to state, DB, and optionally write report.
+
+    Consolidates 4 duplicate patterns in review_stage_node.
+    """
+    from ..gate import write_gate_report
+
+    state["last_error"] = gd.human_message
+    if review_summary:
+        state["review_summary"] = review_summary
+    state["_gate_decision"] = gd.to_dict()
+    db.log_event(state["story_key"], stage, "gate_decision", gd.to_dict())
+    db.update_story(state["story_key"], last_error=gd.human_message)
+    if write_report:
+        try:
+            write_gate_report(gd, state["workspace"])
+        except Exception:
+            pass
+    if pre_route:
+        state["_pre_routed_action"] = "wait_confirm"
+    return state
+
+
+def _sync_story_source(state: StoryState, key: str, stage: str, ctx: dict) -> None:
+    """Sync context to external story source.
+
+    Consolidates 2 duplicate patterns in advance_node.
+    """
+    story_rec = db.get_story(key)
+    if not story_rec:
+        return
+    source_type = story_rec.get("source_type")
+    source_id = story_rec.get("source_id")
+    if not source_type or not source_id:
+        return
+    try:
+        from ...sources import get_source
+
+        source = get_source(source_type)
+        if source:
+            # Read done data if available
+            workspace = state.get("workspace", "")
+            done_path = (
+                Path(workspace) / ".story-done" / f"{stage}.json" if workspace else None
+            )
+            if done_path and done_path.exists():
+                try:
+                    raw = done_path.read_text(encoding="utf-8")
+                    done_data = robust_json_parse(raw)
+                    if done_data:
+                        ctx["done_data"] = done_data
+                except Exception:
+                    pass
+            _try_sync_context(source, source_id, stage, ctx)
+    except Exception as e:
+        log.warning(f"Failed to sync context to {source_type}: {e}")
+
+
 def _rp(state: StoryState) -> dict:
     """Get resolved profile from state, or load it as fallback."""
     rp = state.get("_resolved_profile")
@@ -60,6 +125,98 @@ def _stage_cfg(state: StoryState, stage: str) -> dict:
     """Get resolved stage config from state's resolved profile."""
     rp = _rp(state)
     return rp.get("stages", {}).get(stage, {})
+
+
+def _write_plan_task_file(
+    state: StoryState,
+    plan: dict,
+    stage: str,
+    workspace: str,
+    cfg: dict,
+    *,
+    adversarial: bool = False,
+    loop_rounds: int = 0,
+    loop_decision: str = "",
+) -> StoryState:
+    """Write plan task file to disk and update state.
+
+    Shared by adversarial loop path and normal planner fallback.
+    """
+    story_key = state["story_key"]
+    pf = plan_file(workspace, story_key, stage)
+    pf.parent.mkdir(parents=True, exist_ok=True)
+
+    review_path = state.get("context", {}).get("review_path")
+    review_section = ""
+    if review_path:
+        rf = Path(workspace) / review_path
+        if rf.exists():
+            review_section = (
+                f"\n## 前序 Review 建议\n"
+                f"请先处理以下问题：\n{rf.read_text(encoding='utf-8')}"
+            )
+
+    # Build output hint (adversarial path includes expected_outputs signal)
+    output_hint = ""
+    if adversarial:
+        expected_outputs = cfg.get("expected_outputs", [])
+        done_path = f".story/done/{story_key}/{stage}.json"
+        output_example = {k: "..." for k in expected_outputs}
+        if expected_outputs:
+            import json as _json
+
+            output_hint = (
+                f"\n## 完成信号\n"
+                f"完成后必须写入 `{done_path}`，纯 JSON（不要 markdown 代码块）：\n"
+                f"```json\n{_json.dumps(output_example, ensure_ascii=False, indent=2)}\n```\n"
+            )
+
+    # Build constraints section (adversarial path includes extra constraints)
+    constraints_section = ""
+    if adversarial:
+        constraints_section = (
+            "## 约束\n"
+            "- 所有表名、字段名、类名必须以代码或数据库定义为准；未找到时标记为假设，不得写成已存在事实\n"
+            "- 如需澄清的需求点，写入 open_questions 字段，不要阻塞当前产出\n\n"
+        )
+
+    pf.write_text(
+        f"# 任务书: {stage}\n\n"
+        f"## 执行指令\n{plan.get('extra_instructions', '')}\n"
+        f"{review_section}\n"
+        f"{constraints_section}"
+        f"## 配置\n"
+        f"- Adapter: {plan.get('adapter', 'claude')}\n"
+        f"- Provider: {plan.get('provider', 'deepseek')}\n"
+        f"- Model: {plan.get('model', 'sonnet')}\n\n"
+        f"{output_hint}"
+        f"## 决策理由\n{plan.get('reasoning', '')}\n\n"
+        f"## 路径评分\n"
+        f"当前路径评分: {plan.get('trajectory_score', 'N/A')}/1.0",
+        encoding="utf-8",
+    )
+
+    state["plan_summary"] = plan.get("summary", "")
+    state["trajectory_score"] = plan.get("trajectory_score")
+    state["context"]["plan_path"] = str(pf.relative_to(workspace))
+    state["context"]["plan_summary"] = plan.get("summary", "")
+    state["plan"] = plan
+
+    event_data = {
+        "adapter": plan.get("adapter"),
+        "summary": plan.get("summary", "")[:100],
+        "trajectory_score": plan.get("trajectory_score"),
+    }
+    if adversarial:
+        event_data.update(
+            {
+                "adversarial_loop": True,
+                "loop_rounds": loop_rounds,
+                "loop_decision": loop_decision,
+            }
+        )
+    db.log_event(story_key, stage, "plan", event_data)
+    return state
 
 
 def _try_sync_context(source, source_id: str, stage: str, context: dict):
@@ -129,7 +286,6 @@ def plan_stage_node(state: StoryState) -> StoryState:
         profile_cfg = _rp(state)
         adv_cfg = AdversarialConfig.from_profile(profile_cfg)
         if adv_cfg.plan_loop_enabled(stage):
-            from ...orchestrator.graph import emit_plan_done
             from ..evaluator_loop import run_plan_loop
 
             adapters = ["claude"]
@@ -145,98 +301,35 @@ def plan_stage_node(state: StoryState) -> StoryState:
                 state["plan_summary"] = (
                     f"跳过: {loop_result.final_plan.get('reasoning', '')}"
                 )
-                emit_plan_done(story_key, state["plan_summary"])
                 return state
 
             # Pass with plan
             if loop_result.decision == "pass" and loop_result.final_plan:
                 plan = loop_result.final_plan
-                pf = plan_file(workspace, story_key, stage)
-                pf.parent.mkdir(parents=True, exist_ok=True)
-                review_path = state.get("context", {}).get("review_path")
-                review_section = ""
-                if review_path:
-                    rf = Path(workspace) / review_path
-                    if rf.exists():
-                        review_section = (
-                            f"\n## 前序 Review 建议\n"
-                            f"请先处理以下问题：\n{rf.read_text(encoding='utf-8')}"
-                        )
-                expected_outputs = cfg.get("expected_outputs", [])
-                done_path = f".story/done/{story_key}/{stage}.json"
-
-                output_example = {k: "..." for k in expected_outputs}
-                output_hint = ""
-                if expected_outputs:
-                    import json as _json
-
-                    output_hint = (
-                        f"\n## 完成信号\n"
-                        f"完成后必须写入 `{done_path}`，纯 JSON（不要 markdown 代码块）：\n"
-                        f"```json\n{_json.dumps(output_example, ensure_ascii=False, indent=2)}\n```\n"
-                    )
-
-                pf.write_text(
-                    f"# 任务书: {stage}\n\n"
-                    f"## 执行指令\n{plan.get('extra_instructions', '')}\n"
-                    f"{review_section}\n"
-                    f"## 约束\n"
-                    f"- 所有表名、字段名、类名必须以代码或数据库定义为准；未找到时标记为假设，不得写成已存在事实\n"
-                    f"- 如需澄清的需求点，写入 open_questions 字段，不要阻塞当前产出\n\n"
-                    f"## 配置\n"
-                    f"- 执行工具: {plan.get('adapter', 'claude')}\n"
-                    f"- 执行模型: {plan.get('model', 'default')}\n\n"
-                    f"{output_hint}\n"
-                    f"## 决策理由\n{plan.get('reasoning', '')}\n\n"
-                    f"## 路径评分\n"
-                    f"当前路径评分: {plan.get('trajectory_score', 'N/A')}/1.0",
-                    encoding="utf-8",
-                )
-                state["plan_summary"] = plan.get("summary", "")
-                state["trajectory_score"] = plan.get("trajectory_score")
-                state["context"]["plan_path"] = str(pf.relative_to(workspace))
-                state["context"]["plan_summary"] = plan.get("summary", "")
-                state["plan"] = plan
-                db.log_event(
-                    story_key,
+                return _write_plan_task_file(
+                    state,
+                    plan,
                     stage,
-                    "plan",
-                    {
-                        "adapter": plan.get("adapter"),
-                        "summary": plan.get("summary", "")[:100],
-                        "trajectory_score": plan.get("trajectory_score"),
-                        "adversarial_loop": True,
-                        "loop_rounds": loop_result.rounds,
-                        "loop_decision": loop_result.decision,
-                    },
+                    workspace,
+                    cfg,
+                    adversarial=True,
+                    loop_rounds=loop_result.rounds,
+                    loop_decision=loop_result.decision,
                 )
-                summary = plan.get("summary", "")
-                tool_info = (
-                    f"{plan.get('adapter', 'claude')} / {plan.get('model', 'sonnet')}"
-                )
-                plan_text = f"✓ {summary}  [dim]({tool_info})[/]"
-                emit_plan_done(story_key, plan_text)
-                return state
 
             # Non-pass decisions: route to wait_confirm
             if loop_result.decision in ("no_progress", "max_rounds", "fail"):
-                from ...orchestrator.graph import emit_plan_done
-
                 reason = f"Plan loop {loop_result.decision}: {loop_result.reason}"
                 state["plan_summary"] = reason
                 state["last_error"] = reason
                 state["_pre_routed_action"] = "wait_confirm"
-                emit_plan_done(story_key, f"⚠ {reason}", ok=False)
                 return state
     except Exception as e:
         log.warning(f"Adversarial plan loop failed, falling back to normal: {e}")
     # --- End adversarial plan loop ---
 
     try:
-        from ...orchestrator.graph import emit_plan_done, emit_plan_activity
-
         adapters = ["claude"]
-        emit_plan_activity(story_key, "正在分析需求，生成执行计划...")
         plan = planner.plan_stage(state, cfg, adapters)
 
         if plan.get("skip"):
@@ -253,58 +346,10 @@ def plan_stage_node(state: StoryState) -> StoryState:
         # Split into sub-stories
         if plan.get("split") and plan.get("subtasks"):
             _delegate_subtasks(state, plan)
-            emit_plan_done(story_key, state.get("plan_summary", ""))
             return state
 
         # Write plan task file
-        pf = plan_file(workspace, story_key, stage)
-        pf.parent.mkdir(parents=True, exist_ok=True)
-
-        review_path = state.get("context", {}).get("review_path")
-        review_section = ""
-        if review_path:
-            rf = Path(workspace) / review_path
-            if rf.exists():
-                review_section = (
-                    f"\n## 前序 Review 建议\n"
-                    f"请先处理以下问题：\n{rf.read_text(encoding='utf-8')}"
-                )
-
-        pf.write_text(
-            f"# 任务书: {stage}\n\n"
-            f"## 执行指令\n{plan.get('extra_instructions', '')}\n"
-            f"{review_section}\n\n"
-            f"## 配置\n"
-            f"- Adapter: {plan.get('adapter', 'claude')}\n"
-            f"- Provider: {plan.get('provider', 'deepseek')}\n"
-            f"- Model: {plan.get('model', 'sonnet')}\n\n"
-            f"## 决策理由\n{plan.get('reasoning', '')}\n\n"
-            f"## 路径评分\n"
-            f"当前路径评分: {plan.get('trajectory_score', 'N/A')}/1.0",
-            encoding="utf-8",
-        )
-
-        state["plan_summary"] = plan.get("summary", "")
-        state["trajectory_score"] = plan.get("trajectory_score")
-        state["context"]["plan_path"] = str(pf.relative_to(workspace))
-        state["context"]["plan_summary"] = plan.get("summary", "")
-        state["plan"] = plan
-
-        db.log_event(
-            story_key,
-            stage,
-            "plan",
-            {
-                "adapter": plan.get("adapter"),
-                "summary": plan.get("summary", "")[:100],
-                "trajectory_score": plan.get("trajectory_score"),
-            },
-        )
-        summary = plan.get("summary", "")
-        tool_info = f"{plan.get('adapter', 'claude')} / {plan.get('model', 'sonnet')}"
-        plan_text = f"✓ {summary}  [dim]({tool_info})[/]"
-        emit_plan_done(story_key, plan_text)
-        return state
+        return _write_plan_task_file(state, plan, stage, workspace, cfg)
     except GraphInterrupt:
         return state
     except Exception as e:
@@ -324,13 +369,6 @@ def plan_stage_node(state: StoryState) -> StoryState:
             action="block_for_planner",
             meta={"file_hint": str(STORY_HOME / "planner_error.log")},
         ).apply(state)
-        from ...orchestrator.graph import emit_plan_done
-
-        emit_plan_done(
-            story_key,
-            f"⚠ 规划失败 [{type(e).__name__}]",
-            ok=False,
-        )
         return _block_for_planner(
             state,
             f"Planner failed: {type(e).__name__}: {e}",
@@ -502,7 +540,7 @@ def _sync_done_outputs(state: StoryState, key: str, stage: str, data: dict):
 def _poll_done_file(
     state: StoryState, done_file: Path, key: str, stage: str, workspace: str
 ) -> dict:
-    """Poll for done file, check session/exit status, or interrupt."""
+    """Poll for done file, check session/exit status."""
     # Check done file
     if done_file.exists():
         data = _consume_done_file(done_file, state, key, stage)
@@ -541,20 +579,13 @@ def _poll_done_file(
         return state
 
     # Headless mode — CLI finished without producing done file
-    from ...orchestrator.graph import _tui_app
-
-    if _tui_app is None:
-        NodeError(
-            "execute_and_wait_node",
-            stage,
-            "Headless CLI completed without producing .done file",
-            error_type="HeadlessNoDoneFile",
-            action="set_last_error",
-        ).apply(state)
-        return state
-
-    # TUI mode — yield thread via interrupt
-    interrupt({"reason": "waiting_for_done_file", "stage": stage})
+    NodeError(
+        "execute_and_wait_node",
+        stage,
+        "Headless CLI completed without producing .done file",
+        error_type="HeadlessNoDoneFile",
+        action="set_last_error",
+    ).apply(state)
     return state
 
 
@@ -583,7 +614,6 @@ def review_stage_node(state: StoryState) -> StoryState:
         get_review_round_count,
         increment_review_round_count,
         GateDecision,
-        write_gate_report,
     )
 
     review_round_count = get_review_round_count(state.get("context", {}), stage)
@@ -618,18 +648,13 @@ def review_stage_node(state: StoryState) -> StoryState:
             retry_limit=retry_limit,
             evidence={"done_consumed": True},
         )
-        state["last_error"] = gd.human_message
-        state["review_summary"] = f"达到 review 重试上限 ({retry_limit} 轮)"
-        state["_gate_decision"] = gd.to_dict()
-        db.log_event(state["story_key"], stage, "gate_decision", gd.to_dict())
-        db.update_story(state["story_key"], last_error=gd.human_message)
-        try:
-            write_gate_report(gd, state["workspace"])
-        except Exception:
-            pass
-        if adv_cfg.code_loop_enabled(stage):
-            state["_pre_routed_action"] = "wait_confirm"
-        return state
+        return _apply_gate_decision(
+            state,
+            gd,
+            stage,
+            review_summary=f"达到 review 重试上限 ({retry_limit} 轮)",
+            pre_route=adv_cfg.code_loop_enabled(stage),
+        )
 
     # Gate 2: stale executor attempts
     if review_round_count == 0 and execution_count >= retry_limit:
@@ -648,20 +673,15 @@ def review_stage_node(state: StoryState) -> StoryState:
             retry_limit=retry_limit,
             evidence={"done_consumed": True},
         )
-        state["last_error"] = gd.human_message
-        state["review_summary"] = (
-            f"执行次数 ({execution_count}) 超过守护阈值但 review 尚未运行"
+        return _apply_gate_decision(
+            state,
+            gd,
+            stage,
+            review_summary=(
+                f"执行次数 ({execution_count}) 超过守护阈值但 review 尚未运行"
+            ),
+            pre_route=adv_cfg.code_loop_enabled(stage),
         )
-        state["_gate_decision"] = gd.to_dict()
-        db.log_event(state["story_key"], stage, "gate_decision", gd.to_dict())
-        db.update_story(state["story_key"], last_error=gd.human_message)
-        try:
-            write_gate_report(gd, state["workspace"])
-        except Exception:
-            pass
-        if adv_cfg.code_loop_enabled(stage):
-            state["_pre_routed_action"] = "wait_confirm"
-        return state
 
     # --- Adversarial code review loop ---
     try:
@@ -694,14 +714,13 @@ def review_stage_node(state: StoryState) -> StoryState:
                         "model": adv_cfg.resolve_reviewer_model("code"),
                     },
                 )
-                state["last_error"] = gd.human_message
-                state["review_summary"] = (
-                    f"Adversarial review failed: {loop_result.reason}"
+                return _apply_gate_decision(
+                    state,
+                    gd,
+                    stage,
+                    review_summary=f"Adversarial review failed: {loop_result.reason}",
+                    write_report=False,
                 )
-                state["_gate_decision"] = gd.to_dict()
-                db.log_event(state["story_key"], stage, "gate_decision", gd.to_dict())
-                db.update_story(state["story_key"], last_error=gd.human_message)
-                return state
 
             if loop_result.decision in ("wait_confirm", "no_progress"):
                 gd = GateDecision(
@@ -722,17 +741,13 @@ def review_stage_node(state: StoryState) -> StoryState:
                         "model": adv_cfg.resolve_reviewer_model("code"),
                     },
                 )
-                state["last_error"] = gd.human_message
-                state["review_summary"] = f"Adversarial review: {loop_result.reason}"
-                state["_gate_decision"] = gd.to_dict()
-                state["_pre_routed_action"] = "wait_confirm"
-                db.log_event(state["story_key"], stage, "gate_decision", gd.to_dict())
-                db.update_story(state["story_key"], last_error=gd.human_message)
-                try:
-                    write_gate_report(gd, state["workspace"])
-                except Exception:
-                    pass
-                return state
+                return _apply_gate_decision(
+                    state,
+                    gd,
+                    stage,
+                    review_summary=f"Adversarial review: {loop_result.reason}",
+                    pre_route=True,
+                )
 
             review = loop_result.final_review or {}
             _apply_review(
@@ -894,7 +909,7 @@ def _apply_review(
 
 def router_node(state: StoryState) -> dict:
     """Route to next action: advance, retry (→plan_stage), skip (→advance),
-    fail (→END), or wait_confirm (interrupt + →plan_stage)."""
+    fail (→END), or wait_confirm (→plan_stage)."""
     if _is_cancelled(state):
         return {"_next_action": "__end__"}
 
@@ -1095,7 +1110,11 @@ def _execute_action(state: StoryState, action: str, cfg: dict) -> dict:
 
 
 def _do_wait_confirm(state: StoryState, key: str, stage: str) -> dict:
-    """Pause for human confirmation with gate report + interrupt."""
+    """Pause for human confirmation with gate report.
+
+    Writes paused status to DB and returns — the API server or watchdog
+    will detect the paused state and wait for user action to resume.
+    """
     from ..gate import GateDecision, write_gate_report, gate_decision_from_state
 
     gd_dict = state.pop("_gate_decision", None)
@@ -1142,26 +1161,7 @@ def _do_wait_confirm(state: StoryState, key: str, stage: str) -> dict:
     state["last_error"] = gd.human_message
     _ws_notify(state, "paused")
 
-    # Yield thread — Watchdog or user action will resume
-    interrupt({"reason": "waiting_for_confirmation", "stage": stage})
-
-    # Resumed — check if user set status back to active
-    s = db.get_story(key)
-    if s and s["status"] == "active":
-        state["status"] = "active"
-        state["execution_count"] = 0
-        ctx = {}
-        try:
-            ctx = json.loads(s.get("context_json") or "{}")
-        except Exception:
-            pass
-        override = ctx.get("gate_override")
-        if override == "accept_risk_advance":
-            db.update_context(key, "gate_override", "")
-            state.pop("last_error", None)
-            state["_next_action"] = "advance"
-            return state
-
+    # Set next action so router sends story to plan_stage on resume
     state["_next_action"] = "plan_stage"
     return state
 
@@ -1256,62 +1256,19 @@ def advance_node(state: StoryState) -> StoryState:
                     source = get_source(source_type)
                     if source:
                         source.sync_status(source_id, "completed")
-                        _final_ctx = {}
-                        _final_ws = state.get("workspace", "")
-                        _done_path = (
-                            Path(_final_ws) / ".story-done" / f"{stage}.json"
-                            if _final_ws
-                            else None
-                        )
-                        if _done_path and _done_path.exists():
-                            try:
-                                raw = _done_path.read_text(encoding="utf-8")
-                                done_data = robust_json_parse(raw)
-                                if done_data:
-                                    _final_ctx["done_data"] = done_data
-                            except Exception:
-                                pass
-                        _try_sync_context(source, source_id, stage, _final_ctx)
                 except Exception as e:
                     log.warning(f"Failed to sync status to {source_type}: {e}")
+        _sync_story_source(state, key, stage, {})
         return state
 
     db.log_stage(key, stage, "complete", f"Advanced to {next_stage}")
     # Sync context to source on stage advance
-    _adv_story = db.get_story(key)
-    if _adv_story:
-        _adv_src_type = _adv_story.get("source_type")
-        _adv_src_id = _adv_story.get("source_id")
-        if _adv_src_type and _adv_src_id:
-            try:
-                from ...sources import get_source
-
-                _adv_source = get_source(_adv_src_type)
-                if _adv_source:
-                    _stage_ctx = {}
-                    if state.get("context", {}).get("plan_summary"):
-                        _stage_ctx["plan_summary"] = state["context"]["plan_summary"]
-                    if state.get("context", {}).get("review_summary"):
-                        _stage_ctx["review_summary"] = state["context"][
-                            "review_summary"
-                        ]
-                    workspace = state.get("workspace", "")
-                    done_path = (
-                        Path(workspace) / ".story-done" / f"{stage}.json"
-                        if workspace
-                        else None
-                    )
-                    if done_path and done_path.exists():
-                        try:
-                            raw = done_path.read_text(encoding="utf-8")
-                            done_data = robust_json_parse(raw)
-                            if done_data:
-                                _stage_ctx["done_data"] = done_data
-                        except Exception:
-                            pass
-                    _try_sync_context(_adv_source, _adv_src_id, stage, _stage_ctx)
-            except Exception as e:
-                log.warning(f"Failed to sync context on stage advance: {e}")
+    _stage_ctx = {}
+    if state.get("context", {}).get("plan_summary"):
+        _stage_ctx["plan_summary"] = state["context"]["plan_summary"]
+    if state.get("context", {}).get("review_summary"):
+        _stage_ctx["review_summary"] = state["context"]["review_summary"]
+    _sync_story_source(state, key, stage, _stage_ctx)
     db.update_story(key, current_stage=next_stage, status="active")
     notify("Story Lifecycle", f"Story {key}: {stage} 完成，进入 {next_stage}")
     _ws_notify(state, "active")

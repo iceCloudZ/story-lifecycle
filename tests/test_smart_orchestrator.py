@@ -385,13 +385,9 @@ class TestRouterNode:
                     "adversarial": {"enabled": False},
                 },
             ),
-            patch(
-                "story_lifecycle.orchestrator.nodes.graph_nodes.interrupt",
-                side_effect=lambda x: None,
-            ),
         ):
             result_state = router_node(state)
-        # After wait_confirm + interrupt, router routes back to plan_stage
+        # After wait_confirm, router routes back to plan_stage
         assert route_from_router(result_state) == "plan_stage"
 
     def test_retry_fatigue_fail(self):
@@ -473,7 +469,6 @@ class TestExecuteAndWaitNode:
         tool.execute.side_effect = _execute
         return tool
 
-    @patch("story_lifecycle.orchestrator.graph._tui_app", None)
     @patch("story_lifecycle.orchestrator.tools.get_tool")
     def test_reads_adapter_from_plan(self, mock_get_tool):
         mock_tool = self._mock_tool()
@@ -491,7 +486,6 @@ class TestExecuteAndWaitNode:
         assert tool_args["provider"] == "deepseek"
         assert tool_args["model"] == "opus"
 
-    @patch("story_lifecycle.orchestrator.graph._tui_app", None)
     @patch("story_lifecycle.orchestrator.tools.get_tool")
     def test_falls_back_to_profile_config(self, mock_get_tool):
         mock_tool = self._mock_tool()
@@ -502,7 +496,6 @@ class TestExecuteAndWaitNode:
 
         mock_tool.execute.assert_called_once()
 
-    @patch("story_lifecycle.orchestrator.graph._tui_app", None)
     @patch("story_lifecycle.orchestrator.tools.get_tool")
     def test_prepends_plan_file_to_prompt(self, mock_get_tool):
         mock_tool = self._mock_tool()
@@ -523,7 +516,6 @@ class TestExecuteAndWaitNode:
             tool_args = mock_tool.execute.call_args[0][1]
             assert "Task: Build API" in tool_args["prompt"]
 
-    @patch("story_lifecycle.orchestrator.graph._tui_app", None)
     @patch("story_lifecycle.orchestrator.tools.get_tool")
     def test_dispatches_skill_tool(self, mock_get_tool):
         mock_tool = self._mock_tool()
@@ -692,11 +684,7 @@ class TestGraphCompilation:
 
 class TestSubStoryDelegation:
     @patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner")
-    @patch(
-        "story_lifecycle.orchestrator.nodes.graph_nodes.interrupt",
-        side_effect=lambda x: None,
-    )
-    def test_split_creates_sub_stories(self, mock_interrupt, mock_planner):
+    def test_split_creates_sub_stories(self, mock_planner):
         mock_planner.compress_context.return_value = None
         mock_planner.plan_stage.return_value = {
             "split": True,

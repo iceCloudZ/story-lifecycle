@@ -113,15 +113,14 @@ def _get_version():
 
 @click.group(invoke_without_command=True)
 @click.version_option(version=_get_version(), message="%(prog)s %(version)s")
-@click.option("--serve", is_flag=True, help="Start API server instead of board")
-@click.option("--web", "web_board", is_flag=True, help="Launch web board in browser")
+@click.option("--serve", is_flag=True, help="Start API server without opening browser")
 @click.option("--host", default="127.0.0.1", help="Server bind address")
 @click.option("--port", default=8180, help="Server bind port")
 @click.option(
     "--fix", "fix_deps", is_flag=True, help="Auto-install missing dependencies"
 )
 @click.pass_context
-def cli(ctx, serve, web_board, host, port, fix_deps):
+def cli(ctx, serve, host, port, fix_deps):
     """Story Lifecycle Manager — AI-powered development workflow orchestrator."""
     _cleanup_broken_dists()
     _protect_config()
@@ -156,14 +155,11 @@ def cli(ctx, serve, web_board, host, port, fix_deps):
         run_doctor_fix(interactive=True)
         return
 
-    if web_board:
-        _run_web_board(host, port)
-        return
-
     if serve:
         _run_server(host, port)
         return
 
+    # Default: launch web board (open browser)
     if not _first_run_check():
         return
 
@@ -177,7 +173,7 @@ def cli(ctx, serve, web_board, host, port, fix_deps):
             run_setup()
             load_config_to_env()
 
-    _run_board()
+    _run_web_board(host, port)
 
 
 @cli.command()
@@ -392,37 +388,6 @@ def paths():
     from ..orchestrator.doctor_paths import run_doctor_paths
 
     run_doctor_paths()
-
-
-def _run_board():
-    """Launch the interactive TUI board."""
-    try:
-        from .tui import run_tui
-
-        run_tui()
-    except ImportError:
-        console.print("[yellow]textual not installed. Falling back to static mode.[/]")
-        from ..db import models as db
-
-        stories = db.list_active_stories()
-        if not stories:
-            console.print("[dim]No active stories. Press [[n]] to create one.[/]")
-        else:
-            from rich.table import Table
-
-            table = Table(title="Story Board")
-            table.add_column("Story", style="cyan")
-            table.add_column("Title", style="white")
-            table.add_column("Stage", style="green")
-            table.add_column("Status")
-            for s in stories:
-                table.add_row(
-                    s.get("story_key", ""),
-                    (s.get("title") or "")[:40],
-                    s.get("current_stage", ""),
-                    s.get("status", ""),
-                )
-            console.print(table)
 
 
 def _run_web_board(host, port):

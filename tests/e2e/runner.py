@@ -100,12 +100,6 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
             "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
             return_value=_profile_without_adversarial(),
         ),
-        patch("story_lifecycle.orchestrator.graph.emit_plan_done"),
-        patch("story_lifecycle.orchestrator.graph.emit_terminal_opened"),
-        patch(
-            "story_lifecycle.orchestrator.nodes.graph_nodes.interrupt",
-            side_effect=lambda x: None,
-        ),
     ):
         mock_planner.compress_context.return_value = None
 

@@ -1,0 +1,167 @@
+.diagnostics-page {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.diagnostics-page h2 {
+  margin: 0 0 20px;
+  font-size: 20px;
+}
+
+.diag-section {
+  margin-bottom: 20px;
+  padding: 14px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+}
+
+.diag-section h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.diag-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid #21262d;
+}
+
+.diag-item:last-child {
+  border-bottom: none;
+}
+
+.diag-label {
+  color: #8b949e;
+  font-size: 13px;
+}
+
+.diag-value {
+  font-weight: 500;
+  color: #e6edf3;
+}
+
+.diag-ok {
+  color: #3fb950;
+}
+
+.diag-warn {
+  color: #f0883e;
+}
+
+.diag-empty {
+  color: #8b949e;
+  font-size: 13px;
+}
+
+.story-diag {
+  padding: 14px;
+  margin-bottom: 10px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+}
+
+.diag-story-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.story-diag h4 {
+  margin: 0;
+  font-size: 15px;
+  color: #58a6ff;
+}
+
+.diag-stuck {
+  margin-bottom: 10px;
+}
+
+.stuck-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.stuck-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #3d2e00;
+  color: #f0883e;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.diag-events {
+  margin-bottom: 10px;
+}
+
+.events-timeline {
+  margin-top: 4px;
+}
+
+.diag-event {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  margin-bottom: 2px;
+}
+
+.ev-gate_decision { background: #1c1e40; }
+.ev-stage_error { background: #3d1f1f; }
+.ev-stage_complete { background: #0d2818; }
+
+.ev-type {
+  color: #d2a8ff;
+  min-width: 80px;
+  font-weight: 500;
+}
+
+.ev-stage {
+  color: #58a6ff;
+  min-width: 60px;
+}
+
+.ev-detail {
+  color: #c9d1d9;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ev-time {
+  color: #484f58;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.diag-state {
+  margin-top: 8px;
+}
+
+.diag-state summary {
+  cursor: pointer;
+  color: #8b949e;
+  font-size: 12px;
+}
+
+.diag-state pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #c9d1d9;
+  max-height: 300px;
+  overflow: auto;
+}
