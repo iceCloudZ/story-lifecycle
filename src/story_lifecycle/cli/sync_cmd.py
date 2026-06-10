@@ -11,7 +11,10 @@ console = Console()
 @click.option("--dry-run", is_flag=True, help="只显示会创建/更新哪些，不实际执行")
 @click.option("--status-only", is_flag=True, help="只更新现有 story 的 TAPD 状态")
 @click.option("--workspace", "-w", default=None, help="新 story 的工作区目录")
-def sync_cmd(dry_run, status_only, workspace):
+@click.option(
+    "--all", "-a", "fetch_all", is_flag=True, help="拉取全部需求/缺陷（忽略状态过滤）"
+)
+def sync_cmd(dry_run, status_only, workspace, fetch_all):
     """拉取 TAPD 待处理需求/缺陷，同步为本地 story。"""
     from ..db.models import init_db
     from ..sources.tapd_source import TapdSource
@@ -32,7 +35,7 @@ def sync_cmd(dry_run, status_only, workspace):
 
     source = TapdSource(config)
     try:
-        items = source.fetch_pending()
+        items = source.fetch_pending(fetch_all=fetch_all)
     except Exception as e:
         console.print(f"[red]TAPD 拉取失败: {e}[/]")
         raise SystemExit(1)
@@ -41,7 +44,8 @@ def sync_cmd(dry_run, status_only, workspace):
         console.print("[green]没有待处理的需求或缺陷。[/]")
         return
 
-    console.print(f"  拉取到 [cyan]{len(items)}[/] 个待处理项")
+    label = "全量" if fetch_all else "待处理"
+    console.print(f"  拉取到 [cyan]{len(items)}[/] 个{label}项")
 
     if dry_run:
         _show_dry_run(items)

@@ -1158,6 +1158,7 @@ class SyncRequest(BaseModel):
     workspace: str = ""
     dry_run: bool = False
     status_only: bool = False
+    fetch_all: bool = False
 
 
 @app.post("/api/sync/tapd")
@@ -1173,7 +1174,7 @@ def api_sync_tapd(req: SyncRequest):
 
     source = TapdSource(config)
     try:
-        items = source.fetch_pending()
+        items = source.fetch_pending(fetch_all=req.fetch_all)
     except Exception as e:
         raise HTTPException(502, f"TAPD fetch failed: {e}")
 

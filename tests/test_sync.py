@@ -141,3 +141,32 @@ class TestSyncService:
         result = sync_tapd([], workspace="/tmp/test-ws")
         assert result["created"] == 0
         assert result["updated"] == 0
+
+
+class TestTapdSourceFetchAll:
+    def test_fetch_all_overrides_status_filter(self):
+        from unittest.mock import patch
+
+        from story_lifecycle.sources.tapd_source import TapdSource
+
+        source = TapdSource(
+            {
+                "workspace_id": "12345",
+                "story_status": "open",
+                "bug_status": "new",
+            }
+        )
+
+        assert source.story_status_filter == "open"
+        assert source.bug_status_filter == "new"
+
+        with (
+            patch.object(source, "_fetch_stories", return_value=[]) as mock_s,
+            patch.object(source, "_fetch_bugs", return_value=[]) as mock_b,
+        ):
+            source.fetch_pending(fetch_all=True)
+            mock_s.assert_called_once()
+            mock_b.assert_called_once()
+
+        assert source.story_status_filter == "open"
+        assert source.bug_status_filter == "new"

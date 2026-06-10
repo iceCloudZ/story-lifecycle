@@ -24,12 +24,22 @@ class TapdSource(StorySource):
             "bug_status", "new,reopened,assigned,resolving"
         )
 
-    def fetch_pending(self) -> list[SourceItem]:
+    def fetch_pending(self, fetch_all: bool = False) -> list[SourceItem]:
         items = []
-        if self.story_status_filter:
-            items.extend(self._fetch_stories())
-        if self.bug_status_filter:
-            items.extend(self._fetch_bugs())
+        if fetch_all:
+            saved_story = self.story_status_filter
+            saved_bug = self.bug_status_filter
+            self.story_status_filter = "*"
+            self.bug_status_filter = "*"
+        try:
+            if self.story_status_filter:
+                items.extend(self._fetch_stories())
+            if self.bug_status_filter:
+                items.extend(self._fetch_bugs())
+        finally:
+            if fetch_all:
+                self.story_status_filter = saved_story
+                self.bug_status_filter = saved_bug
         return items
 
     def _fetch_stories(self) -> list[SourceItem]:
