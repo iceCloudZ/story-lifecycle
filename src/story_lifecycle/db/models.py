@@ -23,6 +23,12 @@ VALID_COLUMNS = frozenset(
         "sub_type",
         "source_type",
         "source_id",
+        "deadline",
+        "priority",
+        "owner",
+        "branches_json",
+        "tapd_status",
+        "tapd_url",
     }
 )
 
@@ -193,6 +199,18 @@ def init_db():
             )
         except sqlite3.OperationalError:
             pass
+        for col, default in [
+            ("deadline", "TEXT"),
+            ("priority", "TEXT"),
+            ("owner", "TEXT"),
+            ("branches_json", "TEXT DEFAULT '[]'"),
+            ("tapd_status", "TEXT"),
+            ("tapd_url", "TEXT"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE story ADD COLUMN {col} {default}")
+            except sqlite3.OperationalError:
+                pass
 
 
 # -------- CRUD helpers --------
@@ -494,6 +512,63 @@ def upsert_story(
                     subtask_index,
                 ),
             )
+
+
+def upsert_story_from_source(
+    source_type: str,
+    source_id: str,
+    title: str = "",
+    workspace: str = "",
+    profile: str = "minimal",
+    current_stage: str = "design",
+    status: str = "active",
+    deadline: str = "",
+    priority: str = "",
+    owner: str = "",
+    tapd_status: str = "",
+    tapd_url: str = "",
+) -> tuple[dict, bool]:
+    """Insert or update a story from an external source.
+    Returns (story_dict, was_created).
+    """
+    existing = find_by_source_id(source_type, source_id)
+    if existing:
+        updates = {}
+        if title:
+            updates["title"] = title
+        if deadline:
+            updates["deadline"] = deadline
+        if priority:
+            updates["priority"] = priority
+        if owner:
+            updates["owner"] = owner
+        if tapd_status:
+            updates["tapd_status"] = tapd_status
+        if tapd_url:
+            updates["tapd_url"] = tapd_url
+        if updates:
+            update_story(existing["story_key"], **updates)
+        return get_story(existing["story_key"]), False
+    else:
+        key = f"{source_type}-{source_id}"
+        create_story(
+            story_key=key,
+            title=title,
+            workspace=workspace or str(Path.cwd()),
+            profile=profile,
+            current_stage=current_stage,
+        )
+        update_story(
+            key,
+            source_type=source_type,
+            source_id=source_id,
+            deadline=deadline,
+            priority=priority,
+            owner=owner,
+            tapd_status=tapd_status,
+            tapd_url=tapd_url,
+        )
+        return get_story(key), True
 
 
 # -------- Finding helpers --------
