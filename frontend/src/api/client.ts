@@ -19,7 +19,7 @@ export async function apiAction(method: string, path: string): Promise<boolean> 
 export const storyApi = {
   list: () => fetchJSON<any[]>('/api/story'),
   get: (key: string) => fetchJSON<any>(`/api/story/${key}`),
-  create: (data: { key: string; title?: string; content?: string; profile?: string; workspace?: string }) =>
+  create: (data: { key: string; title?: string; content?: string; profile?: string; workspace?: string; autostart?: boolean }) =>
     fetchJSON<any>('/api/story', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   advance: (key: string) => apiAction('PUT', `/api/story/${key}/advance`),
   skip: (key: string, stage: string) => apiAction('PUT', `/api/story/${key}/skip/${stage}`),

@@ -8,6 +8,12 @@ export interface StorySummary {
   profile: string
   executionCount: number
   updatedAt: string
+  tapdType?: string
+  tapdStatus?: string
+  tapdUrl?: string
+  deadline?: string
+  owner?: string
+  priority?: string
 }
 
 interface StoryStore {

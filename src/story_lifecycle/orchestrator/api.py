@@ -43,6 +43,7 @@ class CreateStoryRequest(BaseModel):
     content: str = ""
     profile: str = "minimal"
     workspace: str = ""
+    autostart: bool = True
 
 
 class AdvanceRequest(BaseModel):
@@ -372,7 +373,8 @@ def create_story(req: CreateStoryRequest):
         prd_path=prd_path,
     )
 
-    start_story_async(story_key)
+    if req.autostart:
+        start_story_async(story_key)
 
     s = db.get_story(story_key)
     return JSONResponse(
@@ -1168,6 +1170,7 @@ def api_approvals():
 
 class SyncRequest(BaseModel):
     workspace: str = ""
+    autostart: bool = True
     dry_run: bool = False
     status_only: bool = False
     fetch_all: bool = False
