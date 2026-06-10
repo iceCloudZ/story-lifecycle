@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.0] - 2026-06-10
+
+### Added
+- Story 基础管理模块：TAPD 需求可视化与本地 story 同步
+- `story sync` CLI 命令 — 拉取 TAPD 待处理需求/缺陷同步为本地 story
+- `story list/show/advance/done` CLI 命令 — 查看、推进、完成 story
+- story 表扩展 6 字段（deadline/priority/owner/branches_json/tapd_status/tapd_url）
+- `SourceItem` 增加 `deadline` 字段 + TAPD 解析增强（提取 deadline/url）
+- `upsert_story_from_source()` — 按 source_type + source_id 幂等 upsert
+- Sync service 核心（dry_run/status_only 模式）
+- API 扩展：`GET /api/story` 逾期筛选 + 新字段、`POST /api/sync/tapd`、`GET /api/sync/tapd/status`
+- 全量回归测试（632 tests）
+
 ## [0.9.1] - 2026-06-10
 
 ### Added
