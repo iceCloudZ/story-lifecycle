@@ -14,6 +14,7 @@ class SourceItem:
     priority: str = ""
     owner: str = ""
     status: str = ""
+    deadline: str = ""
     parent_id: str | None = None
     extra: dict = field(default_factory=dict)
     fetched_at: float = 0.0

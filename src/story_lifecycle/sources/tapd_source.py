@@ -123,11 +123,13 @@ class TapdSource(StorySource):
             priority=raw.get("priority_label", ""),
             owner=raw.get("owner", ""),
             status=raw.get("status", ""),
+            deadline=raw.get("due_date", "") or raw.get("begin_date", ""),
             parent_id=None,
             extra={
                 "short_id": short_id,
                 "category": raw.get("category_name", ""),
                 "iteration_id": raw.get("iteration_id", ""),
+                "url": f"https://www.tapd.cn/{self._api.workspace_id}/prong/stories/view/{full_id}",
             },
             fetched_at=time.time(),
         )
@@ -142,7 +144,12 @@ class TapdSource(StorySource):
             priority=raw.get("priority_label", ""),
             owner=raw.get("current_owner", ""),
             status=raw.get("status", ""),
+            deadline=raw.get("deadline", ""),
             parent_id=raw.get("story_id", None),
-            extra={"severity": raw.get("severity", "")},
+            extra={
+                "severity": raw.get("severity", ""),
+                "url": f"https://www.tapd.cn/{self._api.workspace_id}/bugtrace/bugs/view?bug_id={raw.get('id', '')}",
+                "related_story_id": raw.get("story_id", ""),
+            },
             fetched_at=time.time(),
         )

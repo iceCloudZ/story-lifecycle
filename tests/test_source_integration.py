@@ -93,3 +93,30 @@ def test_derive_story_key_github():
         id="42", source="github", item_type="requirement", title="", description=""
     )
     assert _derive_story_key(gh_item) == "GH-42"
+
+
+class TestSourceItemDeadline:
+    def test_source_item_has_deadline_field(self):
+        from story_lifecycle.sources.base import SourceItem
+
+        item = SourceItem(
+            id="123",
+            source="tapd",
+            item_type="requirement",
+            title="Test",
+            description="desc",
+            deadline="2026-06-15",
+        )
+        assert item.deadline == "2026-06-15"
+
+    def test_source_item_deadline_defaults_empty(self):
+        from story_lifecycle.sources.base import SourceItem
+
+        item = SourceItem(
+            id="123",
+            source="tapd",
+            item_type="requirement",
+            title="Test",
+            description="desc",
+        )
+        assert item.deadline == ""
