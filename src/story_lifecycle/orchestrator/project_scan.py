@@ -103,6 +103,33 @@ _RELEASE_MARKERS: dict[str, str] = {
     "docker-compose.yaml": "docker_compose",
 }
 
+# K8s / Helm markers (per-repo scan)
+_K8S_MARKERS: list[tuple[str, str]] = [
+    ("k8s", "kubernetes"),
+    ("kubernetes", "kubernetes"),
+    ("helm", "helm"),
+    ("charts", "helm"),
+    ("Chart.yaml", "helm"),
+]
+
+# DB migration directory markers
+_DB_MIGRATION_MARKERS: list[str] = [
+    "db/migration",
+    "migrations",
+    "flyway",
+    "src/main/resources/db/migration",
+]
+
+# Nacos / config markers
+_CONFIG_MARKERS: list[tuple[str, str]] = [
+    ("nacos", "nacos"),
+    (".nacos", "nacos"),
+    ("application.yml", "spring_config"),
+    ("application.yaml", "spring_config"),
+    ("application.properties", "spring_config"),
+    ("bootstrap.yml", "spring_config"),
+]
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -458,6 +485,15 @@ def _detect_release_signals(ws: Path, repos: list[RepoInfo]) -> ReleaseProfile:
     for repo in repos:
         repo_path = ws / repo.relative_path
         for marker, sig_type in _RELEASE_MARKERS.items():
+            if (repo_path / marker).exists():
+                signals.append(ReleaseSignal(type=sig_type, value=repo.id))
+        for marker, sig_type in _K8S_MARKERS:
+            if (repo_path / marker).exists():
+                signals.append(ReleaseSignal(type=sig_type, value=repo.id))
+        for marker in _DB_MIGRATION_MARKERS:
+            if (repo_path / marker).is_dir():
+                signals.append(ReleaseSignal(type="db_migration", value=repo.id))
+        for marker, sig_type in _CONFIG_MARKERS:
             if (repo_path / marker).exists():
                 signals.append(ReleaseSignal(type=sig_type, value=repo.id))
 

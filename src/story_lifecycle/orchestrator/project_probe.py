@@ -146,6 +146,11 @@ def validate_probe_output(raw: str, workspace: str | Path) -> dict[str, Any]:
                     }
                 )
                 continue
+            if not ev_path.exists():
+                rejected.append(
+                    {"item": ev["path"], "reason": "evidence path does not exist"}
+                )
+                continue
             valid_evidence.append(ev)
 
         if not valid_evidence:

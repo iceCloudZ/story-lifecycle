@@ -369,4 +369,22 @@ def refresh_profile(workspace: str | Path) -> RefreshReport:
                         if report.status == "ok":
                             report.status = "drift"
 
+    # Detect newly added repos (shallow scan)
+    if profile.workspace_type in ("multi_repo",):
+        from .project_scan import _find_git_repos
+
+        current_git = {g.name for g in _find_git_repos(ws, max_depth=4)}
+        new_repos = current_git - current_repo_ids
+        for name in sorted(new_repos):
+            report.drift.append(
+                DriftItem(
+                    type="repo_added",
+                    repo_id=name,
+                    severity="warning",
+                    detail=f"New repo detected: {name}",
+                )
+            )
+            if report.status == "ok":
+                report.status = "drift"
+
     return report
