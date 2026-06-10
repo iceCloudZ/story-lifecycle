@@ -40,6 +40,7 @@ export default function Dashboard() {
     initialData: stories,
     refetchInterval: 10000,
   })
+  const allStories = fullList ?? []
 
   function handleCreate(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -73,7 +74,7 @@ export default function Dashboard() {
         <div className="dashboard-meta">
           <span className={`ws-dot ${connected ? 'connected' : 'disconnected'}`} />
           <span>{connected ? '已连接' : '断开连接'}</span>
-          <span className="story-count">{fullList.length} 个 Story</span>
+          <span className="story-count">{allStories.length} 个 Story</span>
           <button className="btn btn-primary" onClick={() => setShowCreate(!showCreate)}>
             新建 Story
           </button>
@@ -95,14 +96,14 @@ export default function Dashboard() {
       )}
 
       <div className="story-grid">
-        {fullList.map((s) => (
+        {allStories.map((s) => (
           <StoryCard
             key={s.storyKey}
             story={s}
             onAction={(a) => handleCardAction(s, a)}
           />
         ))}
-        {fullList.length === 0 && (
+        {allStories.length === 0 && (
           <div className="empty-state">
             <p>暂无活跃的 Story</p>
             <p className="hint">使用 <code>story create KEY</code> 或点击上方按钮创建</p>

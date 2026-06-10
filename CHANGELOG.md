@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.2] - 2026-06-10
+
+### Added
+- `tapd_type` 字段 — 三维度区分需求/缺陷/子任务
+- `story list -t` / `story calendar -t` — 按类型筛选
+- 默认隐藏已完成 story（resolved/rejected/closed），`--completed` 查看
+
+### Fixed
+- TAPD `due` 字段名修复（`due_date` → `due`），deadline 优先 `custom_field_40`（预计上线时间）
+- sync 按 `custom_field_25`（后端开发人员）过滤父需求，不再误拉非本人需求
+- 子任务只拉用户的 + 测试任务
+- 前端 ErrorBoundary 防白屏 + Dashboard undefined 兜底
+
 ## [0.10.1] - 2026-06-10
 
 ### Added

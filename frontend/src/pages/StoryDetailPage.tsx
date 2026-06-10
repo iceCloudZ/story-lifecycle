@@ -34,7 +34,7 @@ export default function StoryDetailPage() {
   const { key } = useParams<{ key: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const storyKey = key!
+  const storyKey = key ?? ''
 
   const { data: detail, refetch } = useQuery({
     queryKey: ['story', storyKey],
@@ -73,6 +73,8 @@ export default function StoryDetailPage() {
     enabled: !!detail,
   })
 
+  if (!storyKey) return <div className="loading">无效的 Story Key</div>
+
   if (!detail) return <div className="loading">加载中...</div>
 
   const actions = ACTIONS[detail.status] || []
@@ -81,7 +83,7 @@ export default function StoryDetailPage() {
     if (action.confirm && !window.confirm(action.confirm)) return
     let url = `/api/story/${storyKey}`
     if (action.path === '/skip/{stage}') {
-      url += `/skip/${detail.currentStage}`
+      url += `/skip/${detail?.currentStage}`
     } else if (action.path) {
       url += action.path
     }
@@ -344,7 +346,7 @@ function FindingsList({ findings }: { findings: any[] }) {
           <span className="finding-sev">[{f.severity.toUpperCase()}]</span>
           <span className="finding-cat">{f.category}</span>
           <span className="finding-desc">
-            {expandedId === f.id ? f.description : (f.description.length > 80 ? f.description.slice(0, 80) + '...' : f.description)}
+            {expandedId === f.id ? (f.description ?? '--') : (f.description?.length > 80 ? f.description.slice(0, 80) + '...' : (f.description ?? '--'))}
           </span>
           <span className="finding-status">{f.status}</span>
         </div>
