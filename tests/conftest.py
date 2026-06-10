@@ -66,6 +66,7 @@ def isolated_story_home(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "get_db_path", lambda: db_path)
     monkeypatch.setattr(graph, "checkpoint_db", checkpoint_path)
     monkeypatch.setattr(nodes_mod, "STORY_HOME", story_home)
+    monkeypatch.setenv("STORY_HOME", str(story_home))
 
     # Force load_profile to always use package built-in profiles,
     # preventing tests from accidentally loading repo-root .story/ profiles

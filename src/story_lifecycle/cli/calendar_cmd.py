@@ -16,12 +16,18 @@ WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "�
 
 @click.command("calendar")
 @click.option("--days", "-d", default=14, help="显示未来 N 天的 story（默认 14）")
-def calendar_cmd(days):
+@click.option(
+    "--type", "-t", "story_type", default=None, help="按类型筛选 (story/bug/subtask)"
+)
+@click.option(
+    "--completed", "show_completed", is_flag=True, help="显示已完成的 story（默认隐藏）"
+)
+def calendar_cmd(days, story_type, show_completed):
     """日历视图 — 按 deadline 展示近期 story。"""
     from ..db import models as db
 
     db.init_db()
-    stories = _load_stories_with_deadlines()
+    stories = _load_stories_with_deadlines(story_type, show_completed)
 
     if not stories:
         console.print("[dim]没有带截止日期的 story。[/]")
@@ -82,10 +88,20 @@ def calendar_cmd(days):
         console.print()
 
 
-def _load_stories_with_deadlines() -> list[dict]:
+def _load_stories_with_deadlines(
+    story_type: str = "", show_completed: bool = False
+) -> list[dict]:
     from ..db import models as db
 
     active = db.list_active_stories()
+
+    if story_type:
+        active = [s for s in active if s.get("tapd_type") == story_type]
+
+    if not show_completed:
+        COMPLETED_STATES = {"resolved", "rejected", "closed"}
+        active = [s for s in active if s.get("tapd_status") not in COMPLETED_STATES]
+
     return [s for s in active if s.get("deadline")]
 
 

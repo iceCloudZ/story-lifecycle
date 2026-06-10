@@ -29,6 +29,7 @@ VALID_COLUMNS = frozenset(
         "branches_json",
         "tapd_status",
         "tapd_url",
+        "tapd_type",
     }
 )
 
@@ -206,6 +207,7 @@ def init_db():
             ("branches_json", "TEXT DEFAULT '[]'"),
             ("tapd_status", "TEXT"),
             ("tapd_url", "TEXT"),
+            ("tapd_type", "TEXT DEFAULT 'story'"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE story ADD COLUMN {col} {default}")
@@ -527,6 +529,7 @@ def upsert_story_from_source(
     owner: str = "",
     tapd_status: str = "",
     tapd_url: str = "",
+    tapd_type: str = "story",
 ) -> tuple[dict, bool]:
     """Insert or update a story from an external source.
     Returns (story_dict, was_created).
@@ -546,6 +549,8 @@ def upsert_story_from_source(
             updates["tapd_status"] = tapd_status
         if tapd_url:
             updates["tapd_url"] = tapd_url
+        if tapd_type:
+            updates["tapd_type"] = tapd_type
         if updates:
             update_story(existing["story_key"], **updates)
         return get_story(existing["story_key"]), False
@@ -567,6 +572,7 @@ def upsert_story_from_source(
             owner=owner,
             tapd_status=tapd_status,
             tapd_url=tapd_url,
+            tapd_type=tapd_type,
         )
         return get_story(key), True
 

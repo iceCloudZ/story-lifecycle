@@ -20,7 +20,13 @@ console = Console()
 @click.option(
     "--all", "show_all", is_flag=True, help="显示所有状态（含 completed/failed）"
 )
-def list_cmd(status, overdue, show_all):
+@click.option(
+    "--type", "-t", "story_type", default=None, help="按类型筛选 (story/bug/subtask)"
+)
+@click.option(
+    "--completed", "show_completed", is_flag=True, help="显示已完成的 story（默认隐藏）"
+)
+def list_cmd(status, overdue, show_all, story_type, show_completed):
     """列出所有 story。"""
     from ..db import models as db
 
@@ -34,6 +40,14 @@ def list_cmd(status, overdue, show_all):
     if status:
         stories = [s for s in stories if s["status"] == status]
 
+    if story_type:
+        stories = [s for s in stories if s.get("tapd_type") == story_type]
+
+    # Hide completed (resolved/rejected/closed) by default
+    if not show_completed:
+        COMPLETED_STATES = {"resolved", "rejected", "closed"}
+        stories = [s for s in stories if s.get("tapd_status") not in COMPLETED_STATES]
+
     if overdue:
         from datetime import datetime, timezone
 
@@ -45,6 +59,7 @@ def list_cmd(status, overdue, show_all):
         return
 
     table = Table()
+    table.add_column("类型", max_width=6)
     table.add_column("KEY", style="cyan", max_width=20)
     table.add_column("标题", max_width=35)
     table.add_column("优先级", max_width=6)
@@ -77,7 +92,10 @@ def list_cmd(status, overdue, show_all):
             except ValueError:
                 pass
 
+        TYPE_LABELS = {"bug": "缺陷", "story": "需求", "subtask": "子任务"}
+        tapd_type = s.get("tapd_type", "")
         table.add_row(
+            TYPE_LABELS.get(tapd_type, tapd_type),
             s["story_key"],
             s.get("title", "")[:35],
             s.get("priority", "")[:6],

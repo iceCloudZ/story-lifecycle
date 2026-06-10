@@ -45,14 +45,16 @@ class TapdSource(StorySource):
     def _fetch_stories(self) -> list[SourceItem]:
         seen_ids: set[str] = set()
         results: list[SourceItem] = []
+        owner_name = self.owner.rstrip(";")
         statuses = [s.strip() for s in self.story_status_filter.split(",") if s.strip()]
         if not statuses or "*" in statuses:
-            statuses = [None]  # single pass without status filter
+            statuses = [None]
+
+        # Fetch ALL parent stories (unfiltered), then filter by custom_field_25
         for status in statuses:
             params = {
                 "entity_type": "stories",
-                "limit": 20,
-                "owner": self.owner,
+                "limit": 200,
                 "parent_id": "0",
             }
             if status:
@@ -60,10 +62,33 @@ class TapdSource(StorySource):
             raw_list = self._api.get_stories(params)
             for r in raw_list:
                 flat = r.get("Story", r)
+                # Only include stories where user is the backend developer
+                cf25 = flat.get("custom_field_25", "")
+                if owner_name not in cf25:
+                    continue
                 item = self._parse_story(flat)
                 if item.id not in seen_ids:
                     seen_ids.add(item.id)
                     results.append(item)
+
+        # Fetch child stories — only user's tasks + test tasks
+        for item in list(results):
+            try:
+                children = self._api.get_stories(
+                    {"entity_type": "stories", "parent_id": item.id, "limit": 50}
+                )
+                for r in children:
+                    flat = r.get("Story", r)
+                    child_owner = flat.get("owner", "")
+                    child_name = flat.get("name", "")
+                    if owner_name in child_owner or "测试" in child_name:
+                        child = self._parse_story(flat)
+                        if child.id not in seen_ids:
+                            seen_ids.add(child.id)
+                            results.append(child)
+            except Exception:
+                pass
+
         return results
 
     def _fetch_bugs(self) -> list[SourceItem]:
@@ -124,6 +149,9 @@ class TapdSource(StorySource):
             if len(full_id) > len(ws_id) + 3
             else full_id
         )
+        deadline = (
+            raw.get("custom_field_40", "") or raw.get("due", "") or raw.get("begin", "")
+        )
         return SourceItem(
             id=full_id,
             source="tapd",
@@ -133,13 +161,21 @@ class TapdSource(StorySource):
             priority=raw.get("priority_label", ""),
             owner=raw.get("owner", ""),
             status=raw.get("status", ""),
-            deadline=raw.get("due_date", "") or raw.get("begin_date", ""),
-            parent_id=None,
+            deadline=deadline,
+            parent_id=raw.get("parent_id") or None,
             extra={
                 "short_id": short_id,
                 "category": raw.get("category_name", ""),
                 "iteration_id": raw.get("iteration_id", ""),
                 "url": f"https://www.tapd.cn/{self._api.workspace_id}/prong/stories/view/{full_id}",
+                "due": raw.get("due", ""),
+                "begin": raw.get("begin", ""),
+                "expected_launch": raw.get("custom_field_40", ""),
+                "test_start": raw.get("custom_field_28", ""),
+                "dev_start": raw.get("custom_field_190", ""),
+                "progress": raw.get("progress", ""),
+                "effort": raw.get("effort", ""),
+                "effort_completed": raw.get("effort_completed", ""),
             },
             fetched_at=time.time(),
         )

@@ -245,6 +245,8 @@ def list_stories(
     status: str = "",
     overdue: bool = False,
     show_all: bool = False,
+    tapd_type: str = "",
+    show_completed: bool = False,
 ):
     """List stories with optional filters.
 
@@ -252,6 +254,8 @@ def list_stories(
         status: Filter by status (active, paused, completed, failed)
         overdue: Only show stories past their deadline
         show_all: Include completed/failed stories
+        tapd_type: Filter by type (story/bug/subtask)
+        show_completed: Show completed TAPD stories (default hides resolved/rejected/closed)
     """
     if show_all:
         stories = db.list_active_stories() + db.list_completed_stories(limit=100)
@@ -260,6 +264,13 @@ def list_stories(
 
     if status:
         stories = [s for s in stories if s["status"] == status]
+
+    if tapd_type:
+        stories = [s for s in stories if s.get("tapd_type") == tapd_type]
+
+    if not show_completed:
+        COMPLETED_STATES = {"resolved", "rejected", "closed"}
+        stories = [s for s in stories if s.get("tapd_status") not in COMPLETED_STATES]
 
     if overdue:
         from datetime import datetime, timezone
@@ -284,6 +295,7 @@ def list_stories(
                 "owner": s.get("owner"),
                 "tapdStatus": s.get("tapd_status"),
                 "tapdUrl": s.get("tapd_url"),
+                "tapdType": s.get("tapd_type"),
             }
             for s in stories
         ]
@@ -1200,10 +1212,12 @@ def api_sync_status():
 
 
 def _load_tapd_config() -> dict:
+    import os
     from pathlib import Path
     import yaml
 
-    config_file = Path.home() / ".story-lifecycle" / "config.yaml"
+    home = os.environ.get("STORY_HOME", str(Path.home() / ".story-lifecycle"))
+    config_file = Path(home) / "config.yaml"
     if not config_file.exists():
         return {}
     with open(config_file, encoding="utf-8") as f:

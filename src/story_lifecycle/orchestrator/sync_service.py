@@ -56,6 +56,14 @@ def sync_tapd(
         elif status_only:
             result["skipped"] += 1
         else:
+            # Determine tapd_type
+            if item.item_type == "bug":
+                tapd_type = "bug"
+            elif item.parent_id and item.parent_id != "0":
+                tapd_type = "subtask"
+            else:
+                tapd_type = "story"
+
             story, _ = db.upsert_story_from_source(
                 source_type=item.source,
                 source_id=item.id,
@@ -67,6 +75,7 @@ def sync_tapd(
                 owner=item.owner,
                 tapd_status=item.status,
                 tapd_url=item.extra.get("url", ""),
+                tapd_type=tapd_type,
             )
             result["created"] += 1
             log.info(f"Created story {story['story_key']} for {item.source}:{item.id}")
