@@ -142,6 +142,7 @@ def cli(ctx, serve, host, port, fix_deps):
             "show",
             "advance",
             "done",
+            "calendar",
         ):
             if not is_configured():
                 console.print(
@@ -384,6 +385,10 @@ cli.add_command(list_cmd)
 cli.add_command(show_cmd)
 cli.add_command(advance_cmd)
 cli.add_command(done_cmd)
+
+from .calendar_cmd import calendar_cmd  # noqa: E402
+
+cli.add_command(calendar_cmd)
 
 from .project import project  # noqa: E402
 
