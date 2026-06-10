@@ -241,8 +241,32 @@ def api_kill_pty(story_id: str):
 
 
 @app.get("/api/story")
-def list_stories():
-    stories = db.list_active_stories()
+def list_stories(
+    status: str = "",
+    overdue: bool = False,
+    show_all: bool = False,
+):
+    """List stories with optional filters.
+
+    Query params:
+        status: Filter by status (active, paused, completed, failed)
+        overdue: Only show stories past their deadline
+        show_all: Include completed/failed stories
+    """
+    if show_all:
+        stories = db.list_active_stories() + db.list_completed_stories(limit=100)
+    else:
+        stories = db.list_active_stories()
+
+    if status:
+        stories = [s for s in stories if s["status"] == status]
+
+    if overdue:
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        stories = [s for s in stories if s.get("deadline") and s["deadline"][:10] < now]
+
     return JSONResponse(
         [
             {
@@ -255,6 +279,11 @@ def list_stories():
                 "profile": s["profile"],
                 "executionCount": s["execution_count"],
                 "updatedAt": s["updated_at"],
+                "deadline": s.get("deadline"),
+                "priority": s.get("priority"),
+                "owner": s.get("owner"),
+                "tapdStatus": s.get("tapd_status"),
+                "tapdUrl": s.get("tapd_url"),
             }
             for s in stories
         ]
@@ -297,6 +326,14 @@ def get_story(story_key: str):
             "updatedAt": s["updated_at"],
             "parentKey": s.get("parent_key"),
             "subType": s.get("sub_type"),
+            "deadline": s.get("deadline"),
+            "priority": s.get("priority"),
+            "owner": s.get("owner"),
+            "branchesJson": s.get("branches_json", "[]"),
+            "tapdStatus": s.get("tapd_status"),
+            "tapdUrl": s.get("tapd_url"),
+            "sourceType": s.get("source_type"),
+            "sourceId": s.get("source_id"),
             "subs": sub_list,
         }
     )
@@ -1112,6 +1149,65 @@ def api_approvals():
     findings = db.get_all_pending_findings()
     db.enrich_findings_with_evidence(findings)
     return {"findings": findings}
+
+
+# -------- TAPD Sync API --------
+
+
+class SyncRequest(BaseModel):
+    workspace: str = ""
+    dry_run: bool = False
+    status_only: bool = False
+
+
+@app.post("/api/sync/tapd")
+def api_sync_tapd(req: SyncRequest):
+    """Trigger TAPD sync."""
+    from ..sources.tapd_source import TapdSource
+
+    config = _load_tapd_config()
+    if not config:
+        raise HTTPException(
+            400, "TAPD not configured. Add 'tapd' section to config.yaml."
+        )
+
+    source = TapdSource(config)
+    try:
+        items = source.fetch_pending()
+    except Exception as e:
+        raise HTTPException(502, f"TAPD fetch failed: {e}")
+
+    from .sync_service import sync_tapd
+
+    result = sync_tapd(
+        items,
+        workspace=req.workspace or ".",
+        dry_run=req.dry_run,
+        status_only=req.status_only,
+    )
+    return result
+
+
+@app.get("/api/sync/tapd/status")
+def api_sync_status():
+    """Get TAPD config status."""
+    config = _load_tapd_config()
+    return {
+        "configured": bool(config),
+        "workspace_id": config.get("workspace_id", ""),
+    }
+
+
+def _load_tapd_config() -> dict:
+    from pathlib import Path
+    import yaml
+
+    config_file = Path.home() / ".story-lifecycle" / "config.yaml"
+    if not config_file.exists():
+        return {}
+    with open(config_file, encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    return data.get("tapd", {})
 
 
 # -------- static frontend (must be last — catch-all mount) --------

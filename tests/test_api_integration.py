@@ -188,3 +188,69 @@ class TestDiagnosticsAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert "story" in data or "recentEvents" in data
+
+
+class TestSyncAPI:
+    def test_sync_status_unconfigured(self, api_client, isolated_story_home):
+        resp = api_client.get("/api/sync/tapd/status")
+        assert resp.status_code == 200
+        assert resp.json()["configured"] is False
+
+    def test_sync_tapd_unconfigured_returns_400(self, api_client, isolated_story_home):
+        resp = api_client.post("/api/sync/tapd", json={})
+        assert resp.status_code == 400
+
+
+class TestStoryListWithFilters:
+    def test_list_with_overdue_filter(self, api_client, isolated_story_home):
+        db.upsert_story_from_source(
+            source_type="tapd",
+            source_id="1001",
+            title="逾期需求",
+            deadline="2020-01-01",
+        )
+        db.upsert_story_from_source(
+            source_type="tapd",
+            source_id="1002",
+            title="未来需求",
+            deadline="2099-12-31",
+        )
+
+        resp = api_client.get("/api/story?overdue=true")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["title"] == "逾期需求"
+
+    def test_list_returns_new_fields(self, api_client, isolated_story_home):
+        db.upsert_story_from_source(
+            source_type="tapd",
+            source_id="1001",
+            title="带字段",
+            deadline="2026-06-15",
+            priority="高",
+            tapd_status="open",
+        )
+
+        resp = api_client.get("/api/story")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) >= 1
+        item = data[0]
+        assert item["deadline"] == "2026-06-15"
+        assert item["priority"] == "高"
+        assert item["tapdStatus"] == "open"
+
+    def test_story_detail_returns_new_fields(self, api_client, isolated_story_home):
+        db.upsert_story_from_source(
+            source_type="tapd",
+            source_id="1001",
+            title="详情测试",
+            tapd_status="progressing",
+        )
+
+        resp = api_client.get("/api/story/tapd-1001")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["tapdStatus"] == "progressing"
+        assert data["sourceType"] == "tapd"
