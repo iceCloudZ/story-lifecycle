@@ -1225,6 +1225,133 @@ def _load_tapd_config() -> dict:
     return data.get("tapd", {})
 
 
+# -------- Contact Reachability API --------
+
+
+class CheckReachabilityRequest(BaseModel):
+    contact_id: str
+    email: str = ""
+    phone: str = ""
+    occupation: str = ""
+    verify_with_provider: bool = False
+
+
+class BatchCheckReachabilityRequest(BaseModel):
+    contact_ids: list[str]
+    email: str = ""
+    phone: str = ""
+    occupation: str = ""
+    verify_with_provider: bool = False
+
+
+@app.post("/api/contact/check-reachability")
+async def check_reachability(req: CheckReachabilityRequest):
+    """Check contact reachability via local validators + optional third-party verification."""
+    from ..validators.contact_reachability import (
+        ContactReachabilityValidator,
+        save_reachability_result,
+    )
+
+    validator = ContactReachabilityValidator()
+    result = validator.validate(
+        contact_id=req.contact_id,
+        email=req.email,
+        phone=req.phone,
+        occupation=req.occupation,
+    )
+
+    provider_name = ""
+    local_check_only = True
+
+    if req.verify_with_provider:
+        local_check_only = False
+        try:
+            from ..contact_verification.service import create_default_service
+            from ..contact_verification.models import ContactType
+
+            svc = create_default_service()
+
+            if req.phone:
+                phone_result = await svc.verify_and_merge(ContactType.PHONE, req.phone)
+                if "phone" in result.channels:
+                    ch = result.channels["phone"]
+                    ch.detail += f" [第三方: {phone_result['provider_message']}]"
+                provider_name = phone_result.get("provider", "")
+
+            if req.email:
+                email_result = await svc.verify_and_merge(ContactType.EMAIL, req.email)
+                if "email" in result.channels:
+                    ch = result.channels["email"]
+                    ch.detail += f" [第三方: {email_result['provider_message']}]"
+                if not provider_name:
+                    provider_name = email_result.get("provider", "")
+        except Exception as e:
+            import logging
+
+            logging.getLogger("story-lifecycle").warning(
+                f"Third-party verification failed: {e}"
+            )
+
+    save_reachability_result(
+        result, local_check_only=local_check_only, provider_name=provider_name
+    )
+
+    resp = result.to_dict()
+    resp["third_party_verified"] = req.verify_with_provider
+    if provider_name:
+        resp["provider_name"] = provider_name
+    return JSONResponse(resp)
+
+
+@app.get("/api/contact/{contact_id}/reachability-history")
+def get_reachability_history(contact_id: str, limit: int = 10):
+    """Get recent reachability check history for a contact."""
+    from ..validators.contact_reachability import (
+        get_reachability_history as _get_history,
+    )
+
+    checks = _get_history(contact_id, limit=limit)
+    return {"checks": checks}
+
+
+@app.post("/api/contact/batch-check-reachability")
+async def batch_check_reachability(req: BatchCheckReachabilityRequest):
+    """Batch check reachability for multiple contacts."""
+    from ..validators.contact_reachability import (
+        ContactReachabilityValidator,
+        save_reachability_result,
+    )
+
+    validator = ContactReachabilityValidator()
+    results = {}
+
+    for contact_id in req.contact_ids:
+        result = validator.validate(
+            contact_id=contact_id,
+            email=req.email,
+            phone=req.phone,
+            occupation=req.occupation,
+        )
+
+        if req.verify_with_provider:
+            try:
+                from ..contact_verification.service import create_default_service
+                from ..contact_verification.models import ContactType
+
+                svc = create_default_service()
+                if req.phone:
+                    await svc.verify_and_merge(ContactType.PHONE, req.phone)
+                if req.email:
+                    await svc.verify_and_merge(ContactType.EMAIL, req.email)
+            except Exception:
+                pass
+
+        save_reachability_result(result, local_check_only=not req.verify_with_provider)
+        results[contact_id] = result.to_dict()
+
+    return JSONResponse({"results": results})
+
+
 # -------- static frontend (must be last — catch-all mount) --------
 
 _WEB_DIR = Path(__file__).parent.parent / "web"

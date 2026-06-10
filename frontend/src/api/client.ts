@@ -47,3 +47,13 @@ export const terminalApi = {
   kill: (storyKey: string) => apiAction('DELETE', `/api/pty/${storyKey}`),
   info: (storyKey: string) => fetchJSON<any>(`/api/session/terminal/${storyKey}`),
 }
+
+// Contact Reachability APIs
+export const contactApi = {
+  checkReachability: (data: { contact_id: string; email?: string; phone?: string; occupation?: string; verify_with_provider?: boolean }) =>
+    fetchJSON<any>('/api/contact/check-reachability', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
+  getHistory: (contactId: string, limit = 10) =>
+    fetchJSON<any>(`/api/contact/${contactId}/reachability-history?limit=${limit}`),
+  batchCheck: (data: { contact_ids: string[]; email?: string; phone?: string; occupation?: string; verify_with_provider?: boolean }) =>
+    fetchJSON<any>('/api/contact/batch-check-reachability', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
+}

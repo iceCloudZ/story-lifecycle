@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard'
 import StoryDetailPage from './pages/StoryDetailPage'
 import QualityDashboard from './pages/QualityDashboard'
 import DiagnosticsPage from './pages/DiagnosticsPage'
+import UserDetailPage from './pages/UserDetailPage'
 import './App.css'
 
 const queryClient = new QueryClient({
@@ -41,6 +42,7 @@ function AppContent() {
           <Route path="/story/:key" element={<StoryDetailPage />} />
           <Route path="/quality" element={<QualityDashboard />} />
           <Route path="/diagnostics" element={<DiagnosticsPage />} />
+          <Route path="/contact/:contactId" element={<UserDetailPage />} />
         </Routes>
       </main>
     </div>
