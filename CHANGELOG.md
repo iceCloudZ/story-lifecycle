@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.1] - 2026-06-10
+
+### Added
+- `story sync --all` — 拉取全部 TAPD 需求（不再限于待处理状态）
+- `story calendar` — 按 deadline 分组的日历视图，逾期/今天/近期颜色标记
+
 ## [0.10.0] - 2026-06-10
 
 ### Added
