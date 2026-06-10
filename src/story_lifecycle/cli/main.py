@@ -138,6 +138,10 @@ def cli(ctx, serve, host, port, fix_deps):
             "diagnostics",
             "project",
             "sync",
+            "list",
+            "show",
+            "advance",
+            "done",
         ):
             if not is_configured():
                 console.print(
@@ -373,6 +377,13 @@ cli.add_command(swebench_group)
 from .sync_cmd import sync_cmd  # noqa: E402
 
 cli.add_command(sync_cmd)
+
+from .list_cmd import list_cmd, show_cmd, advance_cmd, done_cmd  # noqa: E402
+
+cli.add_command(list_cmd)
+cli.add_command(show_cmd)
+cli.add_command(advance_cmd)
+cli.add_command(done_cmd)
 
 from .project import project  # noqa: E402
 
