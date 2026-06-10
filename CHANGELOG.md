@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.1] - 2026-06-10
+
+### Added
+- Web UI 全面演进：Dashboard、Story Detail、Terminal、Diagnostics、Quality 五大页面
+- Timeline、Gate History、Loop Trace、Findings、Dependency Graph、Per-Story Workspace、Patterns POST 等功能
+- Workspace lock 升级为 filelock，支持跨进程安全
+- v0.6–v0.8 引擎特性补齐（phase5 + phase6）
+
+### Changed
+- 移除 TUI，清理 `_tui_app` 耦合，重构 CLI 入口
+- 去重 `graph_nodes`，清理死代码，修复 quality_flywheel 测试
+
+### Fixed
+- Demo planner mock 修复，`resume_story` EmptyInputError 处理
+- 全量回归测试通过（611 tests）
+
 ## [0.9.0] - 2026-06-09
 
 ### Added
