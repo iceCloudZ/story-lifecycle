@@ -406,6 +406,14 @@ def resume_story(story_key: str):
 def start_story_async(story_key: str):
     import logging
 
+    story = db.get_story(story_key)
+    if story and story.get("intake_state") == "candidate":
+        log = logging.getLogger("story-lifecycle.graph")
+        log.info(
+            f"start_story_async: {story_key} is candidate, skipping (must promote to ready)"
+        )
+        return
+
     with _running_lock:
         if story_key in _running_stories:
             return
@@ -471,7 +479,9 @@ def resume_ready_interactive_stories() -> list[str]:
 
 def recover_orphan_stories():
     stories = [
-        story for story in db.list_active_stories() if story.get("status") == "active"
+        story
+        for story in db.list_active_stories()
+        if story.get("status") == "active" and story.get("intake_state") == "ready"
     ]
     for s in stories:
         resume_story_async(s["story_key"])

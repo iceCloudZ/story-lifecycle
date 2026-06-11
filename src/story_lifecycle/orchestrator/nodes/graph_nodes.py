@@ -1271,20 +1271,10 @@ def advance_node(state: StoryState) -> StoryState:
         notify("Story Lifecycle", f"Story {key}: 全部阶段完成")
         _ws_notify(state, "completed")
 
-        # Sync status to external source
-        story = db.get_story(key)
-        if story:
-            source_type = story.get("source_type")
-            source_id = story.get("source_id")
-            if source_type and source_id:
-                try:
-                    from ...sources import get_source
-
-                    source = get_source(source_type)
-                    if source:
-                        source.sync_status(source_id, "completed")
-                except Exception as e:
-                    log.warning(f"Failed to sync status to {source_type}: {e}")
+        # Log completion without auto-syncing to TAPD.
+        # TAPD status updates are intentionally NOT done here --
+        # that is a manual/scheduled operation to avoid usage exhaustion.
+        db.log_event(key, stage, "lifecycle_complete", {"action": "all_stages_done"})
         _sync_story_source(state, key, stage, {})
         return state
 

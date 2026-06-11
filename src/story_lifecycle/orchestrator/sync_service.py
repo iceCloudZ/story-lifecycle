@@ -76,6 +76,8 @@ def sync_tapd(
                 tapd_status=item.status,
                 tapd_url=item.extra.get("url", ""),
                 tapd_type=tapd_type,
+                intake_state="candidate",
+                status="idle",
             )
             result["created"] += 1
             log.info(f"Created story {story['story_key']} for {item.source}:{item.id}")

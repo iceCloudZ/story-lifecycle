@@ -449,6 +449,7 @@ def list_active_stories() -> list[dict]:
     with _db() as conn:
         rows = conn.execute(
             """SELECT * FROM story WHERE status IN ('active', 'paused', 'blocked', 'waiting_subtasks')
+               AND intake_state = 'ready'
                ORDER BY updated_at DESC"""
         ).fetchall()
     return [dict(r) for r in rows]
