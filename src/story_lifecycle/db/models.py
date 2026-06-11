@@ -407,8 +407,8 @@ def create_story(
     with _db() as conn:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         conn.execute(
-            """INSERT INTO story (story_key, title, workspace, profile, current_stage, status, created_at, updated_at, parent_key, subtask_index)
-               VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)""",
+            """INSERT INTO story (story_key, title, workspace, profile, current_stage, status, created_at, updated_at, parent_key, subtask_index, intake_state)
+               VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, 'ready')""",
             (
                 story_key,
                 title,

@@ -203,18 +203,20 @@ class TestSyncAPI:
 
 class TestStoryListWithFilters:
     def test_list_with_overdue_filter(self, api_client, isolated_story_home):
-        db.upsert_story_from_source(
+        story1, _ = db.upsert_story_from_source(
             source_type="tapd",
             source_id="1001",
             title="逾期需求",
             deadline="2020-01-01",
         )
-        db.upsert_story_from_source(
+        db.update_story(story1["story_key"], intake_state="ready", status="active")
+        story2, _ = db.upsert_story_from_source(
             source_type="tapd",
             source_id="1002",
             title="未来需求",
             deadline="2099-12-31",
         )
+        db.update_story(story2["story_key"], intake_state="ready", status="active")
 
         resp = api_client.get("/api/story?overdue=true")
         assert resp.status_code == 200
@@ -223,7 +225,7 @@ class TestStoryListWithFilters:
         assert data[0]["title"] == "逾期需求"
 
     def test_list_returns_new_fields(self, api_client, isolated_story_home):
-        db.upsert_story_from_source(
+        story, _ = db.upsert_story_from_source(
             source_type="tapd",
             source_id="1001",
             title="带字段",
@@ -231,6 +233,7 @@ class TestStoryListWithFilters:
             priority="高",
             tapd_status="open",
         )
+        db.update_story(story["story_key"], intake_state="ready", status="active")
 
         resp = api_client.get("/api/story")
         assert resp.status_code == 200

@@ -13,7 +13,7 @@ def runner():
 @pytest.fixture
 def seeded_db(isolated_story_home):
     db.init_db()
-    db.upsert_story_from_source(
+    s1, _ = db.upsert_story_from_source(
         source_type="tapd",
         source_id="1001",
         title="测试需求",
@@ -21,13 +21,16 @@ def seeded_db(isolated_story_home):
         priority="高",
         tapd_status="open",
     )
-    db.upsert_story_from_source(
+    db.update_story(s1["story_key"], intake_state="ready", status="active")
+    s2, _ = db.upsert_story_from_source(
         source_type="tapd",
         source_id="1002",
         title="已完成",
         status="completed",
     )
-    db.update_story("tapd-1002", status="completed", current_stage="done")
+    db.update_story(
+        s2["story_key"], intake_state="ready", status="completed", current_stage="done"
+    )
 
 
 class TestListCmd:

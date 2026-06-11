@@ -1260,6 +1260,371 @@ def _load_tapd_config() -> dict:
     return data.get("tapd", {})
 
 
+# -------- Context endpoints --------
+
+
+@app.get("/api/story/{story_key}/context")
+def api_get_context(story_key: str):
+    """Get full ContextBundle for a story."""
+    try:
+        from .context.resolver import ContextResolver
+
+        resolver = ContextResolver()
+        bundle = resolver.resolve(story_key)
+        errors = resolver.validate(bundle)
+        return {
+            "story": bundle.story,
+            "projects": bundle.projects,
+            "story_projects": bundle.story_projects,
+            "documents": bundle.documents,
+            "change_items": bundle.change_items,
+            "delivery_artifacts": bundle.delivery_artifacts,
+            "runtime_facts": bundle.runtime_facts,
+            "profile": bundle.profile,
+            "revision": bundle.revision,
+            "validation_errors": errors,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+class PutContextRequest(BaseModel):
+    revision: int
+    projects: list[dict] | None = None
+    documents: list[dict] | None = None
+    change_items: list[dict] | None = None
+
+
+@app.put("/api/story/{story_key}/context")
+def api_put_context(story_key: str, req: PutContextRequest):
+    """Update story context. Fails on revision conflict (409)."""
+    current_rev = db.get_context_revision(story_key)
+    if req.revision != current_rev:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "reasonCode": "context_revision_conflict",
+                "current_revision": current_rev,
+            },
+        )
+    # Apply updates
+    new_rev = db.bump_context_revision(story_key)
+    return {"ok": True, "revision": new_rev}
+
+
+@app.post("/api/story/{story_key}/context/refresh")
+def api_refresh_context(story_key: str):
+    """Trigger auto-discovery for a single story. Does NOT start AI."""
+    from .context.auto_discovery import Scanner, Decider, Handler
+
+    sps = db.get_story_projects(story_key)
+    scanner = Scanner()
+    decider = Decider()
+    handler = Handler()
+
+    results = []
+    for sp in sps:
+        project = db.get_project(sp["project_id"])
+        if not project:
+            continue
+        scan_result = scanner.scan(story_key, sp, project)
+        current_docs = _get_story_documents(story_key)
+        current_cis = _get_story_change_items(story_key)
+        mutation = decider.merge(current_docs, current_cis, scan_result)
+        if mutation.new_documents or mutation.new_change_items:
+            new_rev = handler.apply(story_key, mutation)
+            results.append(
+                {
+                    "project_id": sp["project_id"],
+                    "new_documents": len(mutation.new_documents),
+                    "new_change_items": len(mutation.new_change_items),
+                    "new_revision": new_rev,
+                }
+            )
+        else:
+            results.append(
+                {
+                    "project_id": sp["project_id"],
+                    "new_documents": 0,
+                    "new_change_items": 0,
+                }
+            )
+    return {"results": results}
+
+
+@app.get("/api/story/{story_key}/context/snapshot")
+def api_get_snapshot(story_key: str):
+    """Get the latest context snapshot content."""
+    from .context.snapshot import generate_snapshot
+
+    result = generate_snapshot(story_key)
+    snapshot_path = Path(result["snapshot_path"])
+    if snapshot_path.exists():
+        content = snapshot_path.read_text(encoding="utf-8")
+        return {
+            "path": str(snapshot_path),
+            "revision": result["revision"],
+            "content": content,
+        }
+    return {"path": str(snapshot_path), "revision": result["revision"], "content": ""}
+
+
+# -------- Project registry endpoints --------
+
+
+class CreateProjectRequest(BaseModel):
+    name: str
+    repo_path: str
+    default_branch: str = "main"
+    remote_url: str = ""
+
+
+@app.get("/api/projects")
+def api_list_projects():
+    """List all registered projects."""
+    return {"projects": db.list_projects()}
+
+
+@app.post("/api/projects")
+def api_create_project(req: CreateProjectRequest):
+    """Register a new project."""
+    from .project_registry import register_project
+
+    proj = register_project(
+        name=req.name,
+        repo_path=req.repo_path,
+        default_branch=req.default_branch,
+        remote_url=req.remote_url,
+    )
+    return proj
+
+
+class UpdateProjectRequest(BaseModel):
+    name: str | None = None
+    repo_path: str | None = None
+    default_branch: str | None = None
+    remote_url: str | None = None
+
+
+@app.put("/api/projects/{project_id}")
+def api_update_project(project_id: int, req: UpdateProjectRequest):
+    """Update a project."""
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="no fields to update")
+    from .project_registry import update_project
+
+    update_project(project_id, **updates)
+    return db.get_project(project_id)
+
+
+# -------- Worktree endpoints --------
+
+
+class WorktreePrepareRequest(BaseModel):
+    worktree_root: str = ""
+
+
+@app.post("/api/story/{story_key}/worktrees/prepare")
+def api_prepare_worktrees(
+    story_key: str, req: WorktreePrepareRequest = WorktreePrepareRequest()
+):
+    """Prepare worktrees for all project bindings of a story."""
+    from .worktree.handler import prepare_worktrees
+
+    results = prepare_worktrees(story_key, worktree_root=req.worktree_root)
+    return {"results": results}
+
+
+@app.get("/api/story/{story_key}/worktrees/cleanup-preview")
+def api_cleanup_preview(story_key: str):
+    """Preview worktree cleanup for a story."""
+    from .worktree.resolver import resolve_story_worktree
+    from .delivery import can_cleanup_worktree
+
+    worktree_states = resolve_story_worktree(story_key)
+    can_clean, reason = can_cleanup_worktree(story_key)
+    return {
+        "worktrees": worktree_states,
+        "can_cleanup": can_clean,
+        "reason": reason,
+    }
+
+
+class CleanupRequest(BaseModel):
+    project_id: int
+    delivery_state: str = ""
+    force: bool = False
+
+
+@app.post("/api/story/{story_key}/worktrees/cleanup")
+def api_cleanup_worktree(story_key: str, req: CleanupRequest):
+    """Remove a worktree. Requires user confirmation."""
+    from .worktree.handler import cleanup_worktree
+
+    result = cleanup_worktree(
+        story_key,
+        req.project_id,
+        delivery_state=req.delivery_state,
+        force=req.force,
+    )
+    if result["action"] == "reject":
+        return JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "reasonCode": result.get("reject_reason", "unknown"),
+                "message": result["reason"],
+            },
+        )
+    return {"ok": True, "worktree_path": result["worktree_path"]}
+
+
+# -------- Delivery artifact endpoints --------
+
+
+class CreateDeliveryRequest(BaseModel):
+    kind: str
+    project_id: int | None = None
+    provider: str = ""
+    external_id: str = ""
+    url: str = ""
+    source_branch: str = ""
+    target_branch: str = ""
+    delivery_state: str = "not_started"
+    merge_commit: str = ""
+    review_summary: str = ""
+    source: str = "user"
+    evidence_ref: str = ""
+
+
+@app.get("/api/story/{story_key}/delivery-artifacts")
+def api_list_delivery_artifacts(story_key: str):
+    """List all delivery artifacts for a story."""
+    from .delivery import list_delivery_artifacts
+
+    return {"artifacts": list_delivery_artifacts(story_key)}
+
+
+@app.post("/api/story/{story_key}/delivery-artifacts")
+def api_create_delivery_artifact(story_key: str, req: CreateDeliveryRequest):
+    """Register a delivery artifact."""
+    from .delivery import register_delivery
+
+    try:
+        artifact = register_delivery(
+            story_key=story_key,
+            kind=req.kind,
+            project_id=req.project_id,
+            provider=req.provider,
+            external_id=req.external_id,
+            url=req.url,
+            source_branch=req.source_branch,
+            target_branch=req.target_branch,
+            delivery_state=req.delivery_state,
+            merge_commit=req.merge_commit,
+            review_summary=req.review_summary,
+            source=req.source,
+            evidence_ref=req.evidence_ref,
+        )
+        return artifact
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class UpdateDeliveryRequest(BaseModel):
+    delivery_state: str | None = None
+    source: str = "user"
+
+
+@app.put("/api/story/{story_key}/delivery-artifacts/{artifact_id}")
+def api_update_delivery(story_key: str, artifact_id: int, req: UpdateDeliveryRequest):
+    """Update delivery artifact state."""
+    from .delivery import update_delivery_state
+
+    if req.delivery_state:
+        try:
+            return update_delivery_state(artifact_id, req.delivery_state, req.source)
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    return db.get_delivery_artifact(artifact_id)
+
+
+# -------- Lifecycle endpoints --------
+
+
+@app.post("/api/story/{story_key}/start")
+def api_start_story(story_key: str):
+    """Start a story. Validates project binding for candidate stories."""
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(status_code=404, detail="story not found")
+
+    intake_state = story.get("intake_state", "ready")
+    source_type = story.get("source_type", "")
+
+    # Candidate + TAPD + no projects → reject
+    if intake_state == "candidate" and source_type == "tapd":
+        sps = db.get_story_projects(story_key)
+        if not sps:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "ok": False,
+                    "reasonCode": "project_path_missing",
+                    "message": "TAPD candidate story has no project bindings",
+                },
+            )
+
+    # Promote candidate to ready
+    if intake_state == "candidate":
+        db.update_story(story_key, intake_state="ready")
+
+    start_story_async(story_key)
+    return {"ok": True, "story_key": story_key}
+
+
+@app.get("/api/story/{story_key}/tapd-writeback-suggestion")
+def api_tapd_writeback_suggestion(story_key: str):
+    """Generate TAPD writeback suggestion (read-only, P0)."""
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(status_code=404, detail="story not found")
+
+    suggestion = {
+        "story_key": story_key,
+        "current_status": story.get("tapd_status", ""),
+        "local_status": story.get("status", ""),
+        "suggested_action": "review_and_confirm",
+        "note": "P0: TAPD writeback is read-only. User must manually update TAPD.",
+    }
+    return suggestion
+
+
+# -------- helpers --------
+
+
+def _get_story_documents(story_key: str) -> list[dict]:
+    with db._db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM story_document WHERE story_key = ? ORDER BY id",
+            (story_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _get_story_change_items(story_key: str) -> list[dict]:
+    with db._db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM story_change_item WHERE story_key = ? ORDER BY id",
+            (story_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # -------- static frontend (must be last — catch-all mount) --------
 
 _WEB_DIR = Path(__file__).parent.parent / "web"
