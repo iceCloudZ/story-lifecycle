@@ -727,8 +727,8 @@ def upsert_story_from_source(
             updates["tapd_url"] = tapd_url
         if tapd_type:
             updates["tapd_type"] = tapd_type
-        if intake_state:
-            updates["intake_state"] = intake_state
+        # intake_state is a local lifecycle field, NOT TAPD-authoritative.
+        # Never overwrite it on update — a user may have promoted the story to ready.
         if updates:
             update_story(existing["story_key"], **updates)
         return get_story(existing["story_key"]), False
