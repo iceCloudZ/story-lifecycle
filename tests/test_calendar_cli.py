@@ -16,31 +16,35 @@ def runner():
 @pytest.fixture
 def seeded_db(isolated_story_home):
     db.init_db()
-    db.upsert_story_from_source(
+    s1, _ = db.upsert_story_from_source(
         source_type="tapd",
         source_id="1001",
         title="逾期需求",
         deadline="2020-01-01",
     )
+    db.update_story(s1["story_key"], intake_state="ready", status="active")
     near = (datetime.now(timezone.utc) + timedelta(days=5)).strftime("%Y-%m-%d")
-    db.upsert_story_from_source(
+    s2, _ = db.upsert_story_from_source(
         source_type="tapd",
         source_id="1002",
         title="近期需求",
         deadline=near,
     )
+    db.update_story(s2["story_key"], intake_state="ready", status="active")
     far = (datetime.now(timezone.utc) + timedelta(days=60)).strftime("%Y-%m-%d")
-    db.upsert_story_from_source(
+    s3, _ = db.upsert_story_from_source(
         source_type="tapd",
         source_id="1003",
         title="远期需求",
         deadline=far,
     )
-    db.upsert_story_from_source(
+    db.update_story(s3["story_key"], intake_state="ready", status="active")
+    s4, _ = db.upsert_story_from_source(
         source_type="tapd",
         source_id="1004",
         title="无截止日期",
     )
+    db.update_story(s4["story_key"], intake_state="ready", status="active")
 
 
 class TestCalendarCmd:
