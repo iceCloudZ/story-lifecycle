@@ -418,11 +418,15 @@ def test_cli_inspect_json(tmp_path):
     result = runner.invoke(project, ["inspect", "-w", str(tmp_path), "--json"])
     assert result.exit_code == 0
 
+    # The output is valid JSON from json.dumps — extract it from Rich console output
     import re
 
+    # Strip all ANSI/Rich escape sequences
     clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    # JSON objects always start with { and end with }
     start = clean.index("{")
-    data = json.loads(clean[start:], strict=False)
+    end = clean.rindex("}") + 1
+    data = json.loads(clean[start:end])
     assert data["workspace_type"] == "single_repo"
 
 
