@@ -30,6 +30,8 @@ VALID_COLUMNS = frozenset(
         "tapd_status",
         "tapd_url",
         "tapd_type",
+        "intake_state",
+        "context_revision",
     }
 )
 
@@ -213,6 +215,175 @@ def init_db():
                 conn.execute(f"ALTER TABLE story ADD COLUMN {col} {default}")
             except sqlite3.OperationalError:
                 pass
+        # Story context & TAPD lifecycle columns
+        try:
+            conn.execute(
+                "ALTER TABLE story ADD COLUMN intake_state TEXT DEFAULT 'ready'"
+            )
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute(
+                "ALTER TABLE story ADD COLUMN context_revision INTEGER DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass
+
+        # -------- Story Context & TAPD Lifecycle tables --------
+
+        # 1. project — a git repository that stories are implemented in
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS project (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                repo_path TEXT NOT NULL UNIQUE,
+                default_branch TEXT DEFAULT 'main',
+                remote_url TEXT,
+                availability TEXT NOT NULL DEFAULT 'unknown',
+                availability_reason TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_project_name ON project(name)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_project_availability ON project(availability)"
+        )
+
+        # 2. story_project — n:m binding of story to project with workspace details
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS story_project (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                story_key TEXT NOT NULL,
+                project_id INTEGER NOT NULL,
+                branch TEXT,
+                base_branch TEXT DEFAULT 'main',
+                base_commit TEXT,
+                worktree_path TEXT UNIQUE,
+                workspace_type TEXT,
+                worktree_state TEXT NOT NULL DEFAULT 'unprepared',
+                summary TEXT,
+                source TEXT NOT NULL DEFAULT 'user',
+                evidence_ref TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (story_key) REFERENCES story(story_key) ON DELETE CASCADE,
+                FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE CASCADE,
+                UNIQUE(story_key, project_id)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sp_story ON story_project(story_key)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sp_project ON story_project(project_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sp_state ON story_project(worktree_state)"
+        )
+
+        # 3. project_runtime_fact — detected runtime environment facts
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS project_runtime_fact (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                runtime_type TEXT NOT NULL DEFAULT 'unknown',
+                runtime_version TEXT,
+                dependency_ref TEXT,
+                check_command TEXT,
+                availability TEXT NOT NULL DEFAULT 'unknown',
+                evidence_ref TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_prf_project ON project_runtime_fact(project_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_prf_runtime ON project_runtime_fact(runtime_type)"
+        )
+
+        # 4. story_document — PRD / design docs associated with a story
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS story_document (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                story_key TEXT NOT NULL,
+                project_id INTEGER,
+                kind TEXT NOT NULL,
+                ref TEXT,
+                summary TEXT,
+                source TEXT NOT NULL DEFAULT 'ai',
+                evidence_ref TEXT,
+                verification_state TEXT NOT NULL DEFAULT 'unverified',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (story_key) REFERENCES story(story_key) ON DELETE CASCADE,
+                FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE SET NULL
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sd_story ON story_document(story_key)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sd_kind ON story_document(kind)")
+
+        # 5. story_change_item — DDL / Nacos configuration changes
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS story_change_item (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                story_key TEXT NOT NULL,
+                project_id INTEGER,
+                kind TEXT NOT NULL,
+                ref TEXT,
+                summary TEXT,
+                lifecycle_state TEXT NOT NULL DEFAULT 'proposed',
+                verification_state TEXT NOT NULL DEFAULT 'unverified',
+                environment TEXT,
+                source TEXT NOT NULL DEFAULT 'ai',
+                evidence_ref TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (story_key) REFERENCES story(story_key) ON DELETE CASCADE,
+                FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE SET NULL
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sci_story ON story_change_item(story_key)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sci_lifecycle ON story_change_item(lifecycle_state)"
+        )
+
+        # 6. story_delivery_artifact — MR/PR and merge evidence
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS story_delivery_artifact (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                story_key TEXT NOT NULL,
+                project_id INTEGER,
+                kind TEXT NOT NULL,
+                provider TEXT,
+                external_id TEXT,
+                url TEXT,
+                source_branch TEXT,
+                target_branch TEXT,
+                delivery_state TEXT NOT NULL DEFAULT 'not_started',
+                review_state TEXT NOT NULL DEFAULT 'not_reviewed',
+                merge_commit TEXT,
+                review_summary TEXT,
+                source TEXT NOT NULL DEFAULT 'ai',
+                evidence_ref TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (story_key) REFERENCES story(story_key) ON DELETE CASCADE,
+                FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE SET NULL
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sda_story ON story_delivery_artifact(story_key)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sda_delivery ON story_delivery_artifact(delivery_state)"
+        )
 
 
 # -------- CRUD helpers --------
@@ -523,7 +694,8 @@ def upsert_story_from_source(
     workspace: str = "",
     profile: str = "minimal",
     current_stage: str = "design",
-    status: str = "active",
+    status: str = "idle",
+    intake_state: str = "candidate",
     deadline: str = "",
     priority: str = "",
     owner: str = "",
@@ -532,6 +704,10 @@ def upsert_story_from_source(
     tapd_type: str = "story",
 ) -> tuple[dict, bool]:
     """Insert or update a story from an external source.
+
+    For new stories, defaults to intake_state="candidate" and status="idle"
+    to reflect the intake lifecycle. Existing stories are updated in place.
+
     Returns (story_dict, was_created).
     """
     existing = find_by_source_id(source_type, source_id)
@@ -551,6 +727,8 @@ def upsert_story_from_source(
             updates["tapd_url"] = tapd_url
         if tapd_type:
             updates["tapd_type"] = tapd_type
+        if intake_state:
+            updates["intake_state"] = intake_state
         if updates:
             update_story(existing["story_key"], **updates)
         return get_story(existing["story_key"]), False
@@ -567,6 +745,8 @@ def upsert_story_from_source(
             key,
             source_type=source_type,
             source_id=source_id,
+            status=status,
+            intake_state=intake_state,
             deadline=deadline,
             priority=priority,
             owner=owner,
@@ -808,3 +988,575 @@ def find_relevant_patterns(tags: list[str], limit: int = 5) -> list[dict]:
             scored.append((overlap, p))
     scored.sort(key=lambda x: -x[0])
     return [p for _, p in scored[:limit]]
+
+
+# -------- Context revision helpers --------
+
+
+def get_context_revision(story_key: str) -> int:
+    """Return the current context_revision for a story, or 0 if not found."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT context_revision FROM story WHERE story_key = ?", (story_key,)
+        ).fetchone()
+    return row["context_revision"] if row else 0
+
+
+def bump_context_revision(story_key: str) -> int:
+    """Increment context_revision by 1 and return the new value."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        conn.execute(
+            "UPDATE story SET context_revision = context_revision + 1, updated_at = ? "
+            "WHERE story_key = ?",
+            (now, story_key),
+        )
+        row = conn.execute(
+            "SELECT context_revision FROM story WHERE story_key = ?", (story_key,)
+        ).fetchone()
+    return row["context_revision"] if row else 0
+
+
+# -------- Project CRUD --------
+
+
+def create_project(
+    name: str,
+    repo_path: str,
+    default_branch: str = "main",
+    remote_url: str = "",
+    availability: str = "unknown",
+    availability_reason: str = "",
+) -> dict:
+    """Create a project record. Returns the created row as dict."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO project (name, repo_path, default_branch, remote_url,
+               availability, availability_reason, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                name,
+                repo_path,
+                default_branch,
+                remote_url,
+                availability,
+                availability_reason,
+                now,
+                now,
+            ),
+        )
+        row = conn.execute("SELECT * FROM project WHERE name = ?", (name,)).fetchone()
+    return dict(row) if row else {}
+
+
+def get_project(project_id: int) -> dict | None:
+    """Get a single project by id."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM project WHERE id = ?", (project_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_project_by_name(name: str) -> dict | None:
+    """Get a project by its unique name."""
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM project WHERE name = ?", (name,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_projects() -> list[dict]:
+    """Return all projects ordered by name."""
+    with _db() as conn:
+        rows = conn.execute("SELECT * FROM project ORDER BY name").fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_project(project_id: int, **kwargs) -> None:
+    """Update project fields. Always bumps updated_at."""
+    if not kwargs:
+        return
+    valid = {
+        "name",
+        "repo_path",
+        "default_branch",
+        "remote_url",
+        "availability",
+        "availability_reason",
+    }
+    invalid = set(kwargs.keys()) - valid
+    if invalid:
+        raise ValueError(f"Invalid project columns: {invalid}")
+    kwargs["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sets = ", ".join(f"{k} = ?" for k in kwargs)
+    values = list(kwargs.values()) + [project_id]
+    with _db() as conn:
+        conn.execute(f"UPDATE project SET {sets} WHERE id = ?", values)
+
+
+def delete_project(project_id: int) -> None:
+    """Delete a project and all related rows (CASCADE handles children)."""
+    with _db() as conn:
+        conn.execute("DELETE FROM project WHERE id = ?", (project_id,))
+
+
+# -------- Story-Project binding CRUD --------
+
+
+def bind_story_project(
+    story_key: str,
+    project_id: int,
+    branch: str = "",
+    base_branch: str = "main",
+    base_commit: str = "",
+    worktree_path: str = "",
+    workspace_type: str = "",
+    worktree_state: str = "unprepared",
+    summary: str = "",
+    source: str = "user",
+    evidence_ref: str = "",
+) -> dict:
+    """Bind a story to a project. Returns the created row."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO story_project (story_key, project_id, branch, base_branch,
+               base_commit, worktree_path, workspace_type, worktree_state,
+               summary, source, evidence_ref, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                story_key,
+                project_id,
+                branch,
+                base_branch,
+                base_commit,
+                worktree_path,
+                workspace_type,
+                worktree_state,
+                summary,
+                source,
+                evidence_ref,
+                now,
+                now,
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM story_project WHERE story_key = ? AND project_id = ?",
+            (story_key, project_id),
+        ).fetchone()
+    return dict(row) if row else {}
+
+
+def get_story_project(story_key: str, project_id: int) -> dict | None:
+    """Get a specific story-project binding."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM story_project WHERE story_key = ? AND project_id = ?",
+            (story_key, project_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_story_projects(story_key: str) -> list[dict]:
+    """Get all project bindings for a story."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM story_project WHERE story_key = ? ORDER BY id",
+            (story_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_story_project(story_key: str, project_id: int, **kwargs) -> None:
+    """Update a story-project binding. Always bumps updated_at."""
+    if not kwargs:
+        return
+    valid = {
+        "branch",
+        "base_branch",
+        "base_commit",
+        "worktree_path",
+        "workspace_type",
+        "worktree_state",
+        "summary",
+        "source",
+        "evidence_ref",
+    }
+    invalid = set(kwargs.keys()) - valid
+    if invalid:
+        raise ValueError(f"Invalid story_project columns: {invalid}")
+    kwargs["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sets = ", ".join(f"{k} = ?" for k in kwargs)
+    values = list(kwargs.values()) + [story_key, project_id]
+    with _db() as conn:
+        conn.execute(
+            f"UPDATE story_project SET {sets} WHERE story_key = ? AND project_id = ?",
+            values,
+        )
+
+
+def unbind_story_project(story_key: str, project_id: int) -> None:
+    """Remove a story-project binding."""
+    with _db() as conn:
+        conn.execute(
+            "DELETE FROM story_project WHERE story_key = ? AND project_id = ?",
+            (story_key, project_id),
+        )
+
+
+# -------- Project runtime fact CRUD --------
+
+
+def upsert_runtime_facts(
+    project_id: int,
+    runtime_type: str,
+    runtime_version: str = "",
+    dependency_ref: str = "",
+    check_command: str = "",
+    availability: str = "unknown",
+    evidence_ref: str = "",
+) -> dict:
+    """Insert or update runtime facts for a project.
+    One row per (project_id, runtime_type) combination.
+    """
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM project_runtime_fact WHERE project_id = ? AND runtime_type = ?",
+            (project_id, runtime_type),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """UPDATE project_runtime_fact
+                   SET runtime_version = ?, dependency_ref = ?, check_command = ?,
+                       availability = ?, evidence_ref = ?, updated_at = ?
+                   WHERE project_id = ? AND runtime_type = ?""",
+                (
+                    runtime_version,
+                    dependency_ref,
+                    check_command,
+                    availability,
+                    evidence_ref,
+                    now,
+                    project_id,
+                    runtime_type,
+                ),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO project_runtime_fact
+                   (project_id, runtime_type, runtime_version, dependency_ref,
+                    check_command, availability, evidence_ref, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    project_id,
+                    runtime_type,
+                    runtime_version,
+                    dependency_ref,
+                    check_command,
+                    availability,
+                    evidence_ref,
+                    now,
+                ),
+            )
+        row = conn.execute(
+            "SELECT * FROM project_runtime_fact WHERE project_id = ? AND runtime_type = ?",
+            (project_id, runtime_type),
+        ).fetchone()
+    return dict(row) if row else {}
+
+
+def get_runtime_facts(project_id: int) -> list[dict]:
+    """Get all runtime facts for a project."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM project_runtime_fact WHERE project_id = ? ORDER BY id",
+            (project_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# -------- Story document CRUD --------
+
+
+def create_document(
+    story_key: str,
+    kind: str,
+    project_id: int | None = None,
+    ref: str = "",
+    summary: str = "",
+    source: str = "ai",
+    evidence_ref: str = "",
+    verification_state: str = "unverified",
+) -> dict:
+    """Create a story document (PRD / design). Returns the created row."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO story_document
+               (story_key, project_id, kind, ref, summary, source,
+                evidence_ref, verification_state, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                story_key,
+                project_id,
+                kind,
+                ref,
+                summary,
+                source,
+                evidence_ref,
+                verification_state,
+                now,
+                now,
+            ),
+        )
+        row_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        row = conn.execute(
+            "SELECT * FROM story_document WHERE id = ?", (row_id,)
+        ).fetchone()
+    return dict(row) if row else {}
+
+
+def get_document(doc_id: int) -> dict | None:
+    """Get a single document by id."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM story_document WHERE id = ?", (doc_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_story_documents(story_key: str) -> list[dict]:
+    """Get all documents for a story."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM story_document WHERE story_key = ? ORDER BY id",
+            (story_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_document(doc_id: int, **kwargs) -> None:
+    """Update a document. Always bumps updated_at."""
+    if not kwargs:
+        return
+    valid = {
+        "story_key",
+        "project_id",
+        "kind",
+        "ref",
+        "summary",
+        "source",
+        "evidence_ref",
+        "verification_state",
+    }
+    invalid = set(kwargs.keys()) - valid
+    if invalid:
+        raise ValueError(f"Invalid story_document columns: {invalid}")
+    kwargs["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sets = ", ".join(f"{k} = ?" for k in kwargs)
+    values = list(kwargs.values()) + [doc_id]
+    with _db() as conn:
+        conn.execute(f"UPDATE story_document SET {sets} WHERE id = ?", values)
+
+
+def delete_document(doc_id: int) -> None:
+    """Delete a document by id."""
+    with _db() as conn:
+        conn.execute("DELETE FROM story_document WHERE id = ?", (doc_id,))
+
+
+# -------- Story change item CRUD --------
+
+
+def create_change_item(
+    story_key: str,
+    kind: str,
+    project_id: int | None = None,
+    ref: str = "",
+    summary: str = "",
+    lifecycle_state: str = "proposed",
+    verification_state: str = "unverified",
+    environment: str = "",
+    source: str = "ai",
+    evidence_ref: str = "",
+) -> dict:
+    """Create a change item (DDL / Nacos). Returns the created row."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO story_change_item
+               (story_key, project_id, kind, ref, summary, lifecycle_state,
+                verification_state, environment, source, evidence_ref,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                story_key,
+                project_id,
+                kind,
+                ref,
+                summary,
+                lifecycle_state,
+                verification_state,
+                environment,
+                source,
+                evidence_ref,
+                now,
+                now,
+            ),
+        )
+        row_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        row = conn.execute(
+            "SELECT * FROM story_change_item WHERE id = ?", (row_id,)
+        ).fetchone()
+    return dict(row) if row else {}
+
+
+def get_change_item(item_id: int) -> dict | None:
+    """Get a single change item by id."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM story_change_item WHERE id = ?", (item_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_story_change_items(story_key: str) -> list[dict]:
+    """Get all change items for a story."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM story_change_item WHERE story_key = ? ORDER BY id",
+            (story_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_change_item(item_id: int, **kwargs) -> None:
+    """Update a change item. Always bumps updated_at."""
+    if not kwargs:
+        return
+    valid = {
+        "story_key",
+        "project_id",
+        "kind",
+        "ref",
+        "summary",
+        "lifecycle_state",
+        "verification_state",
+        "environment",
+        "source",
+        "evidence_ref",
+    }
+    invalid = set(kwargs.keys()) - valid
+    if invalid:
+        raise ValueError(f"Invalid story_change_item columns: {invalid}")
+    kwargs["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sets = ", ".join(f"{k} = ?" for k in kwargs)
+    values = list(kwargs.values()) + [item_id]
+    with _db() as conn:
+        conn.execute(f"UPDATE story_change_item SET {sets} WHERE id = ?", values)
+
+
+# -------- Story delivery artifact CRUD --------
+
+
+def create_delivery_artifact(
+    story_key: str,
+    kind: str,
+    project_id: int | None = None,
+    provider: str = "",
+    external_id: str = "",
+    url: str = "",
+    source_branch: str = "",
+    target_branch: str = "",
+    delivery_state: str = "not_started",
+    review_state: str = "not_reviewed",
+    merge_commit: str = "",
+    review_summary: str = "",
+    source: str = "ai",
+    evidence_ref: str = "",
+) -> dict:
+    """Create a delivery artifact (MR/PR). Returns the created row."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO story_delivery_artifact
+               (story_key, project_id, kind, provider, external_id, url,
+                source_branch, target_branch, delivery_state, review_state,
+                merge_commit, review_summary, source, evidence_ref,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                story_key,
+                project_id,
+                kind,
+                provider,
+                external_id,
+                url,
+                source_branch,
+                target_branch,
+                delivery_state,
+                review_state,
+                merge_commit,
+                review_summary,
+                source,
+                evidence_ref,
+                now,
+                now,
+            ),
+        )
+        row_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        row = conn.execute(
+            "SELECT * FROM story_delivery_artifact WHERE id = ?", (row_id,)
+        ).fetchone()
+    return dict(row) if row else {}
+
+
+def get_delivery_artifact(artifact_id: int) -> dict | None:
+    """Get a single delivery artifact by id."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM story_delivery_artifact WHERE id = ?", (artifact_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_story_delivery_artifacts(story_key: str) -> list[dict]:
+    """Get all delivery artifacts for a story."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM story_delivery_artifact WHERE story_key = ? ORDER BY id",
+            (story_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_delivery_artifact(artifact_id: int, **kwargs) -> None:
+    """Update a delivery artifact. Always bumps updated_at."""
+    if not kwargs:
+        return
+    valid = {
+        "story_key",
+        "project_id",
+        "kind",
+        "provider",
+        "external_id",
+        "url",
+        "source_branch",
+        "target_branch",
+        "delivery_state",
+        "review_state",
+        "merge_commit",
+        "review_summary",
+        "source",
+        "evidence_ref",
+    }
+    invalid = set(kwargs.keys()) - valid
+    if invalid:
+        raise ValueError(f"Invalid story_delivery_artifact columns: {invalid}")
+    kwargs["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sets = ", ".join(f"{k} = ?" for k in kwargs)
+    values = list(kwargs.values()) + [artifact_id]
+    with _db() as conn:
+        conn.execute(f"UPDATE story_delivery_artifact SET {sets} WHERE id = ?", values)
