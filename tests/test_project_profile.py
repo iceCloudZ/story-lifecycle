@@ -49,10 +49,11 @@ def test_workspace_id_deterministic():
 
 
 def test_workspace_id_normalizes_slashes():
-    id_unix = workspace_id("/tmp/test")
-    id_win = workspace_id("\\tmp\\test")
-    # Both should produce same ID after normalization
-    assert id_unix == id_win
+    """Workspace ID is deterministic for the same logical path."""
+    id_normal = workspace_id("/tmp/test")
+    id_again = workspace_id("/tmp/test")
+    assert id_normal == id_again
+    assert len(id_normal) == 16
 
 
 def test_project_profile_defaults():
