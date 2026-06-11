@@ -76,6 +76,81 @@ sessions        约 7.73 倍
 
 `java-agent` 的长会话带来了较高 cache read，但不是本次会话数量暴增的主因。
 
+### 文件与代码写入影响
+
+本次事故不只是模型用量问题。Story Lifecycle 启动 Claude Code 时使用了以下权限：
+
+```text
+--allowedTools Bash,Read,Edit,Write,Glob,Grep
+--permission-mode acceptEdits
+```
+
+因此 headless 任务具备读取仓库、执行命令、创建文档、修改代码、运行测试以及提交 Git 变更的完整能力。
+
+对 `~/.claude/projects/D--story-lifecycle/*.jsonl` 中事故窗口内、`entrypoint = sdk-cli` 的顶层会话进行工具调用审计，并按 `tool_use.id` 去重后，确认：
+
+| 工具/影响 | 调用数 |
+|---|---:|
+| 全部工具调用 | 4,213 |
+| Bash | 1,157 |
+| Read | 1,071 |
+| Edit | 227 |
+| Write | 148 |
+| Write + Edit | 375 |
+| 被直接写入或编辑的不同路径 | 119 |
+
+375 次直接文件变更调用按目标分类：
+
+| 目标分类 | Write/Edit 调用 | 不同路径 |
+|---|---:|---:|
+| 后端源码 | 195 | 30 |
+| 测试代码 | 64 | 21 |
+| 前端源码 | 51 | 17 |
+| `.story/done` | 41 | 32 |
+| 普通 `docs` 文档 | 8 | 6 |
+| `.story/context` | 4 | 4 |
+| `hc-all` 外部仓库 | 5 | 5 |
+| 其他及 Claude plan | 7 | 4 |
+
+已确认的高频写入目标包括：
+
+```text
+src/story_lifecycle/orchestrator/api.py                       36 次 Edit
+src/story_lifecycle/validators/contact_reachability.py       16 次 Write/Edit
+src/story_lifecycle/validators/email_validator.py            15 次 Write/Edit
+src/story_lifecycle/orchestrator/project_scan.py              14 次 Write/Edit
+src/story_lifecycle/orchestrator/project_profile.py           14 次 Write/Edit
+frontend/src/App.tsx                                           8 次 Edit
+frontend/src/api/client.ts                                     5 次 Edit
+```
+
+日志还确认一次自动任务越过当前仓库，直接修改了 `D:\hc-all` 下 5 个前端文件。这说明当 prompt 中出现其他仓库路径时，当前执行方式没有 workspace 边界保护。
+
+自动会话不只修改工作树，也实际执行了 Git 提交。工具结果中可见：
+
+```text
+15 files changed, 1824 insertions(+)
+6 files changed, 2070 insertions(+), 146 deletions(-)
+4 files changed, 573 insertions(+)
+```
+
+当前 Git 历史中至少有以下明确带 `Story:` 和 Claude 联署的自动提交：
+
+```text
+7ecf712  Story tapd-1144381896001065601
+4d122cb  Story tapd-1144381896001066171
+4b00f0f  Story tapd-1144381896001066171
+```
+
+这些事实证明，批量自动执行阶段真实生成了文档、修改了前后端代码和测试，并创建了提交，不只是扫描代码或消耗 token。
+
+需要区分两个阶段：
+
+1. 2026-06-10 下午至 23:48 的批量自动执行存在大量明确 Write/Edit 和 Git commit 证据。
+2. 2026-06-11 02:41 至 10:13 的 4 个 Story 高频循环有 511 次重复 headless 启动证据，但现有日志不能证明这 511 次每一次都修改了文件。该阶段可以确认持续耗量，不能表述为“每轮都改代码”。
+
+工具调用记录证明写操作曾被执行，但不能单独证明每个中间版本最终仍保留在工作树中；部分内容随后可能被覆盖、格式化、提交或冲突合并。
+
 ### 模型分布
 
 2026-06-10 的 Claude Code 本地记录同时包含多个模型映射：
@@ -481,6 +556,9 @@ Claude CLI：继续启动
 - 每轮事件日志均记录 `wait_confirm`，随后又记录新的 `execute`。
 - 代码中 `wait_confirm` 返回 `plan_stage`，启动恢复包含 paused/blocked。
 - 停止 Story Lifecycle 服务后，headless Claude 进程消失。
+- 自动 `sdk-cli` 会话执行了 375 次 Write/Edit，涉及 119 个不同路径。
+- 自动会话修改了后端、前端、测试和文档，并成功执行了 Git 提交。
+- 至少一次自动会话越过 `story-lifecycle` workspace，修改了 `D:\hc-all` 下的文件。
 
 ### 合理推断
 
@@ -530,6 +608,20 @@ execution_count 超过上限后不再启动 CLI
 保留 plan_summary 时，last_error 仍禁止进入 executor
 批量同步不会自动执行全部历史 TAPD 项
 ```
+
+9. 文件系统写入安全必须作为独立控制面实现，不能只依赖“交互模式”或 prompt 约束：
+
+```text
+每个 Story 默认在独立 git worktree 中执行
+启动前拒绝已有未归属改动的 dirty workspace
+拒绝 Write/Edit/Bash 修改 workspace 根目录之外的路径
+执行前后记录 git status、diff stat 和变更文件清单
+默认禁止自动 git commit/push，只有显式 profile 能力才允许
+设置单次执行的最大改动文件数和最大新增行数
+Story 暂停、阻塞或超预算时终止对应进程并冻结 worktree
+```
+
+交互式 PTY 修复解决的是“普通 Story 不应重复启动不可见 headless Claude”，并不自动解决文件写入隔离。两者必须分别验证。
 
 ## 安全说明
 
