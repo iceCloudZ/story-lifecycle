@@ -4,6 +4,7 @@ Nodes: plan_stage, execute_and_wait, review_stage, router, advance.
 retry/skip/fail/wait_confirm are handled inside router_node.
 """
 
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -429,8 +430,49 @@ def resume_story_async(story_key: str):
     _executor.submit(resume_story, story_key)
 
 
+def find_ready_interactive_stories() -> list[str]:
+    """Return active interactive stories whose done file is ready."""
+    from .paths import stage_done_file
+
+    ready = []
+    for story in db.list_active_stories():
+        if story.get("status") != "active":
+            continue
+        try:
+            context = json.loads(story.get("context_json") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        marker = context.get("_active_execution")
+        if not isinstance(marker, dict):
+            continue
+        if marker.get("mode") != "interactive_pty":
+            continue
+        stage = story.get("current_stage", "")
+        if marker.get("stage") != stage:
+            continue
+        if is_story_running(story["story_key"]):
+            continue
+        if stage_done_file(
+            story.get("workspace", ""),
+            story["story_key"],
+            stage,
+        ).exists():
+            ready.append(story["story_key"])
+    return ready
+
+
+def resume_ready_interactive_stories() -> list[str]:
+    """Submit interactive stories that have produced a done file."""
+    ready = find_ready_interactive_stories()
+    for story_key in ready:
+        resume_story_async(story_key)
+    return ready
+
+
 def recover_orphan_stories():
-    stories = db.list_active_stories()
+    stories = [
+        story for story in db.list_active_stories() if story.get("status") == "active"
+    ]
     for s in stories:
         resume_story_async(s["story_key"])
     return len(stories)

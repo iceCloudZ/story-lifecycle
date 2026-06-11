@@ -1,6 +1,7 @@
 # Demo profile — planner is fully mocked, no LLM dependency.
 version: 2
 cli: claude
+execution_mode: interactive_pty
 
 stages:
   design:

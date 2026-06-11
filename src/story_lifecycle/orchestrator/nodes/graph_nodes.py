@@ -13,6 +13,7 @@ from langgraph.errors import GraphInterrupt
 
 from ...db import models as db
 from ...terminal import ttyd
+from ...terminal.pty import get_pty
 from .. import planner
 from .. import router as llm_router
 from ..notify import send as notify
@@ -259,6 +260,13 @@ def plan_stage_node(state: StoryState) -> StoryState:
     workspace = state["workspace"]
     story_key = state["story_key"]
 
+    active_execution = state.get("context", {}).get("_active_execution")
+    current_done = stage_done_file(workspace, story_key, stage)
+    if current_done.exists() or (
+        isinstance(active_execution, dict) and active_execution.get("stage") == stage
+    ):
+        return state
+
     # Guard: execution_count exceeded max_retries
     max_retries = cfg.get("max_retries", 3)
     if state.get("execution_count", 0) >= max_retries:
@@ -388,10 +396,6 @@ def execute_and_wait_node(state: StoryState) -> dict:
     workspace = state["workspace"]
     key = state["story_key"]
 
-    # Clear stale CLI exit marker
-    _exit_marker = Path(_tf.gettempdir()) / f"story-exit-{key}"
-    _exit_marker.unlink(missing_ok=True)
-
     done_file = stage_done_file(workspace, key, stage)
 
     # --- Phase 1: Consume existing done file (idempotent) ---
@@ -412,6 +416,21 @@ def execute_and_wait_node(state: StoryState) -> dict:
         "_provider", cfg.get("provider", "deepseek")
     )
     model = plan.get("model") or cfg.get("model", "sonnet")
+    execution_mode = cfg.get("execution_mode", "interactive_pty")
+
+    active_execution = state.get("context", {}).get("_active_execution")
+    existing_pty = get_pty(key)
+    if (
+        execution_mode == "interactive_pty"
+        and isinstance(active_execution, dict)
+        and active_execution.get("stage") == stage
+        and existing_pty is not None
+        and existing_pty.alive
+        and existing_pty.purpose == "agent"
+    ):
+        state["_execution_mode"] = execution_mode
+        state["_waiting_for_agent"] = True
+        return state
 
     prompt = ""
     prompt_meta = {}
@@ -431,6 +450,7 @@ def execute_and_wait_node(state: StoryState) -> dict:
         "adapter": adapter_name,
         "provider": provider,
         "model": model,
+        "execution_mode": execution_mode,
         "prompt": prompt,
         "skill": stage_cfg.get("skill", ""),
     }
@@ -521,7 +541,11 @@ def _consume_done_file(
         done_file.unlink()
     except PermissionError:
         pass
-    ttyd.clear_launch_state(key)
+    state.get("context", {}).pop("_active_execution", None)
+    db.update_story(
+        key,
+        context_json=json.dumps(state.get("context", {}), ensure_ascii=False),
+    )
 
     is_synthetic = data.pop("synthetic", None)
     if is_synthetic:
@@ -547,6 +571,9 @@ def _poll_done_file(
         if data is not None:
             state["context"].update(data)
             _sync_done_outputs(state, key, stage, data)
+        return state
+
+    if state.get("_waiting_for_agent"):
         return state
 
     # Check session exit (mplex-launched only)

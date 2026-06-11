@@ -1,6 +1,7 @@
 # Headless smoke test profile — design + implement, no expected_outputs
 version: 2
 cli: claude
+execution_mode: headless
 
 stages:
   design:

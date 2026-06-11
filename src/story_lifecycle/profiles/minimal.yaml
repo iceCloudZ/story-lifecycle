@@ -2,6 +2,7 @@
 # Default profile: design → implement. 最小闭环，快速验证。
 version: 4
 cli: claude
+execution_mode: interactive_pty
 
 stages:
   design:

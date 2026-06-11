@@ -1,5 +1,7 @@
 """Base adapter — defines the interface all CLI adapters must implement."""
 
+import os
+import shlex
 from abc import ABC, abstractmethod
 
 
@@ -33,6 +35,10 @@ class BaseAdapter(ABC):
         non-interactive execution flag (e.g. claude -p, codex -q).
         """
         return None
+
+    def interactive_launch_cmd(self, model: str) -> list[str]:
+        """Return argv for an interactive PTY process."""
+        return shlex.split(self.launch_cmd(model), posix=os.name != "nt")
 
     def cleanup(self, story_key: str, stage: str):
         """Clean up temp files after stage completion. Override if needed."""

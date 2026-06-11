@@ -120,6 +120,10 @@ class TestRouteAfterExecute:
         state = _make_state(last_error="crashed")
         assert route_after_execute(state) == "router"
 
+    def test_interactive_execution_waits_outside_graph(self):
+        state = _make_state(_waiting_for_agent=True, last_error=None)
+        assert route_after_execute(state) == "__end__"
+
 
 # -------- plan_stage_node --------
 
@@ -469,6 +473,19 @@ class TestExecuteAndWaitNode:
         tool.execute.side_effect = _execute
         return tool
 
+    def _mock_interactive_tool(self):
+        tool = MagicMock()
+
+        def _execute(state, args):
+            state["execution_count"] = state.get("execution_count", 0) + 1
+            state["stage_start_time"] = 1.0
+            state["last_error"] = None
+            state["_execution_mode"] = "interactive_pty"
+            state["_waiting_for_agent"] = True
+
+        tool.execute.side_effect = _execute
+        return tool
+
     @patch("story_lifecycle.orchestrator.tools.get_tool")
     def test_reads_adapter_from_plan(self, mock_get_tool):
         mock_tool = self._mock_tool()
@@ -495,6 +512,19 @@ class TestExecuteAndWaitNode:
         execute_and_wait_node(state)
 
         mock_tool.execute.assert_called_once()
+
+    @patch("story_lifecycle.orchestrator.tools.get_tool")
+    def test_interactive_dispatch_does_not_report_headless_failure(
+        self, mock_get_tool, tmp_path
+    ):
+        mock_get_tool.return_value = self._mock_interactive_tool()
+        state = _make_state(workspace=str(tmp_path))
+
+        result = execute_and_wait_node(state)
+
+        assert result["_waiting_for_agent"] is True
+        assert result["last_error"] is None
+        assert route_after_execute(result) == "__end__"
 
     @patch("story_lifecycle.orchestrator.tools.get_tool")
     def test_prepends_plan_file_to_prompt(self, mock_get_tool):

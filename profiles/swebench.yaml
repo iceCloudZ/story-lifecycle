@@ -2,6 +2,7 @@
 # 默认启用对抗循环，提升产出质量
 version: 2
 cli: claude
+execution_mode: headless
 
 stages:
   design:
