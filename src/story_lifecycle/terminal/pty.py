@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from typing import Optional
 
 
@@ -32,11 +33,17 @@ class ManagedPty:
     """A single PTY process bound to a story."""
 
     def __init__(
-        self, story_id: str, command: list[str], cwd: str, env: dict | None = None
+        self,
+        story_id: str,
+        command: list[str],
+        cwd: str,
+        env: dict | None = None,
+        purpose: str = "shell",
     ):
         self.story_id = story_id
         self.command = command
         self.cwd = cwd
+        self.purpose = purpose
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=512)
         self._alive = True
         self._process: object | None = None
@@ -203,14 +210,18 @@ _lock = threading.Lock()
 
 
 def spawn_pty(
-    story_id: str, command: list[str], cwd: str, env: dict | None = None
+    story_id: str,
+    command: list[str],
+    cwd: str,
+    env: dict | None = None,
+    purpose: str = "shell",
 ) -> ManagedPty:
     """Spawn a new PTY for a story. Kills existing one if any."""
     with _lock:
         existing = _ptys.get(story_id)
         if existing:
             existing.kill()
-        pty = ManagedPty(story_id, command, cwd, env)
+        pty = ManagedPty(story_id, command, cwd, env, purpose=purpose)
         _ptys[story_id] = pty
         return pty
 
@@ -218,6 +229,34 @@ def spawn_pty(
 def get_pty(story_id: str) -> Optional[ManagedPty]:
     with _lock:
         return _ptys.get(story_id)
+
+
+def ensure_agent_pty(
+    story_id: str,
+    command: list[str],
+    cwd: str,
+    prompt: str,
+    env: dict | None = None,
+    startup_delay: float = 2.0,
+) -> ManagedPty:
+    """Start or reuse the visible agent PTY, then submit one stage prompt."""
+    existing = get_pty(story_id)
+    if existing and existing.alive and existing.purpose == "agent":
+        pty = existing
+    else:
+        pty = spawn_pty(
+            story_id,
+            command,
+            cwd,
+            env=env,
+            purpose="agent",
+        )
+        if startup_delay:
+            time.sleep(startup_delay)
+
+    if prompt:
+        pty.write(prompt.encode("utf-8") + b"\r")
+    return pty
 
 
 def kill_pty(story_id: str):

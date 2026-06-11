@@ -3,6 +3,7 @@
 # 适用于高风险需求、团队协作、上线前审查。
 version: 4
 cli: claude
+execution_mode: interactive_pty
 
 stages:
   design:

@@ -22,6 +22,9 @@ class ClaudeAdapter(BaseAdapter):
     def launch_cmd(self, model: str) -> str:
         return "claude"
 
+    def interactive_launch_cmd(self, model: str) -> list[str]:
+        return [resolve_executable("claude")]
+
     def headless_launch_cmd(self, model: str, prompt: str) -> list[str] | None:
         return [
             resolve_executable("claude"),

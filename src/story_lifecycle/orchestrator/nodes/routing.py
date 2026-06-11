@@ -20,6 +20,8 @@ def route_after_execute(state: StoryState) -> str:
         return "__end__"
     if state.get("last_error"):
         return "router"
+    if state.get("_waiting_for_agent"):
+        return "__end__"
     return "review_stage"
 
 

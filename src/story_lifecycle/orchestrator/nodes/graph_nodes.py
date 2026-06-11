@@ -6,13 +6,12 @@ retry/skip/fail/wait_confirm are handled inside router_node.
 
 import json
 import logging
-import tempfile as _tf
 from pathlib import Path
 
 from langgraph.errors import GraphInterrupt
 
 from ...db import models as db
-from ...terminal import ttyd
+from ...terminal.pty import get_pty
 from .. import planner
 from .. import router as llm_router
 from ..notify import send as notify
@@ -259,6 +258,13 @@ def plan_stage_node(state: StoryState) -> StoryState:
     workspace = state["workspace"]
     story_key = state["story_key"]
 
+    active_execution = state.get("context", {}).get("_active_execution")
+    current_done = stage_done_file(workspace, story_key, stage)
+    if current_done.exists() or (
+        isinstance(active_execution, dict) and active_execution.get("stage") == stage
+    ):
+        return state
+
     # Guard: execution_count exceeded max_retries
     max_retries = cfg.get("max_retries", 3)
     if state.get("execution_count", 0) >= max_retries:
@@ -388,10 +394,6 @@ def execute_and_wait_node(state: StoryState) -> dict:
     workspace = state["workspace"]
     key = state["story_key"]
 
-    # Clear stale CLI exit marker
-    _exit_marker = Path(_tf.gettempdir()) / f"story-exit-{key}"
-    _exit_marker.unlink(missing_ok=True)
-
     done_file = stage_done_file(workspace, key, stage)
 
     # --- Phase 1: Consume existing done file (idempotent) ---
@@ -412,6 +414,21 @@ def execute_and_wait_node(state: StoryState) -> dict:
         "_provider", cfg.get("provider", "deepseek")
     )
     model = plan.get("model") or cfg.get("model", "sonnet")
+    execution_mode = cfg.get("execution_mode", "interactive_pty")
+
+    active_execution = state.get("context", {}).get("_active_execution")
+    existing_pty = get_pty(key)
+    if (
+        execution_mode == "interactive_pty"
+        and isinstance(active_execution, dict)
+        and active_execution.get("stage") == stage
+        and existing_pty is not None
+        and existing_pty.alive
+        and existing_pty.purpose == "agent"
+    ):
+        state["_execution_mode"] = execution_mode
+        state["_waiting_for_agent"] = True
+        return state
 
     prompt = ""
     prompt_meta = {}
@@ -431,6 +448,7 @@ def execute_and_wait_node(state: StoryState) -> dict:
         "adapter": adapter_name,
         "provider": provider,
         "model": model,
+        "execution_mode": execution_mode,
         "prompt": prompt,
         "skill": stage_cfg.get("skill", ""),
     }
@@ -521,7 +539,11 @@ def _consume_done_file(
         done_file.unlink()
     except PermissionError:
         pass
-    ttyd.clear_launch_state(key)
+    state.get("context", {}).pop("_active_execution", None)
+    db.update_story(
+        key,
+        context_json=json.dumps(state.get("context", {}), ensure_ascii=False),
+    )
 
     is_synthetic = data.pop("synthetic", None)
     if is_synthetic:
@@ -540,7 +562,7 @@ def _sync_done_outputs(state: StoryState, key: str, stage: str, data: dict):
 def _poll_done_file(
     state: StoryState, done_file: Path, key: str, stage: str, workspace: str
 ) -> dict:
-    """Poll for done file, check session/exit status."""
+    """Poll for a stage completion file."""
     # Check done file
     if done_file.exists():
         data = _consume_done_file(done_file, state, key, stage)
@@ -549,36 +571,10 @@ def _poll_done_file(
             _sync_done_outputs(state, key, stage, data)
         return state
 
-    # Check session exit (mplex-launched only)
-    session = ttyd.session_name(key)
-    if key in ttyd._mplex_launched and not ttyd.session_alive(session):
-        NodeError(
-            "execute_and_wait_node",
-            stage,
-            f"Session {session} closed, no done file yet — keeping story active",
-            error_type="SessionClosed",
-            action="keep_active",
-        ).apply(state)
+    if state.get("_waiting_for_agent"):
         return state
 
-    # Check CLI exit marker
-    exit_marker = Path(_tf.gettempdir()) / f"story-exit-{key}"
-    if exit_marker.exists():
-        try:
-            ec = exit_marker.read_text().strip()
-            exit_marker.unlink(missing_ok=True)
-        except Exception:
-            ec = "?"
-        NodeError(
-            "execute_and_wait_node",
-            stage,
-            f"Terminal closed (exit: {ec}), stage {stage} still in progress",
-            error_type="TerminalClosed",
-            action="keep_active",
-        ).apply(state)
-        return state
-
-    # Headless mode — CLI finished without producing done file
+    # Explicit headless mode completed without producing a done file.
     NodeError(
         "execute_and_wait_node",
         stage,

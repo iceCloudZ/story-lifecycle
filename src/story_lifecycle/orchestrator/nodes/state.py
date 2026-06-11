@@ -19,6 +19,8 @@ class StoryState(TypedDict, total=False):
     execution_count: int
     last_error: Optional[str]
     stage_start_time: float
+    _execution_mode: Optional[str]
+    _waiting_for_agent: bool
 
     # Smart Orchestrator fields
     plan_summary: Optional[str]

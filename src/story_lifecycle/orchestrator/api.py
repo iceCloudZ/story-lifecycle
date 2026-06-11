@@ -10,11 +10,16 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ..adapters import get_adapter
 from ..db import models as db
 from ..db.models import init_db
-from ..terminal import ttyd
-from ..terminal.pty import get_pty, spawn_pty, kill_pty
-from .graph import start_story_async, recover_orphan_stories
+from ..terminal.pty import get_pty, ensure_agent_pty, kill_pty
+from .graph import (
+    start_story_async,
+    recover_orphan_stories,
+    resume_ready_interactive_stories,
+)
+from .nodes.profile_loader import resolve_profile
 
 
 # -------- WebSocket broadcast --------
@@ -91,8 +96,21 @@ async def lifespan(app: FastAPI):
         logging.getLogger("story-lifecycle").info(
             f"Recovered {recovered} active stories after restart"
         )
-    ttyd.cleanup_orphaned_sessions()
-    yield
+    watcher = asyncio.create_task(_watch_interactive_done_files())
+    try:
+        yield
+    finally:
+        watcher.cancel()
+        try:
+            await watcher
+        except asyncio.CancelledError:
+            pass
+
+
+async def _watch_interactive_done_files():
+    while True:
+        resume_ready_interactive_stories()
+        await asyncio.sleep(1)
 
 
 app = FastAPI(title="Story Lifecycle Manager", version="0.1.0", lifespan=lifespan)
@@ -214,21 +232,40 @@ async def pty_ws(ws: WebSocket, story_id: str):
 
 @app.post("/api/pty/{story_id}/spawn")
 def api_spawn_pty(story_id: str):
-    """Spawn a PTY for a story (e.g. to run Claude Code)."""
+    """Start or reuse the story's interactive agent PTY."""
     s = db.get_story(story_id)
     if not s:
         raise HTTPException(404, "Story not found")
 
-    workspace = s.get("workspace", "")
+    return _ensure_story_agent_pty(s)
+
+
+def _ensure_story_agent_pty(story: dict) -> dict:
+    workspace = story.get("workspace", "")
     if not workspace or not Path(workspace).exists():
         raise HTTPException(400, "Invalid workspace")
 
-    # Default: spawn a shell in the workspace
-    import sys
+    profile = resolve_profile(story.get("profile", "minimal"))
+    stage_cfg = profile.stage(story.get("current_stage", "design"))
+    adapter_name = stage_cfg.cli or profile.cli or "claude"
+    model = stage_cfg.model or profile.model or "sonnet"
+    existing = get_pty(story["story_key"])
+    reused = bool(existing and existing.alive and existing.purpose == "agent")
 
-    shell = "cmd.exe" if sys.platform == "win32" else "/bin/bash"
-    spawn_pty(story_id, [shell], cwd=workspace)
-    return {"ok": True}
+    adapter = get_adapter(adapter_name)
+    ensure_agent_pty(
+        story["story_key"],
+        adapter.interactive_launch_cmd(model),
+        workspace,
+        "",
+    )
+    return {
+        "ok": True,
+        "reused": reused,
+        "purpose": "agent",
+        "adapter": adapter_name,
+        "model": model,
+    }
 
 
 @app.delete("/api/pty/{story_id}")
@@ -434,7 +471,7 @@ def fail_story(story_key: str, req: SkipRequest = None):
 @app.delete("/api/story/{story_key}")
 def delete_story(story_key: str):
     db.delete_story(story_key)
-    ttyd.stop_ttyd(story_key)
+    kill_pty(story_key)
     return {"ok": True}
 
 
@@ -549,14 +586,9 @@ def get_terminal(story_key: str):
     if not s:
         raise HTTPException(404, "Story not found")
 
-    url = ttyd.ensure_ttyd(story_key, s["workspace"])
-    return JSONResponse(
-        {
-            "url": url,
-            "port": ttyd._story_ports.get(story_key, 0),
-            "session": ttyd.session_name(story_key),
-        }
-    )
+    info = _ensure_story_agent_pty(s)
+    info["url"] = f"/ws/pty/{story_key}"
+    return JSONResponse(info)
 
 
 @app.get("/api/session/health")

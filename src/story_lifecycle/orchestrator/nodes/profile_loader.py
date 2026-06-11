@@ -18,6 +18,7 @@ class StageConfig:
     cli: str = "claude"
     model: str = ""
     provider: str = ""
+    execution_mode: str = "interactive_pty"
     skill: str = ""
     confirm: bool = False
     review: bool = True
@@ -46,6 +47,7 @@ class ResolvedProfile:
     cli: str = "claude"
     model: str = ""
     provider: str = ""
+    execution_mode: str = "interactive_pty"
     stages: dict[str, StageConfig] = field(default_factory=dict)
     quality: dict = field(default_factory=dict)
     adversarial: dict = field(default_factory=dict)
@@ -68,6 +70,7 @@ class ResolvedProfile:
             "cli": self.cli,
             "model": self.model,
             "provider": self.provider,
+            "execution_mode": self.execution_mode,
             "stages": stages,
             "quality": self.quality,
             "adversarial": self.adversarial,
@@ -100,6 +103,7 @@ class ResolvedProfile:
             cli=data.get("cli", "claude"),
             model=data.get("model", ""),
             provider=data.get("provider", ""),
+            execution_mode=data.get("execution_mode", "interactive_pty"),
             stages=stages,
             quality=data.get("quality", {}),
             adversarial=data.get("adversarial", {}),
@@ -117,6 +121,7 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
     top_cli = raw.get("cli", "claude")
     top_model = raw.get("model", "")
     top_provider = raw.get("provider", "")
+    top_execution_mode = raw.get("execution_mode", "interactive_pty")
 
     stages = {}
     for stage_name, stage_raw in raw.get("stages", {}).items():
@@ -126,6 +131,7 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
             cli=stage_raw.get("cli", top_cli),
             model=stage_raw.get("model", top_model),
             provider=stage_raw.get("provider", top_provider),
+            execution_mode=stage_raw.get("execution_mode", top_execution_mode),
             skill=stage_raw.get("skill", ""),
             confirm=stage_raw.get("confirm", False),
             review=stage_raw.get("review", True),
@@ -143,6 +149,7 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
                     "cli",
                     "model",
                     "provider",
+                    "execution_mode",
                     "skill",
                     "confirm",
                     "review",
@@ -159,6 +166,7 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
         cli=top_cli,
         model=top_model,
         provider=top_provider,
+        execution_mode=top_execution_mode,
         stages=stages,
         quality=raw.get("quality", {}),
         adversarial=raw.get("adversarial", {}),

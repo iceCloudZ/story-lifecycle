@@ -125,7 +125,6 @@ class TestSubStoryWaitResume:
             patch(
                 "story_lifecycle.orchestrator.nodes.graph_nodes.planner"
             ) as mock_planner,
-            patch("story_lifecycle.orchestrator.nodes.graph_nodes.ttyd") as mock_ttyd,
             patch("story_lifecycle.orchestrator.nodes.graph_nodes.notify"),
             patch(
                 "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
@@ -175,10 +174,6 @@ class TestSubStoryWaitResume:
                 ],
                 "summary": "Splitting into sub-stories",
             }
-
-            mock_ttyd.session_name.return_value = f"story-{key}"
-            mock_ttyd.session_alive.return_value = True
-            mock_ttyd._MPLEX = None
 
             # Build initial state and call plan_stage_node directly
             state = {

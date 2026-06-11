@@ -1,18 +1,18 @@
-"""BaseTool — shared session launch and state update logic."""
+"""BaseTool - shared CLI execution logic."""
 
 from __future__ import annotations
 
 import json
 import logging
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
 from ...adapters import get_adapter
 from ...db import models as db
-from ...terminal import ttyd
+from ...terminal import pty as pty_terminal
 from ...terminal.platform_ops import subprocess_needs_shell
+from ..execution import ExecutionMode, parse_execution_mode
 
 log = logging.getLogger("story-lifecycle.base-tool")
 
@@ -20,20 +20,15 @@ _HEADLESS_TIMEOUT = 3600
 
 
 class BaseTool:
-    """Base class for all execution tools. Provides common session management."""
+    """Base class for all execution tools."""
 
     def _launch_in_session(self, state: dict, args: dict, prompt: str) -> dict:
-        """Launch a CLI adapter with the given prompt.
-
-        Runs the CLI via subprocess.run with the adapter's headless_launch_cmd.
-        No terminal window or multiplexer session needed.
-
-        Returns updated state with execution_count, stage_start_time, etc.
-        """
+        """Launch a CLI in the explicitly selected execution mode."""
         key = state["story_key"]
         workspace = str(Path(state["workspace"]).resolve())
         adapter_name = args.get("adapter", "claude")
         model = args.get("model", "sonnet")
+        execution_mode = parse_execution_mode(args.get("execution_mode"))
         tool_name = getattr(self, "_tool_name", self.__class__.__name__)
 
         adapter = get_adapter(adapter_name)
@@ -45,10 +40,14 @@ class BaseTool:
             except Exception:
                 pass
 
-        # Always use headless (subprocess) mode
-        headless_fn = getattr(adapter, "headless_launch_cmd", None)
-        cmd = headless_fn(model, prompt) if headless_fn else None
-        if cmd is not None:
+        if execution_mode is ExecutionMode.HEADLESS:
+            cmd = adapter.headless_launch_cmd(model, prompt)
+            if cmd is None:
+                raise RuntimeError(
+                    f"Adapter {adapter_name!r} does not support headless execution"
+                )
+            state["_execution_mode"] = execution_mode.value
+            state["_waiting_for_agent"] = False
             return self._run_headless(
                 state,
                 cmd,
@@ -58,39 +57,59 @@ class BaseTool:
                 model,
                 tool_name,
             )
-        # Adapter doesn't support headless — fall back to session launch
-        log.warning(
-            "Adapter %s does not support headless, falling back to launch_cli",
-            adapter_name,
-        )
-
-        # Fallback: launch in terminal window via ttyd
-        launch = adapter.launch_cmd(model)
-        session = ttyd.session_name(key)
-
-        injected = False
-        if ttyd.session_alive(session):
-            ttyd.send_keys(session, "C-c")
-            time.sleep(0.5)
-            ttyd.send_keys(session, launch, "Enter")
-            time.sleep(8)
-            ttyd.paste_text(session, prompt)
-            ttyd.send_keys(session, "Enter")
-            injected = True
-            ttyd._mplex_launched.add(key)
-
-        if not injected:
-            tmp = (
-                Path(tempfile.gettempdir())
-                / f"story-prompt-{key}-{state['current_stage']}.md"
-            )
-            tmp.write_text(prompt, encoding="utf-8")
-            ttyd.launch_cli(key, workspace, launch, str(tmp))
-            ttyd._mplex_launched.add(key)
 
         state["execution_count"] = state.get("execution_count", 0) + 1
         state["stage_start_time"] = time.time()
         state["last_error"] = None
+        state["_execution_mode"] = execution_mode.value
+        state["_waiting_for_agent"] = True
+        marker = {
+            "stage": state["current_stage"],
+            "mode": execution_mode.value,
+            "adapter": adapter_name,
+            "model": model,
+            "attempt": state["execution_count"],
+        }
+        state.setdefault("context", {})["_active_execution"] = marker
+
+        interactive_fn = getattr(adapter, "interactive_launch_cmd", None)
+        command = (
+            interactive_fn(model)
+            if interactive_fn is not None
+            else [adapter.launch_cmd(model)]
+        )
+        try:
+            pty_terminal.ensure_agent_pty(
+                key,
+                command,
+                workspace,
+                prompt,
+            )
+        except Exception as exc:
+            state["_waiting_for_agent"] = False
+            state["context"].pop("_active_execution", None)
+            state["last_error"] = (
+                f"Interactive PTY launch failed for {adapter_name}: {exc}"
+            )
+            db.log_event(
+                key,
+                state["current_stage"],
+                "execute_failed",
+                {
+                    "tool": tool_name,
+                    "adapter": adapter_name,
+                    "model": model,
+                    "execution_mode": execution_mode.value,
+                    "error": str(exc),
+                },
+            )
+            db.update_story(
+                key,
+                execution_count=state["execution_count"],
+                last_error=state["last_error"],
+                context_json=json.dumps(state["context"], ensure_ascii=False),
+            )
+            return state
 
         db.log_event(
             key,
@@ -100,11 +119,17 @@ class BaseTool:
                 "attempt": state["execution_count"],
                 "tool": tool_name,
                 "adapter": adapter_name,
-                "provider": args.get("provider"),
+                "provider": provider,
                 "model": model,
+                "execution_mode": execution_mode.value,
             },
         )
-        db.update_story(key, execution_count=state["execution_count"], last_error=None)
+        db.update_story(
+            key,
+            execution_count=state["execution_count"],
+            last_error=None,
+            context_json=json.dumps(state["context"], ensure_ascii=False),
+        )
         return state
 
     def _run_headless(
@@ -117,19 +142,12 @@ class BaseTool:
         model: str,
         tool_name: str,
     ) -> dict:
-        """Run CLI synchronously via subprocess in headless mode.
-
-        Pipes *prompt* via stdin (avoids OS command-line length limits).
-        Blocks until the CLI exits.  Updates state with execution metadata
-        and returns.  The caller should return this state immediately
-        (early return from _launch_in_session).
-        """
+        """Run a CLI synchronously via its explicit headless command."""
         key = state["story_key"]
         state["execution_count"] = state.get("execution_count", 0) + 1
         state["stage_start_time"] = time.time()
         state["last_error"] = None
 
-        # Budget-aware timeout: read from context (swebench manifest stores it)
         timeout = _HEADLESS_TIMEOUT
         ctx = state.get("context") or {}
         budget = ctx.get("budget")
@@ -145,13 +163,17 @@ class BaseTool:
                 "tool": tool_name,
                 "adapter": adapter_name,
                 "model": model,
+                "execution_mode": ExecutionMode.HEADLESS.value,
                 "headless": True,
             },
         )
         db.update_story(key, execution_count=state["execution_count"], last_error=None)
 
         log.info(
-            "Headless mode: running %s for %s (timeout=%ds)", adapter_name, key, timeout
+            "Headless mode: running %s for %s (timeout=%ds)",
+            adapter_name,
+            key,
+            timeout,
         )
         try:
             result = subprocess.run(
@@ -180,19 +202,14 @@ class BaseTool:
                 log.info("Headless CLI completed for %s", key)
                 self._synth_done_file(state, result.stdout)
         except subprocess.TimeoutExpired:
-            log.error("Headless CLI timed out (%ds) for %s", _HEADLESS_TIMEOUT, key)
-            state["last_error"] = f"Headless CLI timed out after {_HEADLESS_TIMEOUT}s"
+            log.error("Headless CLI timed out (%ds) for %s", timeout, key)
+            state["last_error"] = f"Headless CLI timed out after {timeout}s"
             db.update_story(key, last_error=state["last_error"])
 
         return state
 
     def _synth_done_file(self, state: dict, stdout: str) -> None:
-        """Write a synthetic .story/done file from headless CLI stdout.
-
-        The CLI (e.g. ``claude -p``) does not reliably write the handshake
-        file itself.  We parse its stdout for JSON output; if that fails we
-        write a minimal marker so ``poll_completion_node`` can proceed.
-        """
+        """Write a synthetic done file from headless CLI stdout."""
         key = state["story_key"]
         stage = state["current_stage"]
         workspace = state["workspace"]
@@ -200,19 +217,16 @@ class BaseTool:
         done_dir.mkdir(parents=True, exist_ok=True)
         done_path = done_dir / f"{stage}.json"
 
-        # Try to find JSON blob in stdout (claude --output-format json)
         data = None
         if stdout and stdout.strip():
-            import re as _re
+            import re
 
-            # Look for fenced JSON block first (```json ... ```)
-            m = _re.search(r"```json\s*\n(.*?)```", stdout, _re.DOTALL)
-            if m:
+            match = re.search(r"```json\s*\n(.*?)```", stdout, re.DOTALL)
+            if match:
                 try:
-                    data = json.loads(m.group(1))
+                    data = json.loads(match.group(1))
                 except (json.JSONDecodeError, ValueError):
                     pass
-            # Try the whole stdout as JSON
             if data is None:
                 try:
                     data = json.loads(stdout.strip())
@@ -222,8 +236,6 @@ class BaseTool:
         if not isinstance(data, dict):
             data = {"output": (stdout or "")[:2000], "synthetic": True}
 
-        # Auto-discover artifacts the CLI may have written but not reported.
-        # Design stage often writes docs/design*.md without setting spec_path.
         if stage == "design" and "spec_path" not in data:
             docs_dir = Path(workspace) / "docs"
             if docs_dir.is_dir():
@@ -232,7 +244,8 @@ class BaseTool:
                     data["spec_path"] = f"docs/{candidates[-1].name}"
 
         done_path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
         log.info("Synthesized .story/done/%s/%s.json for %s", key, stage, key)
 

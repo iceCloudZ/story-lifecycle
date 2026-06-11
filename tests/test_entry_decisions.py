@@ -518,22 +518,21 @@ class TestBaseToolLaunchConstraint:
     healthy session exists (adapter without headless support)."""
 
     def test_no_create_session_no_healthy_session(self, monkeypatch, tmp_path):
-        """When no session exists and adapter has no headless, must call launch_cli."""
+        """Ordinary execution must use the per-story Web PTY."""
         import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.terminal.pty as pty_mod
         import story_lifecycle.orchestrator.tools.base as base_mod
         from story_lifecycle.orchestrator.tools.base import BaseTool
         from story_lifecycle.db import models as db_mod
 
         create_calls = []
-        launch_cli_calls = []
+        agent_pty_calls = []
 
         monkeypatch.setattr(ttyd_mod, "session_alive", lambda n: False)
         monkeypatch.setattr(
             ttyd_mod, "create_session", lambda *a, **kw: create_calls.append(a)
         )
-        monkeypatch.setattr(
-            ttyd_mod, "launch_cli", lambda *a, **kw: launch_cli_calls.append(a)
-        )
+        monkeypatch.setattr(ttyd_mod, "launch_cli", lambda *a, **kw: None)
         monkeypatch.setattr(ttyd_mod, "session_name", lambda k: f"s-{k}")
         monkeypatch.setattr(ttyd_mod, "send_keys", lambda *a, **kw: None)
         monkeypatch.setattr(ttyd_mod, "paste_text", lambda *a, **kw: None)
@@ -541,6 +540,12 @@ class TestBaseToolLaunchConstraint:
         # No Zellij available → must fall back to launch_cli
         monkeypatch.setattr(ttyd_mod, "_MPLEX", None)
         monkeypatch.setattr(ttyd_mod, "zellij_execution_args", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            pty_mod,
+            "ensure_agent_pty",
+            lambda *a, **kw: agent_pty_calls.append((a, kw)),
+            raising=False,
+        )
 
         class FakeAdapter:
             def launch_cmd(self, model):
@@ -566,23 +571,31 @@ class TestBaseToolLaunchConstraint:
         )
 
         assert create_calls == [], "create_session must NOT be called"
-        assert len(launch_cli_calls) == 1, "launch_cli must be called exactly once"
+        assert len(agent_pty_calls) == 1
 
-    def test_headless_path_preferred_when_available(self, monkeypatch, tmp_path):
+    def test_interactive_path_is_default_even_when_headless_available(
+        self, monkeypatch, tmp_path
+    ):
         """When adapter supports headless, must use subprocess.run — never ttyd."""
         import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.terminal.pty as pty_mod
         import story_lifecycle.orchestrator.tools.base as base_mod
         from story_lifecycle.orchestrator.tools.base import BaseTool
         from story_lifecycle.db import models as db_mod
 
-        ttyd_calls = []
+        pty_calls = []
+        headless_calls = []
 
         monkeypatch.setattr(ttyd_mod, "session_alive", lambda n: False)
-        monkeypatch.setattr(
-            ttyd_mod, "launch_cli", lambda *a, **kw: ttyd_calls.append(a)
-        )
+        monkeypatch.setattr(ttyd_mod, "launch_cli", lambda *a, **kw: None)
         monkeypatch.setattr(ttyd_mod, "session_name", lambda k: f"s-{k}")
         monkeypatch.setattr(ttyd_mod, "_mplex_launched", set())
+        monkeypatch.setattr(
+            pty_mod,
+            "ensure_agent_pty",
+            lambda *a, **kw: pty_calls.append((a, kw)),
+            raising=False,
+        )
 
         class FakeAdapter:
             def launch_cmd(self, model):
@@ -595,6 +608,11 @@ class TestBaseToolLaunchConstraint:
                 pass
 
         monkeypatch.setattr(base_mod, "get_adapter", lambda n: FakeAdapter())
+        monkeypatch.setattr(
+            BaseTool,
+            "_run_headless",
+            lambda self, *a, **kw: headless_calls.append(a) or a[0],
+        )
         monkeypatch.setattr(db_mod, "log_event", lambda *a, **kw: None)
         monkeypatch.setattr(db_mod, "update_story", lambda *a, **kw: None)
 
@@ -609,20 +627,105 @@ class TestBaseToolLaunchConstraint:
             state, {"adapter": "claude", "model": "sonnet"}, "prompt"
         )
 
-        assert ttyd_calls == [], "ttyd.launch_cli must NOT be called in headless mode"
-        assert result["last_error"] is None or "Headless CLI" in (
-            result.get("last_error") or ""
+        assert headless_calls == []
+        assert len(pty_calls) == 1
+        assert result["last_error"] is None
+
+    def test_headless_path_requires_explicit_mode(self, monkeypatch, tmp_path):
+        import story_lifecycle.orchestrator.tools.base as base_mod
+        from story_lifecycle.orchestrator.tools.base import BaseTool
+
+        headless_calls = []
+
+        class FakeAdapter:
+            def launch_cmd(self, model):
+                return "echo fake"
+
+            def headless_launch_cmd(self, model, prompt):
+                return ["echo", "headless"]
+
+            def switch_provider(self, provider):
+                pass
+
+        monkeypatch.setattr(base_mod, "get_adapter", lambda name: FakeAdapter())
+        monkeypatch.setattr(
+            BaseTool,
+            "_run_headless",
+            lambda self, *a, **kw: headless_calls.append(a) or a[0],
         )
 
+        state = {
+            "story_key": "T-HEADLESS",
+            "workspace": str(tmp_path),
+            "current_stage": "design",
+            "execution_count": 0,
+        }
+        tool = BaseTool()
+        tool._launch_in_session(
+            state,
+            {
+                "adapter": "claude",
+                "model": "sonnet",
+                "execution_mode": "headless",
+            },
+            "prompt",
+        )
+
+        assert len(headless_calls) == 1
+
+    def test_interactive_launch_failure_is_visible(self, monkeypatch, tmp_path):
+        import story_lifecycle.terminal.pty as pty_mod
+        import story_lifecycle.orchestrator.tools.base as base_mod
+        from story_lifecycle.orchestrator.tools.base import BaseTool
+        from story_lifecycle.db import models as db_mod
+
+        class FakeAdapter:
+            def interactive_launch_cmd(self, model):
+                return ["claude"]
+
+            def switch_provider(self, provider):
+                pass
+
+        monkeypatch.setattr(base_mod, "get_adapter", lambda name: FakeAdapter())
+        monkeypatch.setattr(
+            pty_mod,
+            "ensure_agent_pty",
+            lambda *a, **kw: (_ for _ in ()).throw(OSError("ConPTY unavailable")),
+        )
+        monkeypatch.setattr(db_mod, "log_event", lambda *a, **kw: None)
+        updates = []
+        monkeypatch.setattr(
+            db_mod, "update_story", lambda *a, **kw: updates.append((a, kw))
+        )
+
+        state = {
+            "story_key": "T-PTY-FAIL",
+            "workspace": str(tmp_path),
+            "current_stage": "design",
+            "context": {},
+            "execution_count": 0,
+        }
+
+        result = BaseTool()._launch_in_session(
+            state, {"adapter": "claude", "model": "sonnet"}, "prompt"
+        )
+
+        assert "ConPTY unavailable" in result["last_error"]
+        assert result["_waiting_for_agent"] is False
+        assert "_active_execution" not in result["context"]
+        assert updates[-1][1]["last_error"] == result["last_error"]
+
     def test_injects_into_healthy_session_as_fallback(self, monkeypatch, tmp_path):
-        """When a healthy session exists and no headless, must inject via send_keys."""
+        """Legacy Zellij state must not bypass the Web PTY execution path."""
         import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.terminal.pty as pty_mod
         import story_lifecycle.orchestrator.tools.base as base_mod
         from story_lifecycle.orchestrator.tools.base import BaseTool
         from story_lifecycle.db import models as db_mod
 
         send_keys_calls = []
         launch_cli_calls = []
+        agent_pty_calls = []
 
         monkeypatch.setattr(ttyd_mod, "session_alive", lambda n: True)
         monkeypatch.setattr(ttyd_mod, "create_session", lambda *a, **kw: None)
@@ -635,6 +738,12 @@ class TestBaseToolLaunchConstraint:
             ttyd_mod, "launch_cli", lambda *a, **kw: launch_cli_calls.append(a)
         )
         monkeypatch.setattr(ttyd_mod, "_mplex_launched", set())
+        monkeypatch.setattr(
+            pty_mod,
+            "ensure_agent_pty",
+            lambda *a, **kw: agent_pty_calls.append((a, kw)),
+            raising=False,
+        )
 
         monkeypatch.setattr(time, "sleep", lambda s: None)
 
@@ -664,7 +773,8 @@ class TestBaseToolLaunchConstraint:
         assert launch_cli_calls == [], (
             "launch_cli must NOT be called when session is healthy"
         )
-        assert len(send_keys_calls) >= 2, "send_keys must be called to inject prompt"
+        assert send_keys_calls == []
+        assert len(agent_pty_calls) == 1
 
 
 # ---------------------------------------------------------------------------
