@@ -1,0 +1,73 @@
+<h2>Story 长期资料：三种存储方案</h2>
+<p class="subtitle">请选择更符合长期维护预期的方案。重点比较多项目关联、AI 自动发现、证据审计和 Web 编辑能力。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px">
+      <div class="mockup">
+        <div class="mockup-header">story.context_json</div>
+        <div class="mockup-body">
+          <p>projects: [...]</p>
+          <p>documents: [...]</p>
+          <p>changes: [...]</p>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 扩展现有 context_json</h3>
+      <p>改动最小，直接把所有资料塞进当前运行上下文。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4><ul><li>实现快</li><li>迁移少</li></ul></div>
+        <div class="cons"><h4>问题</h4><ul><li>长期事实与临时运行状态混杂</li><li>并发更新易覆盖</li><li>查询、审计、局部编辑困难</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px">
+      <div class="mockup">
+        <div class="mockup-header">story_context 表</div>
+        <div class="mockup-body">
+          <p>story_key</p>
+          <p>document_json</p>
+          <p>version / updated_at</p>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 独立 JSON 文档</h3>
+      <p>把长期资料从运行上下文中分离，但仍作为一个整体文档保存。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4><ul><li>边界清楚</li><li>读取和生成快照简单</li><li>支持版本号防覆盖</li></ul></div>
+        <div class="cons"><h4>问题</h4><ul><li>项目/变更项难独立查询</li><li>单项确认与证据历史较笨重</li><li>后续发布清单仍需解析 JSON</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)" style="border-color:#3b82f6">
+    <div class="card-image" style="padding:18px">
+      <div class="mockup">
+        <div class="mockup-header">结构化实体 + 注入快照</div>
+        <div class="mockup-body">
+          <p>story_project</p>
+          <p>story_document</p>
+          <p>story_change_item</p>
+          <p>→ Context Snapshot</p>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. 结构化表（推荐）</h3>
+      <p>项目、文档和 DDL/Nacos 变更分别建模，session 启动时生成只读快照。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4><ul><li>按项目管理清晰</li><li>证据、状态和确认可独立审计</li><li>便于 Web 编辑、自动发现和发布检查</li></ul></div>
+        <div class="cons"><h4>代价</h4><ul><li>表和 API 较多</li><li>首期实现量最大</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我的推荐</h3>
+  <p><strong>选择 C，但控制为三个核心实体。</strong>不做通用 CMDB，也不把每个字段拆成独立表。结构化存储负责事实与审计，Context Resolver 负责生成给 AI 的轻量目录。</p>
+</div>

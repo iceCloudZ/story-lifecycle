@@ -1,0 +1,59 @@
+<h2>详细设计 4/4：异常处理、并发与测试</h2>
+<p class="subtitle">所有不可执行分支必须同时具备：用户可见原因、诊断事件、无部分副作用。</p>
+
+<div class="section">
+  <h3>组件边界</h3>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+    <div class="mockup"><div class="mockup-header">Resolvers（只读）</div><div class="mockup-body">
+      <p>ProjectResolver</p><p>WorktreeResolver</p><p>StoryContextResolver</p><p>TapdWorkflowResolver</p>
+    </div></div>
+    <div class="mockup"><div class="mockup-header">Deciders（纯函数）</div><div class="mockup-body">
+      <p>StartStoryDecision</p><p>ContextMergeDecision</p><p>TapdSyncSuggestion</p><p>CleanupDecision</p>
+    </div></div>
+    <div class="mockup"><div class="mockup-header">Handlers（副作用）</div><div class="mockup-body">
+      <p>保存资料</p><p>创建 worktree</p><p>启动 session</p><p>确认式 TAPD 回写</p>
+    </div></div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>原子性与并发</h3>
+  <p>资料编辑使用 <strong>context_revision</strong> 乐观锁：页面提交旧 revision 时返回 409 和最新数据，禁止静默覆盖 AI 或其他页面的更新。</p>
+  <p>同一 Story 的项目、文档、变更项批量保存与事件日志在一个 SQLite 写事务内完成。</p>
+  <p>创建 worktree 使用项目级进程内锁 + 文件锁，锁内再次解析 Git worktree 事实，防止两个 Story 同时抢同一路径或分支。</p>
+  <p>SQLite 同时只能有一个写事务，因此事务保持短小；Git 扫描和外部 API 调用不放在 DB 事务内。</p>
+</div>
+
+<div class="section">
+  <h3>失败处理</h3>
+  <div class="mockup"><div class="mockup-body">
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr><th align="left">失败</th><th align="left">行为</th><th align="left">反馈码</th></tr></thead>
+      <tbody>
+        <tr><td>项目路径不存在</td><td>不创建 worktree，不启动 session</td><td>project_path_missing</td></tr>
+        <tr><td>Git 命令失败/超时</td><td>保留原资料，不猜测状态</td><td>git_command_failed / timeout</td></tr>
+        <tr><td>部分项目 worktree 创建失败</td><td>本次启动失败；清理本次新建且 clean 的 worktree，原有 worktree 不动</td><td>worktree_prepare_partial</td></tr>
+        <tr><td>资料 revision 冲突</td><td>拒绝覆盖，返回最新快照和冲突字段</td><td>context_revision_conflict</td></tr>
+        <tr><td>TAPD 拉取失败</td><td>显示本地缓存为 stale；不改变本地执行状态</td><td>tapd_fetch_failed</td></tr>
+        <tr><td>TAPD 回写失败</td><td>建议保持 pending，允许重试</td><td>tapd_writeback_failed</td></tr>
+        <tr><td>Session 启动失败</td><td>worktree 保留；Story 不进入 active</td><td>session_start_failed</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+</div>
+
+<div class="section">
+  <h3>测试层次</h3>
+  <p><strong>单元测试：</strong>状态映射、资料合并、注入 Markdown、worktree 决策表、TAPD 回写建议。</p>
+  <p><strong>DB 测试：</strong>迁移、外键/唯一约束、事务回滚、revision 冲突、级联清理。</p>
+  <p><strong>Git 集成测试：</strong>临时仓库创建两个 Story worktree；分支占用、路径冲突、stale、dirty cleanup。</p>
+  <p><strong>API 测试：</strong>Story 资料 CRUD、refresh、start、cleanup preview/confirm、TAPD suggestion/confirm。</p>
+  <p><strong>Prompt 回归：</strong>新 session、恢复、重试都注入相同 revision；正文不被自动展开。</p>
+  <p><strong>生命周期回归：</strong>sync 创建 candidate 且绝不调用 start_story_async；本地完成绝不直接调用 TAPD 更新。</p>
+</div>
+
+<div class="section">
+  <h3>本期范围</h3>
+  <p><strong>P0：</strong>结构化资料、Web/API 编辑、worktree 自动创建与校验、session 注入、单 Story 自动发现、TAPD 回写建议。</p>
+  <p><strong>不在 P0：</strong>TAPD Webhook、生产部署平台探测、自动执行 DDL/Nacos、自动删除 worktree、跨机器路径同步。</p>
+</div>

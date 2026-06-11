@@ -1,0 +1,77 @@
+<h2>Story 资料与生命周期：现状及目标边界</h2>
+<p class="subtitle">蓝色为外部事实，绿色为本地执行，橙色为本次新增的长期上下文。虚线表示需要明确同步规则。</p>
+
+<div class="section">
+  <div style="display:grid;grid-template-columns:1fr 72px 1fr;gap:14px;align-items:center">
+    <div class="mockup">
+      <div class="mockup-header">TAPD Story：外部需求事实</div>
+      <div class="mockup-body">
+        <p><strong>身份：</strong>workspace_id + TAPD item id</p>
+        <p><strong>拥有：</strong>标题、负责人、优先级、截止时间、TAPD 状态、原始描述/附件</p>
+        <p><strong>不应拥有：</strong>AI 当前阶段、session 状态、重试次数、执行上下文</p>
+      </div>
+    </div>
+    <div style="text-align:center;font-size:30px;color:#668">⇄</div>
+    <div class="mockup">
+      <div class="mockup-header">本地 Story：开发执行聚合根</div>
+      <div class="mockup-body">
+        <p><strong>身份：</strong>story_key；通过 source_type/source_id 关联 TAPD</p>
+        <p><strong>拥有：</strong>workspace、profile、stage、status、执行次数、错误、审计事件</p>
+        <p><strong>当前已有：</strong>branches_json、context_json、TAPD 元数据镜像</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="display:flex;justify-content:center;font-size:30px;color:#668;margin:4px 0 14px">↓</div>
+
+<div class="mockup" style="border-color:#d69545">
+  <div class="mockup-header" style="background:#fff3df">新增：Story 长期资料包（持久化、可编辑、可注入）</div>
+  <div class="mockup-body">
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+      <div><span class="label">范围</span><p>影响项目 / 仓库</p></div>
+      <div><span class="label">需求</span><p>PRD 文档引用</p></div>
+      <div><span class="label">设计</span><p>设计文档引用</p></div>
+      <div><span class="label">代码</span><p>每项目对应分支</p></div>
+      <div><span class="label">数据</span><p>DDL 文件或变更说明</p></div>
+      <div><span class="label">配置</span><p>Nacos 变更项与环境</p></div>
+    </div>
+    <p style="margin-top:14px"><strong>原则：</strong>这是“跨 session 仍然有效的事实”，不和临时推理、错误信息、运行标记混在同一个 JSON 中。</p>
+  </div>
+</div>
+
+<div style="display:flex;justify-content:center;font-size:30px;color:#668;margin:4px 0 14px">↓ 每次启动或重新开启 session 时生成快照</div>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Context Resolver（只读事实）</div>
+    <div class="mockup-body">
+      <p>读取 TAPD 镜像、本地资料包、当前 stage、workspace 中可用文档。</p>
+      <p>校验路径、缺失项和结构，不产生启动 session 等副作用。</p>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">Prompt Renderer → AI Session</div>
+    <div class="mockup-body">
+      <p>渲染统一的“Story 长期上下文”章节。</p>
+      <p>新 session、恢复执行、重试阶段使用同一份解析结果，避免入口间行为漂移。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>建议的双生命周期</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+    <div>
+      <p><strong>TAPD 生命周期</strong></p>
+      <p>待处理 → 处理中 → 已实现/待验证 → 已完成/关闭</p>
+      <p class="subtitle">业务协作状态，由 TAPD 工作流定义。</p>
+    </div>
+    <div>
+      <p><strong>本地 Story 生命周期</strong></p>
+      <p>已同步 → 待启动 → 执行中 → 暂停/阻塞 → 完成/终止</p>
+      <p class="subtitle">AI 编排状态，由本地状态机定义。</p>
+    </div>
+  </div>
+  <p><strong>关键点：</strong>两套状态相关但不等价，不能用一个 status 字段互相覆盖。状态映射应产生“建议动作”，真正回写 TAPD 需要显式策略。</p>
+</div>
