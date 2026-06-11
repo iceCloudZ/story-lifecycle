@@ -341,7 +341,7 @@ def inspect(workspace, as_json):
     if as_json:
         import json as _json
 
-        console.print(_json.dumps(_to_dict(profile), ensure_ascii=False, indent=2))
+        click.echo(_json.dumps(_to_dict(profile), ensure_ascii=False, indent=2))
         return
 
     console.print("\n[bold cyan]Project Inspection[/]")
