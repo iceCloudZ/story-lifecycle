@@ -151,6 +151,70 @@ frontend/src/api/client.ts                                     5 次 Edit
 
 工具调用记录证明写操作曾被执行，但不能单独证明每个中间版本最终仍保留在工作树中；部分内容随后可能被覆盖、格式化、提交或冲突合并。
 
+### 共享工作区交叉污染
+
+事故还造成了不同 Story 和不同 feature branch 之间的工作区污染，不只是单个任务重复执行。
+
+4 个进入高频循环的 Story 为：
+
+| Story | 最终 execution_count | 事故窗口内 execute 事件 |
+|---|---:|---:|
+| `tapd-1144381896001065824` | 130 | 129 |
+| `tapd-1144381896001065822` | 129 | 128 |
+| `tapd-1144381896001065843` | 128 | 127 |
+| `tapd-1144381896001065825` | 128 | 127 |
+
+Git reflog 和提交记录确认了以下共享 checkout 操作：
+
+```text
+2026-06-11 02:38:55  从 main 切到 feature/tapd-1144381896001065549
+2026-06-11 02:41:28  提交 e1353ee
+2026-06-11 02:43:09  创建 refs/stash
+2026-06-11 02:43:10  切到 feature/tapd-1144381896001065516
+```
+
+提交 `e1353ee` 位于分支 `feature/tapd-1144381896001065549`，但提交正文标记：
+
+```text
+Story: tapd-1144381896001065516
+```
+
+这证明 Story 与当前分支没有形成强绑定，自动任务可以在错误的 feature branch 上提交另一个 Story 的代码。
+
+02:43 创建的 stash 又包含：
+
+```text
+frontend/src/api/client.ts
+src/story_lifecycle/orchestrator/api.py
+src/story_lifecycle/validators/name_validator.py
+tests/test_name_validator.py
+```
+
+其中姓名校验此前已由另一个自动分支 `feature/tapd-1144381896001065338` 在提交 `5461010` 中实现过。当前 stash 保存的是另一套不同规模的实现：
+
+```text
+提交 5461010:  name_validator.py 212 行，test_name_validator.py 240 行
+02:43 stash:   name_validator.py 173 行，test_name_validator.py 409 行
+```
+
+当前主工作区因此留下：
+
+```text
+UU frontend/src/api/client.ts
+MM src/story_lifecycle/orchestrator/api.py
+A  src/story_lifecycle/validators/name_validator.py
+A  tests/test_name_validator.py
+```
+
+这组残留能够解释姓名校验为什么表现为“只写了校验器和测试、核心集成没接完”：它不是一个完整提交，而是并发自动任务在共享 checkout 中 stash、切分支和恢复变更后留下的混合中间态。
+
+影响结论：
+
+1. 自动任务会修改真实代码并提交。
+2. 多个 Story 共用同一 checkout，分支和 Story 没有隔离。
+3. stash/checkout 把不同 Story 的改动混合，产生未合并冲突和半成品。
+4. 仅修复 headless 重试循环不能消除该风险，必须为每个 Story 使用独立 worktree，并校验 Story、branch、workspace 三者绑定关系。
+
 ### 模型分布
 
 2026-06-10 的 Claude Code 本地记录同时包含多个模型映射：
