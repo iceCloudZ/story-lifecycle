@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.3] - 2026-06-11
+
+### Added
+- **Story 长期资料数据模型** — 6 张新表（project、story_project、project_runtime_fact、story_document、story_change_item、story_delivery_artifact），story 表新增 intake_state / context_revision
+- **intake_state 边界守卫** — TAPD 同步创建 `candidate + idle`，禁止自动启动未审核 story；`list_active_stories` / `recover_orphan_stories` 过滤 candidate
+- **项目注册表模块** — 路径规范化（Path.resolve）、git 可用性检测（rev-parse）、多运行时事实记录
+- **Worktree 模块** — Resolver（解析 git worktree list --porcelain -z）+ Decider（纯函数决策表）+ Handler（安全执行），支持多仓库隔离、分支冲突检测、清理门禁
+- **交付产物模块** — 统一 GitHub PR / GitLab MR / 本地合并模型，AI 禁止设置 `abandoned`，审查记录与清理门禁
+- **Context 模块** — ContextResolver（实体组装 + 校验）、Snapshot（版本化 Markdown 快照）、AutoDiscovery（Scanner/Decider/Handler 自动发现 DDL/Nacos/PRD）
+- **15 个新 API 端点** — context CRUD、project CRUD、worktree prepare/cleanup-preview/cleanup、delivery-artifacts CRUD、story start 验证、TAPD 回写建议
+- 显式 story 执行模式与生命周期文档
+- Dashboard 白底主题 + 日历视图 + 泳道布局 + TAPD 链接优化
+- Workspace Onboarding & Project Profile
+- 发布信号、探针验证、漂移检测测试增强
+
+### Fixed
+- `upsert_story_from_source` 不再覆盖 `intake_state`（本地生命周期字段）
+- `create_story` 默认插入 `intake_state='ready'`，修复回归测试
+
 ## [0.10.2] - 2026-06-10
 
 ### Added
