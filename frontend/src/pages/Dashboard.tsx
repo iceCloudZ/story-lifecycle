@@ -99,16 +99,17 @@ export default function Dashboard() {
   }
 
   function handleStartDev(s: StorySummary) {
-    const key = s.storyKey.replace('tapd-', 'DEV-')
-    storyApi.create({
-      key,
-      title: s.title || '',
-      profile: 'minimal',
-      autostart: false,
-    }).then(() => {
-      setTab('story')
-      qc.invalidateQueries({ queryKey: ['stories'] })
-    })
+    // Activate the TAPD story directly instead of creating a duplicate
+    fetch(`/api/story/${s.storyKey}/start`, { method: 'POST' })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json()
+          alert(`无法启动: ${err.message || err.reasonCode || '未知错误'}\n请先为 Story 绑定项目。`)
+          return
+        }
+        setTab('story')
+        qc.invalidateQueries({ queryKey: ['stories'] })
+      })
   }
 
   return (
