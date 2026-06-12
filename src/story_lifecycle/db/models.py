@@ -681,8 +681,8 @@ def upsert_story(
             parent_key = kwargs.pop("parent_key", None)
             subtask_index = kwargs.pop("subtask_index", 0)
             conn.execute(
-                """INSERT INTO story (story_key, title, workspace, profile, current_stage, status, created_at, updated_at, parent_key, subtask_index)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO story (story_key, title, workspace, profile, current_stage, status, intake_state, created_at, updated_at, parent_key, subtask_index)
+                   VALUES (?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?)""",
                 (
                     story_key,
                     title,
