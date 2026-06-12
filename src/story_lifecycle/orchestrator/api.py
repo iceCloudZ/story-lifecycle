@@ -296,9 +296,13 @@ def list_stories(
         show_completed: Show completed TAPD stories (default hides resolved/rejected/closed)
     """
     if show_all:
-        stories = db.list_active_stories() + db.list_completed_stories(limit=100)
+        stories = (
+            db.list_active_stories()
+            + db.list_completed_stories(limit=100)
+            + db.list_candidate_stories()
+        )
     else:
-        stories = db.list_active_stories()
+        stories = db.list_active_stories() + db.list_candidate_stories()
 
     if status:
         stories = [s for s in stories if s["status"] == status]
@@ -334,6 +338,9 @@ def list_stories(
                 "tapdStatus": s.get("tapd_status"),
                 "tapdUrl": s.get("tapd_url"),
                 "tapdType": s.get("tapd_type"),
+                "intakeState": s.get("intake_state"),
+                "sourceType": s.get("source_type"),
+                "sourceId": s.get("source_id"),
             }
             for s in stories
         ]

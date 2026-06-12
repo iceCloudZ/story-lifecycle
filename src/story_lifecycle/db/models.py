@@ -455,6 +455,16 @@ def list_active_stories() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def list_candidate_stories() -> list[dict]:
+    """Return candidate stories that need project binding before activation."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT * FROM story WHERE intake_state = 'candidate'
+               ORDER BY updated_at DESC"""
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def list_completed_stories(limit: int = 20) -> list[dict]:
     with _db() as conn:
         rows = conn.execute(
