@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.0] - 2026-06-13
+
+### Changed
+- **编排引擎从 LangGraph 切换为 Agent Function Calling** — 弃用 StateGraph，改用 Agent 函数调用编排；LLM 先规划再执行 CLI，精简编排 prompt，规划通过 SSE 流式生成。配套新增 Agent 架构测试并清理过期测试
+- **StoryDetailPage 全面重构** — sidebar + content 布局，浅色主题，拆分为概览 / 代码变更 / 对抗循环 / 测试 / 质量门 / 终端六个 Tab
+
+### Added
+- **多会话 PTY 后端** — 1:N story→session 注册表，会话 list/spawn/kill 端点 + 多会话 WebSocket；前端 `usePTYSessions` hook 与终端 Tab 切换
+- StoryDetailPage 组件族：StorySidebar、OverviewTab（进度条 + 规划 + 快速统计）、StageProgress、CodeChangesTab、QualityGateTab、AdversarialLoopTab、TestTab、TerminalTab、ActionCard
+- 项目面板 UI + 「开始开发」自动绑定项目 + 项目选择弹窗 + 路径校验放宽
+- 每阶段 LLM 规划 + 按阶段 adapter 配置
+- stats 与多会话 PTY 前端 API
+
+### Fixed
+- 前端 lint 清零（54 项）：修复 WebSocket/PTY 重连 TDZ 自引用、prop 变化 state 重置、SSE 重入守卫等 React 反模式；`any` 全部替换为领域类型；顺带修掉终端 mount 闪烁、SSE EventSource 被立即销毁两个隐患
+- `upsert_story` 补回缺失的 `intake_state` 列；candidate 推进为 ready 时正确设置 status=active
+- 「我的 Story」与 tapdType 解耦 + 修正 TAPD 缺陷 owner 过滤
+- 候选 story 纳入列表展示，intakeState 写入 API 响应
+- `test_execution_mode` PTY spawn mock 返回 None 导致解包失败
+- minimal.yaml profile 在根目录与打包目录间同步
+- 点击后立即跳转详情页，规划改为异步生成
+
 ## [0.10.3] - 2026-06-11
 
 ### Added
