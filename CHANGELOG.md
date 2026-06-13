@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.1] - 2026-06-14
+
+### Fixed
+- **Dashboard 永远显示 0 个 Story** — WS 推送的 `_story_list_json` 与 REST `/api/story` 共用同一序列化（`_serialize_story_summary`）和取数（`list_visible_stories`），WS payload 补回 `tapdType`/`intakeState` 等字段，Dashboard 过滤不再恒为空（由 Playwright E2E 发现）
+- **findings 双重 severity 过滤** — `/findings` 端点改用 `get_findings_by_story` + 单点过滤，low severity 的 open finding 不再被 `get_open_findings` 的默认 medium 门槛静默砍掉
+- **CLI `story list` 漏 candidate story** — API 与 CLI 统一调用 `db.list_visible_stories(...)`，行为对齐；`COMPLETED_STATES` 提为共享常量
+
+### Added
+- `/api/story/{key}/stats` 端点（`code_changes` / `loop_rounds` / `findings_open`），供详情页概览的统计卡使用；之前该端点缺失导致 OverviewTab 每次加载打 404
+
+### Changed
+- 消除多处 copy-paste drift：event payload 解析抽 `parse_event_payload` / `is_adversarial_loop_event`（统一 stats / loop-trace / timeline / gate-history 四端点的失败语义）；story 列表序列化抽 `_serialize_story_summary`；severity 排序提为 `db.SEVERITY_ORDER` 常量；前端 `AgentAction` 类型三处定义统一 import 自 `api/client`
+
 ## [0.11.0] - 2026-06-13
 
 ### Changed
