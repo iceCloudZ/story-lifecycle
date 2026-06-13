@@ -69,7 +69,9 @@ def test_terminal_spawn_starts_profile_agent_not_shell(
     monkeypatch.setattr(
         api,
         "ensure_agent_pty",
-        lambda *args, **kwargs: calls.append((args, kwargs)),
+        # ensure_agent_pty returns (session_id, pty); append() returns None,
+        # so fall through to a valid tuple to satisfy the caller's unpacking.
+        lambda *args, **kwargs: calls.append((args, kwargs)) or ("session-1", object()),
         raising=False,
     )
 
