@@ -1130,6 +1130,9 @@ def bind_story_project(
 ) -> dict:
     """Bind a story to a project. Returns the created row."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    # worktree_path 有 UNIQUE 约束，未创建 worktree 时用 branch 占位避免空串冲突
+    if not worktree_path:
+        worktree_path = f"_pending_{story_key}_{project_id}"
     with _db() as conn:
         conn.execute(
             """INSERT INTO story_project (story_key, project_id, branch, base_branch,

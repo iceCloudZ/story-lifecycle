@@ -1389,7 +1389,13 @@ class CreateProjectRequest(BaseModel):
 
 @app.get("/api/projects")
 def api_list_projects():
-    """List all registered projects."""
+    """List all registered projects with fresh availability."""
+    from .project_registry import check_project_availability
+
+    projects = db.list_projects()
+    # 刷新每个项目的 availability（轻量 git rev-parse）
+    for p in projects:
+        check_project_availability(p["id"])
     return {"projects": db.list_projects()}
 
 
@@ -1563,42 +1569,50 @@ def api_update_delivery(story_key: str, artifact_id: int, req: UpdateDeliveryReq
 # -------- Lifecycle endpoints --------
 
 
+class StartStoryRequest(BaseModel):
+    project_ids: list[int] = []
+
+
 @app.post("/api/story/{story_key}/start")
-def api_start_story(story_key: str):
-    """Start a story. Auto-binds registered projects for candidate TAPD stories."""
+def api_start_story(story_key: str, req: StartStoryRequest | None = None):
+    """Start a story. Binds user-selected projects for candidate stories."""
     story = db.get_story(story_key)
     if not story:
         raise HTTPException(status_code=404, detail="story not found")
 
     intake_state = story.get("intake_state", "ready")
-    source_type = story.get("source_type", "")
+    req = req or StartStoryRequest()
 
-    # Auto-bind: if candidate TAPD story has no projects, bind all registered projects
-    if intake_state == "candidate" and source_type == "tapd":
-        sps = db.get_story_projects(story_key)
-        if not sps:
-            all_projects = db.list_projects()
-            if not all_projects:
-                return JSONResponse(
-                    status_code=409,
-                    content={
-                        "ok": False,
-                        "reasonCode": "project_path_missing",
-                        "message": "请先在「项目注册」中添加项目，再开始开发",
-                    },
-                )
-            for proj in all_projects:
-                db.bind_story_project(
-                    story_key=story_key,
-                    project_id=proj["id"],
-                    branch=f"codex/{story_key}-{proj['name']}",
-                    base_branch=proj.get("default_branch", "main"),
-                    worktree_state="unprepared",
-                    source="user",
-                )
-
-    # Promote candidate to ready + activate
+    # Bind user-selected projects for candidate stories
     if intake_state == "candidate":
+        sps = db.get_story_projects(story_key)
+        if not sps and not req.project_ids:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "ok": False,
+                    "reasonCode": "project_not_selected",
+                    "message": "请选择要关联的项目",
+                },
+            )
+        if req.project_ids:
+            all_projects = {p["id"]: p for p in db.list_projects()}
+            existing_pids = {sp["project_id"] for sp in sps}
+            for pid in req.project_ids:
+                if pid in existing_pids:
+                    continue  # 跳过已绑定的项目
+                proj = all_projects.get(pid)
+                if proj:
+                    db.bind_story_project(
+                        story_key=story_key,
+                        project_id=proj["id"],
+                        branch=f"codex/{story_key}-{proj['name']}",
+                        base_branch=proj.get("default_branch", "main"),
+                        worktree_state="unprepared",
+                        source="user",
+                    )
+
+        # Promote candidate to ready + activate
         db.update_story(story_key, intake_state="ready", status="active")
 
     start_story_async(story_key)

@@ -70,13 +70,14 @@ def check_project_availability(project_id: int) -> dict | None:
 
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"],
+            ["git", "rev-parse", "--show-toplevel"],
             cwd=str(repo_path),
             capture_output=True,
             text=True,
             timeout=10,
         )
-        if result.returncode == 0 and result.stdout.strip() == "true":
+        if result.returncode == 0 and result.stdout.strip():
+            # Inside a git worktree (root or subdirectory) — both are fine
             db.update_project(
                 project_id,
                 availability="available",
@@ -84,7 +85,9 @@ def check_project_availability(project_id: int) -> dict | None:
             )
         else:
             error_msg = (
-                result.stderr.strip() if result.stderr else "not a git repository"
+                result.stderr.strip()
+                if result.stderr
+                else "not inside a git repository"
             )
             db.update_project(
                 project_id,

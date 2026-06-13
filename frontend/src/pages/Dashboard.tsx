@@ -62,6 +62,8 @@ export default function Dashboard() {
   const [showCreate, setShowCreate] = useState(false)
   const [showProjectForm, setShowProjectForm] = useState(false)
   const [projectCount, setProjectCount] = useState(0)
+  // 项目选择弹窗状态
+  const [pickerStory, setPickerStory] = useState<StorySummary | null>(null)
   const qc = useQueryClient()
 
   const { data: fullList } = useQuery({
@@ -102,18 +104,31 @@ export default function Dashboard() {
     if (ok) qc.invalidateQueries({ queryKey: ['stories'] })
   }
 
-  function handleStartDev(s: StorySummary) {
-    // Activate the TAPD story directly instead of creating a duplicate
-    fetch(`/api/story/${s.storyKey}/start`, { method: 'POST' })
-      .then(async (r) => {
-        if (!r.ok) {
-          const err = await r.json()
-          alert(`无法启动: ${err.message || err.reasonCode || '未知错误'}\n请先为 Story 绑定项目。`)
-          return
-        }
-        setTab('story')
-        qc.invalidateQueries({ queryKey: ['stories'] })
-      })
+  async function handleStartDev(s: StorySummary) {
+    // 如果已经是 ready 状态（已有项目绑定），直接启动
+    if (s.intakeState === 'ready') {
+      const r = await fetch(`/api/story/${s.storyKey}/start`, { method: 'POST' })
+      if (!r.ok) {
+        const err = await r.json()
+        alert(`无法启动: ${err.message || err.reasonCode || '未知错误'}`)
+        return
+      }
+      setTab('story')
+      qc.invalidateQueries({ queryKey: ['stories'] })
+      return
+    }
+
+    // candidate 状态：弹窗让用户选择项目
+    const projectsRes = await fetch('/api/projects')
+    const projectsData = await projectsRes.json()
+    const projects: any[] = projectsData.projects || []
+
+    if (projects.length === 0) {
+      alert('请先在「项目」tab 中注册项目，再开始开发')
+      return
+    }
+
+    setPickerStory(s)
   }
 
   return (
@@ -201,6 +216,103 @@ export default function Dashboard() {
             onRefresh={() => qc.invalidateQueries({ queryKey: ['stories'] })}
           />
         )}
+      </div>
+
+      {/* 项目选择弹窗 */}
+      {pickerStory && (
+        <ProjectPickerModal
+          story={pickerStory}
+          onClose={() => setPickerStory(null)}
+          onConfirm={async (projectIds) => {
+            const r = await fetch(`/api/story/${pickerStory.storyKey}/start`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ project_ids: projectIds }),
+            })
+            if (!r.ok) {
+              const err = await r.json()
+              alert(`无法启动: ${err.message || err.reasonCode || '未知错误'}`)
+              return
+            }
+            setPickerStory(null)
+            setTab('story')
+            qc.invalidateQueries({ queryKey: ['stories'] })
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ---- 项目选择弹窗 ----
+
+function ProjectPickerModal({ story, onClose, onConfirm }: {
+  story: StorySummary
+  onClose: () => void
+  onConfirm: (projectIds: number[]) => void
+}) {
+  const [projects, setProjects] = useState<{ id: number; name: string; availability: string }[]>([])
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/projects')
+      .then(r => r.json())
+      .then(d => setProjects(d.projects || []))
+  }, [])
+
+  function toggle(id: number) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function handleConfirm() {
+    if (selected.size === 0) return
+    setLoading(true)
+    onConfirm(Array.from(selected))
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <span>选择关联项目</span>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <p className="modal-subtitle">{story.title}</p>
+        <div className="modal-body">
+          {projects.length === 0 ? (
+            <p className="hint">暂无注册项目，请先在「项目」tab 中注册</p>
+          ) : (
+            projects.map(p => (
+              <label key={p.id} className={`project-option ${selected.has(p.id) ? 'selected' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(p.id)}
+                  onChange={() => toggle(p.id)}
+                />
+                <span className="project-name">{p.name}</span>
+                {p.availability !== 'available' && (
+                  <span className="project-warn">({p.availability})</span>
+                )}
+              </label>
+            ))
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="btn" onClick={onClose}>取消</button>
+          <button
+            className="btn btn-primary"
+            disabled={selected.size === 0 || loading}
+            onClick={handleConfirm}
+          >
+            {loading ? '启动中...' : `确认开始 (${selected.size} 个项目)`}
+          </button>
+        </div>
       </div>
     </div>
   )
