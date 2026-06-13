@@ -143,20 +143,37 @@ async def ws_stories(ws: WebSocket):
             _ws_clients.remove(ws)
 
 
+def _serialize_story_summary(s: dict) -> dict:
+    """camelCase summary of a story for list views — REST /api/story and the
+    /ws/stories push share this so the two payloads can't drift. (The WS version
+    previously omitted tapdType/intakeState, leaving the Dashboard's filters
+    matching nothing — see the dashboard-zero-stories bug.)"""
+    return {
+        "storyKey": s["story_key"],
+        "title": s["title"],
+        "currentStage": s["current_stage"],
+        "status": s["status"],
+        "complexity": s.get("complexity"),
+        "workspace": s.get("workspace"),
+        "profile": s["profile"],
+        "executionCount": s["execution_count"],
+        "updatedAt": s["updated_at"],
+        "deadline": s.get("deadline"),
+        "priority": s.get("priority"),
+        "owner": s.get("owner"),
+        "tapdStatus": s.get("tapd_status"),
+        "tapdUrl": s.get("tapd_url"),
+        "tapdType": s.get("tapd_type"),
+        "intakeState": s.get("intake_state"),
+        "sourceType": s.get("source_type"),
+        "sourceId": s.get("source_id"),
+    }
+
+
 def _story_list_json() -> list[dict]:
-    stories = db.list_active_stories()
-    return [
-        {
-            "storyKey": s["story_key"],
-            "title": s["title"],
-            "currentStage": s["current_stage"],
-            "status": s["status"],
-            "profile": s["profile"],
-            "executionCount": s["execution_count"],
-            "updatedAt": s["updated_at"],
-        }
-        for s in stories
-    ]
+    # Same gathering + serialization as the REST /api/story endpoint, so the
+    # WS-pushed list and the REST list are identical (incl. candidate stories).
+    return [_serialize_story_summary(s) for s in db.list_visible_stories()]
 
 
 async def notify_story_update(story_key: str, status: str = "", stage: str = ""):
@@ -361,56 +378,15 @@ def list_stories(
         tapd_type: Filter by type (story/bug/subtask)
         show_completed: Show completed TAPD stories (default hides resolved/rejected/closed)
     """
-    if show_all:
-        stories = (
-            db.list_active_stories()
-            + db.list_completed_stories(limit=100)
-            + db.list_candidate_stories()
-        )
-    else:
-        stories = db.list_active_stories() + db.list_candidate_stories()
-
-    if status:
-        stories = [s for s in stories if s["status"] == status]
-
-    if tapd_type:
-        stories = [s for s in stories if s.get("tapd_type") == tapd_type]
-
-    if not show_completed:
-        COMPLETED_STATES = {"resolved", "rejected", "closed"}
-        stories = [s for s in stories if s.get("tapd_status") not in COMPLETED_STATES]
-
-    if overdue:
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        stories = [s for s in stories if s.get("deadline") and s["deadline"][:10] < now]
-
-    return JSONResponse(
-        [
-            {
-                "storyKey": s["story_key"],
-                "title": s["title"],
-                "currentStage": s["current_stage"],
-                "status": s["status"],
-                "complexity": s["complexity"],
-                "workspace": s["workspace"],
-                "profile": s["profile"],
-                "executionCount": s["execution_count"],
-                "updatedAt": s["updated_at"],
-                "deadline": s.get("deadline"),
-                "priority": s.get("priority"),
-                "owner": s.get("owner"),
-                "tapdStatus": s.get("tapd_status"),
-                "tapdUrl": s.get("tapd_url"),
-                "tapdType": s.get("tapd_type"),
-                "intakeState": s.get("intake_state"),
-                "sourceType": s.get("source_type"),
-                "sourceId": s.get("source_id"),
-            }
-            for s in stories
-        ]
+    stories = db.list_visible_stories(
+        show_all=show_all,
+        status=status,
+        item_type=tapd_type,
+        show_completed=show_completed,
+        overdue=overdue,
     )
+
+    return JSONResponse([_serialize_story_summary(s) for s in stories])
 
 
 @app.get("/api/story/{story_key}")
@@ -460,6 +436,36 @@ def get_story(story_key: str):
             "subs": sub_list,
         }
     )
+
+
+@app.get("/api/story/{story_key}/stats")
+def get_story_stats(story_key: str):
+    """Aggregate quality/progress stats for the detail-page overview cards.
+
+    Returns:
+        code_changes: delivery artifacts (PRs/MRs) — units of code change.
+        loop_rounds: adversarial plan↔review / code↔review iterations logged.
+        findings_open: unresolved findings (status == 'open').
+    """
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+
+    code_changes = len(db.get_story_delivery_artifacts(story_key))
+
+    findings_open = sum(
+        1 for f in db.get_findings_by_story(story_key) if f.get("status") == "open"
+    )
+
+    loop_rounds = sum(
+        1 for ev in db.get_story_events(story_key) if db.is_adversarial_loop_event(ev)
+    )
+
+    return {
+        "code_changes": code_changes,
+        "loop_rounds": loop_rounds,
+        "findings_open": findings_open,
+    }
 
 
 @app.post("/api/story")
@@ -748,16 +754,7 @@ def get_story_timeline(story_key: str):
         entry = stages_seen[stage]
         for ev in stage_events:
             ev_type = ev.get("event_type", "")
-            import json as _json
-
-            payload = ev.get("payload")
-            if isinstance(payload, str):
-                try:
-                    payload = _json.loads(payload)
-                except Exception:
-                    payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = db.parse_event_payload(ev)
 
             if ev_type == "plan":
                 if payload.get("summary"):
@@ -843,16 +840,7 @@ def get_gate_history(story_key: str):
     for ev in events:
         if ev.get("event_type") != "gate_decision":
             continue
-        import json as _json
-
-        payload = ev.get("payload")
-        if isinstance(payload, str):
-            try:
-                payload = _json.loads(payload)
-            except Exception:
-                continue
-        if not isinstance(payload, dict):
-            continue
+        payload = db.parse_event_payload(ev)
         decisions.append(
             {
                 "decision_id": payload.get("decision_id", ""),
@@ -908,17 +896,7 @@ def get_loop_trace(story_key: str):
     code_rounds = []
 
     for ev in events:
-        import json as _json
-
-        payload = ev.get("payload")
-        if isinstance(payload, str):
-            try:
-                payload = _json.loads(payload)
-            except Exception:
-                continue
-        if not isinstance(payload, dict):
-            continue
-
+        payload = db.parse_event_payload(ev)
         ev_type = ev.get("event_type", "")
         stage = ev.get("stage", "")
 
@@ -991,24 +969,25 @@ async def get_findings(
     """Return quality findings for a story with optional filters.
 
     Query params:
-        status: Filter by finding status (open, accepted, fixed, verified, etc.)
-        min_severity: Minimum severity threshold (high, medium, low)
+        status: Filter by finding status (open, accepted, fixed, verified, ...).
+                Defaults to 'open'.
+        min_severity: Minimum severity threshold (high, medium, low). Empty = no
+                threshold (all severities), matching the findings_open stat.
     """
-    findings = db.get_open_findings(story_key)
+    # Fetch all findings for the story, then filter in one place. Previously this
+    # called get_open_findings, which silently drops low-severity rows via its
+    # default min_severity='medium' — so ?min_severity=low could never return
+    # low findings, and the default hid them too. (db.SEVERITY_ORDER is the
+    # single shared ranking.)
+    findings = db.get_findings_by_story(story_key)
+    findings = [f for f in findings if f.get("status") == (status or "open")]
 
-    # If status filter is specified, get all findings not just open
-    if status and status != "open":
-        findings = db.get_findings_by_story(story_key)
-        findings = [f for f in findings if f.get("status") == status]
-
-    # Severity filter
-    severity_order = {"high": 3, "medium": 2, "low": 1}
     if min_severity:
-        min_level = severity_order.get(min_severity, 0)
+        min_level = db.SEVERITY_ORDER.get(min_severity, 0)
         findings = [
             f
             for f in findings
-            if severity_order.get(f.get("severity", "low"), 0) >= min_level
+            if db.SEVERITY_ORDER.get(f.get("severity", "low"), 0) >= min_level
         ]
 
     return {"findings": findings}

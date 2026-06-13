@@ -474,6 +474,47 @@ def list_completed_stories(limit: int = 20) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+COMPLETED_STATES = frozenset({"resolved", "rejected", "closed"})
+"""TAPD lifecycle states treated as 'done' and hidden from list views by default."""
+
+
+def list_visible_stories(
+    show_all: bool = False,
+    status: str = "",
+    item_type: str = "",
+    show_completed: bool = False,
+    overdue: bool = False,
+) -> list[dict]:
+    """Gather + filter stories for list views.
+
+    Shared by the REST ``/api/story`` endpoint and the ``story list`` CLI so the
+    two can't drift apart — the CLI previously omitted candidate stories that the
+    API included, and COMPLETED_STATES was hardcoded in both places.
+
+    show_all: include completed/failed/aborted stories.
+    status: filter by lifecycle status (active/paused/blocked/planning/...).
+    item_type: filter by tapd_type (story/bug/subtask).
+    show_completed: keep resolved/rejected/closed TAPD stories (hidden by default).
+    overdue: only stories past their deadline.
+    """
+    stories = list_active_stories() + list_candidate_stories()
+    if show_all:
+        stories = stories + list_completed_stories(limit=100)
+
+    if status:
+        stories = [s for s in stories if s["status"] == status]
+    if item_type:
+        stories = [s for s in stories if s.get("tapd_type") == item_type]
+    if not show_completed:
+        stories = [s for s in stories if s.get("tapd_status") not in COMPLETED_STATES]
+    if overdue:
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        stories = [s for s in stories if s.get("deadline") and s["deadline"][:10] < now]
+    return stories
+
+
 def get_sub_stories(parent_key: str) -> list[dict]:
     with _db() as conn:
         rows = conn.execute(
@@ -647,6 +688,35 @@ def get_story_events(story_key: str) -> list[dict]:
             (story_key,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def parse_event_payload(event: dict) -> dict:
+    """Decode an event's payload (stored as JSON str or dict) into a dict.
+
+    Centralized so failure semantics don't drift across the many endpoints
+    that read event payloads (stats / loop-trace / timeline / gate-history).
+    Returns {} on missing or unparseable payload, so callers can uniformly
+    do dict operations — a failed parse simply yields no matches.
+    """
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, str):
+        try:
+            decoded = json.loads(payload)
+            return decoded if isinstance(decoded, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+def is_adversarial_loop_event(event: dict) -> bool:
+    """True if this event records one adversarial plan↔review / code↔review round."""
+    payload = parse_event_payload(event)
+    return bool(payload.get("adversarial_loop")) and event.get("event_type") in (
+        "plan",
+        "review",
+    )
 
 
 def upsert_story(
@@ -827,15 +897,19 @@ def update_finding(finding_id: str, **kwargs) -> None:
         conn.execute(f"UPDATE finding SET {sets} WHERE id = ?", vals)
 
 
+SEVERITY_ORDER = {"high": 3, "medium": 2, "low": 1}
+"""Severity ranking shared by findings filtering (db + api). Single source so
+the /findings endpoint and get_open_findings can't drift apart again."""
+
+
 def get_open_findings(story_key: str, min_severity: str = "medium") -> list[dict]:
-    severity_order = {"high": 3, "medium": 2, "low": 1}
-    min_level = severity_order.get(min_severity, 2)
+    min_level = SEVERITY_ORDER.get(min_severity, 2)
     with _db() as conn:
         rows = conn.execute(
             "SELECT * FROM finding WHERE story_key = ? AND status = 'open'",
             (story_key,),
         ).fetchall()
-    return [dict(r) for r in rows if severity_order.get(r["severity"], 0) >= min_level]
+    return [dict(r) for r in rows if SEVERITY_ORDER.get(r["severity"], 0) >= min_level]
 
 
 def get_findings_by_status(statuses: list[str]) -> list[dict]:

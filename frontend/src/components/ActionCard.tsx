@@ -1,11 +1,4 @@
-interface AgentAction {
-  action: 'launch' | 'skip'
-  adapter?: string
-  stage?: string
-  focus?: string
-  done_file?: string
-  reason?: string
-}
+import type { AgentAction } from '../api/client'
 
 const ADAPTER_ICON: Record<string, string> = {
   claude: '🟠',

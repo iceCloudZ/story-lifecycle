@@ -80,6 +80,107 @@ class TestLoopTraceAPI:
         assert resp.status_code == 404
 
 
+class TestStoryStatsAPI:
+    def test_stats_aggregates_counts(
+        self, api_client, seeded_story, isolated_story_home
+    ):
+        # two adversarial loop rounds (plan + review); a plain execute event must not count
+        db.log_event(
+            seeded_story, "design", "plan", {"adversarial_loop": True, "loop_rounds": 1}
+        )
+        db.log_event(
+            seeded_story,
+            "implement",
+            "review",
+            {"adversarial_loop": True, "loop_rounds": 1},
+        )
+        # two findings, one resolved → only the open one counts
+        open_fid = db.create_finding(
+            story_key=seeded_story,
+            stage="implement",
+            source="code_review",
+            severity="high",
+            category="security",
+            description="SQL injection",
+        )
+        resolved_fid = db.create_finding(
+            story_key=seeded_story,
+            stage="implement",
+            source="code_review",
+            severity="low",
+            category="style",
+            description="nit",
+        )
+        db.update_finding(resolved_fid, status="resolved")
+        # one delivery artifact (code change)
+        db.create_delivery_artifact(
+            story_key=seeded_story,
+            kind="pr",
+            provider="github",
+            external_id="42",
+            url="https://example.com/pr/42",
+        )
+
+        resp = api_client.get(f"/api/story/{seeded_story}/stats")
+        assert resp.status_code == 200
+        assert resp.json() == {"code_changes": 1, "loop_rounds": 2, "findings_open": 1}
+        # sanity: the open finding is the one we kept open
+        assert open_fid != resolved_fid
+
+    def test_stats_empty_story(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "STATS-EMPTY", title="Empty", workspace="/tmp", profile="minimal"
+        )
+        resp = api_client.get("/api/story/STATS-EMPTY/stats")
+        assert resp.status_code == 200
+        assert resp.json() == {"code_changes": 0, "loop_rounds": 0, "findings_open": 0}
+
+    def test_stats_nonexistent(self, api_client, isolated_story_home):
+        resp = api_client.get("/api/story/NONEXIST/stats")
+        assert resp.status_code == 404
+
+
+class TestWSStoryListJSON:
+    def test_ws_push_includes_filter_fields(self, isolated_story_home):
+        """Regression for the dashboard-zero-stories bug: the WS-pushed story
+        list (which seeds the Dashboard's store/initialData) must include
+        tapdType/intakeState — the Dashboard filters on them. _story_list_json
+        previously returned only 7 fields, so the filters matched nothing."""
+        from story_lifecycle.orchestrator.api import _story_list_json
+
+        db.upsert_story(
+            "WS-TEST-001",
+            title="WS Test",
+            workspace="/tmp",
+            profile="minimal",
+            status="active",
+            tapd_type="story",
+            intake_state="ready",
+        )
+        items = _story_list_json()
+        ours = [s for s in items if s["storyKey"] == "WS-TEST-001"]
+        assert ours, "story should appear in the WS-pushed list"
+        assert ours[0]["tapdType"] == "story"
+        assert ours[0]["intakeState"] == "ready"
+
+    def test_ws_push_matches_rest_shape(self, api_client, isolated_story_home):
+        """The WS list and the REST /api/story list must serialize identically."""
+        from story_lifecycle.orchestrator.api import _story_list_json
+
+        db.upsert_story(
+            "WS-TEST-002",
+            title="Shape Parity",
+            workspace="/tmp",
+            profile="minimal",
+            status="active",
+            tapd_type="bug",
+            intake_state="ready",
+        )
+        ws_keys = {k for s in _story_list_json() for k in s}
+        rest_keys = {k for s in api_client.get("/api/story").json() for k in s}
+        assert ws_keys == rest_keys
+
+
 class TestFindingsAPI:
     def test_findings_returns_dict(self, api_client, seeded_story, isolated_story_home):
         db.create_finding(
@@ -107,6 +208,30 @@ class TestFindingsAPI:
         )
         resp = api_client.get(f"/api/story/{seeded_story}/findings?min_severity=high")
         assert resp.status_code == 200
+
+    def test_findings_low_severity_returnable(
+        self, api_client, seeded_story, isolated_story_home
+    ):
+        """Regression: low-severity open findings must be obtainable. Previously
+        get_open_findings' default min_severity='medium' silently dropped them, so
+        both the default list and ?min_severity=low returned no low findings."""
+        db.create_finding(
+            story_key=seeded_story,
+            stage="implement",
+            source="code_review",
+            severity="low",
+            category="style",
+            description="minor nit",
+        )
+        default_resp = api_client.get(f"/api/story/{seeded_story}/findings")
+        assert default_resp.status_code == 200
+        assert "low" in [f["severity"] for f in default_resp.json()["findings"]]
+
+        low_resp = api_client.get(
+            f"/api/story/{seeded_story}/findings?min_severity=low"
+        )
+        assert low_resp.status_code == 200
+        assert "low" in [f["severity"] for f in low_resp.json()["findings"]]
 
     def test_findings_empty(self, api_client, isolated_story_home):
         db.upsert_story(

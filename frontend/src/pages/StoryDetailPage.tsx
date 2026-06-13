@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { storyApi, apiAction, planApi } from '../api/client'
-import type { ActionButton } from '../api/client'
+import type { AgentAction, ActionButton } from '../api/client'
 import StorySidebar from '../components/StorySidebar'
 import OverviewTab from '../components/OverviewTab'
 import CodeChangesTab from '../components/CodeChangesTab'
@@ -11,15 +11,6 @@ import TestTab from '../components/TestTab'
 import QualityGateTab from '../components/QualityGateTab'
 import TerminalTab from '../components/TerminalTab'
 import './StoryDetailPage.css'
-
-interface AgentAction {
-  action: 'launch' | 'skip'
-  adapter?: string
-  stage?: string
-  focus?: string
-  done_file?: string
-  reason?: string
-}
 
 const MODULES = [
   { id: 'overview', icon: '📊', label: '概览' },

@@ -32,27 +32,13 @@ def list_cmd(status, overdue, show_all, story_type, show_completed):
 
     db.init_db()
 
-    if show_all:
-        stories = db.list_active_stories() + db.list_completed_stories(limit=100)
-    else:
-        stories = db.list_active_stories()
-
-    if status:
-        stories = [s for s in stories if s["status"] == status]
-
-    if story_type:
-        stories = [s for s in stories if s.get("tapd_type") == story_type]
-
-    # Hide completed (resolved/rejected/closed) by default
-    if not show_completed:
-        COMPLETED_STATES = {"resolved", "rejected", "closed"}
-        stories = [s for s in stories if s.get("tapd_status") not in COMPLETED_STATES]
-
-    if overdue:
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        stories = [s for s in stories if s.get("deadline") and s["deadline"][:10] < now]
+    stories = db.list_visible_stories(
+        show_all=show_all,
+        status=status or "",
+        item_type=story_type or "",
+        show_completed=show_completed,
+        overdue=overdue,
+    )
 
     if not stories:
         console.print("[dim]没有 story。运行 [bold]story sync[/] 从 TAPD 拉取需求。[/]")
