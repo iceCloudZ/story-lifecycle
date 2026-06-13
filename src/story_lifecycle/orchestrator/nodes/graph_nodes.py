@@ -128,6 +128,17 @@ def _stage_cfg(state: StoryState, stage: str) -> dict:
     return rp.get("stages", {}).get(stage, {})
 
 
+def _collect_adapters(state: StoryState) -> list[str]:
+    """Collect unique CLI adapter names from all stages in the profile."""
+    rp = _rp(state)
+    stages = rp.get("stages", {})
+    adapters = set()
+    for cfg in stages.values():
+        cli = cfg.get("cli", "claude") if isinstance(cfg, dict) else "claude"
+        adapters.add(cli)
+    return list(adapters) if adapters else ["claude"]
+
+
 def _write_plan_task_file(
     state: StoryState,
     plan: dict,
@@ -296,7 +307,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
         if adv_cfg.plan_loop_enabled(stage):
             from ..evaluator_loop import run_plan_loop
 
-            adapters = ["claude"]
+            adapters = _collect_adapters(state)
             loop_result = run_plan_loop(state, adv_cfg, adapters)
 
             # Skip path
@@ -337,7 +348,7 @@ def plan_stage_node(state: StoryState) -> StoryState:
     # --- End adversarial plan loop ---
 
     try:
-        adapters = ["claude"]
+        adapters = _collect_adapters(state)
         plan = planner.plan_stage(state, cfg, adapters)
 
         if plan.get("skip"):

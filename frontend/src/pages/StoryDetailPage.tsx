@@ -6,6 +6,9 @@ import TerminalPanel from '../components/TerminalPanel'
 import './StoryDetailPage.css'
 
 const ACTIONS: Record<string, { label: string; method: string; path: string; confirm?: string; variant?: string }[]> = {
+  planning: [
+    { label: '终止', method: 'POST', path: '/abort', confirm: '确定终止此 Story？', variant: 'danger' },
+  ],
   active: [
     { label: '跳过阶段', method: 'PUT', path: '/skip/{stage}' },
     { label: '终止', method: 'POST', path: '/abort', confirm: '确定终止此 Story？', variant: 'danger' },
@@ -73,11 +76,30 @@ export default function StoryDetailPage() {
     enabled: !!detail,
   })
 
+  const { data: planData } = useQuery({
+    queryKey: ['plan', storyKey],
+    queryFn: () => fetch(`/api/story/${storyKey}/plan`).then(r => r.json()),
+    enabled: !!detail && (detail.status === 'planning'),
+    refetchInterval: 5000,
+  })
+
   if (!storyKey) return <div className="loading">无效的 Story Key</div>
 
   if (!detail) return <div className="loading">加载中...</div>
 
   const actions = ACTIONS[detail.status] || []
+
+  async function handleConfirmPlan() {
+    const r = await fetch(`/api/story/${storyKey}/plan/confirm`, { method: 'POST' })
+    if (r.ok) refetch()
+    else { const e = await r.json(); alert(`确认失败: ${e.detail || '未知错误'}`) }
+  }
+
+  async function handleRegeneratePlan() {
+    const r = await fetch(`/api/story/${storyKey}/plan/generate`, { method: 'POST' })
+    if (r.ok) refetch()
+    else { const e = await r.json(); alert(`重新规划失败: ${e.detail || '未知错误'}`) }
+  }
 
   async function handleAction(action: (typeof actions)[0]) {
     if (action.confirm && !window.confirm(action.confirm)) return
@@ -122,6 +144,16 @@ export default function StoryDetailPage() {
       </div>
 
       <div className="sdp-actions">
+        {detail.status === 'planning' && (
+          <>
+            <button className="btn btn-primary" onClick={handleConfirmPlan}>
+              确认规划并执行
+            </button>
+            <button className="btn" onClick={handleRegeneratePlan}>
+              重新规划
+            </button>
+          </>
+        )}
         {actions.map((a) => (
           <button
             key={a.label}
@@ -132,6 +164,22 @@ export default function StoryDetailPage() {
           </button>
         ))}
       </div>
+
+      {/* AI 规划展示 */}
+      {detail.status === 'planning' && planData && (
+        <section className="sdp-section plan-section">
+          <h3>🤖 AI 规划</h3>
+          {planData.plan_summary && (
+            <div className="plan-summary">{planData.plan_summary}</div>
+          )}
+          {planData.plan_content && (
+            <pre className="plan-content">{planData.plan_content}</pre>
+          )}
+          {!planData.plan_summary && !planData.plan_content && (
+            <p className="sdp-empty">正在生成规划...</p>
+          )}
+        </section>
+      )}
 
       {/* Horizontal Timeline */}
       {timeline && timeline.stages?.length > 0 && (

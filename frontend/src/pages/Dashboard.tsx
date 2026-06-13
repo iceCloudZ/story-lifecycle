@@ -57,6 +57,7 @@ const CARD_ACTIONS: Record<string, { label: string; method: string; suffix: stri
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate()
   const { stories, connected } = useStoryStore()
   const [tab, setTab] = useState<'tapd' | 'story' | 'calendar' | 'project'>('tapd')
   const [showCreate, setShowCreate] = useState(false)
@@ -105,20 +106,7 @@ export default function Dashboard() {
   }
 
   async function handleStartDev(s: StorySummary) {
-    // 如果已经是 ready 状态（已有项目绑定），直接启动
-    if (s.intakeState === 'ready') {
-      const r = await fetch(`/api/story/${s.storyKey}/start`, { method: 'POST' })
-      if (!r.ok) {
-        const err = await r.json()
-        alert(`无法启动: ${err.message || err.reasonCode || '未知错误'}`)
-        return
-      }
-      setTab('story')
-      qc.invalidateQueries({ queryKey: ['stories'] })
-      return
-    }
-
-    // candidate 状态：弹窗让用户选择项目
+    // candidate 状态：弹窗让用户选择项目，然后跳转详情页（自动触发 LLM 规划）
     const projectsRes = await fetch('/api/projects')
     const projectsData = await projectsRes.json()
     const projects: any[] = projectsData.projects || []
@@ -235,8 +223,8 @@ export default function Dashboard() {
               return
             }
             setPickerStory(null)
-            setTab('story')
             qc.invalidateQueries({ queryKey: ['stories'] })
+            navigate(`/story/${pickerStory.storyKey}`)
           }}
         />
       )}

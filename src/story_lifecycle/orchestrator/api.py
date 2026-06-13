@@ -20,6 +20,7 @@ from .graph import (
     resume_ready_interactive_stories,
 )
 from .nodes.profile_loader import resolve_profile
+from . import planner
 
 
 # -------- WebSocket broadcast --------
@@ -1575,7 +1576,7 @@ class StartStoryRequest(BaseModel):
 
 @app.post("/api/story/{story_key}/start")
 def api_start_story(story_key: str, req: StartStoryRequest | None = None):
-    """Start a story. Binds user-selected projects for candidate stories."""
+    """Start a story. Binds projects, promotes to ready, triggers LLM planning."""
     story = db.get_story(story_key)
     if not story:
         raise HTTPException(status_code=404, detail="story not found")
@@ -1612,8 +1613,155 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
                         source="user",
                     )
 
-        # Promote candidate to ready + activate
-        db.update_story(story_key, intake_state="ready", status="active")
+        # Promote candidate to ready + planning
+        db.update_story(story_key, intake_state="ready", status="planning")
+
+    # 自动触发 LLM 规划（不启动 CLI）
+    try:
+        plan = api_generate_plan(story_key)
+        return {"ok": True, "story_key": story_key, "plan": plan}
+    except HTTPException as e:
+        # 规划失败不影响状态转换，前端可重试
+        return {"ok": True, "story_key": story_key, "plan_error": e.detail}
+
+    start_story_async(story_key)
+    return {"ok": True, "story_key": story_key}
+
+
+@app.get("/api/story/{story_key}/plan")
+def api_get_plan(story_key: str):
+    """获取 Story 的当前规划。"""
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(status_code=404, detail="story not found")
+
+    import json
+
+    ctx = {}
+    try:
+        ctx = json.loads(story.get("context_json") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    plan_summary = ctx.get("plan_summary", "")
+    active_exec = ctx.get("_active_execution", {})
+
+    # 尝试读取 plan 文件内容
+    plan_content = ""
+    plan_path = ctx.get("plan_path", "")
+    if plan_path:
+        from pathlib import Path
+
+        p = Path(story.get("workspace", ".")) / plan_path
+        if p.exists():
+            plan_content = p.read_text(encoding="utf-8", errors="replace")
+
+    return {
+        "story_key": story_key,
+        "status": story.get("status"),
+        "current_stage": story.get("current_stage"),
+        "plan_summary": plan_summary,
+        "plan_content": plan_content,
+        "adapter": active_exec.get("adapter", ""),
+        "confirmed": ctx.get("_plan_confirmed", False),
+    }
+
+
+@app.post("/api/story/{story_key}/plan/generate")
+def api_generate_plan(story_key: str):
+    """用 LLM 生成规划（不启动 CLI）。"""
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(status_code=404, detail="story not found")
+
+    import json
+
+    profile_name = story.get("profile", "minimal")
+    current_stage = story.get("current_stage", "design")
+
+    try:
+        rp = resolve_profile(profile_name)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=400, detail=f"Profile not found: {profile_name}"
+        )
+
+    stage_cfg = rp.stage(current_stage)
+    adapters = ["claude", "codex"]
+
+    state = {
+        "story_key": story_key,
+        "title": story.get("title", ""),
+        "workspace": story.get("workspace", ""),
+        "current_stage": current_stage,
+        "execution_count": story.get("execution_count", 0),
+        "context": json.loads(story.get("context_json") or "{}"),
+        "review_summary": "",
+    }
+    stage_config = {
+        "description": stage_cfg.description,
+        "cli": stage_cfg.cli,
+        "model": stage_cfg.model,
+        "confirm": stage_cfg.confirm,
+        "review": stage_cfg.review,
+        "max_retries": stage_cfg.max_retries,
+    }
+
+    try:
+        plan_result = planner.plan_stage(state, stage_config, adapters)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LLM 规划失败: {e}")
+
+    # 写入 context_json
+    ctx = json.loads(story.get("context_json") or "{}")
+    ctx["plan_summary"] = plan_result.get("summary", "")
+    ctx["_plan_adapter"] = plan_result.get("adapter", stage_cfg.cli)
+    ctx["_plan_model"] = plan_result.get("model", "")
+    ctx["_plan_confirmed"] = False
+
+    # 写 plan 文件
+    workspace = story.get("workspace", ".")
+    plan_dir = Path(workspace) / ".story" / "context" / story_key
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    plan_file_path = plan_dir / f"plan_{current_stage}.md"
+    extra = plan_result.get("extra_instructions", "")
+    if extra:
+        plan_file_path.write_text(extra, encoding="utf-8")
+        ctx["plan_path"] = str(plan_file_path.relative_to(Path(workspace)))
+
+    db.update_story(
+        story_key,
+        context_json=json.dumps(ctx, ensure_ascii=False),
+        status="planning",
+    )
+
+    return {
+        "ok": True,
+        "plan_summary": plan_result.get("summary", ""),
+        "plan_content": extra,
+        "adapter": plan_result.get("adapter", stage_cfg.cli),
+        "reasoning": plan_result.get("reasoning", ""),
+        "skip": plan_result.get("skip", False),
+    }
+
+
+@app.post("/api/story/{story_key}/plan/confirm")
+def api_confirm_plan(story_key: str):
+    """用户确认规划，启动 CLI 执行。"""
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(status_code=404, detail="story not found")
+
+    import json
+
+    ctx = json.loads(story.get("context_json") or "{}")
+    ctx["_plan_confirmed"] = True
+
+    db.update_story(
+        story_key,
+        context_json=json.dumps(ctx, ensure_ascii=False),
+        status="active",
+    )
 
     start_story_async(story_key)
     return {"ok": True, "story_key": story_key}
