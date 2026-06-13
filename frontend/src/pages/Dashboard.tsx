@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { storyApi, apiAction } from '../api/client'
@@ -58,7 +58,7 @@ const CARD_ACTIONS: Record<string, { label: string; method: string; suffix: stri
 
 export default function Dashboard() {
   const { stories, connected } = useStoryStore()
-  const [tab, setTab] = useState<'tapd' | 'story' | 'calendar'>('tapd')
+  const [tab, setTab] = useState<'tapd' | 'story' | 'calendar' | 'project'>('tapd')
   const [showCreate, setShowCreate] = useState(false)
   const qc = useQueryClient()
 
@@ -138,6 +138,9 @@ export default function Dashboard() {
         <button className={`tab-btn ${tab === 'calendar' ? 'active' : ''}`} onClick={() => setTab('calendar')}>
           日历
         </button>
+        <button className={`tab-btn ${tab === 'project' ? 'active' : ''}`} onClick={() => setTab('project')}>
+          项目
+        </button>
       </div>
 
       {showCreate && (
@@ -179,6 +182,9 @@ export default function Dashboard() {
               <StoryCard key={s.storyKey} story={s} onAction={(a) => handleCardAction(s, a)} />
             ))
           )
+        )}
+        {tab === 'project' && (
+          <ProjectPanel onRefresh={() => qc.invalidateQueries({ queryKey: ['stories'] })} />
         )}
       </div>
     </div>
@@ -425,6 +431,79 @@ function StoryCard({ story, onAction }: {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ---- Project management panel ----
+
+function ProjectPanel({ onRefresh }: { onRefresh: () => void }) {
+  const [projects, setProjects] = useState<any[]>([])
+  const [showForm, setShowForm] = useState(false)
+
+  function loadProjects() {
+    fetch('/api/projects').then(r => r.json()).then(d => setProjects(d.projects || []))
+  }
+  useEffect(() => { loadProjects() }, [])
+
+  function handleRegister(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const form = new FormData(e.currentTarget)
+    fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: form.get('name'),
+        repo_path: form.get('repo_path'),
+        default_branch: form.get('default_branch') || 'main',
+      }),
+    }).then(r => {
+      if (r.ok) { loadProjects(); setShowForm(false); onRefresh() }
+      else r.json().then(err => alert('注册失败: ' + (err.detail || '未知错误')))
+    })
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h3>已注册项目</h3>
+        <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
+          {showForm ? '取消' : '注册项目'}
+        </button>
+      </div>
+
+      {showForm && (
+        <form className="create-form" onSubmit={handleRegister} style={{ marginBottom: 16 }}>
+          <input name="name" placeholder="项目名称" required />
+          <input name="repo_path" placeholder="仓库路径 (如 D:/code/my-project)" required />
+          <input name="default_branch" placeholder="默认分支 (默认 main)" defaultValue="main" />
+          <button type="submit" className="btn btn-primary">注册</button>
+        </form>
+      )}
+
+      {projects.length === 0 ? (
+        <div className="empty-state">
+          <p>暂无注册项目</p>
+          <p className="hint">注册项目后，TAPD Story 点击「开始开发」会自动绑定</p>
+        </div>
+      ) : (
+        <div className="story-grid">
+          {projects.map((p: any) => (
+            <div key={p.id} className="story-card" style={{ borderLeft: '3px solid #2563eb' }}>
+              <div className="card-body">
+                <h4>{p.name}</h4>
+                <p style={{ fontSize: 12, color: '#888', wordBreak: 'break-all' }}>{p.repo_path}</p>
+                <p style={{ fontSize: 12 }}>
+                  <span className="tag">分支: {p.default_branch}</span>
+                  <span className={`tag ${p.availability === 'available' ? 'tag-green' : 'tag-yellow'}`}>
+                    {p.availability || 'unknown'}
+                  </span>
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

@@ -1565,7 +1565,7 @@ def api_update_delivery(story_key: str, artifact_id: int, req: UpdateDeliveryReq
 
 @app.post("/api/story/{story_key}/start")
 def api_start_story(story_key: str):
-    """Start a story. Validates project binding for candidate stories."""
+    """Start a story. Auto-binds registered projects for candidate TAPD stories."""
     story = db.get_story(story_key)
     if not story:
         raise HTTPException(status_code=404, detail="story not found")
@@ -1573,18 +1573,29 @@ def api_start_story(story_key: str):
     intake_state = story.get("intake_state", "ready")
     source_type = story.get("source_type", "")
 
-    # Candidate + TAPD + no projects → reject
+    # Auto-bind: if candidate TAPD story has no projects, bind all registered projects
     if intake_state == "candidate" and source_type == "tapd":
         sps = db.get_story_projects(story_key)
         if not sps:
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "ok": False,
-                    "reasonCode": "project_path_missing",
-                    "message": "TAPD candidate story has no project bindings",
-                },
-            )
+            all_projects = db.list_projects()
+            if not all_projects:
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "ok": False,
+                        "reasonCode": "project_path_missing",
+                        "message": "请先在「项目注册」中添加项目，再开始开发",
+                    },
+                )
+            for proj in all_projects:
+                db.bind_story_project(
+                    story_key=story_key,
+                    project_id=proj["id"],
+                    branch=f"codex/{story_key}-{proj['name']}",
+                    base_branch=proj.get("default_branch", "main"),
+                    worktree_state="unprepared",
+                    source="user",
+                )
 
     # Promote candidate to ready
     if intake_state == "candidate":
