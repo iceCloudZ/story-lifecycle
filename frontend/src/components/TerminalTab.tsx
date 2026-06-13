@@ -1,15 +1,63 @@
-import usePTYSessions from '../hooks/usePTYSessions'
+import { useState, useEffect, useCallback } from 'react'
 import TerminalPanel from './TerminalPanel'
 import './TerminalTab.css'
 
 interface Props {
   storyKey: string
-  status: string
+  status?: string
 }
 
-export default function TerminalTab({ storyKey, status }: Props) {
-  const { sessions, activeSessionId, setActiveSession } =
-    usePTYSessions({ storyKey, autoConnect: status === 'active' })
+interface Session {
+  session_id: string
+  adapter: string
+  stage: string
+  model: string
+  status: string
+  started_at: string
+}
+
+export default function TerminalTab({ storyKey }: Props) {
+  const [sessions, setSessions] = useState<Session[]>([])
+  const [activeSession, setActiveSession] = useState<string | null>(null)
+
+  const fetchSessions = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/story/${storyKey}/sessions`)
+      if (r.ok) {
+        const data = await r.json()
+        setSessions(data.sessions || [])
+      }
+    } catch { /* API may not exist yet */ }
+  }, [storyKey])
+
+  useEffect(() => {
+    fetchSessions()
+    const interval = setInterval(fetchSessions, 5000)
+    return () => clearInterval(interval)
+  }, [fetchSessions])
+
+  async function handleSpawn() {
+    const r = await fetch(`/api/story/${storyKey}/sessions/spawn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adapter: 'claude', model: '' }),
+    })
+    if (r.ok) {
+      const data = await r.json()
+      setActiveSession(data.session_id)
+      fetchSessions()
+    } else {
+      // Fallback: try legacy single-PTY spawn
+      const r2 = await fetch(`/api/pty/${storyKey}/spawn`, { method: 'POST' })
+      if (r2.ok) {
+        const data = await r2.json()
+        setActiveSession(data.session_id || storyKey)
+        fetchSessions()
+      }
+    }
+  }
+
+  const activeSessionId = activeSession || (sessions.length > 0 ? sessions[0].session_id : null)
 
   return (
     <div className="tab-content terminal-tab">
@@ -17,17 +65,17 @@ export default function TerminalTab({ storyKey, status }: Props) {
       <div className="tt-session-tabs">
         {sessions.map((s) => (
           <button
-            key={s.sessionId}
-            className={`tt-session-tab ${s.sessionId === activeSessionId ? 'active' : ''}`}
-            onClick={() => setActiveSession(s.sessionId)}
+            key={s.session_id}
+            className={`tt-session-tab ${s.session_id === activeSessionId ? 'active' : ''}`}
+            onClick={() => setActiveSession(s.session_id)}
           >
             <span className="tt-adapter-icon">
               {s.adapter === 'claude' ? '🟠' : '🟢'}
             </span>
             <span className="tt-session-label">
-              {s.stage} · {s.adapter}
+              {s.adapter}
             </span>
-            <span className={`tt-status-dot tt-${s.status}`} />
+            <span className={`tt-status-dot tt-${s.status === 'running' ? 'running' : 'exited'}`} />
           </button>
         ))}
         {sessions.length === 0 && (
@@ -38,15 +86,17 @@ export default function TerminalTab({ storyKey, status }: Props) {
       {/* Active terminal */}
       {activeSessionId ? (
         <div className="tt-terminal-area">
-          <TerminalPanel storyKey={activeSessionId} autoConnect />
+          <TerminalPanel storyKey={storyKey} sessionId={activeSessionId} autoConnect />
           <div className="tt-session-info">
-            {sessions.filter(s => s.sessionId === activeSessionId).map(s => (
-              <span key={s.sessionId}>会话: {s.sessionId} | 启动: {s.startedAt}</span>
-            ))}
+            <span>会话: {activeSessionId}</span>
           </div>
         </div>
       ) : (
-        <div className="tt-no-session">选择或启动一个终端会话</div>
+        <div className="tt-no-session">
+          <button className="btn btn-primary" onClick={handleSpawn}>
+            启动终端
+          </button>
+        </div>
       )}
     </div>
   )

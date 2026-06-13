@@ -7,9 +7,10 @@ import './TerminalPanel.css'
 interface Props {
   storyKey: string | null
   autoConnect?: boolean
+  sessionId?: string
 }
 
-export default function TerminalPanel({ storyKey, autoConnect = false }: Props) {
+export default function TerminalPanel({ storyKey, autoConnect = false, sessionId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
@@ -30,7 +31,10 @@ export default function TerminalPanel({ storyKey, autoConnect = false }: Props) 
   const connectWs = useCallback(() => {
     if (!storyKey || !spawned) return
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${proto}//${location.host}/ws/pty/${storyKey}`)
+    const wsPath = sessionId
+      ? `${proto}//${location.host}/ws/pty/${storyKey}/${sessionId}`
+      : `${proto}//${location.host}/ws/pty/${storyKey}`
+    const ws = new WebSocket(wsPath)
     ws.binaryType = 'arraybuffer'
     setWsStatus('connecting')
 

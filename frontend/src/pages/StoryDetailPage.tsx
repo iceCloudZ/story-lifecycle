@@ -119,8 +119,12 @@ export default function StoryDetailPage() {
 
   async function handleConfirmPlan() {
     const r = await fetch(`/api/story/${storyKey}/plan/confirm`, { method: 'POST' })
-    if (r.ok) refetch()
-    else alert(`确认失败: ${(await r.json()).detail || '未知错误'}`)
+    if (r.ok) {
+      refetch()
+      setActiveTab('terminal')
+    } else {
+      alert(`确认失败: ${(await r.json()).detail || '未知错误'}`)
+    }
   }
 
   async function handleRegeneratePlan() {

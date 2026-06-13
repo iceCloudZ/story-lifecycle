@@ -448,7 +448,7 @@ def find_by_source_id(source_type: str, source_id: str) -> dict | None:
 def list_active_stories() -> list[dict]:
     with _db() as conn:
         rows = conn.execute(
-            """SELECT * FROM story WHERE status IN ('active', 'paused', 'blocked', 'waiting_subtasks')
+            """SELECT * FROM story WHERE status IN ('active', 'paused', 'blocked', 'waiting_subtasks', 'planning')
                AND intake_state = 'ready'
                ORDER BY updated_at DESC"""
         ).fetchall()

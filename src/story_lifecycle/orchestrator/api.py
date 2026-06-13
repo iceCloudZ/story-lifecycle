@@ -6,14 +6,20 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..adapters import get_adapter
 from ..db import models as db
 from ..db.models import init_db
-from ..terminal.pty import get_pty, ensure_agent_pty, kill_pty
+from ..terminal.pty import (
+    get_pty,
+    ensure_agent_pty,
+    kill_pty,
+    list_pty_sessions,
+    spawn_pty,
+)
 from .graph import (
     start_story_async,
     recover_orphan_stories,
@@ -176,12 +182,14 @@ def notify_story_update_sync(story_key: str, status: str = "", stage: str = ""):
 # -------- PTY WebSocket --------
 
 
-@app.websocket("/ws/pty/{story_id}")
-async def pty_ws(ws: WebSocket, story_id: str):
-    """Bidirectional PTY stream: read output → push to xterm.js, recv input → write to PTY."""
+# ---- PTY WebSocket (supports both old single and new multi-session paths) ----
+
+
+async def _pty_ws_handler(ws: WebSocket, story_id: str, session_id: str = ""):
+    """Shared PTY WebSocket handler."""
     await ws.accept()
 
-    pty = get_pty(story_id)
+    pty = get_pty(story_id, session_id)
     if not pty:
         await ws.send_json({"type": "error", "message": "No PTY for this story"})
         await ws.close(code=4044)
@@ -196,7 +204,6 @@ async def pty_ws(ws: WebSocket, story_id: str):
                 continue
             except Exception:
                 break
-        # PTY exited
         try:
             await ws.send_json({"type": "exit"})
         except Exception:
@@ -231,13 +238,63 @@ async def pty_ws(ws: WebSocket, story_id: str):
         pass
 
 
-@app.post("/api/pty/{story_id}/spawn")
-def api_spawn_pty(story_id: str):
-    """Start or reuse the story's interactive agent PTY."""
-    s = db.get_story(story_id)
+@app.websocket("/ws/pty/{story_id}/{session_id}")
+async def pty_ws_multi(ws: WebSocket, story_id: str, session_id: str):
+    """Multi-session PTY WebSocket."""
+    await _pty_ws_handler(ws, story_id, session_id)
+
+
+@app.websocket("/ws/pty/{story_id}")
+async def pty_ws(ws: WebSocket, story_id: str):
+    """Legacy single-PTY WebSocket."""
+    await _pty_ws_handler(ws, story_id, "")
+
+
+# ---- Multi-Session Management API ----
+
+
+class SpawnSessionRequest(BaseModel):
+    adapter: str = "claude"
+    model: str = ""
+
+
+@app.get("/api/story/{story_key}/sessions")
+def api_list_sessions(story_key: str):
+    """List all PTY sessions for a story."""
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+    return {"sessions": list_pty_sessions(story_key)}
+
+
+@app.post("/api/story/{story_key}/sessions/spawn")
+def api_spawn_session(story_key: str, req: SpawnSessionRequest = None):
+    """Spawn a new PTY session for a story."""
+    s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")
 
+    workspace = s.get("workspace", "")
+    if not workspace or not Path(workspace).exists():
+        raise HTTPException(400, "Invalid workspace")
+
+    req = req or SpawnSessionRequest()
+    adapter = get_adapter(req.adapter or "claude")
+    model = req.model or "sonnet"
+    command = adapter.interactive_launch_cmd(model)
+
+    session_id, _ = spawn_pty(
+        story_key, command, workspace, purpose=req.adapter or "claude"
+    )
+    return {"session_id": session_id, "ok": True}
+
+
+@app.post("/api/pty/{story_id}/spawn")
+def api_spawn_pty(story_id: str):
+    """Start or reuse the story's interactive agent PTY (legacy, single-session)."""
+    s = db.get_story(story_id)
+    if not s:
+        raise HTTPException(404, "Story not found")
     return _ensure_story_agent_pty(s)
 
 
@@ -254,7 +311,7 @@ def _ensure_story_agent_pty(story: dict) -> dict:
     reused = bool(existing and existing.alive and existing.purpose == "agent")
 
     adapter = get_adapter(adapter_name)
-    ensure_agent_pty(
+    session_id, _ = ensure_agent_pty(
         story["story_key"],
         adapter.interactive_launch_cmd(model),
         workspace,
@@ -266,12 +323,20 @@ def _ensure_story_agent_pty(story: dict) -> dict:
         "purpose": "agent",
         "adapter": adapter_name,
         "model": model,
+        "session_id": session_id,
     }
+
+
+@app.delete("/api/story/{story_key}/sessions/{session_id}")
+def api_kill_session(story_key: str, session_id: str):
+    """Kill a specific PTY session."""
+    kill_pty(story_key, session_id)
+    return {"ok": True}
 
 
 @app.delete("/api/pty/{story_id}")
 def api_kill_pty(story_id: str):
-    """Kill PTY for a story."""
+    """Kill all PTY sessions for a story."""
     kill_pty(story_id)
     return {"ok": True}
 
@@ -1667,58 +1732,70 @@ def api_get_plan(story_key: str):
 
 
 @app.get("/api/story/{story_key}/plan/stream")
-def api_plan_stream(story_key: str):
+async def api_plan_stream(story_key: str):
     """SSE 流式规划 — Agent Function Calling 模式。
 
     Agent 通过 plan_step/skip_stage 工具调用生成结构化 action list。
     每个 action 实时通过 SSE 推送到前端。
     """
 
-    def error_stream(msg: str):
-        yield f"data: {json.dumps({'type': 'error', 'message': msg}, ensure_ascii=False)}\n\n"
-
     story = db.get_story(story_key)
     if not story:
+
+        async def error_stream(msg: str):
+            yield f"data: {json.dumps({'type': 'error', 'message': msg}, ensure_ascii=False)}\n\n"
+
         return StreamingResponse(
             error_stream("story not found"), media_type="text/event-stream"
         )
 
     import json
 
-    def generate():
-        collected_actions: list[dict] = []
-
-        def on_action(event: dict):
-            collected_actions.append(event)
-            # SSE 推送每个 action
-            import json as _json
-
-            yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
-
-        # 用 generator 包装 on_action 来收集 SSE 事件
-        events: list[str] = []
+    async def generate():
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
 
         def capture_action(event: dict):
-            """同步回调：捕获 action 事件到列表。"""
-            events.append(event)
+            """线程安全回调：把事件放入 asyncio.Queue，实时推送到 SSE。"""
+            loop.call_soon_threadsafe(queue.put_nowait, event)
 
-        try:
-            result = planner.run_orchestrator_agent(story_key, on_action=capture_action)
-        except Exception as e:
-            import logging
+        # 立即发送 started 事件，让前端知道规划已开始
+        yield f"data: {json.dumps({'type': 'started', 'message': 'Agent 开始规划...'}, ensure_ascii=False)}\n\n"
 
-            logging.getLogger("story-lifecycle.api").error(
-                f"Agent planning failed for {story_key}: {e}"
-            )
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
-            return
+        # 在线程池中执行同步阻塞的 Agent 规划
+        def run_planning():
+            try:
+                result = planner.run_orchestrator_agent(
+                    story_key, on_action=capture_action
+                )
+                loop.call_soon_threadsafe(
+                    queue.put_nowait, {"__sentinel__": "done", "result": result}
+                )
+            except Exception as e:
+                import logging
 
-        # 流式推送所有收集到的 action 事件
-        for event in events:
+                logging.getLogger("story-lifecycle.api").error(
+                    f"Agent planning failed for {story_key}: {e}"
+                )
+                loop.call_soon_threadsafe(
+                    queue.put_nowait, {"__sentinel__": "error", "error": str(e)}
+                )
+
+        asyncio.ensure_future(asyncio.to_thread(run_planning))
+
+        # 实时从队列读取并推送
+        while True:
+            event = await queue.get()
+            if "__sentinel__" in event:
+                sentinel = event["__sentinel__"]
+                if sentinel == "done":
+                    result = event["result"]
+                    yield f"data: {json.dumps({'type': 'done', 'actions': result.get('actions', [])}, ensure_ascii=False)}\n\n"
+                elif sentinel == "error":
+                    yield f"data: {json.dumps({'type': 'error', 'message': event['error']}, ensure_ascii=False)}\n\n"
+                break
+            # 实时推送 action 事件
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-        # 推送最终完成事件
-        yield f"data: {json.dumps({'type': 'done', 'actions': result.get('actions', [])}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -1959,8 +2036,38 @@ def _get_story_change_items(story_key: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-# -------- static frontend (must be last — catch-all mount) --------
+# -------- static frontend (must be last) --------
 
 _WEB_DIR = Path(__file__).parent.parent / "web"
 if _WEB_DIR.is_dir() and any(_WEB_DIR.iterdir()):
-    app.mount("/", StaticFiles(directory=str(_WEB_DIR), html=True), name="web")
+    # Mount static assets directly (JS, CSS, favicon, etc.)
+    _assets_dir = _WEB_DIR / "assets"
+    if _assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+
+    # Favicon
+    _favicon = _WEB_DIR / "favicon.svg"
+    if _favicon.exists():
+
+        @app.get("/favicon.svg", include_in_schema=False)
+        async def favicon():
+            return FileResponse(str(_favicon))
+
+        @app.get("/favicon.ico", include_in_schema=False)
+        async def favicon_ico():
+            return FileResponse(str(_favicon))
+
+    # SPA fallback: serve index.html for all unmatched routes
+    _index_html = _WEB_DIR / "index.html"
+    if _index_html.exists():
+
+        @app.get("/{path:path}", include_in_schema=False)
+        async def spa_fallback(path: str):
+            """SPA fallback: serve index.html for all non-API routes."""
+            if path.startswith("api/") or path.startswith("ws/"):
+                raise HTTPException(404, "Not Found")
+            return FileResponse(str(_index_html))
+
+        @app.get("/", include_in_schema=False)
+        async def root():
+            return FileResponse(str(_index_html))

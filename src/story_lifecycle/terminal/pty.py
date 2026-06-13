@@ -203,10 +203,18 @@ class ManagedPty:
             pass
 
 
-# -------- PTY Registry --------
+# -------- PTY Registry (multi-session) --------
 
-_ptys: dict[str, ManagedPty] = {}
+# _ptys: story_id → { session_id → ManagedPty }
+_ptys: dict[str, dict[str, ManagedPty]] = {}
 _lock = threading.Lock()
+_session_counter = 0
+
+
+def _next_session_id(story_id: str) -> str:
+    global _session_counter
+    _session_counter += 1
+    return f"pty-{story_id}-{_session_counter}"
 
 
 def spawn_pty(
@@ -215,20 +223,45 @@ def spawn_pty(
     cwd: str,
     env: dict | None = None,
     purpose: str = "shell",
-) -> ManagedPty:
-    """Spawn a new PTY for a story. Kills existing one if any."""
+    session_id: str = "",
+) -> tuple[str, ManagedPty]:
+    """Spawn a new PTY session for a story. Returns (session_id, pty)."""
     with _lock:
-        existing = _ptys.get(story_id)
-        if existing:
-            existing.kill()
-        pty = ManagedPty(story_id, command, cwd, env, purpose=purpose)
-        _ptys[story_id] = pty
-        return pty
+        if not session_id:
+            session_id = _next_session_id(story_id)
+        pty = ManagedPty(session_id, command, cwd, env, purpose=purpose)
+        _ptys.setdefault(story_id, {})[session_id] = pty
+        return session_id, pty
 
 
-def get_pty(story_id: str) -> Optional[ManagedPty]:
+def get_pty(story_id: str, session_id: str = "") -> Optional[ManagedPty]:
+    """Get a specific PTY session, or the first available one."""
     with _lock:
-        return _ptys.get(story_id)
+        sessions = _ptys.get(story_id, {})
+        if session_id:
+            return sessions.get(session_id)
+        # Return first alive session
+        for s in sessions.values():
+            if s.alive:
+                return s
+        return None
+
+
+def list_pty_sessions(story_id: str) -> list[dict]:
+    """List all PTY sessions for a story."""
+    with _lock:
+        sessions = _ptys.get(story_id, {})
+        return [
+            {
+                "session_id": sid,
+                "adapter": pty.purpose,
+                "stage": "",
+                "model": "",
+                "status": "running" if pty.alive else "exited",
+                "started_at": "",
+            }
+            for sid, pty in sessions.items()
+        ]
 
 
 def ensure_agent_pty(
@@ -238,38 +271,43 @@ def ensure_agent_pty(
     prompt: str,
     env: dict | None = None,
     startup_delay: float = 2.0,
-) -> ManagedPty:
-    """Start or reuse the visible agent PTY, then submit one stage prompt."""
-    existing = get_pty(story_id)
-    if existing and existing.alive and existing.purpose == "agent":
-        pty = existing
-    else:
-        pty = spawn_pty(
-            story_id,
-            command,
-            cwd,
-            env=env,
-            purpose="agent",
-        )
-        if startup_delay:
-            time.sleep(startup_delay)
+) -> tuple[str, ManagedPty]:
+    """Start a new agent PTY session. Returns (session_id, pty)."""
+    session_id, pty = spawn_pty(
+        story_id,
+        command,
+        cwd,
+        env=env,
+        purpose="agent",
+    )
+    if startup_delay:
+        time.sleep(startup_delay)
 
     if prompt:
         pty.write(prompt.encode("utf-8") + b"\r")
-    return pty
+    return session_id, pty
 
 
-def kill_pty(story_id: str):
+def kill_pty(story_id: str, session_id: str = ""):
+    """Kill a specific PTY session, or all sessions for a story."""
     with _lock:
-        pty = _ptys.pop(story_id, None)
-        if pty:
-            pty.kill()
+        sessions = _ptys.get(story_id, {})
+        if session_id:
+            pty = sessions.pop(session_id, None)
+            if pty:
+                pty.kill()
+        else:
+            for pty in sessions.values():
+                pty.kill()
+            sessions.clear()
 
 
 def cleanup_all():
     with _lock:
-        for pty in _ptys.values():
-            pty.kill()
+        for sessions in _ptys.values():
+            for pty in sessions.values():
+                pty.kill()
+            sessions.clear()
         _ptys.clear()
 
 

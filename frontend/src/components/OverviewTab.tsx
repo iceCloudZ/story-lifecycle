@@ -54,10 +54,12 @@ export default function OverviewTab({
           <div className="ot-info-value">{detail.executionCount} / 3</div>
         </div>
         <div className="ot-info-card">
+          <div className="ot-info-label">优先级</div>
+          <div className="ot-info-value">{detail.priority || '-'}</div>
+        </div>
+        <div className="ot-info-card">
           <div className="ot-info-label">来源</div>
-          <div className="ot-info-value">
-            {detail.sourceType ? `${detail.sourceType} · ${detail.priority || '-'}` : '-'}
-          </div>
+          <div className="ot-info-value">{detail.sourceType || '-'}</div>
         </div>
       </div>
 
