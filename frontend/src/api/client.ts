@@ -47,3 +47,18 @@ export const terminalApi = {
   kill: (storyKey: string) => apiAction('DELETE', `/api/pty/${storyKey}`),
   info: (storyKey: string) => fetchJSON<any>(`/api/session/terminal/${storyKey}`),
 }
+
+// Plan APIs (Agent mode)
+export const planApi = {
+  get: (key: string) => fetchJSON<any>(`/api/story/${key}/plan`),
+  streamUrl: (key: string) => `/api/story/${key}/plan/stream`,
+  confirm: (key: string) => apiAction('POST', `/api/story/${key}/plan/confirm`),
+  regenerate: (key: string) => fetchJSON<any>(`/api/story/${key}/plan/regenerate`, { method: 'POST' }),
+  answer: (key: string, answer: string) =>
+    fetchJSON<any>(`/api/story/${key}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answer }),
+    }),
+  waitQuestion: (key: string) => fetchJSON<any>(`/api/story/${key}/wait`),
+}

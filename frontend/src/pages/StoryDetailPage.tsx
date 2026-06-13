@@ -1,9 +1,19 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams, useNavigate } from 'react-router-dom'
-import { storyApi, apiAction } from '../api/client'
+import { storyApi, apiAction, planApi } from '../api/client'
 import TerminalPanel from '../components/TerminalPanel'
 import './StoryDetailPage.css'
+
+/* ---- Action type from Agent ---- */
+interface AgentAction {
+  action: 'launch' | 'skip'
+  adapter?: string
+  stage?: string
+  focus?: string
+  done_file?: string
+  reason?: string
+}
 
 const ACTIONS: Record<string, { label: string; method: string; path: string; confirm?: string; variant?: string }[]> = {
   planning: [
@@ -31,6 +41,12 @@ const ACTIONS: Record<string, { label: string; method: string; path: string; con
   aborted: [
     { label: '删除', method: 'DELETE', path: '', confirm: '确定删除？不可恢复。', variant: 'danger' },
   ],
+}
+
+/* Adapter icon map */
+const ADAPTER_ICON: Record<string, string> = {
+  claude: '🟠',
+  codex: '🟢',
 }
 
 export default function StoryDetailPage() {
@@ -76,43 +92,90 @@ export default function StoryDetailPage() {
     enabled: !!detail,
   })
 
-  // planning 状态且没有 plan_summary 时，用 SSE 流式触发生成
+  /* ---- Agent plan state ---- */
   const [planTriggered, setPlanTriggered] = useState(false)
-  const [streamingText, setStreamingText] = useState('')
+  const [streamingActions, setStreamingActions] = useState<AgentAction[]>([])
+  const [planError, setPlanError] = useState('')
 
   const { data: planData } = useQuery({
     queryKey: ['plan', storyKey],
-    queryFn: () => fetch(`/api/story/${storyKey}/plan`).then(r => r.json()),
-    enabled: !!detail && (detail.status === 'planning'),
-    refetchInterval: planTriggered ? false : 5000, // 流式输出时停止轮询
+    queryFn: () => planApi.get(storyKey),
+    enabled: !!detail && detail.status === 'planning',
+    refetchInterval: planTriggered ? false : 5000,
   })
+
+  /* SSE: stream Agent actions */
   useEffect(() => {
-    if (detail?.status === 'planning' && !planData?.plan_summary && !planTriggered) {
-      setPlanTriggered(true)
-      const es = new EventSource(`/api/story/${storyKey}/plan/stream`)
-      es.onmessage = (e) => {
-        try {
-          const d = JSON.parse(e.data)
-          if (d.type === 'done') {
-            es.close()
-            qc.invalidateQueries({ queryKey: ['plan', storyKey] })
-          } else if (d.type === 'error') {
-            setStreamingText(`规划失败: ${d.message}`)
-            es.close()
-          }
-        } catch {}
-      }
-      es.onerror = () => {
-        es.close()
-        setPlanTriggered(false)
-        qc.invalidateQueries({ queryKey: ['plan', storyKey] })
-      }
-      return () => es.close()
+    if (detail?.status !== 'planning') return
+    // Don't re-trigger if we already have actions (from DB or SSE)
+    const existingActions = planData?.actions
+    if (existingActions?.length) return
+    if (planData?.plan_summary && !planData?.actions) return // legacy mode
+    if (planTriggered) return
+
+    setPlanTriggered(true)
+    const es = new EventSource(planApi.streamUrl(storyKey))
+
+    es.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data)
+        if (d.type === 'action') {
+          setStreamingActions(prev => [...prev, d.action])
+        } else if (d.type === 'done') {
+          es.close()
+          qc.invalidateQueries({ queryKey: ['plan', storyKey] })
+        } else if (d.type === 'error') {
+          setPlanError(d.message)
+          es.close()
+        }
+      } catch { /* ignore parse errors */ }
     }
-  }, [detail?.status, planData?.plan_summary, planTriggered, storyKey, qc])
+
+    es.onerror = () => {
+      es.close()
+      setPlanTriggered(false)
+      qc.invalidateQueries({ queryKey: ['plan', storyKey] })
+    }
+    return () => es.close()
+  }, [detail?.status, planData, planTriggered, storyKey, qc])
+
+  /* Resolve actions: prefer streaming, fall back to DB, then legacy */
+  const resolvedActions: AgentAction[] =
+    streamingActions.length > 0
+      ? streamingActions
+      : (planData?.actions ?? [])
+
+  const isLegacyPlan = !resolvedActions.length && !!planData?.plan_summary
+  const isConfirmed = planData?.confirmed ?? false
+
+  /* ---- Wait question (human-in-the-loop) ---- */
+  const [waitQuestion, setWaitQuestion] = useState<any>(null)
+
+  useEffect(() => {
+    if (detail?.status !== 'active') return
+    let cancelled = false
+    const poll = async () => {
+      while (!cancelled) {
+        try {
+          const data = await planApi.waitQuestion(storyKey)
+          if (!cancelled && data.waiting) {
+            setWaitQuestion(data.question)
+            return // stop polling once question found
+          }
+        } catch { /* ignore */ }
+        await new Promise(r => setTimeout(r, 5000))
+      }
+    }
+    poll()
+    return () => { cancelled = true }
+  }, [detail?.status, storyKey])
+
+  async function handleAnswer(answer: string) {
+    await planApi.answer(storyKey, answer)
+    setWaitQuestion(null)
+  }
 
   if (!storyKey) return <div className="loading">无效的 Story Key</div>
-
   if (!detail) return <div className="loading">加载中...</div>
 
   const actions = ACTIONS[detail.status] || []
@@ -125,11 +188,12 @@ export default function StoryDetailPage() {
 
   async function handleRegeneratePlan() {
     setPlanTriggered(false)
-    setStreamingText('')
-    // 下次 render 会触发 useEffect 重新生成
-    // 先清除 DB 里的 plan
-    await fetch(`/api/story/${storyKey}/plan/generate`, { method: 'POST' })
-      .then(() => qc.invalidateQueries({ queryKey: ['plan', storyKey] }))
+    setStreamingActions([])
+    setPlanError('')
+    try {
+      await planApi.regenerate(storyKey)
+    } catch { /* fallback: next render triggers SSE */ }
+    qc.invalidateQueries({ queryKey: ['plan', storyKey] })
   }
 
   async function handleAction(action: (typeof actions)[0]) {
@@ -175,15 +239,15 @@ export default function StoryDetailPage() {
       </div>
 
       <div className="sdp-actions">
+        {detail.status === 'planning' && !isConfirmed && resolvedActions.length > 0 && (
+          <button className="btn btn-primary" onClick={handleConfirmPlan}>
+            ✅ 确认并执行 ({resolvedActions.filter(a => a.action === 'launch').length} 步)
+          </button>
+        )}
         {detail.status === 'planning' && (
-          <>
-            <button className="btn btn-primary" onClick={handleConfirmPlan}>
-              确认规划并执行
-            </button>
-            <button className="btn" onClick={handleRegeneratePlan}>
-              重新规划
-            </button>
-          </>
+          <button className="btn" onClick={handleRegeneratePlan}>
+            🔄 重新规划
+          </button>
         )}
         {actions.map((a) => (
           <button
@@ -196,18 +260,68 @@ export default function StoryDetailPage() {
         ))}
       </div>
 
-      {/* AI 规划展示 */}
-      {detail.status === 'planning' && planData && (
+      {/* ---- Agent Action Cards (planning phase) ---- */}
+      {detail.status === 'planning' && (
         <section className="sdp-section plan-section">
-          <h3>🤖 AI 规划</h3>
-          {planData.plan_summary && (
-            <div className="plan-summary">{planData.plan_summary}</div>
+          <h3>🤖 Agent 规划</h3>
+
+          {/* Structured action cards */}
+          {resolvedActions.length > 0 ? (
+            <div className="action-cards">
+              {resolvedActions.map((a, i) => (
+                <ActionCard key={i} action={a} index={i} />
+              ))}
+            </div>
+          ) : planError ? (
+            <div className="plan-error">❌ {planError}</div>
+          ) : isLegacyPlan ? (
+            /* Legacy fallback: text-based plan */
+            <>
+              {planData.plan_summary && (
+                <div className="plan-summary">{planData.plan_summary}</div>
+              )}
+              {planData.plan_content && (
+                <pre className="plan-content">{planData.plan_content}</pre>
+              )}
+            </>
+          ) : (
+            <div className="plan-loading">
+              <span className="plan-spinner" /> Agent 正在规划...
+            </div>
           )}
-          {planData.plan_content && (
-            <pre className="plan-content">{planData.plan_content}</pre>
+        </section>
+      )}
+
+      {/* ---- Wait Question (human-in-the-loop) ---- */}
+      {waitQuestion && (
+        <section className="sdp-section wait-section">
+          <h3>❓ CLI 等待确认</h3>
+          <div className="wait-question">{waitQuestion.question}</div>
+          {waitQuestion.context && (
+            <div className="wait-context">{waitQuestion.context}</div>
           )}
-          {!planData.plan_summary && !planData.plan_content && (
-            <p className="sdp-empty">{streamingText || '正在生成规划...'}</p>
+          {waitQuestion.options ? (
+            <div className="wait-options">
+              {waitQuestion.options.map((opt: string, i: number) => (
+                <button key={i} className="btn btn-primary" onClick={() => handleAnswer(opt)}>
+                  {opt}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="wait-input">
+              <input
+                type="text"
+                placeholder="输入回答..."
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAnswer((e.target as HTMLInputElement).value)
+                }}
+              />
+              <button className="btn btn-primary" onClick={() => {
+                const input = document.querySelector('.wait-input input') as HTMLInputElement
+                if (input?.value) handleAnswer(input.value)
+              }}>提交</button>
+            </div>
           )}
         </section>
       )}
@@ -279,6 +393,35 @@ export default function StoryDetailPage() {
         <h3>终端</h3>
         <TerminalPanel storyKey={storyKey} />
       </section>
+    </div>
+  )
+}
+
+/* ---- Action Card (Agent mode) ---- */
+function ActionCard({ action, index }: { action: AgentAction; index: number }) {
+  if (action.action === 'skip') {
+    return (
+      <div className="action-card action-skip">
+        <div className="ac-header">
+          <span className="ac-index">#{index + 1}</span>
+          <span className="ac-icon">⏭️</span>
+          <span className="ac-stage">{action.stage}</span>
+          <span className="ac-badge ac-skip-badge">SKIP</span>
+        </div>
+        <div className="ac-reason">{action.reason}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="action-card action-launch">
+      <div className="ac-header">
+        <span className="ac-index">#{index + 1}</span>
+        <span className="ac-icon">{ADAPTER_ICON[action.adapter ?? 'claude'] ?? '🔧'}</span>
+        <span className="ac-stage">{action.stage}</span>
+        <span className="ac-badge ac-adapter-badge">{action.adapter}</span>
+      </div>
+      {action.focus && <div className="ac-focus">{action.focus}</div>}
     </div>
   )
 }

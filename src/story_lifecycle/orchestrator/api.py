@@ -1621,7 +1621,7 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
 
 @app.get("/api/story/{story_key}/plan")
 def api_get_plan(story_key: str):
-    """获取 Story 的当前规划。"""
+    """获取 Story 的当前规划。支持 Agent 模式和 Legacy 模式。"""
     story = db.get_story(story_key)
     if not story:
         raise HTTPException(status_code=404, detail="story not found")
@@ -1636,6 +1636,7 @@ def api_get_plan(story_key: str):
 
     plan_summary = ctx.get("plan_summary", "")
     active_exec = ctx.get("_active_execution", {})
+    agent_actions = ctx.get("_agent_actions")
 
     # 尝试读取 plan 文件内容
     plan_content = ""
@@ -1647,7 +1648,7 @@ def api_get_plan(story_key: str):
         if p.exists():
             plan_content = p.read_text(encoding="utf-8", errors="replace")
 
-    return {
+    result = {
         "story_key": story_key,
         "status": story.get("status"),
         "current_stage": story.get("current_stage"),
@@ -1655,12 +1656,23 @@ def api_get_plan(story_key: str):
         "plan_content": plan_content,
         "adapter": active_exec.get("adapter", ""),
         "confirmed": ctx.get("_plan_confirmed", False),
+        "mode": "agent" if agent_actions else "legacy",
     }
+
+    # Agent 模式：返回结构化 action list
+    if agent_actions:
+        result["actions"] = agent_actions
+
+    return result
 
 
 @app.get("/api/story/{story_key}/plan/stream")
 def api_plan_stream(story_key: str):
-    """SSE 流式生成规划。先返回摘要/决策（JSON），再流式输出 focus 内容。"""
+    """SSE 流式规划 — Agent Function Calling 模式。
+
+    Agent 通过 plan_step/skip_stage 工具调用生成结构化 action list。
+    每个 action 实时通过 SSE 推送到前端。
+    """
 
     def error_stream(msg: str):
         yield f"data: {json.dumps({'type': 'error', 'message': msg}, ensure_ascii=False)}\n\n"
@@ -1672,91 +1684,41 @@ def api_plan_stream(story_key: str):
         )
 
     import json
-    from ..llm_client import get_llm
-    from .nodes.json_helpers import robust_json_parse
-
-    profile_name = story.get("profile", "minimal")
-    current_stage = story.get("current_stage", "design")
-
-    try:
-        rp = resolve_profile(profile_name)
-    except FileNotFoundError:
-        return StreamingResponse(
-            error_stream(f"Profile not found: {profile_name}"),
-            media_type="text/event-stream",
-        )
-
-    stage_cfg = rp.stage(current_stage)
-    adapters = ["claude", "codex"]
-
-    state = {
-        "story_key": story_key,
-        "title": story.get("title", ""),
-        "workspace": story.get("workspace", ""),
-        "current_stage": current_stage,
-        "execution_count": story.get("execution_count", 0),
-        "context": json.loads(story.get("context_json") or "{}"),
-        "review_summary": "",
-    }
-    stage_config = {
-        "description": stage_cfg.description,
-        "cli": stage_cfg.cli,
-        "model": stage_cfg.model,
-        "confirm": stage_cfg.confirm,
-        "review": stage_cfg.review,
-        "max_retries": stage_cfg.max_retries,
-    }
 
     def generate():
-        llm = get_llm()
-        prompt_text = planner.build_plan_prompt(state, stage_config, adapters)
+        collected_actions: list[dict] = []
 
-        full_text = []
+        def on_action(event: dict):
+            collected_actions.append(event)
+            # SSE 推送每个 action
+            import json as _json
 
-        def on_chunk(delta: str):
-            full_text.append(delta)
+            yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
+
+        # 用 generator 包装 on_action 来收集 SSE 事件
+        events: list[str] = []
+
+        def capture_action(event: dict):
+            """同步回调：捕获 action 事件到列表。"""
+            events.append(event)
 
         try:
-            result_text = llm.stream(
-                prompt_text, on_chunk=on_chunk, temperature=0.1, timeout=90
-            )
+            result = planner.run_orchestrator_agent(story_key, on_action=capture_action)
         except Exception as e:
+            import logging
+
+            logging.getLogger("story-lifecycle.api").error(
+                f"Agent planning failed for {story_key}: {e}"
+            )
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
             return
 
-        # 解析 LLM 返回的 JSON
-        plan_result = {}
-        try:
-            parsed = robust_json_parse(result_text)
-            if parsed:
-                plan_result = parsed
-        except Exception:
-            plan_result = {"summary": result_text[:100]}
+        # 流式推送所有收集到的 action 事件
+        for event in events:
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-        # 写入 DB
-        ctx = json.loads(story.get("context_json") or "{}")
-        ctx["plan_summary"] = plan_result.get("summary", "")
-        ctx["_plan_adapter"] = plan_result.get("adapter", stage_cfg.cli)
-        ctx["_plan_model"] = plan_result.get("model", "")
-        ctx["_plan_confirmed"] = False
-
-        workspace = story.get("workspace", ".")
-        plan_dir = Path(workspace) / ".story" / "context" / story_key
-        plan_dir.mkdir(parents=True, exist_ok=True)
-        plan_file_path = plan_dir / f"plan_{current_stage}.md"
-        focus = plan_result.get("focus", "")
-        if focus:
-            plan_file_path.write_text(focus, encoding="utf-8")
-            ctx["plan_path"] = str(plan_file_path.relative_to(Path(workspace)))
-
-        db.update_story(
-            story_key,
-            context_json=json.dumps(ctx, ensure_ascii=False),
-            status="planning",
-        )
-
-        # 发送最终结果
-        yield f"data: {json.dumps({'type': 'done', 'plan': plan_result}, ensure_ascii=False)}\n\n"
+        # 推送最终完成事件
+        yield f"data: {json.dumps({'type': 'done', 'actions': result.get('actions', [])}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -1842,7 +1804,7 @@ def api_generate_plan(story_key: str):
 
 @app.post("/api/story/{story_key}/plan/confirm")
 def api_confirm_plan(story_key: str):
-    """用户确认规划，启动 CLI 执行。"""
+    """用户确认规划，启动执行。"""
     story = db.get_story(story_key)
     if not story:
         raise HTTPException(status_code=404, detail="story not found")
@@ -1860,6 +1822,103 @@ def api_confirm_plan(story_key: str):
 
     start_story_async(story_key)
     return {"ok": True, "story_key": story_key}
+
+
+@app.post("/api/story/{story_key}/plan/regenerate")
+def api_regenerate_plan(story_key: str):
+    """重新生成规划（Agent 模式）。"""
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(status_code=404, detail="story not found")
+
+    import json
+
+    # 清除旧的 agent actions
+    ctx = json.loads(story.get("context_json") or "{}")
+    ctx.pop("_agent_actions", None)
+    ctx["_plan_confirmed"] = False
+    db.update_story(
+        story_key,
+        context_json=json.dumps(ctx, ensure_ascii=False),
+        status="planning",
+    )
+
+    # 重新触发 Agent 规划
+    try:
+        result = planner.run_orchestrator_agent(story_key)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Agent 规划失败: {e}")
+
+    return {"ok": True, "actions": result.get("actions", [])}
+
+
+class AnswerRequest(BaseModel):
+    answer: str
+
+
+@app.post("/api/story/{story_key}/answer")
+def api_answer_wait(story_key: str, req: AnswerRequest):
+    """用户回答 CLI 的等待确认问题（human-in-the-loop）。
+
+    CLI 写入 .story-wait/{stage}.json，用户通过此端点回答。
+    Agent 将回答写入 .story-wait/{stage}.answer.json。
+    """
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(status_code=404, detail="story not found")
+
+    import json
+
+    workspace = story.get("workspace", "")
+
+    # 查找 wait 文件
+    wait_dir = Path(workspace) / ".story-wait"
+    wait_files = list(wait_dir.glob(f"{story_key}-*.json")) if wait_dir.exists() else []
+
+    if not wait_files:
+        raise HTTPException(status_code=404, detail="No pending wait question found")
+
+    # 处理第一个 wait 文件
+    wait_path = wait_files[0]
+    answer_path = wait_path.with_suffix(".answer.json")
+    answer_path.write_text(
+        json.dumps({"answer": req.answer}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    return {"ok": True, "wait_file": str(wait_path.name), "answer": req.answer}
+
+
+@app.get("/api/story/{story_key}/wait")
+def api_get_wait_question(story_key: str):
+    """获取当前 CLI 等待确认的问题。"""
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(status_code=404, detail="story not found")
+
+    import json
+
+    workspace = story.get("workspace", "")
+    wait_dir = Path(workspace) / ".story-wait"
+    wait_files = list(wait_dir.glob(f"{story_key}-*.json")) if wait_dir.exists() else []
+
+    if not wait_files:
+        return {"ok": True, "waiting": False}
+
+    wait_path = wait_files[0]
+    try:
+        question = json.loads(wait_path.read_text(encoding="utf-8"))
+    except Exception:
+        question = {
+            "raw": wait_path.read_text(encoding="utf-8", errors="replace")[:500]
+        }
+
+    return {
+        "ok": True,
+        "waiting": True,
+        "question": question,
+        "file": str(wait_path.name),
+    }
 
 
 @app.get("/api/story/{story_key}/tapd-writeback-suggestion")

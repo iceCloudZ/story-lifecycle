@@ -1,8 +1,9 @@
 """Smart Orchestrator — plan and review via LLM.
 
-Role-based prompts:
-- Planner = 架构师/PM (plan_stage)
-- Reviewer = QA/评审员 (review_stage)
+Two modes:
+1. **Legacy text-based planning** — plan_stage / review_stage / review_plan
+2. **Agent mode (new)** — run_orchestrator_agent / continue_orchestrator_agent
+   Uses Function Calling to generate structured tool calls instead of text JSON.
 
 All LLM calls delegate to LLMClient.
 """
@@ -14,6 +15,7 @@ from pathlib import Path
 
 from ..llm_client import get_llm
 from ..schemas import PlanResult, ReviewResult, PlanReviewResult
+from .agent_tools import ORCHESTRATOR_TOOLS
 
 log = logging.getLogger("story-lifecycle.planner")
 
@@ -396,3 +398,477 @@ def _trace_llm(
         )
     except Exception:
         pass
+
+
+# ══════════════════════════════════════════════════════════════════
+# Agent Mode — Function Calling 驱动的编排循环
+# ══════════════════════════════════════════════════════════════════
+
+
+def _build_agent_system_prompt(
+    *,
+    profile_stages: dict | None = None,
+    story_title: str = "",
+    story_key: str = "",
+) -> str:
+    """构建 Agent 的 system prompt。"""
+    stages_hint = ""
+    if profile_stages:
+        lines = []
+        for name, cfg in profile_stages.items():
+            desc = cfg.get("description", "") if isinstance(cfg, dict) else ""
+            cli = cfg.get("cli", "claude") if isinstance(cfg, dict) else "claude"
+            lines.append(f"  - {name}: {desc} (CLI: {cli})")
+        stages_hint = "\n".join(lines)
+    else:
+        stages_hint = "  - design: 需求澄清、方案设计\n  - implement: 编码实现\n  - test: 测试验证"
+
+    return f"""你是开发任务编排 Agent。根据需求信息，用工具规划并执行开发流程。
+
+## 你的职责
+- 根据需求决定需要执行哪些阶段
+- 每个阶段选择合适的 CLI 工具（claude 或 codex）
+- 给每个阶段指定 2-3 个关键要点（focus）
+- 规划完成后暂停，等待用户确认
+
+## 当前 Story
+- Key: {story_key}
+- 标题: {story_title}
+
+## 可用阶段
+{stages_hint}
+
+## 规则
+1. 对每个需要执行的阶段，调用 plan_step 工具
+2. 对不需要的阶段（如纯前端需求不需要后端设计），调用 skip_stage
+3. focus 要简洁（2-3 个要点），不要写详细设计
+4. CLI（claude/codex）会自己理解需求并设计方案，你不需要代劳
+5. 规划完所有阶段后停止调用工具"""
+
+
+def _build_agent_user_message(
+    *,
+    story_key: str,
+    title: str,
+    content: str,
+    workspace: str = "",
+    profile_stages: dict | None = None,
+) -> str:
+    """构建 Agent 的初始 user message。"""
+    parts = [
+        "## 需求信息",
+        f"标题: {title}",
+    ]
+    if content:
+        parts.append(f"内容:\n{content[:3000]}")
+    if workspace:
+        parts.append(f"工作目录: {workspace}")
+
+    # 阶段建议
+    if profile_stages:
+        stage_names = list(profile_stages.keys())
+        parts.append(f"\n请为以下阶段做规划: {', '.join(stage_names)}")
+
+    return "\n".join(parts)
+
+
+def run_orchestrator_agent(
+    story_key: str,
+    *,
+    on_action=None,
+) -> dict:
+    """Supervisor Agent 规划循环：生成结构化 action list。
+
+    使用 Function Calling 替代文本 JSON 规划。Agent 调用 plan_step/skip_stage
+    工具来声明每个阶段的执行计划。
+
+    Args:
+        story_key: Story 唯一标识
+        on_action: 回调函数，每个 tool_call 时调用，用于 SSE 推送
+
+    Returns:
+        {"status": "planning", "actions": [...]}
+    """
+    from ..db import models as db
+
+    story = db.get_story(story_key)
+    if not story:
+        raise ValueError(f"Story not found: {story_key}")
+
+    title = story.get("title", "")
+    content = story.get("content", "")
+    workspace = story.get("workspace", "")
+    profile_name = story.get("profile", "minimal")
+
+    # 解析 profile 获取阶段列表
+    profile_stages = None
+    try:
+        from .nodes.profile_loader import resolve_profile
+
+        rp = resolve_profile(profile_name)
+        profile_stages = {
+            name: {
+                "description": cfg.description,
+                "cli": cfg.cli,
+            }
+            for name, cfg in rp.stages.items()
+        }
+    except Exception:
+        pass
+
+    # 构建 messages
+    system_prompt = _build_agent_system_prompt(
+        profile_stages=profile_stages,
+        story_title=title,
+        story_key=story_key,
+    )
+    user_msg = _build_agent_user_message(
+        story_key=story_key,
+        title=title,
+        content=content,
+        workspace=workspace,
+        profile_stages=profile_stages,
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_msg},
+    ]
+
+    # Agent 循环：收集 plan_step / skip_stage 调用
+    actions = []
+    llm = get_llm()
+    max_rounds = 10
+
+    t0 = time.monotonic()
+    try:
+        for round_idx in range(max_rounds):
+            resp = llm.invoke_with_tools(
+                messages,
+                ORCHESTRATOR_TOOLS,
+                tool_choice="auto",
+                temperature=0.1,
+                timeout=90,
+            )
+
+            # 记录 assistant 回复
+            assistant_msg = resp["message"].copy()
+            # 确保 tool_calls 是序列化友好的格式
+            if resp["tool_calls"]:
+                serializable_calls = []
+                for tc in resp["tool_calls"]:
+                    fn = tc.get("function", {})
+                    args = fn.get("arguments", {})
+                    if isinstance(args, dict):
+                        args = json.dumps(args, ensure_ascii=False)
+                    serializable_calls.append(
+                        {
+                            "id": tc.get("id", ""),
+                            "type": tc.get("type", "function"),
+                            "function": {
+                                "name": fn.get("name", ""),
+                                "arguments": args,
+                            },
+                        }
+                    )
+                assistant_msg["tool_calls"] = serializable_calls
+            messages.append(assistant_msg)
+
+            tool_calls = resp["tool_calls"]
+            if not tool_calls:
+                # Agent 说完了（没有更多 tool calls）
+                break
+
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                name = fn.get("name", "")
+                args = fn.get("arguments", {})
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {}
+
+                if name == "plan_step":
+                    action = {
+                        "action": "launch",
+                        "adapter": args.get("adapter", "claude"),
+                        "stage": args.get("stage", ""),
+                        "focus": args.get("focus", ""),
+                        "done_file": args.get(
+                            "done_file",
+                            f".story-done/{story_key}-{args.get('stage', '')}.json",
+                        ),
+                    }
+                    actions.append(action)
+                    if on_action:
+                        on_action({"type": "action", "action": action})
+
+                elif name == "skip_stage":
+                    action = {
+                        "action": "skip",
+                        "stage": args.get("stage", ""),
+                        "reason": args.get("reason", ""),
+                    }
+                    actions.append(action)
+                    if on_action:
+                        on_action({"type": "action", "action": action})
+
+                # 喂回 tool result 给 Agent
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": json.dumps(
+                            {"status": "recorded"}, ensure_ascii=False
+                        ),
+                    }
+                )
+
+        _trace_llm(
+            model=llm.model,
+            usage={},
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            operation="agent_plan",
+            story_key=story_key,
+        )
+    except Exception as exc:
+        _trace_llm(
+            model=llm.model,
+            usage={},
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            operation="agent_plan",
+            story_key=story_key,
+            success=False,
+            error=str(exc),
+        )
+        raise
+
+    # 写入 DB：暂停等用户确认
+    ctx = {}
+    try:
+        ctx = json.loads(story.get("context_json") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        pass
+    ctx["_agent_actions"] = actions
+    ctx["_plan_confirmed"] = False
+    db.update_story(
+        story_key,
+        context_json=json.dumps(ctx, ensure_ascii=False),
+        status="planning",
+    )
+
+    return {"status": "planning", "actions": actions}
+
+
+def continue_orchestrator_agent(story_key: str):
+    """用户确认规划后，执行 action list。
+
+    遍历 action list，逐个执行：
+    - launch: 启动 CLI，轮询 done file
+    - skip: 记录跳过
+
+    执行在后台线程中运行。
+    """
+    from ..db import models as db
+    from ..adapters import get_adapter
+    from .nodes.profile_loader import resolve_profile
+    from .nodes.json_helpers import robust_json_parse
+    from ..terminal.pty import ensure_agent_pty
+
+    story = db.get_story(story_key)
+    if not story:
+        raise ValueError(f"Story not found: {story_key}")
+
+    workspace = story.get("workspace", "")
+    title = story.get("title", "")
+    profile_name = story.get("profile", "minimal")
+
+    ctx = {}
+    try:
+        ctx = json.loads(story.get("context_json") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    actions = ctx.get("_agent_actions", [])
+    if not actions:
+        log.warning(f"No actions found for {story_key}")
+        db.update_story(story_key, status="failed", last_error="No actions to execute")
+        return
+
+    # 更新状态为执行中
+    ctx["_plan_confirmed"] = True
+    db.update_story(
+        story_key,
+        context_json=json.dumps(ctx, ensure_ascii=False),
+        status="active",
+    )
+
+    # 解析 profile 用于生成 prompt
+    profile_stages = {}
+    try:
+        rp = resolve_profile(profile_name)
+        profile_stages = {name: cfg for name, cfg in rp.stages.items()}
+    except Exception:
+        pass
+
+    # 逐个执行 action
+    for idx, action in enumerate(actions):
+        if action.get("action") == "skip":
+            stage = action.get("stage", f"stage_{idx}")
+            reason = action.get("reason", "")
+            db.log_event(story_key, stage, "skipped", {"reason": reason})
+            log.info(f"[{story_key}] Skipped stage {stage}: {reason}")
+            continue
+
+        if action.get("action") == "launch":
+            stage = action.get("stage", f"stage_{idx}")
+            adapter_name = action.get("adapter", "claude")
+            focus = action.get("focus", "")
+            done_file_rel = action.get(
+                "done_file",
+                f".story-done/{story_key}-{stage}.json",
+            )
+
+            # 更新当前阶段
+            db.update_story(story_key, current_stage=stage)
+
+            # 构建 CLI prompt
+            cli_prompt = _build_cli_prompt(
+                story_key=story_key,
+                title=title,
+                stage=stage,
+                focus=focus,
+                done_file=done_file_rel,
+                profile_stages=profile_stages,
+            )
+
+            # 写入 prompt 文件
+            prompt_dir = Path(workspace) / ".story" / "context" / story_key
+            prompt_dir.mkdir(parents=True, exist_ok=True)
+            prompt_file = prompt_dir / f"prompt_{stage}.md"
+            prompt_file.write_text(cli_prompt, encoding="utf-8")
+
+            # 启动 CLI
+            try:
+                adapter = get_adapter(adapter_name)
+                # 获取 stage model 配置
+                model = ""
+                if stage in profile_stages:
+                    cfg = profile_stages[stage]
+                    model = cfg.model if hasattr(cfg, "model") else ""
+                launch_cmd = adapter.interactive_launch_cmd(model=model)
+                ensure_agent_pty(
+                    story_key,
+                    launch_cmd,
+                    workspace,
+                    cli_prompt,  # prompt 作为第 4 个参数注入到 PTY
+                )
+            except Exception as exc:
+                log.error(
+                    f"[{story_key}] Failed to launch {adapter_name} for {stage}: {exc}"
+                )
+                db.update_story(
+                    story_key,
+                    status="failed",
+                    last_error=f"CLI launch failed for {stage}: {exc}",
+                )
+                return
+
+            # 更新执行上下文
+            ctx["_active_execution"] = {
+                "mode": "interactive_pty",
+                "adapter": adapter_name,
+                "stage": stage,
+                "start_time": time.time(),
+            }
+            db.update_story(
+                story_key,
+                context_json=json.dumps(ctx, ensure_ascii=False),
+            )
+
+            # 轮询 done file
+            done_path = Path(workspace) / done_file_rel
+            poll_timeout = 30 * 60  # 30 minutes
+            poll_interval = 5  # seconds
+            elapsed = 0
+
+            while elapsed < poll_timeout:
+                # 检查 done file
+                if done_path.exists():
+                    try:
+                        raw = done_path.read_text(encoding="utf-8")
+                        done_data = robust_json_parse(raw) or {}
+                        db.log_event(story_key, stage, "completed", done_data)
+                        log.info(
+                            f"[{story_key}] Stage {stage} completed: "
+                            f"{done_data.get('summary', '')[:100]}"
+                        )
+                        # 清理 done file
+                        try:
+                            done_path.unlink()
+                        except OSError:
+                            pass
+                        break
+                    except Exception as exc:
+                        log.error(f"[{story_key}] Error parsing done file: {exc}")
+
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+            else:
+                # 超时
+                log.warning(
+                    f"[{story_key}] Stage {stage} timed out after {poll_timeout}s"
+                )
+                db.update_story(
+                    story_key,
+                    status="failed",
+                    last_error=f"Stage {stage} timed out",
+                )
+                return
+
+    # 所有 action 执行完毕
+    db.update_story(story_key, status="completed")
+    log.info(f"[{story_key}] All stages completed")
+
+
+def _build_cli_prompt(
+    *,
+    story_key: str,
+    title: str,
+    stage: str,
+    focus: str,
+    done_file: str,
+    profile_stages: dict,
+) -> str:
+    """构建给 CLI 的执行 prompt。"""
+    stage_desc = ""
+    if stage in profile_stages:
+        cfg = profile_stages[stage]
+        stage_desc = cfg.description if hasattr(cfg, "description") else str(cfg)
+
+    return f"""## 任务: {stage}
+
+### Story 信息
+- Key: {story_key}
+- 标题: {title}
+
+### 阶段说明
+{stage_desc}
+
+### 关键要点
+{focus}
+
+### 完成协议
+完成后必须写入文件 `{done_file}`，内容为 JSON:
+{{"stage": "{stage}", "status": "done", "summary": "完成摘要", "files_changed": []}}
+
+注意：JSON 必须是纯 JSON，不要包裹在 markdown 代码块中。"""
+
+
+def run_orchestrator_agent_async(story_key: str, *, on_action=None) -> dict:
+    """同步版本的 Agent 规划（直接调用，不进线程池）。
+
+    用于 SSE 端点：规划在 generator 中执行，SSE 流式推送每个 action。
+    """
+    return run_orchestrator_agent(story_key, on_action=on_action)
