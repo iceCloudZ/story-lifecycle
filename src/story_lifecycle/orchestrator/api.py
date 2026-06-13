@@ -6,7 +6,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1658,6 +1658,110 @@ def api_get_plan(story_key: str):
     }
 
 
+@app.get("/api/story/{story_key}/plan/stream")
+def api_plan_stream(story_key: str):
+    """SSE 流式生成规划。先返回摘要/决策（JSON），再流式输出 focus 内容。"""
+
+    def error_stream(msg: str):
+        yield f"data: {json.dumps({'type': 'error', 'message': msg}, ensure_ascii=False)}\n\n"
+
+    story = db.get_story(story_key)
+    if not story:
+        return StreamingResponse(
+            error_stream("story not found"), media_type="text/event-stream"
+        )
+
+    import json
+    from ..llm_client import get_llm
+    from .nodes.json_helpers import robust_json_parse
+
+    profile_name = story.get("profile", "minimal")
+    current_stage = story.get("current_stage", "design")
+
+    try:
+        rp = resolve_profile(profile_name)
+    except FileNotFoundError:
+        return StreamingResponse(
+            error_stream(f"Profile not found: {profile_name}"),
+            media_type="text/event-stream",
+        )
+
+    stage_cfg = rp.stage(current_stage)
+    adapters = ["claude", "codex"]
+
+    state = {
+        "story_key": story_key,
+        "title": story.get("title", ""),
+        "workspace": story.get("workspace", ""),
+        "current_stage": current_stage,
+        "execution_count": story.get("execution_count", 0),
+        "context": json.loads(story.get("context_json") or "{}"),
+        "review_summary": "",
+    }
+    stage_config = {
+        "description": stage_cfg.description,
+        "cli": stage_cfg.cli,
+        "model": stage_cfg.model,
+        "confirm": stage_cfg.confirm,
+        "review": stage_cfg.review,
+        "max_retries": stage_cfg.max_retries,
+    }
+
+    def generate():
+        llm = get_llm()
+        prompt_text = planner.build_plan_prompt(state, stage_config, adapters)
+
+        full_text = []
+
+        def on_chunk(delta: str):
+            full_text.append(delta)
+
+        try:
+            result_text = llm.stream(
+                prompt_text, on_chunk=on_chunk, temperature=0.1, timeout=90
+            )
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            return
+
+        # 解析 LLM 返回的 JSON
+        plan_result = {}
+        try:
+            parsed = robust_json_parse(result_text)
+            if parsed:
+                plan_result = parsed
+        except Exception:
+            plan_result = {"summary": result_text[:100]}
+
+        # 写入 DB
+        ctx = json.loads(story.get("context_json") or "{}")
+        ctx["plan_summary"] = plan_result.get("summary", "")
+        ctx["_plan_adapter"] = plan_result.get("adapter", stage_cfg.cli)
+        ctx["_plan_model"] = plan_result.get("model", "")
+        ctx["_plan_confirmed"] = False
+
+        workspace = story.get("workspace", ".")
+        plan_dir = Path(workspace) / ".story" / "context" / story_key
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        plan_file_path = plan_dir / f"plan_{current_stage}.md"
+        focus = plan_result.get("focus", "")
+        if focus:
+            plan_file_path.write_text(focus, encoding="utf-8")
+            ctx["plan_path"] = str(plan_file_path.relative_to(Path(workspace)))
+
+        db.update_story(
+            story_key,
+            context_json=json.dumps(ctx, ensure_ascii=False),
+            status="planning",
+        )
+
+        # 发送最终结果
+        yield f"data: {json.dumps({'type': 'done', 'plan': plan_result}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+# 保留非流式版本作为 fallback
 @app.post("/api/story/{story_key}/plan/generate")
 def api_generate_plan(story_key: str):
     """用 LLM 生成规划（不启动 CLI）。"""
@@ -1715,7 +1819,7 @@ def api_generate_plan(story_key: str):
     plan_dir = Path(workspace) / ".story" / "context" / story_key
     plan_dir.mkdir(parents=True, exist_ok=True)
     plan_file_path = plan_dir / f"plan_{current_stage}.md"
-    extra = plan_result.get("extra_instructions", "")
+    extra = plan_result.get("focus", "")
     if extra:
         plan_file_path.write_text(extra, encoding="utf-8")
         ctx["plan_path"] = str(plan_file_path.relative_to(Path(workspace)))

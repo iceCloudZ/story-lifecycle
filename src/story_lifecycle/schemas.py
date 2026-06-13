@@ -25,9 +25,11 @@ class PlanResult(BaseModel):
     split: bool = False
     subtasks: Optional[list[SubtaskDef]] = None
     summary: str = ""
-    extra_instructions: str = ""
+    focus: str = ""
     reasoning: str = ""
     trajectory_score: float = 0.5
+    done_file: str = ""
+    done_schema: str = ""
 
 
 # ── Reviewer ──

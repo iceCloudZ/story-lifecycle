@@ -76,21 +76,38 @@ export default function StoryDetailPage() {
     enabled: !!detail,
   })
 
+  // planning 状态且没有 plan_summary 时，用 SSE 流式触发生成
+  const [planTriggered, setPlanTriggered] = useState(false)
+  const [streamingText, setStreamingText] = useState('')
+
   const { data: planData } = useQuery({
     queryKey: ['plan', storyKey],
     queryFn: () => fetch(`/api/story/${storyKey}/plan`).then(r => r.json()),
     enabled: !!detail && (detail.status === 'planning'),
-    refetchInterval: 3000,
+    refetchInterval: planTriggered ? false : 5000, // 流式输出时停止轮询
   })
-
-  // planning 状态且没有 plan_summary 时，自动触发生成
-  const [planTriggered, setPlanTriggered] = useState(false)
   useEffect(() => {
     if (detail?.status === 'planning' && !planData?.plan_summary && !planTriggered) {
       setPlanTriggered(true)
-      fetch(`/api/story/${storyKey}/plan/generate`, { method: 'POST' })
-        .then(() => qc.invalidateQueries({ queryKey: ['plan', storyKey] }))
-        .catch(() => setPlanTriggered(false))
+      const es = new EventSource(`/api/story/${storyKey}/plan/stream`)
+      es.onmessage = (e) => {
+        try {
+          const d = JSON.parse(e.data)
+          if (d.type === 'done') {
+            es.close()
+            qc.invalidateQueries({ queryKey: ['plan', storyKey] })
+          } else if (d.type === 'error') {
+            setStreamingText(`规划失败: ${d.message}`)
+            es.close()
+          }
+        } catch {}
+      }
+      es.onerror = () => {
+        es.close()
+        setPlanTriggered(false)
+        qc.invalidateQueries({ queryKey: ['plan', storyKey] })
+      }
+      return () => es.close()
     }
   }, [detail?.status, planData?.plan_summary, planTriggered, storyKey, qc])
 
@@ -108,11 +125,11 @@ export default function StoryDetailPage() {
 
   async function handleRegeneratePlan() {
     setPlanTriggered(false)
-    const r = await fetch(`/api/story/${storyKey}/plan/generate`, { method: 'POST' })
-    if (r.ok) {
-      qc.invalidateQueries({ queryKey: ['plan', storyKey] })
-    }
-    else { const e = await r.json(); alert(`重新规划失败: ${e.detail || '未知错误'}`) }
+    setStreamingText('')
+    // 下次 render 会触发 useEffect 重新生成
+    // 先清除 DB 里的 plan
+    await fetch(`/api/story/${storyKey}/plan/generate`, { method: 'POST' })
+      .then(() => qc.invalidateQueries({ queryKey: ['plan', storyKey] }))
   }
 
   async function handleAction(action: (typeof actions)[0]) {
@@ -190,7 +207,7 @@ export default function StoryDetailPage() {
             <pre className="plan-content">{planData.plan_content}</pre>
           )}
           {!planData.plan_summary && !planData.plan_content && (
-            <p className="sdp-empty">正在生成规划...</p>
+            <p className="sdp-empty">{streamingText || '正在生成规划...'}</p>
           )}
         </section>
       )}
