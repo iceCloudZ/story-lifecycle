@@ -457,3 +457,175 @@
   max-height: 400px;
   overflow-y: auto;
 }
+
+.plan-error {
+  color: #f85149;
+  padding: 10px;
+  background: #3d1f1f;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.plan-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #8b949e;
+  font-size: 14px;
+  padding: 12px;
+}
+
+.plan-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #30363d;
+  border-top-color: #58a6ff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---- Action Cards ---- */
+
+.action-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.action-card {
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  transition: border-color 0.15s;
+}
+
+.action-card:hover {
+  border-color: #58a6ff;
+}
+
+.action-launch {
+  border-left: 3px solid #3fb950;
+}
+
+.action-skip {
+  border-left: 3px solid #484f58;
+  opacity: 0.65;
+}
+
+.ac-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ac-index {
+  font-weight: 700;
+  color: #8b949e;
+  font-size: 12px;
+  min-width: 24px;
+}
+
+.ac-icon {
+  font-size: 16px;
+}
+
+.ac-stage {
+  font-weight: 600;
+  font-size: 14px;
+  color: #e6edf3;
+}
+
+.ac-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.ac-adapter-badge {
+  background: #0d2818;
+  color: #3fb950;
+}
+
+.ac-skip-badge {
+  background: #21262d;
+  color: #484f58;
+}
+
+.ac-focus {
+  color: #c9d1d9;
+  font-size: 13px;
+  line-height: 1.5;
+  padding-left: 32px;
+}
+
+.ac-reason {
+  color: #8b949e;
+  font-size: 12px;
+  font-style: italic;
+  padding-left: 32px;
+  text-decoration: line-through;
+}
+
+/* ---- Wait Section (human-in-the-loop) ---- */
+
+.wait-section {
+  border: 1px solid #f0883e;
+  background: #3d2e00;
+}
+
+.wait-question {
+  font-size: 15px;
+  font-weight: 600;
+  color: #f0883e;
+  margin-bottom: 8px;
+}
+
+.wait-context {
+  font-size: 13px;
+  color: #c9d1d9;
+  margin-bottom: 12px;
+}
+
+.wait-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wait-options .btn {
+  background: #21262d;
+  border: 1px solid #f0883e;
+  color: #f0883e;
+}
+
+.wait-options .btn:hover {
+  background: #30363d;
+}
+
+.wait-input {
+  display: flex;
+  gap: 8px;
+}
+
+.wait-input input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  color: #e6edf3;
+  font-size: 13px;
+  outline: none;
+}
+
+.wait-input input:focus {
+  border-color: #58a6ff;
+}

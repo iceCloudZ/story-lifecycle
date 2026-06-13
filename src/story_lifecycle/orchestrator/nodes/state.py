@@ -1,3 +1,9 @@
+"""Story execution state — TypedDict shared across helpers.
+
+Previously part of the LangGraph 5-node architecture. Now kept as a
+plain TypedDict for backward compatibility with stage_resolver, prompt_renderer, etc.
+"""
+
 from pathlib import Path
 from typing import TypedDict, Optional
 

@@ -195,6 +195,77 @@ class LLMClient:
                     pass
         return "".join(full)
 
+    def invoke_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        tool_choice: str | dict = "auto",
+        temperature: float = 0.1,
+        timeout: int = 90,
+        max_tokens: int | None = None,
+    ) -> dict:
+        """Call LLM with function calling tools. Returns parsed tool_calls.
+
+        Args:
+            messages: Full conversation history (supports multi-turn).
+            tools: OpenAI function calling format tool definitions.
+            tool_choice: "auto" | "none" | {"type":"function","function":{"name":"..."}}
+            temperature: Sampling temperature.
+            timeout: Request timeout in seconds.
+            max_tokens: Max tokens for response.
+
+        Returns:
+            {
+                "message": {"role": "assistant", "content": "...", "tool_calls": [...]},
+                "tool_calls": [
+                    {"id": "call_xxx", "type": "function",
+                     "function": {"name": "plan_step", "arguments": "{...}"}}
+                ],
+                "content": "..."  # text content if any
+            }
+        """
+        body: dict = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
+
+        resp_body = self._request(body, timeout=timeout)
+        msg = resp_body["choices"][0]["message"]
+
+        tool_calls = msg.get("tool_calls") or []
+        # Normalize tool_calls: ensure arguments are parsed from string
+        normalized = []
+        for tc in tool_calls:
+            fn = tc.get("function", {})
+            args_str = fn.get("arguments", "{}")
+            if isinstance(args_str, str):
+                try:
+                    args_str = json.loads(args_str)
+                except json.JSONDecodeError:
+                    pass
+            normalized.append(
+                {
+                    "id": tc.get("id", ""),
+                    "type": tc.get("type", "function"),
+                    "function": {
+                        "name": fn.get("name", ""),
+                        "arguments": args_str,
+                    },
+                }
+            )
+
+        return {
+            "message": msg,
+            "tool_calls": normalized,
+            "content": msg.get("content", "") or "",
+        }
+
     # ── internal ──
 
     def _build_body(
