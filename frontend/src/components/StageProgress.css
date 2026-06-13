@@ -1,0 +1,59 @@
+.stage-progress {
+  padding: 16px 0;
+}
+.sp-track {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+}
+.sp-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  position: relative;
+  min-width: 80px;
+}
+.sp-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #21262d;
+  border: 2px solid #30363d;
+  z-index: 1;
+  flex-shrink: 0;
+}
+.sp-line {
+  position: absolute;
+  top: 7px;
+  left: -50%;
+  right: 50%;
+  height: 2px;
+  background: #30363d;
+  z-index: 0;
+}
+.sp-completed .sp-dot { background: #238636; border-color: #3fb950; }
+.sp-completed .sp-line { background: #238636; }
+.sp-running .sp-dot { background: #58a6ff; border-color: #79c0ff; animation: sp-pulse 2s infinite; }
+.sp-failed .sp-dot { background: #f85149; border-color: #ff7b72; }
+.sp-skipped .sp-dot { background: #484f58; border-color: #6e7681; }
+@keyframes sp-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(88, 166, 255, 0); }
+}
+.sp-label {
+  margin-top: 6px;
+  text-align: center;
+}
+.sp-name {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #e6edf3;
+}
+.sp-status-text {
+  display: block;
+  font-size: 10px;
+  color: #8b949e;
+  margin-top: 2px;
+}
