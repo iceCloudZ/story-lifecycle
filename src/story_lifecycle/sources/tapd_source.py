@@ -100,7 +100,7 @@ class TapdSource(StorySource):
         for status in statuses:
             params = {
                 "limit": 20,
-                "owner": self.owner,
+                "current_owner": self.owner,
             }
             if status:
                 params["status"] = status

@@ -72,8 +72,10 @@ export default function Dashboard() {
   })
   const allStories = fullList ?? []
 
+  // TAPD 需求 tab: 展示所有 TAPD 来源的 story（发现/筛选）
   const tapdStories = allStories.filter((s) => s.tapdType)
-  const localStories = allStories.filter((s) => !s.tapdType)
+  // 我的 Story tab: 所有已激活的 story，不区分来源（TAPD/飞书/手工创建）
+  const myStories = allStories.filter((s) => s.intakeState === 'ready')
 
   function handleCreate(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -122,7 +124,7 @@ export default function Dashboard() {
           <span className={`ws-dot ${connected ? 'connected' : 'disconnected'}`} />
           <span>{connected ? '已连接' : '断开连接'}</span>
           <span className="story-count">
-            {tab === 'project' ? `${projectCount} 个项目` : `${tab === 'tapd' ? tapdStories.length : localStories.length} 个 Story`}
+            {tab === 'project' ? `${projectCount} 个项目` : `${tab === 'tapd' ? tapdStories.length : myStories.length} 个 Story`}
           </span>
           {tab === 'project' ? (
             <button className="btn btn-primary" onClick={() => setShowProjectForm(!showProjectForm)}>
@@ -180,13 +182,13 @@ export default function Dashboard() {
           <CalendarView stories={tapdStories} />
         )}
         {tab === 'story' && (
-          localStories.length === 0 ? (
+          myStories.length === 0 ? (
             <div className="empty-state">
               <p>暂无活跃的 Story</p>
               <p className="hint">在 TAPD 需求 Tab 点击「开始开发」或使用 <code>story create KEY</code> 创建</p>
             </div>
           ) : (
-            localStories.map((s) => (
+            myStories.map((s) => (
               <StoryCard key={s.storyKey} story={s} onAction={(a) => handleCardAction(s, a)} />
             ))
           )

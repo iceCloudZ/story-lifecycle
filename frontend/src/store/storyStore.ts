@@ -8,6 +8,9 @@ export interface StorySummary {
   profile: string
   executionCount: number
   updatedAt: string
+  intakeState?: string
+  sourceType?: string
+  sourceId?: string
   tapdType?: string
   tapdStatus?: string
   tapdUrl?: string
