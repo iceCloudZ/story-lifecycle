@@ -62,3 +62,34 @@ export const planApi = {
     }),
   waitQuestion: (key: string) => fetchJSON<any>(`/api/story/${key}/wait`),
 }
+
+// Stats API
+export const statsApi = {
+  get: (key: string) => fetchJSON<{
+    code_changes: number
+    loop_rounds: number
+    findings_open: number
+  }>(`/api/story/${key}/stats`),
+}
+
+// Multi-session PTY API
+export const sessionApi = {
+  list: (storyKey: string) =>
+    fetchJSON<{ sessions: Array<{ session_id: string; adapter: string; stage: string; model: string; status: string; started_at: string }> }>(
+      `/api/story/${storyKey}/sessions`
+    ),
+  spawn: (storyKey: string, adapter: string, model: string) =>
+    fetchJSON<{ session_id: string }>(`/api/story/${storyKey}/sessions/spawn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adapter, model }),
+    }),
+  kill: (storyKey: string, sessionId: string) =>
+    fetchJSON<{ ok: boolean }>(`/api/story/${storyKey}/sessions/${sessionId}`, {
+      method: 'DELETE',
+    }),
+  wsUrl: (storyKey: string, sessionId: string) => {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${location.host}/ws/pty/${storyKey}/${sessionId}`
+  },
+}
