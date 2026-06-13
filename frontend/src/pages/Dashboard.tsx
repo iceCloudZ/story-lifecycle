@@ -60,6 +60,8 @@ export default function Dashboard() {
   const { stories, connected } = useStoryStore()
   const [tab, setTab] = useState<'tapd' | 'story' | 'calendar' | 'project'>('tapd')
   const [showCreate, setShowCreate] = useState(false)
+  const [showProjectForm, setShowProjectForm] = useState(false)
+  const [projectCount, setProjectCount] = useState(0)
   const qc = useQueryClient()
 
   const { data: fullList } = useQuery({
@@ -120,11 +122,17 @@ export default function Dashboard() {
           <span className={`ws-dot ${connected ? 'connected' : 'disconnected'}`} />
           <span>{connected ? '已连接' : '断开连接'}</span>
           <span className="story-count">
-            {tab === 'tapd' ? tapdStories.length : localStories.length} 个 Story
+            {tab === 'project' ? `${projectCount} 个项目` : `${tab === 'tapd' ? tapdStories.length : localStories.length} 个 Story`}
           </span>
-          <button className="btn btn-primary" onClick={() => setShowCreate(!showCreate)}>
-            新建 Story
-          </button>
+          {tab === 'project' ? (
+            <button className="btn btn-primary" onClick={() => setShowProjectForm(!showProjectForm)}>
+              {showProjectForm ? '取消' : '注册项目'}
+            </button>
+          ) : (
+            <button className="btn btn-primary" onClick={() => setShowCreate(!showCreate)}>
+              新建 Story
+            </button>
+          )}
         </div>
       </div>
 
@@ -184,7 +192,12 @@ export default function Dashboard() {
           )
         )}
         {tab === 'project' && (
-          <ProjectPanel onRefresh={() => qc.invalidateQueries({ queryKey: ['stories'] })} />
+          <ProjectPanel
+            showForm={showProjectForm}
+            setShowForm={setShowProjectForm}
+            onCountChange={setProjectCount}
+            onRefresh={() => qc.invalidateQueries({ queryKey: ['stories'] })}
+          />
         )}
       </div>
     </div>
@@ -437,12 +450,19 @@ function StoryCard({ story, onAction }: {
 
 // ---- Project management panel ----
 
-function ProjectPanel({ onRefresh }: { onRefresh: () => void }) {
+function ProjectPanel({ showForm, setShowForm, onCountChange, onRefresh }: {
+  showForm: boolean
+  setShowForm: (v: boolean) => void
+  onCountChange: (n: number) => void
+  onRefresh: () => void
+}) {
   const [projects, setProjects] = useState<any[]>([])
-  const [showForm, setShowForm] = useState(false)
 
   function loadProjects() {
-    fetch('/api/projects').then(r => r.json()).then(d => setProjects(d.projects || []))
+    fetch('/api/projects').then(r => r.json()).then(d => {
+      setProjects(d.projects || [])
+      onCountChange((d.projects || []).length)
+    })
   }
   useEffect(() => { loadProjects() }, [])
 
@@ -463,47 +483,47 @@ function ProjectPanel({ onRefresh }: { onRefresh: () => void }) {
     })
   }
 
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h3>已注册项目</h3>
-        <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
-          {showForm ? '取消' : '注册项目'}
+  if (projects.length === 0 && !showForm) {
+    return (
+      <div className="empty-state">
+        <p>暂无注册项目</p>
+        <p className="hint">注册项目后，TAPD Story 点击「开始开发」会自动绑定</p>
+        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => setShowForm(true)}>
+          注册第一个项目
         </button>
       </div>
+    )
+  }
 
+  return (
+    <div>
       {showForm && (
-        <form className="create-form" onSubmit={handleRegister} style={{ marginBottom: 16 }}>
-          <input name="name" placeholder="项目名称" required />
+        <form className="create-form" onSubmit={handleRegister}>
+          <input name="name" placeholder="项目名称 (如 hc-order)" required />
           <input name="repo_path" placeholder="仓库路径 (如 D:/code/my-project)" required />
-          <input name="default_branch" placeholder="默认分支 (默认 main)" defaultValue="main" />
-          <button type="submit" className="btn btn-primary">注册</button>
+          <input name="default_branch" placeholder="默认分支" defaultValue="main" />
+          <button type="submit" className="btn btn-primary">保存</button>
+          <button type="button" className="btn" onClick={() => setShowForm(false)}>取消</button>
         </form>
       )}
 
-      {projects.length === 0 ? (
-        <div className="empty-state">
-          <p>暂无注册项目</p>
-          <p className="hint">注册项目后，TAPD Story 点击「开始开发」会自动绑定</p>
-        </div>
-      ) : (
-        <div className="story-grid">
-          {projects.map((p: any) => (
-            <div key={p.id} className="story-card" style={{ borderLeft: '3px solid #2563eb' }}>
-              <div className="card-body">
-                <h4>{p.name}</h4>
-                <p style={{ fontSize: 12, color: '#888', wordBreak: 'break-all' }}>{p.repo_path}</p>
-                <p style={{ fontSize: 12 }}>
-                  <span className="tag">分支: {p.default_branch}</span>
-                  <span className={`tag ${p.availability === 'available' ? 'tag-green' : 'tag-yellow'}`}>
-                    {p.availability || 'unknown'}
-                  </span>
-                </p>
-              </div>
+      <div className="story-grid">
+        {projects.map((p: any) => (
+          <div key={p.id} className="story-card-v2 project-card">
+            <div className="card-top">
+              <span className="card-key">{p.name}</span>
+              <span className={`badge-type ${p.availability === 'available' ? 'badge-ok' : 'badge-warn'}`}
+                style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3 }}>
+                {p.availability || 'unknown'}
+              </span>
             </div>
-          ))}
-        </div>
-      )}
+            <p className="card-meta" style={{ wordBreak: 'break-all', marginBottom: 4 }}>
+              {p.repo_path}
+            </p>
+            <p className="card-meta">默认分支: {p.default_branch}</p>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
