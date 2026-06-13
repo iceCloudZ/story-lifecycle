@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams, useNavigate } from 'react-router-dom'
 import { storyApi, apiAction } from '../api/client'
@@ -80,8 +80,19 @@ export default function StoryDetailPage() {
     queryKey: ['plan', storyKey],
     queryFn: () => fetch(`/api/story/${storyKey}/plan`).then(r => r.json()),
     enabled: !!detail && (detail.status === 'planning'),
-    refetchInterval: 5000,
+    refetchInterval: 3000,
   })
+
+  // planning 状态且没有 plan_summary 时，自动触发生成
+  const [planTriggered, setPlanTriggered] = useState(false)
+  useEffect(() => {
+    if (detail?.status === 'planning' && !planData?.plan_summary && !planTriggered) {
+      setPlanTriggered(true)
+      fetch(`/api/story/${storyKey}/plan/generate`, { method: 'POST' })
+        .then(() => qc.invalidateQueries({ queryKey: ['plan', storyKey] }))
+        .catch(() => setPlanTriggered(false))
+    }
+  }, [detail?.status, planData?.plan_summary, planTriggered, storyKey, qc])
 
   if (!storyKey) return <div className="loading">无效的 Story Key</div>
 
@@ -96,8 +107,11 @@ export default function StoryDetailPage() {
   }
 
   async function handleRegeneratePlan() {
+    setPlanTriggered(false)
     const r = await fetch(`/api/story/${storyKey}/plan/generate`, { method: 'POST' })
-    if (r.ok) refetch()
+    if (r.ok) {
+      qc.invalidateQueries({ queryKey: ['plan', storyKey] })
+    }
     else { const e = await r.json(); alert(`重新规划失败: ${e.detail || '未知错误'}`) }
   }
 

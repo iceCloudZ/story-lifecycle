@@ -1616,15 +1616,6 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
         # Promote candidate to ready + planning
         db.update_story(story_key, intake_state="ready", status="planning")
 
-    # 自动触发 LLM 规划（不启动 CLI）
-    try:
-        plan = api_generate_plan(story_key)
-        return {"ok": True, "story_key": story_key, "plan": plan}
-    except HTTPException as e:
-        # 规划失败不影响状态转换，前端可重试
-        return {"ok": True, "story_key": story_key, "plan_error": e.detail}
-
-    start_story_async(story_key)
     return {"ok": True, "story_key": story_key}
 
 
