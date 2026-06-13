@@ -1,0 +1,66 @@
+.qgt-subtabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.qgt-subtab {
+  padding: 5px 14px;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  background: #161b22;
+  color: #8b949e;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.qgt-subtab:hover { border-color: #58a6ff; color: #c9d1d9; }
+.qgt-subtab.active { background: #1f6feb22; color: #58a6ff; border-color: #58a6ff; }
+.qgt-empty { color: #8b949e; font-size: 13px; padding: 40px; text-align: center; }
+.qgt-finding {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-bottom: 3px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.qgt-sev-high { background: #3d1f1f; }
+.qgt-sev-medium { background: #3d2e00; }
+.qgt-sev-low { background: #0d2818; }
+.qgt-finding-sev { font-weight: 600; flex-shrink: 0; font-size: 10px; }
+.qgt-sev-high .qgt-finding-sev { color: #f85149; }
+.qgt-sev-medium .qgt-finding-sev { color: #f0883e; }
+.qgt-sev-low .qgt-finding-sev { color: #3fb950; }
+.qgt-finding-cat { color: #58a6ff; font-size: 10px; flex-shrink: 0; min-width: 80px; }
+.qgt-finding-desc { color: #c9d1d9; flex: 1; line-height: 1.3; }
+.qgt-finding-status { font-size: 10px; padding: 1px 6px; border-radius: 3px; flex-shrink: 0; }
+.qgt-status-open { color: #f85149; background: #3d1f1f; }
+.qgt-status-fixed { color: #3fb950; background: #0d2818; }
+.qgt-status-verified { color: #3fb950; background: #0d2818; }
+.qgt-status-rejected { color: #8b949e; background: #21262d; }
+.qgt-gate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.qgt-gate-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: #161b22;
+  border-radius: 4px;
+  font-size: 12px;
+  border-left: 3px solid #30363d;
+}
+.qgt-gate-pass { border-left-color: #3fb950; }
+.qgt-gate-retry { border-left-color: #f0883e; }
+.qgt-gate-fail { border-left-color: #f85149; }
+.qgt-gate-decision { font-weight: 600; font-size: 11px; }
+.qgt-gate-pass .qgt-gate-decision { color: #3fb950; }
+.qgt-gate-retry .qgt-gate-decision { color: #f0883e; }
+.qgt-gate-fail .qgt-gate-decision { color: #f85149; }
+.qgt-gate-stage { color: #58a6ff; font-size: 10px; }
+.qgt-gate-reason { color: #8b949e; font-size: 11px; flex: 1; }

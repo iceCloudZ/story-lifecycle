@@ -1,0 +1,45 @@
+.tt-stats {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.tt-stat {
+  background: #161b22;
+  padding: 10px 16px;
+  border-radius: 6px;
+  text-align: center;
+  flex: 1;
+}
+.tt-stat-num { font-size: 20px; font-weight: 700; color: #e6edf3; }
+.tt-stat-label { font-size: 10px; color: #8b949e; margin-top: 4px; }
+.tt-table {
+  background: #161b22;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.tt-table-header {
+  display: flex;
+  padding: 6px 12px;
+  background: #21262d;
+  font-size: 10px;
+  color: #8b949e;
+  font-weight: 600;
+}
+.tt-table-header span:first-child { flex: 1; }
+.tt-table-header span:nth-child(2) { width: 140px; }
+.tt-table-header span:last-child { width: 70px; }
+.tt-table-row {
+  display: flex;
+  padding: 7px 12px;
+  border-bottom: 1px solid #21262d;
+  font-size: 11px;
+  align-items: center;
+}
+.tt-test-point { flex: 1; color: #c9d1d9; }
+.tt-coverage { width: 140px; font-size: 10px; color: #58a6ff; }
+.tt-status { width: 70px; font-size: 10px; }
+.tt-status-open { color: #f85149; }
+.tt-status-fixed { color: #3fb950; }
+.tt-status-verified { color: #3fb950; }
+.tt-status-rejected { color: #484f58; }
+.tt-empty { color: #8b949e; font-size: 13px; padding: 40px; text-align: center; }
