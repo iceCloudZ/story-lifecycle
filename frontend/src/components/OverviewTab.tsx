@@ -1,0 +1,120 @@
+import { useQuery } from '@tanstack/react-query'
+import { statsApi } from '../api/client'
+import StageProgress from './StageProgress'
+import ActionCard from './ActionCard'
+
+interface Props {
+  storyKey: string
+  detail: any
+  resolvedActions: any[]
+  isConfirmed: boolean
+  onConfirmPlan: () => void
+  onRegeneratePlan: () => void
+  onAction: (action: any) => void
+  actions: any[]
+  onTabChange: (tabId: string) => void
+}
+
+export default function OverviewTab({
+  storyKey, detail, resolvedActions, isConfirmed,
+  onConfirmPlan, onRegeneratePlan, onAction, actions, onTabChange,
+}: Props) {
+  const { data: stats } = useQuery({
+    queryKey: ['stats', storyKey],
+    queryFn: () => statsApi.get(storyKey),
+    enabled: !!detail,
+  })
+
+  // Resolve stage list from profile — default to minimal profile stages
+  const stages = [
+    { name: 'design', status: 'pending' as const },
+    { name: 'implement', status: 'pending' as const },
+    { name: 'test', status: 'pending' as const },
+  ]
+
+  return (
+    <div className="tab-content overview-tab">
+      {/* Top bar */}
+      <div className="ot-header">
+        <span className="ot-key">{detail.storyKey}</span>
+        <span className="ot-updated">更新: {detail.updatedAt}</span>
+      </div>
+
+      {/* Progress bar */}
+      <StageProgress stages={stages} currentStage={detail.currentStage} />
+
+      {/* Info cards */}
+      <div className="ot-info-grid">
+        <div className="ot-info-card">
+          <div className="ot-info-label">Profile</div>
+          <div className="ot-info-value">{detail.profile}</div>
+        </div>
+        <div className="ot-info-card">
+          <div className="ot-info-label">重试次数</div>
+          <div className="ot-info-value">{detail.executionCount} / 3</div>
+        </div>
+        <div className="ot-info-card">
+          <div className="ot-info-label">来源</div>
+          <div className="ot-info-value">
+            {detail.sourceType ? `${detail.sourceType} · ${detail.priority || '-'}` : '-'}
+          </div>
+        </div>
+      </div>
+
+      {/* Agent planning area */}
+      {detail.status === 'planning' && resolvedActions.length > 0 && (
+        <div className="ot-plan-section">
+          <h3>🤖 Agent 规划</h3>
+          <div className="action-cards">
+            {resolvedActions.map((a, i) => (
+              <ActionCard key={i} action={a} index={i} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div className="ot-actions">
+        {detail.status === 'planning' && !isConfirmed && resolvedActions.length > 0 && (
+          <>
+            <button className="btn btn-primary" onClick={onConfirmPlan}>
+              ✅ 确认并执行 ({resolvedActions.filter((a: any) => a.action === 'launch').length} 步)
+            </button>
+            <button className="btn" onClick={onRegeneratePlan}>
+              🔄 重新规划
+            </button>
+          </>
+        )}
+        {actions.map((a: any) => (
+          <button
+            key={a.label}
+            className={`btn ${a.variant === 'danger' ? 'btn-danger' : ''} ${a.variant === 'primary' ? 'btn-primary' : ''}`}
+            onClick={() => onAction(a)}
+          >
+            {a.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Quick stats */}
+      {stats && (
+        <div className="ot-stats">
+          <button className="ot-stat-card" onClick={() => onTabChange('code')}>
+            <div className="ot-stat-num">{stats.code_changes}</div>
+            <div className="ot-stat-label">代码变更</div>
+          </button>
+          <button className="ot-stat-card" onClick={() => onTabChange('loop')}>
+            <div className="ot-stat-num">{stats.loop_rounds}</div>
+            <div className="ot-stat-label">循环轮次</div>
+          </button>
+          <button className="ot-stat-card" onClick={() => onTabChange('quality')}>
+            <div className="ot-stat-num" style={{ color: stats.findings_open > 0 ? '#f85149' : '#3fb950' }}>
+              {stats.findings_open}
+            </div>
+            <div className="ot-stat-label">Findings 待处理</div>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
