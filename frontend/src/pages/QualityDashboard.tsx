@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { patternApi, storyApi } from '../api/client'
+import type { Pattern, Story } from '../api/client'
 import './QualityDashboard.css'
 
 export default function QualityDashboard() {
@@ -25,14 +26,14 @@ export default function QualityDashboard() {
     queryFn: storyApi.list,
   })
 
-  async function handleApprove(id: string) {
+  async function handleApprove(id: string | number) {
     const ok = await patternApi.approve(id)
     if (ok) {
       qc.invalidateQueries({ queryKey: ['patterns'] })
     }
   }
 
-  async function handleReject(id: string) {
+  async function handleReject(id: string | number) {
     const ok = await patternApi.reject(id)
     if (ok) {
       qc.invalidateQueries({ queryKey: ['patterns'] })
@@ -40,7 +41,8 @@ export default function QualityDashboard() {
   }
 
   // Aggregate findings stats
-  const findingsStats = aggregateFindings(stories || [])
+  const findingsStats = aggregateFindings(stories ?? [])
+  const rejectedPatterns = rejected?.patterns ?? []
 
   return (
     <div className="quality-dashboard">
@@ -95,7 +97,7 @@ export default function QualityDashboard() {
         <h3>待审批 Patterns ({proposed?.patterns?.length || 0})</h3>
         {proposed?.patterns?.length ? (
           <div className="pattern-list">
-            {proposed.patterns.map((p: any) => (
+            {proposed.patterns.map((p: Pattern) => (
               <div key={p.id} className="pattern-card pattern-proposed">
                 <div className="pattern-pattern">{p.pattern}</div>
                 <div className="pattern-rule">{p.rule}</div>
@@ -120,7 +122,7 @@ export default function QualityDashboard() {
         <h3>活跃 Patterns ({active?.patterns?.length || 0})</h3>
         {active?.patterns?.length ? (
           <div className="pattern-list">
-            {active.patterns.map((p: any) => (
+            {active.patterns.map((p: Pattern) => (
               <div key={p.id} className="pattern-card pattern-active">
                 <div className="pattern-pattern">{p.pattern}</div>
                 <div className="pattern-rule">{p.rule}</div>
@@ -138,12 +140,12 @@ export default function QualityDashboard() {
       </section>
 
       {/* Rejected Patterns (collapsed) */}
-      {rejected?.patterns?.length > 0 && (
+      {rejectedPatterns.length > 0 && (
         <section className="qd-section">
           <details>
-            <summary><h3 className="inline-h3">已拒绝 Patterns ({rejected.patterns.length})</h3></summary>
+            <summary><h3 className="inline-h3">已拒绝 Patterns ({rejectedPatterns.length})</h3></summary>
             <div className="pattern-list">
-              {rejected.patterns.map((p: any) => (
+              {rejectedPatterns.map((p: Pattern) => (
                 <div key={p.id} className="pattern-card pattern-rejected">
                   <div className="pattern-pattern">{p.pattern}</div>
                   <div className="pattern-rule">{p.rule}</div>
@@ -161,7 +163,7 @@ export default function QualityDashboard() {
   )
 }
 
-function aggregateFindings(stories: any[]) {
+function aggregateFindings(stories: Story[]) {
   const stats = {
     total: 0,
     high: 0,

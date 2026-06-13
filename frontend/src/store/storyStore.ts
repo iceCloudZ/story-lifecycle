@@ -8,7 +8,7 @@ export interface StorySummary {
   profile: string
   executionCount: number
   updatedAt: string
-  intakeState?: string
+  intakeState?: string | null
   sourceType?: string
   sourceId?: string
   tapdType?: string

@@ -8,7 +8,7 @@ export default function DiagnosticsPage() {
     queryFn: storyApi.list,
   })
 
-  const failedStories = (stories || []).filter((s: any) =>
+  const failedStories = (stories ?? []).filter((s) =>
     s.status === 'failed' || s.status === 'blocked'
   )
 
@@ -25,7 +25,7 @@ export default function DiagnosticsPage() {
         </div>
         <div className="diag-item">
           <span className="diag-label">活跃 Story</span>
-          <span className="diag-value">{(stories || []).filter((s: any) => s.status === 'active').length}</span>
+          <span className="diag-value">{(stories ?? []).filter((s) => s.status === 'active').length}</span>
         </div>
         <div className="diag-item">
           <span className="diag-label">失败/阻塞</span>
@@ -41,7 +41,7 @@ export default function DiagnosticsPage() {
       <section className="diag-section">
         <h3>失败/阻塞的 Story ({failedStories.length})</h3>
         {failedStories.length > 0 ? (
-          failedStories.map((s: any) => (
+          failedStories.map((s) => (
             <StoryDiagnostics key={s.storyKey} storyKey={s.storyKey} />
           ))
         ) : (
@@ -57,6 +57,8 @@ function StoryDiagnostics({ storyKey }: { storyKey: string }) {
     queryKey: ['debug', storyKey],
     queryFn: () => storyApi.debug(storyKey, 20),
   })
+  const stuckReasons = debug?.stuckReasons ?? []
+  const recentEvents = debug?.recentEvents ?? []
 
   function handleDownload() {
     const blob = new Blob([JSON.stringify(debug, null, 2)], { type: 'application/json' })
@@ -77,27 +79,27 @@ function StoryDiagnostics({ storyKey }: { storyKey: string }) {
         </button>
       </div>
 
-      {debug?.stuckReasons?.length > 0 && (
+      {stuckReasons.length > 0 && (
         <div className="diag-stuck">
           <span className="diag-label">Stuck Reasons:</span>
           <div className="stuck-tags">
-            {debug.stuckReasons.map((r: string, i: number) => (
+            {stuckReasons.map((r, i) => (
               <span key={i} className="stuck-tag">{r}</span>
             ))}
           </div>
         </div>
       )}
 
-      {debug?.recentEvents?.length > 0 && (
+      {recentEvents.length > 0 && (
         <div className="diag-events">
           <span className="diag-label">最近事件:</span>
           <div className="events-timeline">
-            {debug.recentEvents.slice(0, 10).map((ev: any, i: number) => (
+            {recentEvents.slice(0, 10).map((ev, i) => (
               <div key={i} className={`diag-event ev-${ev.event_type}`}>
                 <span className="ev-type">{ev.event_type}</span>
                 <span className="ev-stage">{ev.stage}</span>
                 {ev.detail && <span className="ev-detail">{truncate(ev.detail, 100)}</span>}
-                <span className="ev-time">{formatTime(ev.created_at)}</span>
+                <span className="ev-time">{formatTime(ev.created_at ?? '')}</span>
               </div>
             ))}
           </div>

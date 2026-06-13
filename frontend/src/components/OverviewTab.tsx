@@ -1,17 +1,18 @@
 import { useQuery } from '@tanstack/react-query'
 import { statsApi } from '../api/client'
+import type { Story, AgentAction, ActionButton } from '../api/client'
 import StageProgress from './StageProgress'
 import ActionCard from './ActionCard'
 
 interface Props {
   storyKey: string
-  detail: any
-  resolvedActions: any[]
+  detail: Story
+  resolvedActions: AgentAction[]
   isConfirmed: boolean
   onConfirmPlan: () => void
   onRegeneratePlan: () => void
-  onAction: (action: any) => void
-  actions: any[]
+  onAction: (action: ActionButton) => void
+  actions: ActionButton[]
   onTabChange: (tabId: string) => void
 }
 
@@ -80,14 +81,14 @@ export default function OverviewTab({
         {detail.status === 'planning' && !isConfirmed && resolvedActions.length > 0 && (
           <>
             <button className="btn btn-primary" onClick={onConfirmPlan}>
-              ✅ 确认并执行 ({resolvedActions.filter((a: any) => a.action === 'launch').length} 步)
+              ✅ 确认并执行 ({resolvedActions.filter((a) => a.action === 'launch').length} 步)
             </button>
             <button className="btn" onClick={onRegeneratePlan}>
               🔄 重新规划
             </button>
           </>
         )}
-        {actions.map((a: any) => (
+        {actions.map((a) => (
           <button
             key={a.label}
             className={`btn ${a.variant === 'danger' ? 'btn-danger' : ''} ${a.variant === 'primary' ? 'btn-primary' : ''}`}

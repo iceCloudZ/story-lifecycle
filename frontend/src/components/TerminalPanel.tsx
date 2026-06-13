@@ -15,18 +15,22 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
   const termRef = useRef<Terminal | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
-  const [spawned, setSpawned] = useState(false)
+  // When sessionId is provided, the session already exists — skip spawn
+  const [spawned, setSpawned] = useState(!!sessionId)
+  const [prevStoryKey, setPrevStoryKey] = useState(storyKey)
   const [searchVisible, setSearchVisible] = useState(false)
   const [searchText, setSearchText] = useState('')
   const [wsStatus, setWsStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Ref indirection lets onclose reference connectWs without a TDZ self-reference.
+  const connectWsRef = useRef<() => void>(() => {})
 
-  // Spawn PTY on demand
-  async function handleSpawn() {
-    if (!storyKey) return
+  // Spawn PTY on demand (only when sessionId not provided)
+  const handleSpawn = useCallback(async () => {
+    if (!storyKey || sessionId) return
     const r = await fetch(`/api/pty/${storyKey}/spawn`, { method: 'POST' })
     if (r.ok) setSpawned(true)
-  }
+  }, [storyKey, sessionId])
 
   const connectWs = useCallback(() => {
     if (!storyKey || !spawned) return
@@ -46,7 +50,7 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
       setWsStatus('disconnected')
       // Auto-reconnect after 3 seconds
       if (spawned) {
-        reconnectTimerRef.current = setTimeout(connectWs, 3000)
+        reconnectTimerRef.current = setTimeout(() => connectWsRef.current(), 3000)
       }
     }
 
@@ -80,7 +84,13 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
     }
 
     wsRef.current = ws
-  }, [storyKey, spawned])
+  }, [storyKey, spawned, sessionId])
+
+  // Keep the reconnect ref pointed at the latest connectWs (in an effect, not
+  // during render).
+  useEffect(() => {
+    connectWsRef.current = connectWs
+  }, [connectWs])
 
   // Initialize terminal
   useEffect(() => {
@@ -147,18 +157,24 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
     }
   }, [spawned, connectWs])
 
-  // Cleanup spawned state when story changes
-  useEffect(() => {
+  // Reset transient UI state when the story changes — render-time adjustment
+  // (per https://react.dev/reference/react/useState#storing-information-from-previous-renders)
+  // instead of a setState-in-effect. Also avoids clobbering the initial
+  // `!!sessionId` state on first mount, which the previous effect did.
+  if (storyKey !== prevStoryKey) {
+    setPrevStoryKey(storyKey)
     setSpawned(false)
     setSearchVisible(false)
-  }, [storyKey])
+  }
 
-  // Auto-connect for active stories
+  // Auto-connect for active stories. handleSpawn's setState runs only after an
+  // awaited fetch, so it is not synchronous in this effect body.
   useEffect(() => {
     if (autoConnect && storyKey && !spawned) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       handleSpawn()
     }
-  }, [autoConnect, storyKey, spawned])
+  }, [autoConnect, storyKey, spawned, handleSpawn])
 
   // Search functionality
   function handleSearch() {

@@ -4,6 +4,8 @@ import { useStoryStore } from '../store/storyStore'
 export function useStoryWebSocket() {
   const { setStories, setConnected, updateStory } = useStoryStore()
   const wsRef = useRef<WebSocket | null>(null)
+  // Ref indirection lets onclose reference "connect" without a TDZ self-reference.
+  const connectRef = useRef<() => void>(() => {})
 
   const connect = useCallback(() => {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -12,7 +14,7 @@ export function useStoryWebSocket() {
     ws.onopen = () => setConnected(true)
     ws.onclose = () => {
       setConnected(false)
-      setTimeout(connect, 3000)
+      setTimeout(() => connectRef.current(), 3000)
     }
     ws.onerror = () => ws.close()
 
@@ -40,6 +42,13 @@ export function useStoryWebSocket() {
 
     wsRef.current = ws
   }, [setStories, setConnected, updateStory])
+
+  // Keep the reconnect ref pointed at the latest connect (in an effect, not
+  // during render). Declared before the connect() effect so the ref is set
+  // before the first connection is opened.
+  useEffect(() => {
+    connectRef.current = connect
+  }, [connect])
 
   useEffect(() => {
     connect()

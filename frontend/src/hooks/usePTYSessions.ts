@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { sessionApi } from '../api/client'
 
@@ -16,7 +16,7 @@ interface Props {
   autoConnect?: boolean
 }
 
-export default function usePTYSessions({ storyKey, autoConnect: _autoConnect = false }: Props) {
+export default function usePTYSessions({ storyKey }: Props) {
   const qc = useQueryClient()
 
   const { data: sessionList } = useQuery({
@@ -35,40 +35,40 @@ export default function usePTYSessions({ storyKey, autoConnect: _autoConnect = f
     startedAt: s.started_at,
   }))
 
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
 
-  // Auto-select first running session
-  useEffect(() => {
-    if (!activeSessionId && sessions.length > 0) {
-      const running = sessions.find((s) => s.status !== 'exited')
-      setActiveSessionId(running?.sessionId ?? sessions[0].sessionId)
-    }
-  }, [sessions, activeSessionId])
+  // Effective active session: explicit selection, else auto-pick the first
+  // running session (derived during render instead of setState-in-effect).
+  const activeSessionId =
+    selectedSessionId ??
+    (sessions.length > 0
+      ? (sessions.find((s) => s.status !== 'exited') ?? sessions[0]).sessionId
+      : null)
 
   const spawnSession = useCallback(
     async (adapter: string, model: string) => {
       const result = await sessionApi.spawn(storyKey, adapter, model)
       qc.invalidateQueries({ queryKey: ['sessions', storyKey] })
-      setActiveSessionId(result.session_id)
+      setSelectedSessionId(result.session_id)
     },
-    [storyKey, qc]
+    [storyKey, qc, setSelectedSessionId]
   )
 
   const killSession = useCallback(
     async (sessionId: string) => {
       await sessionApi.kill(storyKey, sessionId)
       qc.invalidateQueries({ queryKey: ['sessions', storyKey] })
-      if (activeSessionId === sessionId) {
-        setActiveSessionId(null)
+      if (selectedSessionId === sessionId) {
+        setSelectedSessionId(null)
       }
     },
-    [storyKey, qc, activeSessionId]
+    [storyKey, qc, selectedSessionId, setSelectedSessionId]
   )
 
   return {
     sessions,
     activeSessionId,
-    setActiveSession: setActiveSessionId,
+    setActiveSession: setSelectedSessionId,
     spawnSession,
     killSession,
   }

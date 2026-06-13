@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { storyApi, apiAction } from '../api/client'
+import type { Project } from '../api/client'
 import { useStoryStore, type StorySummary } from '../store/storyStore'
 import './Dashboard.css'
 
@@ -109,7 +110,7 @@ export default function Dashboard() {
     // candidate 状态：弹窗让用户选择项目，然后跳转详情页（自动触发 LLM 规划）
     const projectsRes = await fetch('/api/projects')
     const projectsData = await projectsRes.json()
-    const projects: any[] = projectsData.projects || []
+    const projects: Project[] = projectsData.projects || []
 
     if (projects.length === 0) {
       alert('请先在「项目」tab 中注册项目，再开始开发')
@@ -558,7 +559,7 @@ function ProjectPanel({ showForm, setShowForm, onCountChange, onRefresh }: {
   onCountChange: (n: number) => void
   onRefresh: () => void
 }) {
-  const [projects, setProjects] = useState<any[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
 
   function loadProjects() {
     fetch('/api/projects').then(r => r.json()).then(d => {
@@ -566,6 +567,9 @@ function ProjectPanel({ showForm, setShowForm, onCountChange, onRefresh }: {
       onCountChange((d.projects || []).length)
     })
   }
+  // Mount-only initial load; loadProjects is intentionally omitted from deps to
+  // avoid refetch storms when the parent re-renders.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadProjects() }, [])
 
   function handleRegister(e: React.FormEvent<HTMLFormElement>) {
@@ -610,7 +614,7 @@ function ProjectPanel({ showForm, setShowForm, onCountChange, onRefresh }: {
       )}
 
       <div className="story-grid">
-        {projects.map((p: any) => (
+        {projects.map((p: Project) => (
           <div key={p.id} className="story-card-v2 project-card">
             <div className="card-top">
               <span className="card-key">{p.name}</span>

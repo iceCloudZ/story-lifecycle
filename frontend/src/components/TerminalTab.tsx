@@ -30,7 +30,10 @@ export default function TerminalTab({ storyKey }: Props) {
     } catch { /* API may not exist yet */ }
   }, [storyKey])
 
+  // Poll sessions on mount + every 5s. fetchSessions' setState runs after an
+  // awaited fetch, so it is not synchronous in this effect body.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchSessions()
     const interval = setInterval(fetchSessions, 5000)
     return () => clearInterval(interval)
@@ -57,7 +60,12 @@ export default function TerminalTab({ storyKey }: Props) {
     }
   }
 
-  const activeSessionId = activeSession || (sessions.length > 0 ? sessions[0].session_id : null)
+  // Auto-select first running session, or the first session if none running
+  const activeSessionId =
+    activeSession ||
+    (sessions.length > 0
+      ? (sessions.find((s) => s.status === 'running') || sessions[0]).session_id
+      : null)
 
   return (
     <div className="tab-content terminal-tab">
@@ -78,21 +86,19 @@ export default function TerminalTab({ storyKey }: Props) {
             <span className={`tt-status-dot tt-${s.status === 'running' ? 'running' : 'exited'}`} />
           </button>
         ))}
-        {sessions.length === 0 && (
-          <div className="tt-empty-sessions">暂无 CLI 会话</div>
-        )}
+        <button className="tt-session-tab tt-spawn-btn" onClick={handleSpawn} title="新建会话">
+          + 新建
+        </button>
       </div>
 
       {/* Active terminal */}
       {activeSessionId ? (
         <div className="tt-terminal-area">
           <TerminalPanel storyKey={storyKey} sessionId={activeSessionId} autoConnect />
-          <div className="tt-session-info">
-            <span>会话: {activeSessionId}</span>
-          </div>
         </div>
       ) : (
         <div className="tt-no-session">
+          <p>暂无 CLI 会话</p>
           <button className="btn btn-primary" onClick={handleSpawn}>
             启动终端
           </button>

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { storyApi } from '../api/client'
+import type { LoopRound } from '../api/client'
 
 interface Props {
   storyKey: string
@@ -17,8 +18,9 @@ export default function AdversarialLoopTab({ storyKey }: Props) {
   })
 
   // Merge plan and code loop rounds
-  const allRounds: any[] = []
-  const addRounds = (rounds: any[], loopType: string) => {
+  const allRounds: LoopRound[] = []
+  const addRounds = (rounds: LoopRound[] | undefined, loopType: 'plan' | 'code') => {
+    if (!rounds) return
     for (const r of rounds) {
       allRounds.push({ ...r, loopType })
     }
@@ -88,7 +90,7 @@ export default function AdversarialLoopTab({ storyKey }: Props) {
                     <div className="lt-side-label">Review</div>
                     <div className="lt-side-content">
                       质量: {r.quality || '--'}
-                      {r.issues_count > 0 && ` · ${r.issues_count} issues`}
+                      {(r.issues_count ?? 0) > 0 && ` · ${r.issues_count} issues`}
                     </div>
                   </div>
                 </div>

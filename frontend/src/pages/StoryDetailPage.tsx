@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { storyApi, apiAction, planApi } from '../api/client'
+import type { ActionButton } from '../api/client'
 import StorySidebar from '../components/StorySidebar'
 import OverviewTab from '../components/OverviewTab'
 import CodeChangesTab from '../components/CodeChangesTab'
@@ -29,7 +30,7 @@ const MODULES = [
   { id: 'terminal', icon: '💻', label: '终端' },
 ]
 
-const ACTIONS: Record<string, any[]> = {
+const ACTIONS: Record<string, ActionButton[]> = {
   planning: [
     { label: '终止', method: 'POST', path: '/abort', confirm: '确定终止此 Story？', variant: 'danger' },
   ],
@@ -74,6 +75,10 @@ export default function StoryDetailPage() {
   })
 
   const [planTriggered, setPlanTriggered] = useState(false)
+  // Re-entry guard for the SSE effect — a ref avoids setState-in-effect and,
+  // unlike state, doesn't sit in the dep array (which previously caused the
+  // effect to re-run and tear down the EventSource right after opening it).
+  const planTriggeredRef = useRef(false)
   const [streamingActions, setStreamingActions] = useState<AgentAction[]>([])
 
   const { data: planData } = useQuery({
@@ -89,9 +94,12 @@ export default function StoryDetailPage() {
     const existingActions = planData?.actions
     if (existingActions?.length) return
     if (planData?.plan_summary && !planData?.actions) return
-    if (planTriggered) return
-    setPlanTriggered(true)
+    if (planTriggeredRef.current) return
+    planTriggeredRef.current = true
     const es = new EventSource(planApi.streamUrl(storyKey))
+    // Pauses plan polling once the stream is live; fires async, not in the
+    // effect body, so it doesn't trip set-state-in-effect.
+    es.onopen = () => setPlanTriggered(true)
     es.onmessage = (e) => {
       try {
         const d = JSON.parse(e.data)
@@ -105,9 +113,9 @@ export default function StoryDetailPage() {
         }
       } catch { /* ignore */ }
     }
-    es.onerror = () => { es.close(); setPlanTriggered(false); qc.invalidateQueries({ queryKey: ['plan', storyKey] }) }
+    es.onerror = () => { es.close(); planTriggeredRef.current = false; setPlanTriggered(false); qc.invalidateQueries({ queryKey: ['plan', storyKey] }) }
     return () => es.close()
-  }, [detail?.status, planData, planTriggered, storyKey, qc])
+  }, [detail?.status, planData, storyKey, qc])
 
   const resolvedActions: AgentAction[] = streamingActions.length > 0 ? streamingActions : (planData?.actions ?? [])
   const isConfirmed = planData?.confirmed ?? false
@@ -128,12 +136,18 @@ export default function StoryDetailPage() {
   }
 
   async function handleRegeneratePlan() {
-    setPlanTriggered(false); setStreamingActions([])
-    try { await planApi.regenerate(storyKey) } catch {}
+    planTriggeredRef.current = false
+    setPlanTriggered(false)
+    setStreamingActions([])
+    try {
+      await planApi.regenerate(storyKey)
+    } catch {
+      /* ignore — invalidate will refetch below */
+    }
     qc.invalidateQueries({ queryKey: ['plan', storyKey] })
   }
 
-  async function handleAction(action: any) {
+  async function handleAction(action: ActionButton) {
     if (action.confirm && !window.confirm(action.confirm)) return
     let url = `/api/story/${storyKey}`
     if (action.path === '/skip/{stage}') url += `/skip/${detail?.currentStage}`

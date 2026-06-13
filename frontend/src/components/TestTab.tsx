@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { storyApi } from '../api/client'
+import type { Finding } from '../api/client'
 
 interface Props {
   storyKey: string
@@ -15,7 +16,7 @@ export default function TestTab({ storyKey }: Props) {
   // In MVP, test data comes from findings with test-related categories.
   // When backend adds a dedicated test API, switch to that.
   const testFindings = (findingsData?.findings ?? []).filter(
-    (f: any) => f.category === 'missing_test' || f.category === 'test' || f.source === 'test'
+    (f: Finding) => f.category === 'missing_test' || f.category === 'test' || f.source === 'test'
   )
 
   return (
@@ -48,7 +49,7 @@ export default function TestTab({ storyKey }: Props) {
             <span>覆盖范围</span>
             <span>状态</span>
           </div>
-          {testFindings.map((f: any, i: number) => (
+          {testFindings.map((f: Finding, i: number) => (
             <div key={i} className="tt-table-row">
               <span className="tt-test-point">{f.description || f.category}</span>
               <span className="tt-coverage">{f.location || '--'}</span>

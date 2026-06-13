@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { storyApi } from '../api/client'
+import type { Finding, GateDecision } from '../api/client'
 
 interface Props {
   storyKey: string
@@ -26,8 +27,9 @@ export default function QualityGateTab({ storyKey }: Props) {
 
   // Sort findings by severity
   const severityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 }
+  const severityRank = (f: Finding) => (f.severity ? severityOrder[f.severity] ?? 3 : 3)
   const sortedFindings = [...findings].sort(
-    (a, b) => (severityOrder[a.severity] ?? 3) - (severityOrder[b.severity] ?? 3)
+    (a, b) => severityRank(a) - severityRank(b)
   )
 
   return (
@@ -53,7 +55,7 @@ export default function QualityGateTab({ storyKey }: Props) {
           {sortedFindings.length === 0 ? (
             <div className="qgt-empty">暂无 Findings</div>
           ) : (
-            sortedFindings.map((f: any, i: number) => (
+            sortedFindings.map((f: Finding, i: number) => (
               <div key={f.id || i} className={`qgt-finding qgt-sev-${f.severity}`}>
                 <span className="qgt-finding-sev">[{f.severity?.toUpperCase() || 'LOW'}]</span>
                 <span className="qgt-finding-cat">{f.category || '--'}</span>
@@ -70,7 +72,7 @@ export default function QualityGateTab({ storyKey }: Props) {
           {decisions.length === 0 ? (
             <div className="qgt-empty">暂无 Gate 决策</div>
           ) : (
-            decisions.map((d: any, i: number) => (
+            decisions.map((d: GateDecision, i: number) => (
               <div key={i} className={`qgt-gate-item qgt-gate-${d.decision}`}>
                 <span className="qgt-gate-decision">{d.decision}</span>
                 <span className="qgt-gate-stage">{d.stage}</span>

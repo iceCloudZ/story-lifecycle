@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { storyApi } from '../api/client'
+import type { TimelineStage } from '../api/client'
 
 interface Props {
   storyKey: string
@@ -45,7 +46,7 @@ export default function CodeChangesTab({ storyKey }: Props) {
   const totalDeletions = filteredFiles.reduce((s, f) => s + f.deletions, 0)
 
   // Extract unique stage names from timeline
-  const stageNames: string[] = timeline?.stages?.map((s: any) => s.stage) ?? []
+  const stageNames: string[] = timeline?.stages?.map((s: TimelineStage) => s.stage) ?? []
 
   return (
     <div className="tab-content code-changes-tab">
