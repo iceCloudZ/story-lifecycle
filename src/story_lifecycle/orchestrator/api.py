@@ -1597,9 +1597,9 @@ def api_start_story(story_key: str):
                     source="user",
                 )
 
-    # Promote candidate to ready
+    # Promote candidate to ready + activate
     if intake_state == "candidate":
-        db.update_story(story_key, intake_state="ready")
+        db.update_story(story_key, intake_state="ready", status="active")
 
     start_story_async(story_key)
     return {"ok": True, "story_key": story_key}
