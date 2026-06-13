@@ -5,27 +5,27 @@
 }
 .lt-filter-btn {
   padding: 4px 12px;
-  border: 1px solid #30363d;
+  border: 1px solid #e5e7eb;
   border-radius: 4px;
-  background: #161b22;
-  color: #8b949e;
+  background: #f3f4f6;
+  color: #6b7280;
   font-size: 11px;
   cursor: pointer;
   transition: all 0.15s;
 }
-.lt-filter-btn:hover { border-color: #58a6ff; color: #c9d1d9; }
-.lt-filter-btn.active { background: #1f6feb22; color: #58a6ff; border-color: #58a6ff; }
-.lt-empty { color: #8b949e; font-size: 13px; padding: 40px; text-align: center; }
+.lt-filter-btn:hover { border-color: #2563eb; color: #374151; }
+.lt-filter-btn.active { background: #eff6ff; color: #2563eb; border-color: #2563eb; }
+.lt-empty { color: #6b7280; font-size: 13px; padding: 40px; text-align: center; }
 .lt-rounds { display: flex; flex-direction: column; gap: 8px; }
 .lt-card {
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
   border-radius: 6px;
   overflow: hidden;
 }
-.lt-card.lt-advance { border-left: 3px solid #3fb950; }
-.lt-card.lt-retry { border-left: 3px solid #f0883e; }
-.lt-card.lt-fail { border-left: 3px solid #f85149; }
+.lt-card.lt-advance { border-left: 3px solid #16a34a; }
+.lt-card.lt-retry { border-left: 3px solid #d97706; }
+.lt-card.lt-fail { border-left: 3px solid #dc2626; }
 .lt-card-header {
   display: flex;
   align-items: center;
@@ -35,24 +35,24 @@
   font-size: 12px;
   transition: background 0.15s;
 }
-.lt-card-header:hover { background: #1f6feb11; }
-.lt-round-num { font-weight: 600; color: #e6edf3; }
+.lt-card-header:hover { background: #f9fafb; }
+.lt-round-num { font-weight: 600; color: #1f2937; }
 .lt-badge { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
-.lt-badge-advance { background: #0d2818; color: #3fb950; }
-.lt-badge-retry { background: #3d2e00; color: #f0883e; }
-.lt-badge-fail { background: #3d1f1f; color: #f85149; }
-.lt-score { font-size: 11px; color: #d2a8ff; }
-.lt-expand { color: #484f58; font-size: 10px; margin-left: auto; }
+.lt-badge-advance { background: #dcfce7; color: #16a34a; }
+.lt-badge-retry { background: #fef3c7; color: #d97706; }
+.lt-badge-fail { background: #fee2e2; color: #dc2626; }
+.lt-score { font-size: 11px; color: #7c3aed; }
+.lt-expand { color: #9ca3af; font-size: 10px; margin-left: auto; }
 .lt-card-body {
   display: flex;
   gap: 8px;
   padding: 8px 12px;
-  border-top: 1px solid #21262d;
+  border-top: 1px solid #f3f4f6;
   font-size: 11px;
   align-items: flex-start;
 }
 .lt-code-side { flex: 1; }
 .lt-review-side { flex: 1; }
-.lt-arrow { color: #484f58; font-size: 14px; padding-top: 12px; }
-.lt-side-label { color: #8b949e; font-size: 10px; font-weight: 600; margin-bottom: 4px; }
-.lt-side-content { color: #c9d1d9; line-height: 1.5; }
+.lt-arrow { color: #9ca3af; font-size: 14px; padding-top: 12px; }
+.lt-side-label { color: #6b7280; font-size: 10px; font-weight: 600; margin-bottom: 4px; }
+.lt-side-content { color: #374151; line-height: 1.5; }

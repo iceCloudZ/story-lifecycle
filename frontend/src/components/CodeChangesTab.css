@@ -6,43 +6,43 @@
 }
 .cct-filter-btn {
   padding: 4px 12px;
-  border: 1px solid #30363d;
+  border: 1px solid #e5e7eb;
   border-radius: 4px;
-  background: #161b22;
-  color: #8b949e;
+  background: #f3f4f6;
+  color: #6b7280;
   font-size: 11px;
   cursor: pointer;
   transition: all 0.15s;
 }
-.cct-filter-btn:hover { border-color: #58a6ff; color: #c9d1d9; }
-.cct-filter-btn.active { background: #1f6feb22; color: #58a6ff; border-color: #58a6ff; }
+.cct-filter-btn:hover { border-color: #2563eb; color: #374151; }
+.cct-filter-btn.active { background: #eff6ff; color: #2563eb; border-color: #2563eb; }
 .cct-stats {
   display: flex;
   gap: 10px;
   margin-bottom: 12px;
 }
 .cct-stat {
-  background: #161b22;
+  background: #ffffff;
   padding: 8px 14px;
   border-radius: 4px;
   text-align: center;
   flex: 1;
 }
-.cct-stat-num { font-size: 16px; font-weight: 700; color: #e6edf3; }
-.cct-stat-label { font-size: 10px; color: #8b949e; margin-top: 2px; }
+.cct-stat-num { font-size: 16px; font-weight: 700; color: #1f2937; }
+.cct-stat-label { font-size: 10px; color: #6b7280; margin-top: 2px; }
 .cct-empty {
-  color: #8b949e;
+  color: #6b7280;
   font-size: 13px;
   padding: 40px;
   text-align: center;
 }
 .cct-file-list {
-  background: #161b22;
+  background: #ffffff;
   border-radius: 6px;
   overflow: hidden;
 }
 .cct-file-item {
-  border-bottom: 1px solid #21262d;
+  border-bottom: 1px solid #f3f4f6;
 }
 .cct-file-header {
   display: flex;
@@ -53,20 +53,20 @@
   font-size: 12px;
   transition: background 0.15s;
 }
-.cct-file-header:hover { background: #1f6feb11; }
-.cct-expand-icon { color: #484f58; font-size: 10px; width: 14px; }
-.cct-file-path { font-weight: 600; color: #58a6ff; flex: 1; }
-.cct-file-additions { color: #3fb950; font-size: 11px; }
-.cct-file-deletions { color: #f85149; font-size: 11px; }
-.cct-file-stage { color: #8b949e; font-size: 10px; }
+.cct-file-header:hover { background: #f9fafb; }
+.cct-expand-icon { color: #9ca3af; font-size: 10px; width: 14px; }
+.cct-file-path { font-weight: 600; color: #2563eb; flex: 1; }
+.cct-file-additions { color: #16a34a; font-size: 11px; }
+.cct-file-deletions { color: #dc2626; font-size: 11px; }
+.cct-file-stage { color: #6b7280; font-size: 10px; }
 .cct-diff {
   margin: 0;
   padding: 8px 10px;
-  background: #0d1117;
+  background: #f9fafb;
   font-family: monospace;
   font-size: 11px;
   line-height: 1.6;
-  color: #c9d1d9;
+  color: #374151;
   max-height: 300px;
   overflow-y: auto;
   white-space: pre-wrap;

@@ -7,7 +7,7 @@
   display: flex;
   gap: 4px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #21262d;
+  border-bottom: 1px solid #e5e7eb;
   overflow-x: auto;
   flex-shrink: 0;
 }
@@ -16,19 +16,19 @@
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border: 1px solid #30363d;
+  border: 1px solid #e5e7eb;
   border-radius: 6px 6px 0 0;
-  background: #161b22;
-  color: #8b949e;
+  background: #f3f4f6;
+  color: #6b7280;
   font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s;
 }
-.tt-session-tab:hover { background: #21262d; color: #c9d1d9; }
+.tt-session-tab:hover { background: #e5e7eb; color: #374151; }
 .tt-session-tab.active {
-  background: #1f6feb22;
-  color: #58a6ff;
+  background: #eff6ff;
+  color: #2563eb;
   border-bottom-color: transparent;
 }
 .tt-adapter-icon { font-size: 12px; }
@@ -39,9 +39,9 @@
   border-radius: 50%;
   flex-shrink: 0;
 }
-.tt-running { background: #3fb950; }
-.tt-waiting { background: #f0883e; animation: sp-pulse 2s infinite; }
-.tt-exited { background: #484f58; }
+.tt-running { background: #16a34a; }
+.tt-waiting { background: #d97706; animation: sp-pulse 2s infinite; }
+.tt-exited { background: #9ca3af; }
 .tt-terminal-area {
   flex: 1;
   display: flex;
@@ -51,13 +51,13 @@
 .tt-session-info {
   padding: 4px 8px;
   font-size: 10px;
-  color: #484f58;
-  border-top: 1px solid #21262d;
+  color: #9ca3af;
+  border-top: 1px solid #e5e7eb;
   flex-shrink: 0;
 }
 .tt-empty-sessions {
   padding: 8px 12px;
-  color: #484f58;
+  color: #6b7280;
   font-size: 11px;
 }
 .tt-no-session {
@@ -65,11 +65,11 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #8b949e;
+  color: #6b7280;
   font-size: 13px;
 }
 
 @keyframes sp-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(240, 136, 62, 0.4); }
-  50% { box-shadow: 0 0 0 4px rgba(240, 136, 62, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(217, 119, 6, 0); }
 }

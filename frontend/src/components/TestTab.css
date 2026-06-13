@@ -4,25 +4,25 @@
   margin-bottom: 16px;
 }
 .tt-stat {
-  background: #161b22;
+  background: #ffffff;
   padding: 10px 16px;
   border-radius: 6px;
   text-align: center;
   flex: 1;
 }
-.tt-stat-num { font-size: 20px; font-weight: 700; color: #e6edf3; }
-.tt-stat-label { font-size: 10px; color: #8b949e; margin-top: 4px; }
+.tt-stat-num { font-size: 20px; font-weight: 700; color: #1f2937; }
+.tt-stat-label { font-size: 10px; color: #6b7280; margin-top: 4px; }
 .tt-table {
-  background: #161b22;
+  background: #ffffff;
   border-radius: 6px;
   overflow: hidden;
 }
 .tt-table-header {
   display: flex;
   padding: 6px 12px;
-  background: #21262d;
+  background: #f9fafb;
   font-size: 10px;
-  color: #8b949e;
+  color: #6b7280;
   font-weight: 600;
 }
 .tt-table-header span:first-child { flex: 1; }
@@ -31,15 +31,15 @@
 .tt-table-row {
   display: flex;
   padding: 7px 12px;
-  border-bottom: 1px solid #21262d;
+  border-bottom: 1px solid #f3f4f6;
   font-size: 11px;
   align-items: center;
 }
-.tt-test-point { flex: 1; color: #c9d1d9; }
-.tt-coverage { width: 140px; font-size: 10px; color: #58a6ff; }
+.tt-test-point { flex: 1; color: #374151; }
+.tt-coverage { width: 140px; font-size: 10px; color: #2563eb; }
 .tt-status { width: 70px; font-size: 10px; }
-.tt-status-open { color: #f85149; }
-.tt-status-fixed { color: #3fb950; }
-.tt-status-verified { color: #3fb950; }
-.tt-status-rejected { color: #484f58; }
-.tt-empty { color: #8b949e; font-size: 13px; padding: 40px; text-align: center; }
+.tt-status-open { color: #dc2626; }
+.tt-status-fixed { color: #16a34a; }
+.tt-status-verified { color: #16a34a; }
+.tt-status-rejected { color: #9ca3af; }
+.tt-empty { color: #6b7280; font-size: 13px; padding: 40px; text-align: center; }
