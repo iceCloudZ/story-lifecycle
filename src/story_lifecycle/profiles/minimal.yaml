@@ -8,6 +8,7 @@ stages:
   design:
     order: 1
     description: "需求澄清与方案设计"
+    cli: codex
     skill: "/brainstorming"
     confirm: false
     review: false
@@ -21,6 +22,7 @@ stages:
   implement:
     order: 2
     description: "编码实现"
+    cli: claude
     confirm: false
     review: false
     max_retries: 3
