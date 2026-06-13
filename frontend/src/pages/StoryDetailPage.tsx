@@ -4,6 +4,10 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { storyApi, apiAction, planApi } from '../api/client'
 import StorySidebar from '../components/StorySidebar'
 import OverviewTab from '../components/OverviewTab'
+import CodeChangesTab from '../components/CodeChangesTab'
+import AdversarialLoopTab from '../components/AdversarialLoopTab'
+import TestTab from '../components/TestTab'
+import QualityGateTab from '../components/QualityGateTab'
 import TerminalTab from '../components/TerminalTab'
 import './StoryDetailPage.css'
 
@@ -165,18 +169,10 @@ export default function StoryDetailPage() {
               onTabChange={setActiveTab}
             />
           )}
-          {activeTab === 'code' && (
-            <div className="tab-placeholder">💻 代码变更 — 即将实现</div>
-          )}
-          {activeTab === 'loop' && (
-            <div className="tab-placeholder">🔁 对抗循环 — 即将实现</div>
-          )}
-          {activeTab === 'test' && (
-            <div className="tab-placeholder">🧪 测试 — 即将实现</div>
-          )}
-          {activeTab === 'quality' && (
-            <div className="tab-placeholder">🛡 质量 & Gate — 即将实现</div>
-          )}
+          {activeTab === 'code' && <CodeChangesTab storyKey={storyKey} />}
+          {activeTab === 'loop' && <AdversarialLoopTab storyKey={storyKey} />}
+          {activeTab === 'test' && <TestTab storyKey={storyKey} />}
+          {activeTab === 'quality' && <QualityGateTab storyKey={storyKey} />}
           {activeTab === 'terminal' && (
             <TerminalTab storyKey={storyKey} status={detail.status} />
           )}
