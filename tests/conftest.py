@@ -32,8 +32,6 @@ def _reset_graph_globals():
     with graph._running_lock:
         graph._running_stories.clear()
         graph._story_epochs.clear()
-    # Reset compiled graph cache to avoid stale state leaking between tests
-    graph._compiled_graph = None
     yield
     for lock_file in glob_mod.glob(str(graph._workspace_locks_dir / "*.lock")):
         try:
@@ -61,10 +59,8 @@ def isolated_story_home(tmp_path, monkeypatch):
     story_home = tmp_path / "story-home"
     story_home.mkdir()
     db_path = story_home / "story.db"
-    checkpoint_path = story_home / "checkpoint.db"
 
     monkeypatch.setattr(db, "get_db_path", lambda: db_path)
-    monkeypatch.setattr(graph, "checkpoint_db", checkpoint_path)
     monkeypatch.setattr(nodes_mod, "STORY_HOME", story_home)
     monkeypatch.setenv("STORY_HOME", str(story_home))
 

@@ -106,7 +106,7 @@ class TestContextAPI:
         resp = client.post(f"/api/story/{key}/start")
         assert resp.status_code == 409
         data = resp.json()
-        assert data["reasonCode"] == "project_path_missing"
+        assert data["reasonCode"] == "project_not_selected"
 
     def test_prepare_worktrees_endpoint(self, client, isolated_story_home):
         """POST /worktrees/prepare should return results."""
