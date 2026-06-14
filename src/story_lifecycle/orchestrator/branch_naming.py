@@ -21,16 +21,17 @@ _PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 def slugify_english(text: str) -> str:
     """Clean free-form text (typically LLM output) into a branch-safe slug.
 
-    Lowercase, spaces -> ``-``, strip non [a-z0-9-], collapse repeats, trim
-    leading/trailing ``-``, cap at ~30 chars on a word boundary.
+    Lowercase, spaces/hyphens -> ``_`` (team convention: no hyphens in branch
+    names), strip non [a-z0-9_], collapse repeats, trim leading/trailing ``_``,
+    cap at ~30 chars on a word boundary.
     """
     s = (text or "").strip().lower()
-    s = re.sub(r"\s+", "-", s)  # spaces -> -
-    s = re.sub(r"[^a-z0-9-]", "", s)  # drop punctuation / non-ascii
-    s = re.sub(r"-{2,}", "-", s)  # collapse runs of -
-    s = s.strip("-")
+    s = re.sub(r"[\s\-]+", "_", s)  # spaces / hyphens -> _
+    s = re.sub(r"[^a-z0-9_]", "", s)  # drop punctuation / non-ascii
+    s = re.sub(r"_{2,}", "_", s)  # collapse runs of _
+    s = s.strip("_")
     if len(s) > 30:
-        s = s[:30].rstrip("-")
+        s = s[:30].rstrip("_")
     return s
 
 
@@ -114,7 +115,7 @@ def _translate_summary(title: str, story_key: str) -> str:
         # DeepSeek-v4-pro 是 reasoning 模型，会先输出推理过程。用 ANSWER: 标记
         # 让它把最终 slug 放在末尾，再用正则提取（比 JSON/纯文本约束更稳）。
         prompt = (
-            "Translate to English git branch slug: lowercase, hyphenated, "
+            "Translate to English git branch slug: lowercase, underscore-separated, "
             "3-6 words, drop any 【...】 prefix. End your response with the "
             "slug on its own line prefixed by ANSWER:\n\n"
             f"{title}"
