@@ -8,7 +8,7 @@ stages:
   design:
     order: 1
     description: "需求澄清与方案设计"
-    cli: codex
+    cli: claude
     skill: "/brainstorming"
     confirm: false
     review: false
