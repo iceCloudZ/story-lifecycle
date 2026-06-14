@@ -733,6 +733,18 @@ def continue_orchestrator_agent(story_key: str):
             # 更新当前阶段
             db.update_story(story_key, current_stage=stage)
 
+            # 查项目绑定，拼成分支隔离提示，让 CLI 自行判断是否建 worktree/切分支
+            project_lines = []
+            for sp in db.get_story_projects(story_key):
+                proj = db.get_project(sp["project_id"])
+                if not proj:
+                    continue
+                project_lines.append(
+                    f"- 仓库 `{proj['repo_path']}`: 分支 `{sp['branch']}`, "
+                    f"基线 `{sp.get('base_branch', 'main')}`"
+                )
+            project_section = "\n".join(project_lines)
+
             # 构建 CLI prompt
             cli_prompt = _build_cli_prompt(
                 story_key=story_key,
@@ -742,6 +754,7 @@ def continue_orchestrator_agent(story_key: str):
                 done_file=done_file_rel,
                 profile_stages=profile_stages,
                 prd_path=ctx.get("prd_path", ""),
+                project_section=project_section,
             )
 
             # 写入 prompt 文件
@@ -869,6 +882,7 @@ def _build_cli_prompt(
     done_file: str,
     profile_stages: dict,
     prd_path: str = "",
+    project_section: str = "",
 ) -> str:
     """构建给 CLI 的执行 prompt。"""
     stage_desc = ""
@@ -886,6 +900,29 @@ def _build_cli_prompt(
             f"\n### PRD / 需求详情\n请读取 PRD 文件了解完整需求: `{prd_path}`\n"
         )
 
+    # 项目仓库与分支隔离：注入每个绑定仓库的分支/基线/路径，由 CLI 自行判断
+    # 是否需要 worktree 或切分支。后端的 prepare_worktrees 仍是可选的手动 API，
+    # 这里走“让 CLI 判断”的路线。
+    worktree_section = ""
+    if project_section:
+        worktree_section = f"""
+### 项目仓库与分支隔离
+
+已绑定以下项目仓库，系统为每个仓库规划了工作分支：
+
+{project_section}
+
+**由你判断本次改动需要的隔离级别**：
+- 纯文档/分析类改动 → 可直接在当前工作区进行，无需隔离
+- 涉及代码修改、跨服务、或高风险 → 建议建立隔离环境
+
+建立隔离环境的两种方式（按项目仓库分别执行）：
+- 方式 A（独立目录，推荐用于多项目并行）： `git -C <repo_path> worktree add <新路径> <分支>` 或基于基线 `git -C <repo_path> worktree add -b <分支> <新路径> <基线>`
+- 方式 B（在主仓库切分支）： `git -C <repo_path> checkout -b <分支> <基线>`（已有则 `git -C <repo_path> checkout <分支>`）
+
+**硬约束**：若 git 操作失败（分支已存在且冲突、无权限、仓库不可写等），**立即停止后续工作**，将错误写入完成协议的 `summary` 字段并把 `status` 设为 `"error"`，不要尝试在错误的分支或主分支上继续。
+"""
+
     return f"""## 任务: {stage}
 
 ### Story 信息
@@ -897,7 +934,7 @@ def _build_cli_prompt(
 {prd_section}
 ### 关键要点
 {focus}
-
+{worktree_section}
 ### 完成协议
 完成后必须写入文件 `{done_file}`，内容为 JSON:
 {{"stage": "{stage}", "status": "done", "summary": "完成摘要", "files_changed": []}}

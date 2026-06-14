@@ -109,3 +109,9 @@ taskkill /F /PID <ssh-pid>                                  # 用完关隧道
 - `promptHas.path_in=true`、`promptHas.marker_in=false`。
 - 后端日志有 `adapter=claude` 的 EXECUTE + PTY started。
 - 进程清干净(claude.exe 计数归 0 或可接受)。
+
+## 已知坑(2026-06-14 实跑发现)
+1. **`ptyUp.adapter` 字段可能是 `agent` 而不是 `claude`** —— sessions API 返回的 `adapter` 是角色标签,真正的执行 adapter 看 **后端日志** `EXECUTE stage=design adapter=...` 和 **plan 的 action.adapter**。判 PASS 以后端日志为准。
+2. **`promptHas.path_in` 的脚本检查会误报 false** —— 脚本把 `prd_path` 里的 `\` 归一化成了 `/`,但 `prompt_design.md` 实际写的是反斜杠(`D:\story-lifecycle\prd\...`),`includes` 匹配不上。**PRD 路径实际注入是正确的**(prompt 文件第 11 行有 `请读取 PRD 文件: \`路径\``)。要修脚本:检查时统一把 prompt 文件内容也 `replace(/\\/g,'/')`,或直接查 marker。
+3. **config.yaml 的 api_key/base_url/model 老被重置(消失)** —— setup wizard 或 `_protect_config` 可能清掉这几个字段但保留 tapd 段。建议把 DeepSeek 配置额外存一份:`~/.story-lifecycle/config.deepseek-backup.yaml`(非标准名不会被覆盖)。丢了恢复:`Copy-Item ~/.story-lifecycle/config.deepseek-backup.yaml ~/.story-lifecycle/config.yaml -Force`。
+4. **应用日志在 stderr,不在 stdout** —— `story serve` 后台跑时,EXECUTE/PTY/injecting prompt 这些 INFO 日志走的是 logging 到 stderr。要看日志重定向 `.err` 文件,不是 `.log`。
