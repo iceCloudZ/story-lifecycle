@@ -1661,10 +1661,26 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
                     continue  # 跳过已绑定的项目
                 proj = all_projects.get(pid)
                 if proj:
+                    # 分支名按 profile 的 branch_rule 生成（含 LLM 翻译的英文摘要），
+                    # profile 没配 branch_rule 时回退到旧的 codex/{key}-{project} 规则。
+                    from .nodes.profile_loader import load_profile
+                    from .branch_naming import generate_branch_for_story
+
+                    profile_raw = load_profile(story.get("profile") or "minimal")
+                    branch = (
+                        generate_branch_for_story(
+                            story_key=story_key,
+                            title=story.get("title", ""),
+                            profile_raw=profile_raw,
+                            project_name=proj["name"],
+                        )
+                        or f"codex/{story_key}-{proj['name']}"
+                    )
+
                     db.bind_story_project(
                         story_key=story_key,
                         project_id=proj["id"],
-                        branch=f"codex/{story_key}-{proj['name']}",
+                        branch=branch,
                         base_branch=proj.get("default_branch", "main"),
                         worktree_state="unprepared",
                         source="user",
