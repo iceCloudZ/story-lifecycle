@@ -1616,6 +1616,7 @@ def api_update_delivery(story_key: str, artifact_id: int, req: UpdateDeliveryReq
 
 class StartStoryRequest(BaseModel):
     project_ids: list[int] = []
+    content: str = ""  # PRD / 需求正文，开始开发时必填，design 阶段注入给 CLI
 
 
 @app.post("/api/story/{story_key}/start")
@@ -1627,6 +1628,17 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
 
     intake_state = story.get("intake_state", "ready")
     req = req or StartStoryRequest()
+
+    # 开始开发时要求填写 story 内容（PRD）—— design 阶段会注入给 CLI。
+    if not (req.content or "").strip():
+        return JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "reasonCode": "content_required",
+                "message": "请填写 story 内容 / PRD",
+            },
+        )
 
     # Bind user-selected projects for candidate stories
     if intake_state == "candidate":
@@ -1643,6 +1655,7 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
         if req.project_ids:
             all_projects = {p["id"]: p for p in db.list_projects()}
             existing_pids = {sp["project_id"] for sp in sps}
+            bound_repo = None
             for pid in req.project_ids:
                 if pid in existing_pids:
                     continue  # 跳过已绑定的项目
@@ -1656,9 +1669,31 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
                         worktree_state="unprepared",
                         source="user",
                     )
+                    # Point the story's workspace at the bound project's repo so the
+                    # AI CLI actually runs there. Previously workspace stayed the
+                    # sync-time/server-cwd default (e.g. the orchestrator's own repo),
+                    # so the CLI operated in the wrong project. (Worktree isolation is
+                    # a separate, not-yet-wired layer — this just fixes the repo.)
+                    if not bound_repo and proj.get("repo_path"):
+                        bound_repo = proj["repo_path"]
+            if bound_repo:
+                db.update_story(story_key, workspace=bound_repo)
 
         # Promote candidate to ready + planning
         db.update_story(story_key, intake_state="ready", status="planning")
+
+    # 保存 PRD 到工作区，供 design 阶段注入（_build_cli_prompt 读 context_json.prd_path）。
+    # 绑定项目后 workspace 已指向项目 repo，所以 PRD 落在正确的仓库里。
+    story = db.get_story(story_key)
+    workspace = (story or {}).get("workspace", "") or ""
+    if workspace:
+        from pathlib import Path
+
+        prd_dir = Path(workspace) / "prd"
+        prd_dir.mkdir(parents=True, exist_ok=True)
+        prd_file = prd_dir / f"{story_key}.md"
+        prd_file.write_text(req.content, encoding="utf-8")
+        db.update_context(story_key, "prd_path", str(prd_file))
 
     return {"ok": True, "story_key": story_key}
 

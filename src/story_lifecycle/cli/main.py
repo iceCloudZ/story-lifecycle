@@ -461,6 +461,19 @@ def _run_server(host, port):
 
     console.print(f"[green]Starting Story Lifecycle orchestrator on {host}:{port}[/]")
     console.print(f"[dim]Data directory: {db.get_db_path().parent}[/]")
+
+    # Surface app-level logs (planner / api) at INFO alongside uvicorn's access logs.
+    import logging
+
+    _sl = logging.getLogger("story-lifecycle")
+    if not _sl.handlers:
+        _h = logging.StreamHandler()
+        _h.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+        )
+        _sl.addHandler(_h)
+    _sl.setLevel(logging.INFO)
+
     uvicorn.run(
         "story_lifecycle.orchestrator.api:app", host=host, port=port, reload=False
     )

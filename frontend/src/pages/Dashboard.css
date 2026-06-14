@@ -407,7 +407,7 @@
 .modal-card {
   background: #fff;
   border-radius: 10px;
-  width: 380px;
+  width: 560px;
   max-width: 90vw;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
   display: flex;
@@ -445,8 +445,71 @@
 
 .modal-body {
   padding: 6px 18px 14px;
-  max-height: 280px;
+  max-height: 420px;
   overflow-y: auto;
+}
+
+.modal-prd {
+  margin-top: 12px;
+  border-top: 1px solid #eee;
+  padding-top: 10px;
+}
+.modal-prd-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.modal-prd-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+}
+.modal-prd-label .req {
+  color: #ef4444;
+}
+.modal-prd-upload {
+  font-size: 12px;
+  color: #2563eb;
+  cursor: pointer;
+  user-select: none;
+}
+.modal-prd-upload:hover {
+  text-decoration: underline;
+}
+.modal-prd-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 120px;
+}
+.modal-prd-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid #d4e5ff;
+  background: #f4f9ff;
+  border-radius: 6px;
+  padding: 10px 10px;
+  font-size: 13px;
+  color: #2563eb;
+  word-break: break-all;
+}
+.modal-prd-clear {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: #888;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  white-space: nowrap;
 }
 
 .project-option {

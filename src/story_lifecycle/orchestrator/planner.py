@@ -741,6 +741,7 @@ def continue_orchestrator_agent(story_key: str):
                 focus=focus,
                 done_file=done_file_rel,
                 profile_stages=profile_stages,
+                prd_path=ctx.get("prd_path", ""),
             )
 
             # 写入 prompt 文件
@@ -758,12 +759,39 @@ def continue_orchestrator_agent(story_key: str):
                     cfg = profile_stages[stage]
                     model = cfg.model if hasattr(cfg, "model") else ""
                 launch_cmd = adapter.interactive_launch_cmd(model=model)
+                _ctx_markers = (
+                    "上下文",
+                    "context",
+                    "DDL",
+                    "CREATE TABLE",
+                    "Nacos",
+                    "PRD",
+                    "表结构",
+                    "接口定义",
+                )
+                log.info(
+                    "[%s] >>> EXECUTE stage=%s adapter=%s model=%s cmd=%s workspace=%s",
+                    story_key,
+                    stage,
+                    adapter_name,
+                    model or "-",
+                    launch_cmd,
+                    workspace,
+                )
+                log.info(
+                    "[%s] injecting prompt into PTY: %d chars; contains-context=%s; head=%r",
+                    story_key,
+                    len(cli_prompt),
+                    any(m in cli_prompt for m in _ctx_markers),
+                    cli_prompt[:120],
+                )
                 ensure_agent_pty(
                     story_key,
                     launch_cmd,
                     workspace,
                     cli_prompt,  # prompt 作为第 4 个参数注入到 PTY
                 )
+                log.info("[%s] PTY session started for stage=%s", story_key, stage)
             except Exception as exc:
                 log.error(
                     f"[{story_key}] Failed to launch {adapter_name} for {stage}: {exc}"
@@ -840,12 +868,23 @@ def _build_cli_prompt(
     focus: str,
     done_file: str,
     profile_stages: dict,
+    prd_path: str = "",
 ) -> str:
     """构建给 CLI 的执行 prompt。"""
     stage_desc = ""
     if stage in profile_stages:
         cfg = profile_stages[stage]
         stage_desc = cfg.description if hasattr(cfg, "description") else str(cfg)
+
+    # PRD 注入：只注入文件路径，让 CLI 自行读取（内联内容会把上下文撑爆）。
+    # PRD 由 /start 落地成文件（上传的文件或粘贴的内容都存为 workspace/prd/{key}.md），
+    # 路径存在 context_json.prd_path。这是 LangGraph→Agent FC 迁移时丢失的回归
+    # （legacy prompts/design.md 的 {prd_path_section} + prompt_renderer.py 曾注入路径）。
+    prd_section = ""
+    if prd_path:
+        prd_section = (
+            f"\n### PRD / 需求详情\n请读取 PRD 文件了解完整需求: `{prd_path}`\n"
+        )
 
     return f"""## 任务: {stage}
 
@@ -855,7 +894,7 @@ def _build_cli_prompt(
 
 ### 阶段说明
 {stage_desc}
-
+{prd_section}
 ### 关键要点
 {focus}
 

@@ -103,7 +103,7 @@ class TestContextAPI:
             source_id="999",
         )
 
-        resp = client.post(f"/api/story/{key}/start")
+        resp = client.post(f"/api/story/{key}/start", json={"content": "# PRD"})
         assert resp.status_code == 409
         data = resp.json()
         assert data["reasonCode"] == "project_not_selected"

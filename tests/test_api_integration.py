@@ -181,6 +181,120 @@ class TestWSStoryListJSON:
         assert ws_keys == rest_keys
 
 
+class TestStartStoryWorkspace:
+    def test_start_sets_workspace_to_project_repo(
+        self, api_client, isolated_story_home
+    ):
+        """Regression: /start must point the story's workspace at the bound project's
+        repo_path, so the AI CLI runs there. Previously workspace stayed the sync-time
+        default (e.g. the orchestrator's own repo)."""
+        proj = db.create_project("myproj", "/tmp/myproj-repo", default_branch="main")
+        db.upsert_story(
+            "CAND-001",
+            title="Cand",
+            workspace="/old/default/ws",
+            profile="minimal",
+            status="idle",
+            intake_state="candidate",
+        )
+        # upsert_story's INSERT branch hardcodes intake_state='ready', so set
+        # candidate explicitly (mirrors how TAPD sync creates candidate stories).
+        db.update_story("CAND-001", intake_state="candidate")
+        resp = api_client.post(
+            "/api/story/CAND-001/start",
+            json={"project_ids": [proj["id"]], "content": "# PRD\n做登录记录查询"},
+        )
+        assert resp.status_code == 200
+        s = db.get_story("CAND-001")
+        assert s["workspace"] == "/tmp/myproj-repo"
+        assert s["intake_state"] == "ready"
+        assert s["status"] == "planning"
+
+    def test_start_requires_content(self, api_client, isolated_story_home):
+        """开始开发必须填写 story 内容/PRD。"""
+        proj = db.create_project("p2", "/tmp/p2", default_branch="main")
+        db.upsert_story(
+            "CAND-002",
+            title="x",
+            workspace="/tmp",
+            profile="minimal",
+            status="idle",
+            intake_state="candidate",
+        )
+        db.update_story("CAND-002", intake_state="candidate")
+        resp = api_client.post(
+            "/api/story/CAND-002/start", json={"project_ids": [proj["id"]]}
+        )
+        assert resp.status_code == 409
+        assert resp.json()["reasonCode"] == "content_required"
+
+    def test_start_saves_prd_and_path(self, api_client, isolated_story_home, tmp_path):
+        """填了 content 后,/start 把 PRD 写到工作区并存 prd_path 到 context_json。"""
+        proj = db.create_project("p3", str(tmp_path / "repo"), default_branch="main")
+        (tmp_path / "repo").mkdir()
+        db.upsert_story(
+            "CAND-003",
+            title="y",
+            workspace=str(tmp_path / "repo"),
+            profile="minimal",
+            status="idle",
+            intake_state="candidate",
+        )
+        db.update_story("CAND-003", intake_state="candidate")
+        resp = api_client.post(
+            "/api/story/CAND-003/start",
+            json={"project_ids": [proj["id"]], "content": "# 需求\n登录记录查询"},
+        )
+        assert resp.status_code == 200
+        import json as _json
+
+        ctx = _json.loads(db.get_story("CAND-003")["context_json"] or "{}")
+        prd_path = ctx.get("prd_path", "")
+        from pathlib import Path
+
+        pp = Path(prd_path)
+        assert pp.name == "CAND-003.md" and pp.parent.name == "prd"
+        assert "登录记录查询" in pp.read_text(encoding="utf-8")
+
+
+class TestBuildCliPromptPrd:
+    def test_prd_path_injected_not_content(self, tmp_path):
+        """Regression: _build_cli_prompt must inject the PRD file PATH (not inline
+        the content — that would blow up the CLI's context). LangGraph→Agent FC
+        migration dropped PRD injection entirely."""
+        from story_lifecycle.orchestrator.planner import _build_cli_prompt
+
+        prd = tmp_path / "prd" / "X.md"
+        prd.parent.mkdir()
+        prd.write_text("# 需求\n登录记录查询 字段：用户/IP/时间", encoding="utf-8")
+        prompt = _build_cli_prompt(
+            story_key="X",
+            title="T",
+            stage="design",
+            focus="要点",
+            done_file=".story-done/X-design.json",
+            profile_stages={},
+            prd_path=str(prd),
+        )
+        assert "PRD / 需求详情" in prompt
+        assert str(prd) in prompt  # path injected
+        assert "登录记录查询" not in prompt  # content NOT inlined (no context bloat)
+
+    def test_no_prd_section_when_path_empty(self):
+        from story_lifecycle.orchestrator.planner import _build_cli_prompt
+
+        prompt = _build_cli_prompt(
+            story_key="X",
+            title="T",
+            stage="design",
+            focus="要点",
+            done_file="d",
+            profile_stages={},
+            prd_path="",
+        )
+        assert "PRD / 需求详情" not in prompt
+
+
 class TestFindingsAPI:
     def test_findings_returns_dict(self, api_client, seeded_story, isolated_story_home):
         db.create_finding(

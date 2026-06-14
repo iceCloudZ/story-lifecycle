@@ -212,11 +212,11 @@ export default function Dashboard() {
         <ProjectPickerModal
           story={pickerStory}
           onClose={() => setPickerStory(null)}
-          onConfirm={async (projectIds) => {
+          onConfirm={async (projectIds, content) => {
             const r = await fetch(`/api/story/${pickerStory.storyKey}/start`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ project_ids: projectIds }),
+              body: JSON.stringify({ project_ids: projectIds, content }),
             })
             if (!r.ok) {
               const err = await r.json()
@@ -238,10 +238,15 @@ export default function Dashboard() {
 function ProjectPickerModal({ story, onClose, onConfirm }: {
   story: StorySummary
   onClose: () => void
-  onConfirm: (projectIds: number[]) => void
+  onConfirm: (projectIds: number[], content: string) => void
 }) {
   const [projects, setProjects] = useState<{ id: number; name: string; availability: string }[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [paste, setPaste] = useState('')
+  const [uploaded, setUploaded] = useState<{ name: string; content: string } | null>(null)
+  // 最终发给后端的 PRD 正文：上传文件读出的内容，或粘贴的文本。后端会存成文件、
+  // 注入文件路径给 CLI（不内联内容，避免撑爆上下文）。
+  const content = uploaded ? uploaded.content : paste
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -260,9 +265,18 @@ function ProjectPickerModal({ story, onClose, onConfirm }: {
   }
 
   function handleConfirm() {
-    if (selected.size === 0) return
+    if (selected.size === 0 || !content.trim()) return
     setLoading(true)
-    onConfirm(Array.from(selected))
+    onConfirm(Array.from(selected), content)
+  }
+
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    const reader = new FileReader()
+    reader.onload = () =>
+      setUploaded({ name: f.name, content: String(reader.result || '') })
+    reader.readAsText(f)
   }
 
   return (
@@ -291,12 +305,50 @@ function ProjectPickerModal({ story, onClose, onConfirm }: {
               </label>
             ))
           )}
+          <div className="modal-prd">
+            <div className="modal-prd-head">
+              <label className="modal-prd-label">
+                Story 内容 / PRD <span className="req">*</span>
+              </label>
+              {!uploaded && (
+                <label className="modal-prd-upload" title="上传本地 .md/.txt 文件">
+                  📂 上传本地文件
+                  <input
+                    type="file"
+                    accept=".md,.markdown,.txt,text/*"
+                    onChange={handleFile}
+                    hidden
+                  />
+                </label>
+              )}
+            </div>
+            {uploaded ? (
+              <div className="modal-prd-file">
+                📄 {uploaded.name}
+                <button
+                  type="button"
+                  className="modal-prd-clear"
+                  onClick={() => setUploaded(null)}
+                >
+                  清除（改用粘贴）
+                </button>
+              </div>
+            ) : (
+              <textarea
+                className="modal-prd-input"
+                value={paste}
+                onChange={(e) => setPaste(e.target.value)}
+                placeholder="粘贴需求 / PRD，或用上方按钮上传本地文件；后端会存成文件、design 阶段注入文件路径给 AI CLI"
+                rows={6}
+              />
+            )}
+          </div>
         </div>
         <div className="modal-footer">
           <button className="btn" onClick={onClose}>取消</button>
           <button
             className="btn btn-primary"
-            disabled={selected.size === 0 || loading}
+            disabled={selected.size === 0 || !content.trim() || loading}
             onClick={handleConfirm}
           >
             {loading ? '启动中...' : `确认开始 (${selected.size} 个项目)`}
