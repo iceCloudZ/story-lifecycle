@@ -29,6 +29,120 @@ def _has_unix_pty() -> bool:
     return sys.platform not in ("win32", "emscripten") and hasattr(os, "fork")
 
 
+# ---- Windows Job Object: kill the whole process tree on .kill() ----
+# taskkill /T walks parent-child links and misses children that detached from
+# the parent (codex.exe helpers survived kill_pty, leaking hundreds of MB). A
+# Job Object with KILL_ON_JOB_CLOSE kills every process in the job when its
+# handle is closed — including detached ones. We assign the spawned process to
+# such a job at spawn time and CloseHandle it on kill().
+_WIN_JOB_OK = False
+if sys.platform == "win32":
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        _k32.CreateJobObjectW.restype = wintypes.HANDLE
+        _k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        _k32.SetInformationJobObject.restype = wintypes.BOOL
+        _k32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        ]
+        _k32.OpenProcess.restype = wintypes.HANDLE
+        _k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        _k32.AssignProcessToJobObject.restype = wintypes.BOOL
+        _k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        _k32.CloseHandle.restype = wintypes.BOOL
+        _k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        class _IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_void_p),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", _IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        _JobObjectExtendedLimitInformation = 9
+        _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        _PROCESS_SET_QUOTA = 0x0100
+        _PROCESS_TERMINATE = 0x0001
+        _WIN_JOB_OK = True
+    except Exception:
+        _WIN_JOB_OK = False
+
+
+def _create_kill_job(pid: int):
+    """Assign `pid` (and its future children) to a KILL_ON_JOB_CLOSE Job Object.
+    Returns the job handle (int) to keep alive; CloseHandle on it kills the job.
+    Returns None on non-Windows or any failure (caller falls back to taskkill)."""
+    if not _WIN_JOB_OK:
+        return None
+    try:
+        job = _k32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not _k32.SetInformationJobObject(
+            job,
+            _JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        ):
+            _k32.CloseHandle(job)
+            return None
+        proc = _k32.OpenProcess(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid)
+        if not proc:
+            _k32.CloseHandle(job)
+            return None
+        ok = _k32.AssignProcessToJobObject(job, proc)
+        _k32.CloseHandle(proc)
+        if not ok:
+            _k32.CloseHandle(job)
+            return None
+        return job
+    except Exception:
+        return None
+
+
+def _close_kill_job(job):
+    """Close the job handle -> KILL_ON_JOB_CLOSE kills the whole process tree."""
+    if job and _WIN_JOB_OK:
+        try:
+            _k32.CloseHandle(job)
+        except Exception:
+            pass
+
+
 class ManagedPty:
     """A single PTY process bound to a story."""
 
@@ -48,6 +162,7 @@ class ManagedPty:
         self._alive = True
         self._process: object | None = None
         self._read_thread: threading.Thread | None = None
+        self._job = None  # Windows Job Object handle (KILL_ON_JOB_CLOSE) or None
 
         merge_env = dict(os.environ)
         if env:
@@ -80,6 +195,7 @@ class ManagedPty:
             dimensions=(30, 120),
         )
         self._mode = "winpty"
+        self._job = _create_kill_job(getattr(self._process, "pid", None))
 
     def _spawn_unix(self, env: dict):
         import pty as _pty
@@ -112,6 +228,7 @@ class ManagedPty:
         )
         self._process = proc
         self._mode = "subprocess"
+        self._job = _create_kill_job(proc.pid)
 
     def _read_loop(self):
         try:
@@ -187,18 +304,46 @@ class ManagedPty:
 
     def kill(self):
         self._alive = False
+        pid = None
+        try:
+            pid = self._process.pid
+        except Exception:
+            pass
+
+        # Kill the WHOLE process tree, not just the direct child.
+        # Unix runs the child in its own process group (setsid) -> killpg.
+        # Windows: close the KILL_ON_JOB_CLOSE Job Object (kills the whole job,
+        # including grandchildren that detached — taskkill /T misses those).
+        # Fall back to taskkill /T if no job was set up.
+        if self._mode == "unix":
+            try:
+                os.killpg(self._unix_pid, signal.SIGTERM)
+            except Exception:
+                pass
+            try:
+                os.close(self._master_fd)
+            except Exception:
+                pass
+            return
+
+        # Windows: winpty or subprocess fallback
+        if self._job:
+            _close_kill_job(self._job)
+            self._job = None
+        elif sys.platform == "win32" and pid:
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    capture_output=True,
+                    timeout=10,
+                )
+            except Exception:
+                pass
         try:
             if self._mode == "winpty":
                 self._process.terminate(force=True)
-            elif self._mode == "subprocess":
+            else:
                 self._process.terminate()
-            elif self._mode == "unix":
-                os.killpg(self._unix_pid, signal.SIGTERM)
-        except Exception:
-            pass
-        try:
-            if self._mode == "unix":
-                os.close(self._master_fd)
         except Exception:
             pass
 

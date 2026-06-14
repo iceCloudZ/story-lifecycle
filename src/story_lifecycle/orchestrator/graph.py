@@ -269,12 +269,18 @@ def resume_ready_interactive_stories() -> list[str]:
 
 
 def recover_orphan_stories():
-    """Recover stories left in 'active' state after server restart."""
+    """Recover stories left 'active' after a server restart.
+
+    We do NOT auto-resume execution: relaunching the AI CLI on every restart was
+    surprising and heavy (it silently re-spawned codex for each active story).
+    Instead, mark such stories 'paused' so they surface in the UI with a manual
+    '继续执行' action. Candidates are already excluded by list_active_stories.
+    """
     stories = [
         story
         for story in db.list_active_stories()
         if story.get("status") == "active" and story.get("intake_state") == "ready"
     ]
     for s in stories:
-        resume_story_async(s["story_key"])
+        db.update_story(s["story_key"], status="paused")
     return len(stories)

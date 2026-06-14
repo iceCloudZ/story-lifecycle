@@ -40,16 +40,22 @@ class TestCandidateRejection:
         assert "ready-1" in keys
         assert "cand-1" not in keys
 
-    def test_recover_orphan_skips_candidates(self, isolated_story_home, monkeypatch):
+    def test_recover_orphan_marks_paused_not_resumed(
+        self, isolated_story_home, monkeypatch
+    ):
+        """Restart recovery must NOT auto-resume (re-launch the AI CLI). It marks
+        ready orphans 'paused' for manual resume; candidates are untouched."""
         db.create_story("ready-orphan", "Ready Orphan", str(isolated_story_home))
-        db.update_story("ready-orphan", intake_state="ready")
+        db.update_story("ready-orphan", intake_state="ready", status="active")
         db.create_story("cand-orphan", "Candidate Orphan", str(isolated_story_home))
-        db.update_story("cand-orphan", intake_state="candidate")
+        db.update_story("cand-orphan", intake_state="candidate", status="active")
         resumed = []
         monkeypatch.setattr(
             "story_lifecycle.orchestrator.graph.resume_story_async",
             lambda k: resumed.append(k),
         )
         recover_orphan_stories()
-        assert "ready-orphan" in resumed
-        assert "cand-orphan" not in resumed
+        # Nothing is auto-resumed (no CLI relaunch on restart).
+        assert resumed == []
+        # The ready orphan is surfaced as paused for manual '继续执行'.
+        assert db.get_story("ready-orphan")["status"] == "paused"
