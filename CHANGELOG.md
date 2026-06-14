@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.2] - 2026-06-15
+
+### Added
+- **开始开发要求填 PRD** — `/start` 必填 story 内容/PRD；支持**上传本地文件**（只显示文件名，内容不灌进输入框）或**粘贴文本**，两者都落地成 `workspace/prd/{key}.md`，design 阶段把**文件路径**注入给 AI CLI（只注路径不内联内容，避免撑爆 CLI 上下文）。前端 `ProjectPickerModal` 加了必填 PRD 步骤。
+- **执行可观测日志** — serve 启动时把 `story-lifecycle` logger 配到 INFO；planner 打 `EXECUTE / injecting(prompt 大小+是否含 context+头部) / PTY session started` 三条日志。
+
+### Fixed
+- **`/start` workspace 绑定** — 关联项目后 workspace 指向项目 `repo_path`（原来停在服务进程 cwd，CLI 跑错仓库）。
+- **PRD 注入迁移回归** — `_build_cli_prompt` 补回 PRD 路径注入（LangGraph→Agent Function Calling 迁移时丢失）。
+- **pty.kill 杀进程树** — Windows 用 Job Object（KILL_ON_JOB_CLOSE）+ `taskkill /T /F` 双保险回收 CLI 子进程；孤儿从 ~9 个（数百 MB）降到极少（主进程 + 绝大多数 helper 都被杀，winpty 不支持挂起启动，codex 个别早派生的 helper 仍可能逃逸）。
+- **重启不再自动重跑执行** — `recover_orphan_stories` 不再 `resume_story_async` 重新执行（避免静默重启 codex），改把 active 孤儿标记 `paused`，由用户从 UI 手动「继续执行」。
+
 ## [0.11.1] - 2026-06-14
 
 ### Fixed
