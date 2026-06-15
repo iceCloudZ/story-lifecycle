@@ -53,16 +53,24 @@ def _reset_graph_globals():
     graph._compiled_graph = None
 
 
-@pytest.fixture
-def isolated_story_home(tmp_path, monkeypatch):
-    """Provide an isolated ~/.story-lifecycle directory for testing."""
+@pytest.fixture(autouse=True)
+def _isolated_db(tmp_path, monkeypatch):
+    """Auto-redirect the story DB to a per-test tmp dir so no test ever writes the real
+    ~/.story-lifecycle/story.db. Tests that need a populated DB can still request
+    isolated_story_home (which also inits tables)."""
     story_home = tmp_path / "story-home"
     story_home.mkdir()
     db_path = story_home / "story.db"
-
     monkeypatch.setattr(db, "get_db_path", lambda: db_path)
     monkeypatch.setattr(nodes_mod, "STORY_HOME", story_home)
     monkeypatch.setenv("STORY_HOME", str(story_home))
+    db.init_db()
+
+
+@pytest.fixture
+def isolated_story_home(_isolated_db, monkeypatch):
+    """Isolated home (DB already redirected by _isolated_db autouse) +
+    force package built-in profiles."""
 
     # Force load_profile to always use package built-in profiles,
     # preventing tests from accidentally loading repo-root .story/ profiles
@@ -81,5 +89,8 @@ def isolated_story_home(tmp_path, monkeypatch):
     monkeypatch.setattr(nodes_mod, "load_profile", _load_builtin_only)
     monkeypatch.setattr(_pl, "load_profile", _load_builtin_only)
 
-    db.init_db()
-    return story_home
+    # _isolated_db already set up the tmp story_home and initialized tables.
+    # Reconstruct the same path so callers that use the return value keep working.
+    import os
+
+    return __import__("pathlib").Path(os.environ["STORY_HOME"])
