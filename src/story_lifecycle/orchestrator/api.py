@@ -1433,6 +1433,27 @@ def api_get_context_pack(story_key: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+class AddDocumentRequest(BaseModel):
+    kind: str
+    ref: str = ""
+    summary: str = ""
+    evidence_ref: str = ""
+    project_id: int | None = None
+
+
+@app.post("/api/story/{story_key}/context/documents")
+def api_add_document(story_key: str, req: AddDocumentRequest):
+    """Add a document (prd/spec/plan) — agent backfill."""
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    doc = db.create_document(
+        story_key, req.kind, project_id=req.project_id, ref=req.ref,
+        summary=req.summary, evidence_ref=req.evidence_ref, source="agent",
+    )
+    db.bump_context_revision(story_key)
+    return doc
+
+
 # -------- Project registry endpoints --------
 
 
