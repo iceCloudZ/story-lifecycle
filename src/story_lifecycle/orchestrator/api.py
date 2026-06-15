@@ -1422,6 +1422,17 @@ def api_get_snapshot(story_key: str):
     return {"path": str(snapshot_path), "revision": result["revision"], "content": ""}
 
 
+@app.get("/api/story/{story_key}/context/pack")
+def api_get_context_pack(story_key: str):
+    """Render a neutral mixed-density context pack for AI injection."""
+    try:
+        from .context.pack import generate_pack
+
+        return generate_pack(story_key)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 # -------- Project registry endpoints --------
 
 
