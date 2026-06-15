@@ -76,8 +76,10 @@ export default function Dashboard() {
   })
   const allStories = fullList ?? []
 
-  // TAPD 需求 tab: 展示所有 TAPD 来源的 story（发现/筛选）
+  // TAPD 全集：日历视图仍需子任务数据，保留所有 TAPD 来源
   const tapdStories = allStories.filter((s) => s.tapdType)
+  // TAPD 需求列表只展示需求(story)+缺陷(bug)，排除子任务(subtask)
+  const requirementStories = tapdStories.filter((s) => s.tapdType !== 'subtask')
   // 我的 Story tab: 所有已激活的 story，不区分来源（TAPD/飞书/手工创建）
   const myStories = allStories.filter((s) => s.intakeState === 'ready')
 
@@ -128,7 +130,7 @@ export default function Dashboard() {
           <span className={`ws-dot ${connected ? 'connected' : 'disconnected'}`} />
           <span>{connected ? '已连接' : '断开连接'}</span>
           <span className="story-count">
-            {tab === 'project' ? `${projectCount} 个项目` : `${tab === 'tapd' ? tapdStories.length : myStories.length} 个 Story`}
+            {tab === 'project' ? `${projectCount} 个项目` : `${tab === 'tapd' ? requirementStories.length : myStories.length} 个 Story`}
           </span>
           {tab === 'project' ? (
             <button className="btn btn-primary" onClick={() => setShowProjectForm(!showProjectForm)}>
@@ -147,7 +149,7 @@ export default function Dashboard() {
           我的 Story
         </button>
         <button className={`tab-btn ${tab === 'tapd' ? 'active' : ''}`} onClick={() => setTab('tapd')}>
-          TAPD 需求 {tapdStories.length > 0 && <span className="tab-count">({tapdStories.length})</span>}
+          TAPD 需求 {requirementStories.length > 0 && <span className="tab-count">({requirementStories.length})</span>}
         </button>
         <button className={`tab-btn ${tab === 'calendar' ? 'active' : ''}`} onClick={() => setTab('calendar')}>
           日历
@@ -173,13 +175,13 @@ export default function Dashboard() {
 
       <div className="story-grid">
         {tab === 'tapd' && (
-          tapdStories.length === 0 ? (
+          requirementStories.length === 0 ? (
             <div className="empty-state">
               <p>暂无 TAPD 需求</p>
               <p className="hint">运行 <code>story sync --all</code> 从 TAPD 同步</p>
             </div>
           ) : (
-            <TapdSwimlanes stories={tapdStories} onStartDev={handleStartDev} />
+            <TapdSwimlanes stories={requirementStories} onStartDev={handleStartDev} />
           )
         )}
         {tab === 'calendar' && (
