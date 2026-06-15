@@ -10,6 +10,7 @@ import AdversarialLoopTab from '../components/AdversarialLoopTab'
 import TestTab from '../components/TestTab'
 import QualityGateTab from '../components/QualityGateTab'
 import TerminalTab from '../components/TerminalTab'
+import ContextTab from '../components/ContextTab'
 import './StoryDetailPage.css'
 
 const MODULES = [
@@ -18,6 +19,7 @@ const MODULES = [
   { id: 'loop', icon: '🔁', label: '对抗循环' },
   { id: 'test', icon: '🧪', label: '测试' },
   { id: 'quality', icon: '🛡', label: '质量 & Gate' },
+  { id: 'context', icon: '📄', label: '上下文' },
   { id: 'terminal', icon: '💻', label: '终端' },
 ]
 
@@ -182,6 +184,7 @@ export default function StoryDetailPage() {
           {activeTab === 'loop' && <AdversarialLoopTab storyKey={storyKey} />}
           {activeTab === 'test' && <TestTab storyKey={storyKey} />}
           {activeTab === 'quality' && <QualityGateTab storyKey={storyKey} />}
+          {activeTab === 'context' && <ContextTab storyKey={storyKey} />}
           {activeTab === 'terminal' && (
             <TerminalTab storyKey={storyKey} status={detail.status} />
           )}
