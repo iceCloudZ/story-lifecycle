@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.3] - 2026-06-15
+
+### Added
+- **Profile 驱动的分支命名** — 按 profile 配置生成 worktree/分支，story 摘要经 LLM 翻译为英文 slug 作为分支名，隔离每个 story 的开发环境
+- **Planner 注入项目绑定** — 规划阶段把关联项目（仓库路径、默认分支）注入 AI CLI prompt，支持 worktree 与分支隔离执行
+
+### Changed
+- **TAPD 需求页过滤子任务** — 需求 tab 只展示需求(story)和缺陷(bug)，不再展示子任务(subtask)；日历视图仍保留子任务
+- minimal profile 默认 design 阶段使用 claude adapter
+
+### Fixed
+- **分支名 slug 用下划线分隔** — slug 分隔符从连字符改为下划线，避免分支名含连字符导致的命名/解析问题
+
 ## [0.11.2] - 2026-06-15
 
 ### Added
