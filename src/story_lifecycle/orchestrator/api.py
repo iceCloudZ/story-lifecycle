@@ -1474,12 +1474,44 @@ def api_add_change_item(story_key: str, req: AddChangeItemRequest):
     if not db.get_story(story_key):
         raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
     ci = db.create_change_item(
-        story_key, req.kind, project_id=req.project_id, ref=req.ref,
-        summary=req.summary, evidence_ref=req.evidence_ref,
-        environment=req.environment, source="agent",
+        story_key,
+        req.kind,
+        project_id=req.project_id,
+        ref=req.ref,
+        summary=req.summary,
+        evidence_ref=req.evidence_ref,
+        environment=req.environment,
+        source="agent",
     )
     db.bump_context_revision(story_key)
     return ci
+
+
+class SetBranchRequest(BaseModel):
+    project_id: int
+    branch: str
+    worktree_path: str = ""
+    base_branch: str = "main"
+
+
+@app.put("/api/story/{story_key}/context/branch")
+def api_set_branch(story_key: str, req: SetBranchRequest):
+    """Create or update a story-project branch binding — agent backfill."""
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    existing = db.get_story_project(story_key, req.project_id)
+    if existing:
+        db.update_story_project(
+            story_key, req.project_id,
+            branch=req.branch, worktree_path=req.worktree_path, base_branch=req.base_branch,
+        )
+    else:
+        db.bind_story_project(
+            story_key, req.project_id,
+            branch=req.branch, worktree_path=req.worktree_path, base_branch=req.base_branch,
+        )
+    db.bump_context_revision(story_key)
+    return db.get_story_project(story_key, req.project_id)
 
 
 # -------- Project registry endpoints --------
