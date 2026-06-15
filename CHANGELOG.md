@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.4] - 2026-06-15
+
+### Added
+- **Story 上下文资料包（复制注入）** — 详情页新增「上下文」Tab + 「复制上下文资料包」按钮；一键导出中性、混合浓度的 Markdown 资料包（PRD/spec/plan/DDL 给 worktree 内路径，Nacos 配置正文内联），粘贴到任意 AI agent 即可开干，适配开发/改 bug/排查多场景。后端 `context/pack.py` + `GET /api/story/{key}/context/pack`。
+- **Context 关系回填 API** — 新增 3 个写端点：`POST /context/documents`（PRD/spec/plan）、`POST /context/change-items`（DDL/Nacos）、`PUT /context/branch`（分支绑定）；每次写入 bump context revision。供 agent 半手动回填 story 关系。
+- **hc-all `story-context` 通用 agent skill** — 放 `.agents/skills/`（不绑 claude），教任何 agent 用 curl 把分支/PRD/DDL/Nacos 关系写回 DB。
+
+### Changed
+- 删除过时的 hc-all `story-lifecycle` skill（.agents + .claude 版）并清理 dev-workflow / AGENTS.md 的悬空引用——该 skill 停留在旧命令 + PostgreSQL 描述，与当前 SQLite 系统不符（系统渐进演化，稳定后重写）。
+
+### Fixed
+- **测试不再污染主库** — `tests/conftest.py` 新增 autouse DB 隔离 fixture（`_isolated_db`），所有测试默认重定向到 tmp 目录，杜绝写真实 `~/.story-lifecycle/story.db`（根因：原 `isolated_story_home` 非 autouse，漏用的测试直连主库）。
+
 ## [0.11.3] - 2026-06-15
 
 ### Added
