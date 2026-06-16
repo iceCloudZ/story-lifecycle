@@ -15,6 +15,7 @@ interface ContextBundle {
 
 export default function ContextTab({ storyKey }: { storyKey: string }) {
   const [copied, setCopied] = useState(false)
+  const [skill, setSkill] = useState('')
 
   const { data: ctx } = useQuery<ContextBundle>({
     queryKey: ['context', storyKey],
@@ -26,7 +27,10 @@ export default function ContextTab({ storyKey }: { storyKey: string }) {
   })
 
   async function copyPack() {
-    const r = await fetch(`/api/story/${storyKey}/context/pack`)
+    const url = skill
+      ? `/api/story/${storyKey}/context/pack?skill=${encodeURIComponent(skill)}`
+      : `/api/story/${storyKey}/context/pack`
+    const r = await fetch(url)
     const body = await r.json()
     await navigator.clipboard.writeText(body.content || '')
     setCopied(true)
@@ -43,6 +47,11 @@ export default function ContextTab({ storyKey }: { storyKey: string }) {
         <button className="btn btn-primary" onClick={copyPack}>
           {copied ? '✓ 已复制' : '复制上下文资料包'}
         </button>
+        <select value={skill} onChange={(e) => setSkill(e.target.value)} className="ctx-skill-select">
+          <option value="">（中性，不指定 skill）</option>
+          <option value="bug-fix">bug-fix</option>
+          <option value="env-debug">env-debug</option>
+        </select>
         <span className="ctx-hint">粘贴到任意 AI agent 即可（开发/改 bug/排查通用）</span>
       </div>
 

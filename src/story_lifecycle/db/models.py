@@ -783,6 +783,7 @@ def upsert_story_from_source(
     tapd_status: str = "",
     tapd_url: str = "",
     tapd_type: str = "story",
+    parent_key: str = "",
 ) -> tuple[dict, bool]:
     """Insert or update a story from an external source.
 
@@ -808,6 +809,8 @@ def upsert_story_from_source(
             updates["tapd_url"] = tapd_url
         if tapd_type:
             updates["tapd_type"] = tapd_type
+        if parent_key:
+            updates["parent_key"] = parent_key
         # intake_state is a local lifecycle field, NOT TAPD-authoritative.
         # Never overwrite it on update — a user may have promoted the story to ready.
         if updates:
@@ -834,6 +837,7 @@ def upsert_story_from_source(
             tapd_status=tapd_status,
             tapd_url=tapd_url,
             tapd_type=tapd_type,
+            parent_key=parent_key,
         )
         return get_story(key), True
 

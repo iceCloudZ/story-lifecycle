@@ -72,13 +72,21 @@ export default function QualityGateTab({ storyKey }: Props) {
           {decisions.length === 0 ? (
             <div className="qgt-empty">暂无 Gate 决策</div>
           ) : (
-            decisions.map((d: GateDecision, i: number) => (
-              <div key={i} className={`qgt-gate-item qgt-gate-${d.decision}`}>
-                <span className="qgt-gate-decision">{d.decision}</span>
-                <span className="qgt-gate-stage">{d.stage}</span>
-                <span className="qgt-gate-reason">{d.reason_code || d.human_message || '--'}</span>
-              </div>
-            ))
+            decisions.map((d: GateDecision, i: number) => {
+              const evidenceRef =
+                typeof d.evidence?.evidence_ref === 'string'
+                  ? d.evidence.evidence_ref
+                  : ''
+              return (
+                <div key={i} className={`qgt-gate-item qgt-gate-${d.decision}`}>
+                  <span className="qgt-gate-decision">{d.decision}</span>
+                  <span className="qgt-gate-stage">{d.stage}</span>
+                  <span className="qgt-gate-reason">{d.reason_code || d.human_message || '--'}</span>
+                  {d.human_message && <span className="qgt-gate-summary">{d.human_message}</span>}
+                  {evidenceRef && <span className="qgt-gate-evidence">{evidenceRef}</span>}
+                </div>
+              )
+            })
           )}
         </div>
       )}

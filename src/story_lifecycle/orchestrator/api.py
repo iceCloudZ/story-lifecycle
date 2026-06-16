@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..adapters import get_adapter
 from ..db import models as db
@@ -88,6 +88,15 @@ class DecideFindingRequest(BaseModel):
     action: str  # accept, reject, defer, downgrade, mark_verified
     reason: str = ""
     verification_event_id: int | None = None
+
+
+class CreateGateResultRequest(BaseModel):
+    stage: str
+    gate_name: str
+    result: str
+    summary: str = ""
+    evidence_ref: str = ""
+    evidence: dict = Field(default_factory=dict)
 
 
 # -------- app lifecycle --------
@@ -864,20 +873,66 @@ def get_gate_history(story_key: str):
             detail_data = _json2.loads(detail) if detail else {}
         except Exception:
             detail_data = {}
+        evidence = detail_data.get("evidence", {}) or {}
+        if detail_data.get("evidence_ref"):
+            evidence = {**evidence, "evidence_ref": detail_data["evidence_ref"]}
         decisions.append(
             {
                 "decision_id": detail_data.get("decision_id", ""),
                 "stage": gr.get("stage", ""),
                 "decision": gr.get("result", ""),
-                "reason_code": detail_data.get("reason_code", ""),
-                "human_message": "",
-                "evidence": {},
+                "reason_code": detail_data.get("reason_code", gr.get("gate_name", "")),
+                "human_message": detail_data.get("summary", ""),
+                "evidence": evidence,
                 "allowed_actions": [],
                 "created_at": gr.get("created_at", ""),
             }
         )
 
     return {"decisions": decisions}
+
+
+@app.post("/api/story/{story_key}/gate-results")
+def api_create_gate_result(story_key: str, req: CreateGateResultRequest):
+    """Record a manual gate result with evidence for story-led delivery."""
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+
+    normalized_result = req.result.upper()
+    valid_results = {"PASS", "FAIL", "BLOCKED", "PARTIAL", "WAIVED"}
+    if normalized_result not in valid_results:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid result: {req.result}. Expected one of {sorted(valid_results)}",
+        )
+
+    import json as _json
+
+    detail = {
+        "reason_code": req.gate_name,
+        "summary": req.summary,
+        "evidence_ref": req.evidence_ref,
+        "evidence": req.evidence or {},
+    }
+    db.record_gate_result(
+        story_key=story_key,
+        stage=req.stage,
+        gate_name=req.gate_name,
+        result=normalized_result,
+        detail=_json.dumps(detail, ensure_ascii=False),
+    )
+    db.log_event(
+        story_key,
+        stage=req.stage,
+        event_type="gate_result_recorded",
+        payload={
+            "gate_name": req.gate_name,
+            "result": normalized_result,
+            "summary": req.summary,
+            "evidence_ref": req.evidence_ref,
+        },
+    )
+    return {"ok": True, "result": normalized_result}
 
 
 # -------- Loop Trace API (Task 3.3) --------
@@ -1423,14 +1478,77 @@ def api_get_snapshot(story_key: str):
 
 
 @app.get("/api/story/{story_key}/context/pack")
-def api_get_context_pack(story_key: str):
+def api_get_context_pack(story_key: str, skill: str = ""):
     """Render a neutral mixed-density context pack for AI injection."""
     try:
         from .context.pack import generate_pack
 
-        return generate_pack(story_key)
+        return generate_pack(story_key, skill=skill)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/story/{story_key}/sync-related-bugs")
+def api_sync_related_bugs(story_key: str):
+    """Sync bugs linked to this story (via TAPD get_related_bugs), setting parent_key."""
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    if story.get("source_type") not in ("tapd", None):
+        return {"synced": 0, "reason": "not a tapd source"}
+    # source_id 优先；旧 story 可能只把 TAPD id 编进 story_key（tapd-{id}），从中提取
+    tapd_id = story.get("source_id") or (
+        story_key[5:] if story_key.startswith("tapd-") else ""
+    )
+    if not tapd_id:
+        return {"synced": 0, "reason": "no tapd id (not a tapd story)"}
+    config = _load_tapd_config()
+    if not config.get("workspace_id"):
+        raise HTTPException(status_code=503, detail="TAPD not configured")
+    from ..sources.tapd_api import TapdApi
+
+    api = TapdApi(workspace_id=config["workspace_id"])
+    related = api.get_related_bugs(tapd_id) or []
+    synced = 0
+    for r in related:
+        bug_id = r.get("bug_id")
+        if not bug_id:
+            continue
+        flat = (api.get_bug_detail(bug_id) or {}).get("Bug", {})
+        db.upsert_story_from_source(
+            source_type="tapd",
+            source_id=f"bug_{bug_id}",
+            title=flat.get("title", ""),
+            tapd_type="bug",
+            tapd_status=flat.get("status", ""),
+            owner=flat.get("current_owner", ""),
+            tapd_url=f"https://www.tapd.cn/{config['workspace_id']}/bugtrace/bugs/view?bug_id={bug_id}",
+            parent_key=story_key,
+        )
+        synced += 1
+    return {"synced": synced, "story_key": story_key}
+
+
+@app.post("/api/story/{bug_key}/resolve")
+def api_resolve_bug(bug_key: str):
+    """Mark a bug resolved: update TAPD + local status. Warns if no bugfix-report."""
+    story = db.get_story(bug_key)
+    if not story:
+        raise HTTPException(status_code=404, detail=f"story not found: {bug_key}")
+    if story.get("tapd_type") != "bug":
+        raise HTTPException(status_code=400, detail="not a bug")
+    has_evidence = any(
+        d.get("kind") == "bugfix-report" for d in db.get_story_documents(bug_key)
+    )
+    config = _load_tapd_config()
+    if config.get("workspace_id") and story.get("source_id"):
+        from ..sources.tapd_api import TapdApi
+
+        api = TapdApi(workspace_id=config["workspace_id"])
+        bug_id = story["source_id"].removeprefix("bug_")
+        api.update_bug(bug_id, {"status": "resolved"})
+    db.update_story(bug_key, status="completed", tapd_status="resolved")
+    return {"ok": True, "has_bugfix_report": has_evidence}
 
 
 class AddDocumentRequest(BaseModel):

@@ -95,3 +95,11 @@ class TapdApi:
             data = result.get("data", [])
             return data if isinstance(data, list) else []
         return result if isinstance(result, list) else []
+
+    def get_related_bugs(self, story_id: str) -> list[dict]:
+        """Bugs linked to a story (TAPD stories/get_related_bugs)."""
+        result = self._call("get_related_bugs", {"story_id": story_id})
+        if isinstance(result, dict):
+            data = result.get("data", [])
+            return data if isinstance(data, list) else []
+        return result if isinstance(result, list) else []

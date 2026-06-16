@@ -89,6 +89,7 @@ export interface GateDecision {
   stage?: string
   reason_code?: string
   human_message?: string
+  evidence?: Record<string, unknown>
 }
 
 export interface GateHistoryResponse {

@@ -67,6 +67,17 @@ export default function StoryDetailPage() {
     refetchInterval: 5000,
   })
 
+  // 进详情触发关联 bug 同步（节流 5min，避免每次都打 TAPD）
+  useQuery({
+    queryKey: ['sync-related-bugs', storyKey],
+    queryFn: async () => {
+      const r = await fetch(`/api/story/${storyKey}/sync-related-bugs`, { method: 'POST' })
+      return r.ok ? r.json() : null
+    },
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  })
+
   const [planTriggered, setPlanTriggered] = useState(false)
   // Re-entry guard for the SSE effect — a ref avoids setState-in-effect and,
   // unlike state, doesn't sit in the dep array (which previously caused the
@@ -151,11 +162,26 @@ export default function StoryDetailPage() {
     }
   }
 
+  async function handleResolve() {
+    if (!window.confirm('确认 bug 已修复？会更新 TAPD + 本地状态。')) return
+    const r = await fetch(`/api/story/${storyKey}/resolve`, { method: 'POST' })
+    if (r.ok) {
+      const body = await r.json()
+      if (!body.has_bugfix_report) alert('⚠ 未发现 bugfix-report 证据，建议补记后再 resolve')
+      refetch()
+    } else {
+      alert('resolve 失败')
+    }
+  }
+
   return (
     <div className="story-detail-page-v2">
       <div className="sdpv2-topbar">
         <button className="btn btn-back" onClick={() => navigate('/')}>← 返回</button>
         {detail.lastError && <span className="sdpv2-error-badge" title={detail.lastError}>⚠ {detail.lastError}</span>}
+        {detail.tapdType === 'bug' && (
+          <button className="btn btn-primary" onClick={handleResolve}>标记已修复</button>
+        )}
       </div>
       <div className="sdpv2-body">
         <StorySidebar

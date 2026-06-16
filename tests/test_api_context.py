@@ -153,3 +153,38 @@ class TestContextAPI:
             json={"delivery_state": "approved", "source": "user"},
         )
         assert resp.status_code == 200
+
+    def test_gate_result_backfill_visible_in_gate_history(
+        self, client, isolated_story_home
+    ):
+        """Manual evidence backfill should record gate results with evidence."""
+        key = "test-gate-backfill"
+        db.create_story(key, "Gate Backfill", str(isolated_story_home))
+        db.update_story(key, intake_state="ready")
+
+        resp = client.post(
+            f"/api/story/{key}/gate-results",
+            json={
+                "stage": "build-check",
+                "gate_name": "backend_compile_ci",
+                "result": "PASS",
+                "summary": "hc-config CI compile success",
+                "evidence_ref": "Skyladder build #33085",
+                "evidence": {"build_no": 33085, "commit": "abc123"},
+            },
+        )
+        assert resp.status_code == 200
+        created = resp.json()
+        assert created["ok"] is True
+
+        resp = client.get(f"/api/story/{key}/gate-history")
+        assert resp.status_code == 200
+        decisions = resp.json()["decisions"]
+        assert len(decisions) == 1
+        decision = decisions[0]
+        assert decision["stage"] == "build-check"
+        assert decision["decision"] == "PASS"
+        assert decision["reason_code"] == "backend_compile_ci"
+        assert decision["human_message"] == "hc-config CI compile success"
+        assert decision["evidence"]["evidence_ref"] == "Skyladder build #33085"
+        assert decision["evidence"]["build_no"] == 33085

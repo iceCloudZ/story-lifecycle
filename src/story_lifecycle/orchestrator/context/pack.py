@@ -10,7 +10,7 @@ from __future__ import annotations
 from .resolver import ContextResolver, ContextBundle
 
 
-def generate_pack(story_key: str) -> dict:
+def generate_pack(story_key: str, skill: str = "") -> dict:
     """Render a context pack for manual injection into an AI agent session.
 
     Returns {"content": <markdown>, "revision": N, "story_key": story_key}.
@@ -19,7 +19,7 @@ def generate_pack(story_key: str) -> dict:
     from ...db import models as db
 
     bundle = ContextResolver().resolve(story_key)
-    content = _render_pack(story_key, bundle)
+    content = _render_pack(story_key, bundle, skill)
     db.log_event(
         story_key,
         stage=bundle.story.get("current_stage", "") if bundle.story else "",
@@ -29,10 +29,13 @@ def generate_pack(story_key: str) -> dict:
     return {"content": content, "revision": bundle.revision, "story_key": story_key}
 
 
-def _render_pack(story_key: str, bundle: ContextBundle) -> str:
+def _render_pack(story_key: str, bundle: ContextBundle, skill: str = "") -> str:
     story = bundle.story or {}
     lines: list[str] = []
 
+    if skill:
+        lines.append(f"## 建议调用 /{skill} 处理")
+        lines.append("")
     lines.append(f"# Story 上下文资料包：{story_key}")
     lines.append("")
     lines.append(f"- 标题：{story.get('title', '')}")
@@ -112,6 +115,47 @@ def _render_pack(story_key: str, bundle: ContextBundle) -> str:
             if da.get("target_branch"):
                 lines.append(f"  - 目标分支：`{da.get('target_branch', '')}`")
         lines.append("")
+
+    # 关联需求（parent）—— bug 改时带上需求的 spec/plan/分支/DDL
+    parent_key = story.get("parent_key", "")
+    if parent_key:
+        try:
+            parent_bundle = ContextResolver().resolve(parent_key)
+            pst = parent_bundle.story or {}
+            lines.append("")
+            lines.append(f"## 关联需求：{pst.get('title', parent_key)}")
+            if pst.get("tapd_url"):
+                lines.append(f"- TAPD：{pst['tapd_url']}")
+            for sp in parent_bundle.story_projects:
+                proj = _find_project(parent_bundle.projects, sp.get("project_id"))
+                pname = proj.get("name", "") if proj else ""
+                lines.append(f"- **{pname}**：分支 `{sp.get('branch', '')}`")
+            for doc in parent_bundle.documents:
+                lines.append(f"- {doc.get('kind', '')}：{doc.get('ref', '')}")
+            for ci in parent_bundle.change_items:
+                lines.append(
+                    f"- {ci.get('kind', '').upper()}："
+                    f"{ci.get('ref', '') or ci.get('summary', '')}"
+                )
+        except Exception:
+            lines.append("")
+            lines.append(f"## 关联需求：{parent_key}（详情加载失败）")
+
+    # 完整度检查
+    gaps = []
+    has_spec = any(d.get("kind") == "spec" for d in bundle.documents)
+    if not has_spec:
+        gaps.append("spec")
+    if not bundle.story_projects:
+        gaps.append("branch")
+    if story.get("tapd_type") == "bug":
+        if not any(d.get("kind") == "bugfix-report" for d in bundle.documents):
+            gaps.append("bugfix-report")
+    if gaps:
+        lines.append("")
+        lines.append("## 完整度")
+        for g in gaps:
+            lines.append(f"- ⚠ 缺 {g}")
 
     return "\n".join(lines)
 

@@ -59,6 +59,54 @@ def test_pack_returns_revision(isolated_story_home, tmp_path):
     assert result["story_key"] == "S5"
 
 
+def test_pack_includes_parent_requirement(isolated_story_home, tmp_path):
+    # parent 需求
+    db.create_story(story_key="REQ-1", title="删除联系人", workspace=str(tmp_path))
+    db.create_project(name="p", repo_path=str(tmp_path))
+    db.bind_story_project("REQ-1", 1, branch="feature/x")
+    db.create_document("REQ-1", kind="spec", ref="spec.md", summary="联系人删除")
+    # bug with parent
+    db.create_story(
+        story_key="BUG-9",
+        title="UID千分位",
+        workspace=str(tmp_path),
+        parent_key="REQ-1",
+    )
+    content = generate_pack("BUG-9")["content"]
+    assert "关联需求" in content
+    assert "删除联系人" in content  # parent title
+    assert "feature/x" in content  # parent branch
+    assert "spec.md" in content  # parent spec ref
+
+
+def test_pack_skill_hint_when_param(isolated_story_home, tmp_path):
+    _seed_story("S-skill", tmp_path)
+    content = generate_pack("S-skill", skill="bug-fix")["content"]
+    assert "建议调用 /bug-fix 处理" in content
+
+
+def test_pack_no_skill_hint_by_default(isolated_story_home, tmp_path):
+    _seed_story("S-noskill", tmp_path)
+    content = generate_pack("S-noskill")["content"]
+    assert "建议调用" not in content
+
+
+def test_pack_flags_missing_refs(isolated_story_home, tmp_path):
+    db.create_story(story_key="S-gap", title="t", workspace=str(tmp_path))
+    content = generate_pack("S-gap")["content"]
+    assert "⚠ 缺 spec" in content
+    assert "⚠ 缺 branch" in content
+
+
+def test_pack_no_gap_flags_when_complete(isolated_story_home, tmp_path):
+    db.create_story(story_key="S-ok", title="t", workspace=str(tmp_path))
+    db.create_project(name="p", repo_path=str(tmp_path))
+    db.bind_story_project("S-ok", 1, branch="feature/x")
+    db.create_document("S-ok", kind="spec", ref="spec.md")
+    content = generate_pack("S-ok")["content"]
+    assert "⚠ 缺" not in content
+
+
 def test_pack_endpoint_returns_content(isolated_story_home, tmp_path):
     _seed_story("E1", tmp_path)
     client = TestClient(app)
