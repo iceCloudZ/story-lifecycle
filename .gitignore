@@ -33,3 +33,7 @@ Installing
 Stopping
 To
 .worktrees/
+
+# Playwright MCP artifacts
+.playwright-mcp/
+context-tab.png

@@ -50,7 +50,9 @@ def test_set_branch_creates_binding(isolated_story_home, tmp_path):
     _seed("W3", tmp_path)
     db.create_project(name="p3", repo_path=str(tmp_path))
     client = TestClient(app)
-    r = client.put("/api/story/W3/context/branch", json={"project_id": 1, "branch": "feature/W3"})
+    r = client.put(
+        "/api/story/W3/context/branch", json={"project_id": 1, "branch": "feature/W3"}
+    )
     assert r.status_code == 200
     assert r.json()["branch"] == "feature/W3"
 
@@ -60,6 +62,8 @@ def test_set_branch_updates_existing(isolated_story_home, tmp_path):
     db.create_project(name="p4", repo_path=str(tmp_path))
     db.bind_story_project("W4", 1, branch="old-branch")
     client = TestClient(app)
-    r = client.put("/api/story/W4/context/branch", json={"project_id": 1, "branch": "new-branch"})
+    r = client.put(
+        "/api/story/W4/context/branch", json={"project_id": 1, "branch": "new-branch"}
+    )
     assert r.status_code == 200
     assert r.json()["branch"] == "new-branch"
