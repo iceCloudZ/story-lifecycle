@@ -1502,13 +1502,19 @@ def api_set_branch(story_key: str, req: SetBranchRequest):
     existing = db.get_story_project(story_key, req.project_id)
     if existing:
         db.update_story_project(
-            story_key, req.project_id,
-            branch=req.branch, worktree_path=req.worktree_path, base_branch=req.base_branch,
+            story_key,
+            req.project_id,
+            branch=req.branch,
+            worktree_path=req.worktree_path,
+            base_branch=req.base_branch,
         )
     else:
         db.bind_story_project(
-            story_key, req.project_id,
-            branch=req.branch, worktree_path=req.worktree_path, base_branch=req.base_branch,
+            story_key,
+            req.project_id,
+            branch=req.branch,
+            worktree_path=req.worktree_path,
+            base_branch=req.base_branch,
         )
     db.bump_context_revision(story_key)
     return db.get_story_project(story_key, req.project_id)

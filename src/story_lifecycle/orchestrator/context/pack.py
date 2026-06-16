@@ -39,7 +39,9 @@ def _render_pack(story_key: str, bundle: ContextBundle) -> str:
     tapd_url = story.get("tapd_url", "")
     if tapd_url:
         lines.append(f"- TAPD：{tapd_url}")
-    lines.append(f"- Profile / Stage：{story.get('profile', '')} / {story.get('current_stage', '')}")
+    lines.append(
+        f"- Profile / Stage：{story.get('profile', '')} / {story.get('current_stage', '')}"
+    )
     lines.append(f"- Context Revision：{bundle.revision}")
     lines.append("")
 
@@ -72,7 +74,9 @@ def _render_pack(story_key: str, bundle: ContextBundle) -> str:
     # 变更项：DDL 给路径，Nacos 内联
     ddl = [ci for ci in bundle.change_items if ci.get("kind") == "ddl"]
     nacos = [ci for ci in bundle.change_items if ci.get("kind") == "nacos"]
-    others = [ci for ci in bundle.change_items if ci.get("kind") not in ("ddl", "nacos")]
+    others = [
+        ci for ci in bundle.change_items if ci.get("kind") not in ("ddl", "nacos")
+    ]
     if ddl:
         lines.append("## DDL（在 worktree 内可读）")
         for ci in ddl:
@@ -102,7 +106,9 @@ def _render_pack(story_key: str, bundle: ContextBundle) -> str:
         lines.append("## 交付产物")
         for da in bundle.delivery_artifacts:
             url = da.get("url", "")
-            lines.append(f"- **{da.get('kind', '')}**：{url or da.get('external_id', '')}")
+            lines.append(
+                f"- **{da.get('kind', '')}**：{url or da.get('external_id', '')}"
+            )
             if da.get("target_branch"):
                 lines.append(f"  - 目标分支：`{da.get('target_branch', '')}`")
         lines.append("")
