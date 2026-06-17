@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.5] - 2026-06-17
+
+### Added
+- **改 bug 闭环** — `pack(bug)` 自动含关联需求的全套 context（spec/plan/分支/DDL/Nacos）；进 story 详情自动同步关联 bug（节流 5min）；ContextTab 复制 pack 时可指定 skill 提示词；bug 详情「标记已修复」一键收尾（TAPD + 本地状态）；pack 完整度检查标红缺失项（spec/branch/bugfix-report）。端到端验证 bug 1009779 ↔ 需求 1065460。
+- **POST /api/story/{key}/sync-related-bugs** — 从 TAPD `get-related-bugs` 拉关联 bug，设 `parent_key`（bug↔需求关联从 story 侧拿，不依赖 bug.story_id null 字段）。
+- **POST /api/story/{bug_key}/resolve** — bug 标记已修复，更新 TAPD bug 状态 + 本地 status，返回 bugfix-report 证据是否就位。
+- **pack 增强** — `parent_key` 解析（拼关联需求 context）+ 可选 `?skill=` 提示词 + 完整度检查（缺项标红）。
+- **TapdApi.get_related_bugs** + **upsert_story_from_source 支持 parent_key**。
+
+### Fixed
+- **sync-related-bugs 对旧 story 健壮** — 旧 story 的 `source_type`/`source_id` 可能为 NULL（story_key 含 TAPD id 但字段没存），从 story_key（`tapd-{id}`）提取 TAPD id。
+
 ## [0.11.4] - 2026-06-15
 
 ### Added
