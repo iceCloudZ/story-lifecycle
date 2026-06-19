@@ -92,8 +92,46 @@ class TestContextAPI:
         )
         assert resp.status_code == 200
 
-    def test_candidate_start_rejected_no_project(self, client, isolated_story_home):
-        """Starting a TAPD candidate without projects should be rejected."""
+    def test_workspaces_are_inferred_from_registered_projects(
+        self, client, isolated_story_home
+    ):
+        """Workspace picker should show monorepo roots, not every module as a workspace."""
+        monorepo = isolated_story_home / "hc-all"
+        (monorepo / ".story").mkdir(parents=True)
+        service = monorepo / "hc-order"
+        frontend = monorepo / "frontends" / "hc-admin"
+        service.mkdir(parents=True)
+        frontend.mkdir(parents=True)
+        db.create_project("hc-order", str(service), "master")
+        db.create_project("hc-admin", str(frontend), "master")
+
+        resp = client.get("/api/workspaces")
+
+        assert resp.status_code == 200
+        workspaces = resp.json()["workspaces"]
+        assert workspaces == [
+            {
+                "path": str(monorepo.resolve()),
+                "name": "hc-all",
+                "projectCount": 2,
+                "projects": ["hc-admin", "hc-order"],
+            }
+        ]
+
+    def test_create_story_requires_workspace(self, client, isolated_story_home):
+        """The UI/API should not silently create stories in the server cwd."""
+        resp = client.post(
+            "/api/story",
+            json={"key": "tapd-1", "title": "No Workspace", "autostart": False},
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "workspace required"
+
+    def test_candidate_start_allows_no_project_for_intake_only(
+        self, client, isolated_story_home
+    ):
+        """Intake/PRD preparation should not require selecting a project/module."""
         key = "tapd-candidate-no-proj"
         db.create_story(key, "No Project", str(isolated_story_home))
         db.update_story(
@@ -104,9 +142,182 @@ class TestContextAPI:
         )
 
         resp = client.post(f"/api/story/{key}/start", json={"content": "# PRD"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        story = db.get_story(key)
+        assert story["status"] == "planning"
+
+    def test_intake_preview_prefills_story_from_source(
+        self, client, isolated_story_home, monkeypatch
+    ):
+        """Entering a story id should fetch source detail and run PRD generator."""
+        from story_lifecycle.sources.base import SourceItem
+        from story_lifecycle.sources import tapd_source as tapd_source_mod
+        from story_lifecycle.orchestrator import prd_generator
+
+        class FakeTapdSource:
+            def __init__(self, config):
+                pass
+
+            def get_detail(self, item_id):
+                return SourceItem(
+                    id="1144381896001065618",
+                    source="tapd",
+                    item_type="requirement",
+                    title="授信提现展示拒绝原因",
+                    description="提现被拒绝时展示拒绝原因",
+                    extra={
+                        "url": "https://www.tapd.cn/114438189600/prong/stories/view/1144381896001065618"
+                    },
+                )
+
+        monkeypatch.setattr(tapd_source_mod, "TapdSource", FakeTapdSource)
+        monkeypatch.setattr(
+            prd_generator,
+            "generate_prd_from_source",
+            lambda source: prd_generator.PrdGenerationResult(
+                action="generated",
+                markdown="# 授信提现展示拒绝原因\n\n## 安全审查\n\n无前端可控核心参数。",
+                summary="已生成 PRD",
+            ),
+        )
+
+        resp = client.post(
+            "/api/intake/preview",
+            json={"source_type": "tapd", "source_id": "1065618"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["storyKey"] == "tapd-1144381896001065618"
+        assert data["title"] == "授信提现展示拒绝原因"
+        assert data["action"] == "generated"
+        assert "安全审查" in data["markdown"]
+
+    def test_start_tapd_candidate_returns_dingtalk_link_when_prd_source_is_external(
+        self, client, isolated_story_home, monkeypatch
+    ):
+        """A TAPD intake should stop when the PRD generator asks for DingTalk download."""
+        from story_lifecycle.sources.base import SourceItem
+        from story_lifecycle.sources import tapd_source as tapd_source_mod
+        from story_lifecycle.orchestrator import prd_generator
+
+        class FakeTapdSource:
+            def __init__(self, config):
+                pass
+
+            def get_detail(self, item_id):
+                return SourceItem(
+                    id=item_id,
+                    source="tapd",
+                    item_type="requirement",
+                    title="钉钉文档需求",
+                    description='请看 <a href="https://alidocs.dingtalk.com/i/nodes/abc">钉钉文档</a>',
+                )
+
+        monkeypatch.setattr(tapd_source_mod, "TapdSource", FakeTapdSource)
+        monkeypatch.setattr(
+            prd_generator,
+            "generate_prd_from_source",
+            lambda source: prd_generator.PrdGenerationResult(
+                action="manual_download_required",
+                dingtalk_links=["https://alidocs.dingtalk.com/i/nodes/abc"],
+                markdown="",
+                summary="需要人工下载钉钉文档",
+            ),
+        )
+        proj = db.create_project("ding-proj", str(isolated_story_home), "main")
+        db.create_story("tapd-123", "钉钉文档需求", str(isolated_story_home))
+        db.update_story(
+            "tapd-123",
+            intake_state="candidate",
+            source_type="tapd",
+            source_id="123",
+        )
+
+        resp = client.post(
+            "/api/story/tapd-123/start",
+            json={"project_ids": [proj["id"]]},
+        )
+
         assert resp.status_code == 409
         data = resp.json()
-        assert data["reasonCode"] == "project_not_selected"
+        assert data["reasonCode"] == "dingtalk_download_required"
+        assert data["dingtalk_links"] == ["https://alidocs.dingtalk.com/i/nodes/abc"]
+
+    def test_start_tapd_candidate_generates_prd_from_tapd_body_when_no_dingtalk(
+        self, client, isolated_story_home, monkeypatch, tmp_path
+    ):
+        """A TAPD intake should save PRD.md when the generator returns markdown."""
+        from story_lifecycle.sources.base import SourceItem
+        from story_lifecycle.sources import tapd_source as tapd_source_mod
+        from story_lifecycle.orchestrator import prd_generator
+
+        class FakeTapdSource:
+            def __init__(self, config):
+                pass
+
+            def get_detail(self, item_id):
+                return SourceItem(
+                    id=item_id,
+                    source="tapd",
+                    item_type="requirement",
+                    title="授信提现展示拒绝原因",
+                    description="<p>用户提现被拒绝时，需要展示拒绝原因。</p>",
+                    priority="高",
+                    owner="赵子豪",
+                    status="status_3",
+                    extra={"url": "https://www.tapd.cn/ws/prong/stories/view/123"},
+                )
+
+        monkeypatch.setattr(tapd_source_mod, "TapdSource", FakeTapdSource)
+        monkeypatch.setattr(
+            prd_generator,
+            "generate_prd_from_source",
+            lambda source: prd_generator.PrdGenerationResult(
+                action="generated",
+                dingtalk_links=[],
+                markdown=(
+                    "# 授信提现展示拒绝原因\n\n"
+                    "## 需求描述\n\n用户提现被拒绝时，需要展示拒绝原因。\n\n"
+                    "## 安全审查\n\n无前端可控核心参数。\n"
+                ),
+                summary="已生成 PRD",
+            ),
+        )
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        proj = db.create_project("auto-prd-proj", str(repo), "main")
+        db.create_story("tapd-1234", "授信提现展示拒绝原因", str(isolated_story_home))
+        db.update_story(
+            "tapd-1234",
+            intake_state="candidate",
+            source_type="tapd",
+            source_id="1234",
+        )
+
+        resp = client.post(
+            "/api/story/tapd-1234/start",
+            json={"project_ids": [proj["id"]]},
+        )
+
+        assert resp.status_code == 200
+        story = db.get_story("tapd-1234")
+        assert story["intake_state"] == "ready"
+        assert story["status"] == "planning"
+        import json as _json
+
+        ctx = _json.loads(story["context_json"] or "{}")
+        prd_path = ctx["prd_path"]
+        from pathlib import Path
+
+        prd = Path(prd_path)
+        assert prd.name == "PRD.md"
+        content = prd.read_text(encoding="utf-8")
+        assert "授信提现展示拒绝原因" in content
+        assert "用户提现被拒绝时，需要展示拒绝原因" in content
+        assert "安全审查" in content
 
     def test_prepare_worktrees_endpoint(self, client, isolated_story_home):
         """POST /worktrees/prepare should return results."""

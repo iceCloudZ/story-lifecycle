@@ -94,6 +94,8 @@ def test_pack_no_skill_hint_by_default(isolated_story_home, tmp_path):
 def test_pack_flags_missing_refs(isolated_story_home, tmp_path):
     db.create_story(story_key="S-gap", title="t", workspace=str(tmp_path))
     content = generate_pack("S-gap")["content"]
+    assert "⚠ 缺 prd" in content
+    assert "⚠ 缺 research" in content
     assert "⚠ 缺 spec" in content
     assert "⚠ 缺 branch" in content
 
@@ -102,6 +104,8 @@ def test_pack_no_gap_flags_when_complete(isolated_story_home, tmp_path):
     db.create_story(story_key="S-ok", title="t", workspace=str(tmp_path))
     db.create_project(name="p", repo_path=str(tmp_path))
     db.bind_story_project("S-ok", 1, branch="feature/x")
+    db.create_document("S-ok", kind="prd", ref="PRD.md")
+    db.create_document("S-ok", kind="research", ref="research.md")
     db.create_document("S-ok", kind="spec", ref="spec.md")
     content = generate_pack("S-ok")["content"]
     assert "⚠ 缺" not in content

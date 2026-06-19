@@ -50,23 +50,21 @@ def test_profiles_load():
 
 
 def test_minimal_profile_stages():
-    """minimal = design -> implement (2 stages only)."""
+    """minimal = design -> build -> verify."""
     from story_lifecycle.orchestrator.nodes import load_profile
 
     profile = load_profile("minimal")
     stages = list(profile["stages"].keys())
-    assert stages == ["design", "implement"], f"Expected 2 stages, got {stages}"
+    assert stages == ["design", "build", "verify"], f"Expected 3 stages, got {stages}"
 
 
 def test_strict_profile_stages():
-    """strict = design -> review_design -> implement -> review (4 stages)."""
+    """strict = design -> build -> verify, with review loops inlined."""
     from story_lifecycle.orchestrator.nodes import load_profile
 
     profile = load_profile("strict")
     stages = list(profile["stages"].keys())
-    assert stages == ["design", "review_design", "implement", "review"], (
-        f"Expected 4 stages, got {stages}"
-    )
+    assert stages == ["design", "build", "verify"], f"Expected 3 stages, got {stages}"
 
 
 def test_minimal_profile_no_quality():

@@ -78,13 +78,13 @@ class TestAdvanceCmd:
         assert result.exit_code == 0
 
         s = db.get_story("tapd-1001")
-        assert s["current_stage"] == "implement"
+        assert s["current_stage"] == "build"
 
     def test_advance_to_done(self, runner, isolated_story_home):
         from story_lifecycle.cli.list_cmd import advance_cmd
 
         db.init_db()
-        db.create_story("ADV-001", "推进测试", "/tmp", current_stage="test")
+        db.create_story("ADV-001", "推进测试", "/tmp", current_stage="verify")
 
         runner.invoke(advance_cmd, ["ADV-001"])
         s = db.get_story("ADV-001")

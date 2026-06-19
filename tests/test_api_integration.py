@@ -229,7 +229,7 @@ class TestStartStoryWorkspace:
         assert resp.json()["reasonCode"] == "content_required"
 
     def test_start_saves_prd_and_path(self, api_client, isolated_story_home, tmp_path):
-        """填了 content 后,/start 把 PRD 写到工作区并存 prd_path 到 context_json。"""
+        """填了 content 后,/start 把 PRD 写到 story 证据目录并存 prd_path。"""
         proj = db.create_project("p3", str(tmp_path / "repo"), default_branch="main")
         (tmp_path / "repo").mkdir()
         db.upsert_story(
@@ -253,8 +253,37 @@ class TestStartStoryWorkspace:
         from pathlib import Path
 
         pp = Path(prd_path)
-        assert pp.name == "CAND-003.md" and pp.parent.name == "prd"
+        assert pp.name == "PRD.md"
+        assert pp.parent.name == "003-y"
+        assert pp.parent.parent.name == "story"
         assert "登录记录查询" in pp.read_text(encoding="utf-8")
+
+    def test_start_ready_story_binds_project_and_enters_planning(
+        self, api_client, isolated_story_home, tmp_path
+    ):
+        """Manual stories use the same one-step intake/start flow as TAPD stories."""
+        repo = tmp_path / "manual-repo"
+        repo.mkdir()
+        proj = db.create_project("manual-proj", str(repo), default_branch="main")
+        db.upsert_story(
+            "MANUAL-001",
+            title="手工需求",
+            workspace=str(isolated_story_home),
+            profile="minimal",
+            status="idle",
+            intake_state="ready",
+        )
+
+        resp = api_client.post(
+            "/api/story/MANUAL-001/start",
+            json={"project_ids": [proj["id"]], "content": "# PRD\n手工需求内容"},
+        )
+
+        assert resp.status_code == 200
+        story = db.get_story("MANUAL-001")
+        assert story["workspace"] == str(repo)
+        assert story["status"] == "planning"
+        assert story["intake_state"] == "ready"
 
 
 class TestBuildCliPromptPrd:
