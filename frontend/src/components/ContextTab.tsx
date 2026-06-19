@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 interface ContextDoc { kind: string; ref: string; summary?: string }
 interface ContextChange { kind: string; ref: string; summary?: string; evidence_ref?: string }
 interface ContextBundle {
-  story: { title?: string; tapd_url?: string; profile?: string; current_stage?: string }
+  story: { title?: string; tapd_url?: string; profile?: string; current_stage?: string; workspace?: string }
   story_projects: { project_id: number; branch?: string; worktree_path?: string; base_branch?: string; summary?: string }[]
   projects: { id: number; name?: string }[]
   documents: ContextDoc[]
@@ -15,6 +15,7 @@ interface ContextBundle {
 
 export default function ContextTab({ storyKey }: { storyKey: string }) {
   const [copied, setCopied] = useState(false)
+  const [copiedTarget, setCopiedTarget] = useState('')
   const [skill, setSkill] = useState('')
 
   const { data: ctx } = useQuery<ContextBundle>({
@@ -34,30 +35,71 @@ export default function ContextTab({ storyKey }: { storyKey: string }) {
     const body = await r.json()
     await navigator.clipboard.writeText(body.content || '')
     setCopied(true)
+    setCopiedTarget('pack')
     setTimeout(() => setCopied(false), 2000)
+    setTimeout(() => setCopiedTarget(''), 2000)
+  }
+
+  async function copyText(value: string, target: string) {
+    if (!value) return
+    await navigator.clipboard.writeText(value)
+    setCopiedTarget(target)
+    setTimeout(() => setCopiedTarget(''), 2000)
+  }
+
+  function openLocalPath(path: string) {
+    if (!path) return
+    window.open(`file:///${path.replace(/\\/g, '/')}`, '_blank', 'noopener,noreferrer')
   }
 
   const projName = (pid: number) => ctx?.projects.find((p) => p.id === pid)?.name || '(未知项目)'
   const ddl = (ctx?.change_items || []).filter((c) => c.kind === 'ddl')
   const nacos = (ctx?.change_items || []).filter((c) => c.kind === 'nacos')
+  const workspace = ctx?.story?.workspace || ''
+  const prd = (ctx?.documents || []).find((d) => d.kind === 'prd')
+  const prdPath = prd?.ref || ''
 
   return (
     <div className="context-tab">
       <div className="ctx-toolbar">
         <button className="btn btn-primary" onClick={copyPack}>
-          {copied ? '✓ 已复制' : '复制上下文资料包'}
+          {copied && copiedTarget === 'pack' ? '已复制资料包' : '复制上下文资料包'}
+        </button>
+        <button className="btn" disabled={!prdPath} onClick={() => copyText(prdPath, 'prd')}>
+          {copiedTarget === 'prd' ? '已复制 PRD 路径' : '复制 PRD 路径'}
+        </button>
+        <button className="btn" disabled={!workspace} onClick={() => copyText(workspace, 'workspace')}>
+          {copiedTarget === 'workspace' ? '已复制工作区' : '复制工作区'}
+        </button>
+        <button className="btn" disabled={!prdPath} onClick={() => openLocalPath(prdPath)}>
+          打开 PRD
         </button>
         <select value={skill} onChange={(e) => setSkill(e.target.value)} className="ctx-skill-select">
           <option value="">（中性，不指定 skill）</option>
           <option value="bug-fix">bug-fix</option>
           <option value="env-debug">env-debug</option>
         </select>
-        <span className="ctx-hint">粘贴到任意 AI agent 即可（开发/改 bug/排查通用）</span>
       </div>
+
+      <section className="ctx-manual-panel">
+        <h4>半自动使用</h4>
+        <div className="ctx-steps">
+          <div>1. 确认工作区和 PRD 路径正确。</div>
+          <div>2. 复制上下文资料包，粘贴给你手动打开的 AI agent。</div>
+          <div>3. 让 AI 先做 Design/影响模块分析；确认后再决定是否进入开发。</div>
+        </div>
+      </section>
+
+      <section>
+        <h4>工作区</h4>
+        <div className="ctx-item ctx-path">{workspace || '(未选择工作区)'}</div>
+      </section>
 
       <section>
         <h4>绑定项目与分支</h4>
-        {(ctx?.story_projects || []).length === 0 && <p className="ctx-empty">未绑定项目</p>}
+        {(ctx?.story_projects || []).length === 0 && (
+          <p className="ctx-empty">未绑定项目。半自动流程下这是正常状态，影响模块和分支在 Design 后再确定。</p>
+        )}
         {(ctx?.story_projects || []).map((sp) => (
           <div key={sp.project_id} className="ctx-item">
             <strong>{projName(sp.project_id)}</strong>：分支 <code>{sp.branch || '-'}</code>
@@ -71,7 +113,7 @@ export default function ContextTab({ storyKey }: { storyKey: string }) {
         <h4>文档（{ctx?.documents?.length || 0}）</h4>
         {(ctx?.documents || []).map((d, i) => (
           <div key={i} className="ctx-item">
-            <strong>{d.kind}</strong>：{d.ref || '(无路径)'}
+            <strong>{d.kind}</strong>：<span className="ctx-path">{d.ref || '(无路径)'}</span>
             {d.summary && <div className="ctx-sub">{d.summary}</div>}
           </div>
         ))}

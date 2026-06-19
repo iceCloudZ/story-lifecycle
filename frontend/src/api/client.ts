@@ -125,12 +125,32 @@ export interface Stats {
   findings_open: number
 }
 
+export interface IntakePreview {
+  storyKey: string
+  sourceType: string
+  sourceId: string
+  title: string
+  sourceUrl?: string
+  action: 'generated' | 'manual_download_required' | 'needs_clarification' | 'failed'
+  markdown: string
+  summary?: string
+  dingtalkLinks?: string[]
+  questions?: string[]
+}
+
 export interface Project {
   id: string | number
   name: string
   availability?: string
   repo_path?: string
   default_branch?: string
+}
+
+export interface WorkspaceOption {
+  path: string
+  name: string
+  projectCount: number
+  projects: string[]
 }
 
 export interface Pattern {
@@ -165,6 +185,13 @@ export const storyApi = {
   get: (key: string) => fetchJSON<Story>(`/api/story/${key}`),
   create: (data: { key: string; title?: string; content?: string; profile?: string; workspace?: string; autostart?: boolean }) =>
     fetchJSON<Story>('/api/story', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
+  workspaces: () => fetchJSON<{ workspaces: WorkspaceOption[] }>('/api/workspaces'),
+  previewIntake: (data: { source_type?: string; source_id: string }) =>
+    fetchJSON<IntakePreview>('/api/intake/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
   advance: (key: string) => apiAction('PUT', `/api/story/${key}/advance`),
   skip: (key: string, stage: string) => apiAction('PUT', `/api/story/${key}/skip/${stage}`),
   abort: (key: string) => apiAction('POST', `/api/story/${key}/abort`),

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { storyApi, apiAction } from '../api/client'
-import type { Project } from '../api/client'
+import type { Project, WorkspaceOption } from '../api/client'
 import { useStoryStore, type StorySummary } from '../store/storyStore'
 import './Dashboard.css'
 
@@ -61,11 +61,10 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const { stories, connected } = useStoryStore()
   const [tab, setTab] = useState<'tapd' | 'story' | 'calendar' | 'project'>('tapd')
-  const [showCreate, setShowCreate] = useState(false)
+  const [intakeModal, setIntakeModal] = useState<{ story?: StorySummary } | null>(null)
+  const [intakeNotice, setIntakeNotice] = useState<StartNotice | null>(null)
   const [showProjectForm, setShowProjectForm] = useState(false)
   const [projectCount, setProjectCount] = useState(0)
-  // 项目选择弹窗状态
-  const [pickerStory, setPickerStory] = useState<StorySummary | null>(null)
   const qc = useQueryClient()
 
   const { data: fullList } = useQuery({
@@ -83,19 +82,6 @@ export default function Dashboard() {
   // 我的 Story tab: 所有已激活的 story，不区分来源（TAPD/飞书/手工创建）
   const myStories = allStories.filter((s) => s.intakeState === 'ready')
 
-  function handleCreate(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const form = new FormData(e.currentTarget)
-    storyApi.create({
-      key: form.get('key') as string,
-      title: (form.get('title') as string) || '',
-      profile: (form.get('profile') as string) || 'minimal',
-    }).then(() => {
-      setShowCreate(false)
-      qc.invalidateQueries({ queryKey: ['stories'] })
-    })
-  }
-
   async function handleCardAction(s: StorySummary, action: (typeof CARD_ACTIONS[string])[0]) {
     if (action.confirm && !window.confirm(action.confirm)) return
     let url = `/api/story/${s.storyKey}`
@@ -109,17 +95,45 @@ export default function Dashboard() {
   }
 
   async function handleStartDev(s: StorySummary) {
-    // candidate 状态：弹窗让用户选择项目，然后跳转详情页（自动触发 LLM 规划）
-    const projectsRes = await fetch('/api/projects')
-    const projectsData = await projectsRes.json()
-    const projects: Project[] = projectsData.projects || []
+    setIntakeNotice(null)
+    setIntakeModal({ story: s })
+  }
 
-    if (projects.length === 0) {
-      alert('请先在「项目」tab 中注册项目，再开始开发')
+  async function handleIntakeConfirm(input: IntakeConfirmInput) {
+    let storyKey = intakeModal?.story?.storyKey || input.key
+
+    if (!intakeModal?.story) {
+      const created = await storyApi.create({
+        key: input.key,
+        title: input.title,
+        profile: input.profile,
+        workspace: input.workspace,
+        autostart: false,
+      })
+      storyKey = created.storyKey
+    }
+
+    const r = await fetch(`/api/story/${storyKey}/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_ids: input.projectIds, content: input.content }),
+    })
+    if (!r.ok) {
+      const err = await r.json()
+      const notice = normalizeStartNotice(err)
+      setIntakeNotice(notice)
+      if (notice.reasonCode === 'dingtalk_download_required') {
+        for (const link of notice.dingtalkLinks) {
+          window.open(link, '_blank', 'noopener,noreferrer')
+        }
+      }
       return
     }
 
-    setPickerStory(s)
+    setIntakeModal(null)
+    setIntakeNotice(null)
+    qc.invalidateQueries({ queryKey: ['stories'] })
+    navigate(`/story/${storyKey}`)
   }
 
   return (
@@ -137,8 +151,8 @@ export default function Dashboard() {
               {showProjectForm ? '取消' : '注册项目'}
             </button>
           ) : (
-            <button className="btn btn-primary" onClick={() => setShowCreate(!showCreate)}>
-              新建 Story
+            <button className="btn btn-primary" onClick={() => { setIntakeNotice(null); setIntakeModal({}) }}>
+              新建并开始
             </button>
           )}
         </div>
@@ -158,20 +172,6 @@ export default function Dashboard() {
           项目
         </button>
       </div>
-
-      {showCreate && (
-        <form className="create-form" onSubmit={handleCreate}>
-          <input name="key" placeholder="Story Key (必填)" required />
-          <input name="title" placeholder="标题" />
-          <select name="profile">
-            <option value="minimal">minimal</option>
-            <option value="strict">strict</option>
-            <option value="demo">demo</option>
-          </select>
-          <button type="submit" className="btn btn-primary">创建</button>
-          <button type="button" className="btn" onClick={() => setShowCreate(false)}>取消</button>
-        </form>
-      )}
 
       <div className="story-grid">
         {tab === 'tapd' && (
@@ -209,67 +209,153 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* 项目选择弹窗 */}
-      {pickerStory && (
-        <ProjectPickerModal
-          story={pickerStory}
-          onClose={() => setPickerStory(null)}
-          onConfirm={async (projectIds, content) => {
-            const r = await fetch(`/api/story/${pickerStory.storyKey}/start`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ project_ids: projectIds, content }),
-            })
-            if (!r.ok) {
-              const err = await r.json()
-              alert(`无法启动: ${err.message || err.reasonCode || '未知错误'}`)
-              return
-            }
-            setPickerStory(null)
-            qc.invalidateQueries({ queryKey: ['stories'] })
-            navigate(`/story/${pickerStory.storyKey}`)
-          }}
+      {intakeModal && (
+        <IntakeStartModal
+          story={intakeModal.story}
+          notice={intakeNotice}
+          onClose={() => { setIntakeModal(null); setIntakeNotice(null) }}
+          onConfirm={handleIntakeConfirm}
         />
       )}
     </div>
   )
 }
 
-// ---- 项目选择弹窗 ----
+// ---- Intake / Start modal ----
 
-function ProjectPickerModal({ story, onClose, onConfirm }: {
-  story: StorySummary
+type StartNotice = {
+  reasonCode: string
+  message: string
+  dingtalkLinks: string[]
+  questions: string[]
+}
+
+type IntakeConfirmInput = {
+  key: string
+  title: string
+  profile: string
+  workspace: string
+  projectIds: number[]
+  content: string
+}
+
+function normalizeStartNotice(err: Record<string, unknown>): StartNotice {
+  return {
+    reasonCode: String(err.reasonCode || 'start_failed'),
+    message: String(err.message || err.detail || '无法启动'),
+    dingtalkLinks: Array.isArray(err.dingtalk_links) ? err.dingtalk_links.map(String) : [],
+    questions: Array.isArray(err.questions) ? err.questions.map(String) : [],
+  }
+}
+
+function IntakeStartModal({ story, notice, onClose, onConfirm }: {
+  story?: StorySummary
+  notice: StartNotice | null
   onClose: () => void
-  onConfirm: (projectIds: number[], content: string) => void
+  onConfirm: (input: IntakeConfirmInput) => void | Promise<void>
 }) {
-  const [projects, setProjects] = useState<{ id: number; name: string; availability: string }[]>([])
-  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const isNew = !story
+  const [key, setKey] = useState('')
+  const [title, setTitle] = useState('')
+  const profile = 'minimal'
+  const [workspace, setWorkspace] = useState('')
+  const [workspaces, setWorkspaces] = useState<WorkspaceOption[]>([])
+  const [workspaceLoading, setWorkspaceLoading] = useState(false)
+  const [workspaceError, setWorkspaceError] = useState('')
   const [paste, setPaste] = useState('')
   const [uploaded, setUploaded] = useState<{ name: string; content: string } | null>(null)
   // 最终发给后端的 PRD 正文：上传文件读出的内容，或粘贴的文本。后端会存成文件、
   // 注入文件路径给 CLI（不内联内容，避免撑爆上下文）。
   const content = uploaded ? uploaded.content : paste
   const [loading, setLoading] = useState(false)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewStartedAt, setPreviewStartedAt] = useState<number | null>(null)
+  const [localNotice, setLocalNotice] = useState<StartNotice | null>(null)
+  const activeNotice = localNotice || notice
 
   useEffect(() => {
-    fetch('/api/projects')
-      .then(r => r.json())
-      .then(d => setProjects(d.projects || []))
-  }, [])
+    if (!isNew) return
+    let alive = true
+    setWorkspaceLoading(true)
+    storyApi.workspaces()
+      .then((data) => {
+        if (!alive) return
+        const items = data.workspaces || []
+        setWorkspaces(items)
+        setWorkspace((current) => current || items[0]?.path || '')
+        setWorkspaceError('')
+      })
+      .catch((err) => {
+        if (!alive) return
+        setWorkspaceError(err instanceof Error ? err.message : '工作区加载失败')
+      })
+      .finally(() => {
+        if (alive) setWorkspaceLoading(false)
+      })
+    return () => { alive = false }
+  }, [isNew])
 
-  function toggle(id: number) {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  async function handlePreview() {
+    const rawId = story ? (story.sourceId || story.storyKey) : key
+    const sourceId = rawId.trim().replace(/^tapd-/, '')
+    if (!sourceId) return
+    setPreviewLoading(true)
+    setPreviewStartedAt(Date.now())
+    setLocalNotice(null)
+    try {
+      const preview = await storyApi.previewIntake({ source_type: 'tapd', source_id: sourceId })
+      if (isNew) setKey(preview.storyKey)
+      if (preview.title) setTitle(preview.title)
+      if (preview.action === 'generated' && preview.markdown.trim()) {
+        setUploaded(null)
+        setPaste(preview.markdown)
+        setLocalNotice({
+          reasonCode: 'intake_prd_generated',
+          message: preview.summary || '已根据来源生成 PRD 草稿，请确认后继续。',
+          dingtalkLinks: [],
+          questions: [],
+        })
+      } else if (preview.action === 'manual_download_required') {
+        const links = preview.dingtalkLinks || []
+        setLocalNotice({
+          reasonCode: 'dingtalk_download_required',
+          message: preview.summary || '请先打开外部文档并下载/复制 PRD 内容。',
+          dingtalkLinks: links,
+          questions: [],
+        })
+        for (const link of links) window.open(link, '_blank', 'noopener,noreferrer')
+      } else {
+        setLocalNotice({
+          reasonCode: `intake_${preview.action}`,
+          message: preview.summary || '读取需求后仍需补充信息。',
+          dingtalkLinks: preview.dingtalkLinks || [],
+          questions: preview.questions || [],
+        })
+      }
+    } catch (err) {
+      setLocalNotice({
+        reasonCode: 'intake_preview_failed',
+        message: err instanceof Error ? err.message : '读取需求失败',
+        dingtalkLinks: [],
+        questions: [],
+      })
+    } finally {
+      setPreviewLoading(false)
+      setPreviewStartedAt(null)
+    }
   }
 
   function handleConfirm() {
-    if (selected.size === 0 || !content.trim()) return
+    if (isNew && (!key.trim() || !workspace.trim() || !content.trim())) return
     setLoading(true)
-    onConfirm(Array.from(selected), content)
+    Promise.resolve(onConfirm({
+      key: key.trim(),
+      title: title.trim(),
+      profile,
+      workspace: workspace.trim(),
+      projectIds: [],
+      content,
+    })).finally(() => setLoading(false))
   }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -285,32 +371,92 @@ function ProjectPickerModal({ story, onClose, onConfirm }: {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <span>选择关联项目</span>
+          <span>{isNew ? '新建并开始' : '开始开发'}</span>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
-        <p className="modal-subtitle">{story.title}</p>
+        <p className="modal-subtitle">
+          {story ? story.title : '创建 Story、选择工作区，并准备 PRD 后进入规划'}
+        </p>
         <div className="modal-body">
-          {projects.length === 0 ? (
-            <p className="hint">暂无注册项目，请先在「项目」tab 中注册</p>
-          ) : (
-            projects.map(p => (
-              <label key={p.id} className={`project-option ${selected.has(p.id) ? 'selected' : ''}`}>
-                <input
-                  type="checkbox"
-                  checked={selected.has(p.id)}
-                  onChange={() => toggle(p.id)}
-                />
-                <span className="project-name">{p.name}</span>
-                {p.availability !== 'available' && (
-                  <span className="project-warn">({p.availability})</span>
-                )}
+          {isNew && (
+            <div className="modal-story-fields">
+              <div className="story-id-field">
+                <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="TAPD Story ID / Story Key" />
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={!key.trim() || previewLoading}
+                  onClick={handlePreview}
+                >
+                  {previewLoading ? '读取中...' : '读取需求'}
+                </button>
+              </div>
+              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="标题" />
+              <label className="modal-field">
+                <span>工作区 <span className="req">*</span></span>
+                <select
+                  value={workspace}
+                  onChange={(e) => setWorkspace(e.target.value)}
+                  disabled={workspaceLoading || workspaces.length === 0}
+                >
+                  {workspaces.length === 0 && <option value="">暂无可选工作区</option>}
+                  {workspaces.map((item) => (
+                    <option key={item.path} value={item.path}>
+                      {item.name} · {item.projectCount} 个项目 · {item.path}
+                    </option>
+                  ))}
+                </select>
               </label>
-            ))
+              {workspaceError && <p className="hint danger">{workspaceError}</p>}
+              {!workspaceError && workspaces.length === 0 && !workspaceLoading && (
+                <p className="hint danger">没有可选工作区，请先在“项目”页注册 monorepo 下的项目。</p>
+              )}
+            </div>
+          )}
+          {!isNew && story?.sourceType === 'tapd' && (
+            <button
+              type="button"
+              className="btn btn-sm intake-read-btn"
+              disabled={previewLoading}
+              onClick={handlePreview}
+            >
+              {previewLoading ? '读取中...' : '读取需求并生成 PRD 草稿'}
+            </button>
+          )}
+          <p className="hint">先选择 monorepo 工作区并准备 PRD；影响模块由后续 Design 阶段识别。</p>
+          {previewLoading && (
+            <div className="intake-loading">
+              <div className="intake-spinner" />
+              <div>
+                <div className="intake-loading-title">正在读取需求</div>
+                <div className="intake-loading-copy">
+                  正在拉取 TAPD 详情并调用内置 PRD generator。通常需要 10-30 秒；TAPD 或 LLM 较慢时会更久。
+                  {previewStartedAt && Date.now() - previewStartedAt > 45000 && ' 已超过 45 秒，可能是 TAPD 或 LLM 响应较慢。'}
+                </div>
+              </div>
+            </div>
+          )}
+          {activeNotice && (
+            <div className={`intake-notice intake-${activeNotice.reasonCode}`}>
+              <div>{activeNotice.message}</div>
+              {activeNotice.dingtalkLinks.length > 0 && (
+                <div className="intake-links">
+                  {activeNotice.dingtalkLinks.map((link) => (
+                    <a key={link} href={link} target="_blank" rel="noopener noreferrer">{link}</a>
+                  ))}
+                </div>
+              )}
+              {activeNotice.questions.length > 0 && (
+                <ul>
+                  {activeNotice.questions.map((q) => <li key={q}>{q}</li>)}
+                </ul>
+              )}
+            </div>
           )}
           <div className="modal-prd">
             <div className="modal-prd-head">
               <label className="modal-prd-label">
-                Story 内容 / PRD <span className="req">*</span>
+                Story 内容 / PRD {isNew && <span className="req">*</span>}
               </label>
               {!uploaded && (
                 <label className="modal-prd-upload" title="上传本地 .md/.txt 文件">
@@ -340,7 +486,9 @@ function ProjectPickerModal({ story, onClose, onConfirm }: {
                 className="modal-prd-input"
                 value={paste}
                 onChange={(e) => setPaste(e.target.value)}
-                placeholder="粘贴需求 / PRD，或用上方按钮上传本地文件；后端会存成文件、design 阶段注入文件路径给 AI CLI"
+                placeholder={story
+                  ? '可留空：后台会让内置 PRD generator 根据来源判断；如已下载钉钉文档，可粘贴或上传'
+                  : '粘贴需求 / PRD，或用上方按钮上传本地文件；后台会保存为 PRD.md'}
                 rows={6}
               />
             )}
@@ -350,10 +498,10 @@ function ProjectPickerModal({ story, onClose, onConfirm }: {
           <button className="btn" onClick={onClose}>取消</button>
           <button
             className="btn btn-primary"
-            disabled={selected.size === 0 || !content.trim() || loading}
+            disabled={(isNew && (!key.trim() || !workspace.trim() || !content.trim())) || loading}
             onClick={handleConfirm}
           >
-            {loading ? '启动中...' : `确认开始 (${selected.size} 个项目)`}
+            {loading ? '处理中...' : '准备 PRD 并进入规划'}
           </button>
         </div>
       </div>

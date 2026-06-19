@@ -116,9 +116,11 @@ class TapdSource(StorySource):
     def get_detail(self, item_id: str) -> SourceItem | None:
         if item_id.startswith("bug_"):
             raw = self._api.get_bug_detail(item_id.removeprefix("bug_"))
-            return self._parse_bug(raw) if raw else None
+            flat = raw.get("Bug", raw) if raw else None
+            return self._parse_bug(flat) if flat else None
         raw = self._api.get_story_detail(item_id)
-        return self._parse_story(raw) if raw else None
+        flat = raw.get("Story", raw) if raw else None
+        return self._parse_story(flat) if flat else None
 
     def sync_status(self, item_id: str, status: str):
         TAPD_STATUS_MAP = {

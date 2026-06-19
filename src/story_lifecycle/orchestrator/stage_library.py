@@ -98,6 +98,16 @@ BUILTIN_STAGES: dict[str, StageDefinition] = {
         max_retries=3,
         timeout_minutes=30,
     ),
+    "build": StageDefinition(
+        name="build",
+        category=StageCategory.EXECUTION,
+        description="Create implementation plan and change code/config",
+        required_inputs=["prd", "research", "spec"],
+        expected_outputs=["plan_path", "implementation_artifacts"],
+        risk=StageRisk.MEDIUM,
+        max_retries=3,
+        timeout_minutes=45,
+    ),
     "review": StageDefinition(
         name="review",
         category=StageCategory.REVIEW,
@@ -117,6 +127,16 @@ BUILTIN_STAGES: dict[str, StageDefinition] = {
         risk=StageRisk.LOW,
         max_retries=2,
         timeout_minutes=20,
+    ),
+    "verify": StageDefinition(
+        name="verify",
+        category=StageCategory.VALIDATION,
+        description="Run validation and prepare delivery/context evidence",
+        required_inputs=["implementation_artifacts", "plan_path"],
+        expected_outputs=["test_report_path", "delivery_path", "context_pack_path"],
+        risk=StageRisk.LOW,
+        max_retries=2,
+        timeout_minutes=30,
     ),
     "architecture_review": StageDefinition(
         name="architecture_review",

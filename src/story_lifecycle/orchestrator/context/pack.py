@@ -143,9 +143,18 @@ def _render_pack(story_key: str, bundle: ContextBundle, skill: str = "") -> str:
 
     # 完整度检查
     gaps = []
+    has_prd = any(d.get("kind") == "prd" for d in bundle.documents)
+    if not has_prd:
+        gaps.append("prd")
+    has_research = any(d.get("kind") == "research" for d in bundle.documents)
+    if not has_research:
+        gaps.append("research")
     has_spec = any(d.get("kind") == "spec" for d in bundle.documents)
     if not has_spec:
         gaps.append("spec")
+    has_plan = any(d.get("kind") == "plan" for d in bundle.documents)
+    if story.get("current_stage") in ("build", "verify", "done") and not has_plan:
+        gaps.append("plan")
     if not bundle.story_projects:
         gaps.append("branch")
     if story.get("tapd_type") == "bug":

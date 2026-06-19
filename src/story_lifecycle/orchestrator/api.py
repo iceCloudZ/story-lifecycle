@@ -1,7 +1,6 @@
 """FastAPI server — REST API for story management and terminal access."""
 
 import asyncio
-import os
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -481,21 +480,16 @@ def get_story_stats(story_key: str):
 def create_story(req: CreateStoryRequest):
     from .service import create_and_start_story
 
-    workspace = req.workspace or os.getcwd()
-    prd_path = None
-    if req.content:
-        prd_dir = Path(workspace) / "prd"
-        prd_dir.mkdir(exist_ok=True)
-        prd_file = prd_dir / f"{req.key}.md"
-        prd_file.write_text(req.content, encoding="utf-8")
-        prd_path = str(prd_file)
+    workspace = req.workspace.strip()
+    if not workspace:
+        raise HTTPException(status_code=400, detail="workspace required")
 
     story_key = create_and_start_story(
         story_key=req.key,
         title=req.title,
         profile=req.profile,
         workspace=workspace,
-        prd_path=prd_path,
+        prd_path=None,
     )
 
     if req.autostart:
@@ -1648,6 +1642,49 @@ class CreateProjectRequest(BaseModel):
     remote_url: str = ""
 
 
+def _workspace_root_for_project(repo_path: str) -> Path:
+    """Infer the story workspace root for a registered project path."""
+    path = Path(repo_path).resolve()
+    candidates = [path, *path.parents]
+    for candidate in candidates:
+        if (
+            (candidate / ".story").exists()
+            or (candidate / ".agents").exists()
+            or (candidate / "AGENTS.md").exists()
+        ):
+            return candidate
+    return path
+
+
+def _workspace_options_from_projects(projects: list[dict]) -> list[dict]:
+    """Return unique selectable workspaces derived from registered projects."""
+    options: dict[str, dict] = {}
+    for project in projects:
+        repo_path = project.get("repo_path") or ""
+        if not repo_path:
+            continue
+        root = _workspace_root_for_project(repo_path)
+        key = str(root)
+        option = options.setdefault(
+            key,
+            {
+                "path": key,
+                "name": root.name or key,
+                "projectCount": 0,
+                "projects": [],
+            },
+        )
+        option["projectCount"] += 1
+        option["projects"].append(project.get("name", ""))
+    return sorted(options.values(), key=lambda item: item["name"])
+
+
+@app.get("/api/workspaces")
+def api_list_workspaces():
+    """List selectable story workspaces inferred from registered projects."""
+    return {"workspaces": _workspace_options_from_projects(db.list_projects())}
+
+
 @app.get("/api/projects")
 def api_list_projects():
     """List all registered projects with fresh availability."""
@@ -1835,6 +1872,232 @@ class StartStoryRequest(BaseModel):
     content: str = ""  # PRD / 需求正文，开始开发时必填，design 阶段注入给 CLI
 
 
+class IntakePreviewRequest(BaseModel):
+    source_type: str = "tapd"
+    source_id: str
+
+
+@app.post("/api/intake/preview")
+def api_intake_preview(req: IntakePreviewRequest):
+    """Fetch source detail and ask the built-in PRD generator to prefill Intake."""
+    source_id = req.source_id.strip()
+    if not source_id:
+        raise HTTPException(status_code=400, detail="source_id required")
+    source_type = (req.source_type or "tapd").strip().lower()
+
+    if source_type != "tapd":
+        raise HTTPException(
+            status_code=400, detail=f"unsupported source: {source_type}"
+        )
+
+    source_id = source_id.removeprefix("tapd-")
+    from ..sources import tapd_source
+    from . import prd_generator
+
+    source = tapd_source.TapdSource(_load_tapd_config())
+    item = source.get_detail(source_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="source story not found")
+
+    snapshot = prd_generator.StorySourceSnapshot(
+        story_key=f"{item.source}-{item.id}",
+        source_type=item.source,
+        source_id=item.id,
+        title=item.title,
+        description=item.description or "",
+        url=item.extra.get("url", ""),
+        priority=item.priority,
+        owner=item.owner,
+        status=item.status,
+    )
+    result = prd_generator.generate_prd_from_source(snapshot)
+    return {
+        "storyKey": snapshot.story_key,
+        "sourceType": snapshot.source_type,
+        "sourceId": snapshot.source_id,
+        "title": snapshot.title,
+        "sourceUrl": snapshot.url,
+        "action": result.action,
+        "markdown": result.markdown,
+        "summary": result.summary,
+        "dingtalkLinks": result.dingtalk_links,
+        "questions": result.questions,
+    }
+
+
+def _prepare_intake_prd_content(story_key: str, story: dict, content: str):
+    """Return (content, error_response) for the start endpoint.
+
+    If the user supplied content, treat it as the PRD/intake material directly.
+    Otherwise, ask the built-in PRD generator to prepare PRD from the story source.
+    """
+    if (content or "").strip():
+        return content, None
+
+    source_type = story.get("source_type") or ""
+    source_id = story.get("source_id") or ""
+    if not source_type or not source_id:
+        return "", JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "reasonCode": "content_required",
+                "message": "请填写 story 内容 / PRD",
+            },
+        )
+
+    try:
+        source_snapshot = _load_story_source_snapshot(story_key, story)
+    except Exception as exc:
+        return "", JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "reasonCode": "source_detail_unavailable",
+                "message": f"无法读取 story 来源详情: {exc}",
+            },
+        )
+    if not source_snapshot:
+        return "", JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "reasonCode": "content_required",
+                "message": "请填写 story 内容 / PRD",
+            },
+        )
+
+    from . import prd_generator
+
+    try:
+        result = prd_generator.generate_prd_from_source(source_snapshot)
+    except Exception as exc:
+        return "", JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "reasonCode": "prd_generation_failed",
+                "message": f"PRD 生成失败: {exc}",
+            },
+        )
+
+    if result.action == "generated" and result.markdown.strip():
+        return result.markdown, None
+
+    if result.action == "manual_download_required":
+        return "", JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "reasonCode": "dingtalk_download_required",
+                "message": result.summary or "请先打开外部文档并下载/复制 PRD 内容",
+                "dingtalk_links": result.dingtalk_links,
+            },
+        )
+
+    if result.action == "needs_clarification":
+        return "", JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "reasonCode": "intake_clarification_required",
+                "message": result.summary or "PRD 生成前需要补充需求信息",
+                "questions": result.questions,
+            },
+        )
+
+    return "", JSONResponse(
+        status_code=409,
+        content={
+            "ok": False,
+            "reasonCode": "prd_generation_failed",
+            "message": result.summary or "PRD 生成失败",
+        },
+    )
+
+
+def _load_story_source_snapshot(story_key: str, story: dict):
+    from . import prd_generator
+
+    source_type = story.get("source_type") or ""
+    source_id = story.get("source_id") or ""
+
+    if source_type == "tapd":
+        from ..sources import tapd_source
+
+        source = tapd_source.TapdSource(_load_tapd_config())
+        item = source.get_detail(source_id)
+        if not item:
+            return None
+        return prd_generator.StorySourceSnapshot(
+            story_key=story_key,
+            source_type=item.source,
+            source_id=item.id,
+            title=item.title or story.get("title", ""),
+            description=item.description or "",
+            url=item.extra.get("url", "") or story.get("tapd_url", ""),
+            priority=item.priority,
+            owner=item.owner,
+            status=item.status,
+        )
+
+    return prd_generator.StorySourceSnapshot(
+        story_key=story_key,
+        source_type=source_type,
+        source_id=source_id,
+        title=story.get("title", ""),
+        description="",
+        url=story.get("tapd_url", ""),
+        priority=story.get("priority", ""),
+        owner=story.get("owner", ""),
+        status=story.get("tapd_status", ""),
+    )
+
+
+def _bind_story_projects_for_start(story_key: str, story: dict, project_ids: list[int]):
+    sps = db.get_story_projects(story_key)
+    if not project_ids:
+        return
+
+    all_projects = {p["id"]: p for p in db.list_projects()}
+    existing_pids = {sp["project_id"] for sp in sps}
+    bound_repo = None
+    for pid in project_ids:
+        if pid in existing_pids:
+            continue
+        proj = all_projects.get(pid)
+        if not proj:
+            continue
+        # 分支名按 profile 的 branch_rule 生成（含 LLM 翻译的英文摘要），
+        # profile 没配 branch_rule 时回退到旧的 codex/{key}-{project} 规则。
+        from .nodes.profile_loader import load_profile
+        from .branch_naming import generate_branch_for_story
+
+        profile_raw = load_profile(story.get("profile") or "minimal")
+        branch = (
+            generate_branch_for_story(
+                story_key=story_key,
+                title=story.get("title", ""),
+                profile_raw=profile_raw,
+                project_name=proj["name"],
+            )
+            or f"codex/{story_key}-{proj['name']}"
+        )
+
+        db.bind_story_project(
+            story_key=story_key,
+            project_id=proj["id"],
+            branch=branch,
+            base_branch=proj.get("default_branch", "main"),
+            worktree_state="unprepared",
+            source="user",
+        )
+        if not bound_repo and proj.get("repo_path"):
+            bound_repo = proj["repo_path"]
+    if bound_repo:
+        db.update_story(story_key, workspace=bound_repo)
+
+
 @app.post("/api/story/{story_key}/start")
 def api_start_story(story_key: str, req: StartStoryRequest | None = None):
     """Start a story. Binds projects, promotes to ready, triggers LLM planning."""
@@ -1845,87 +2108,57 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
     intake_state = story.get("intake_state", "ready")
     req = req or StartStoryRequest()
 
-    # 开始开发时要求填写 story 内容（PRD）—— design 阶段会注入给 CLI。
-    if not (req.content or "").strip():
-        return JSONResponse(
-            status_code=409,
-            content={
-                "ok": False,
-                "reasonCode": "content_required",
-                "message": "请填写 story 内容 / PRD",
-            },
-        )
+    # Intake: user-provided PRD wins; otherwise source-backed stories can ask the
+    # built-in PRD generator LLM to prepare or route PRD creation.
+    prd_content, intake_error = _prepare_intake_prd_content(
+        story_key, story, req.content
+    )
+    if intake_error:
+        return intake_error
 
-    # Bind user-selected projects for candidate stories
     if intake_state == "candidate":
-        sps = db.get_story_projects(story_key)
-        if not sps and not req.project_ids:
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "ok": False,
-                    "reasonCode": "project_not_selected",
-                    "message": "请选择要关联的项目",
-                },
-            )
-        if req.project_ids:
-            all_projects = {p["id"]: p for p in db.list_projects()}
-            existing_pids = {sp["project_id"] for sp in sps}
-            bound_repo = None
-            for pid in req.project_ids:
-                if pid in existing_pids:
-                    continue  # 跳过已绑定的项目
-                proj = all_projects.get(pid)
-                if proj:
-                    # 分支名按 profile 的 branch_rule 生成（含 LLM 翻译的英文摘要），
-                    # profile 没配 branch_rule 时回退到旧的 codex/{key}-{project} 规则。
-                    from .nodes.profile_loader import load_profile
-                    from .branch_naming import generate_branch_for_story
-
-                    profile_raw = load_profile(story.get("profile") or "minimal")
-                    branch = (
-                        generate_branch_for_story(
-                            story_key=story_key,
-                            title=story.get("title", ""),
-                            profile_raw=profile_raw,
-                            project_name=proj["name"],
-                        )
-                        or f"codex/{story_key}-{proj['name']}"
-                    )
-
-                    db.bind_story_project(
-                        story_key=story_key,
-                        project_id=proj["id"],
-                        branch=branch,
-                        base_branch=proj.get("default_branch", "main"),
-                        worktree_state="unprepared",
-                        source="user",
-                    )
-                    # Point the story's workspace at the bound project's repo so the
-                    # AI CLI actually runs there. Previously workspace stayed the
-                    # sync-time/server-cwd default (e.g. the orchestrator's own repo),
-                    # so the CLI operated in the wrong project. (Worktree isolation is
-                    # a separate, not-yet-wired layer — this just fixes the repo.)
-                    if not bound_repo and proj.get("repo_path"):
-                        bound_repo = proj["repo_path"]
-            if bound_repo:
-                db.update_story(story_key, workspace=bound_repo)
-
         # Promote candidate to ready + planning
         db.update_story(story_key, intake_state="ready", status="planning")
 
-    # 保存 PRD 到工作区，供 design 阶段注入（_build_cli_prompt 读 context_json.prd_path）。
-    # 绑定项目后 workspace 已指向项目 repo，所以 PRD 落在正确的仓库里。
+    # Project binding is optional during Intake. In monorepos, the selected
+    # implementation modules (for example hc-order or hc-limit under hc-all) are
+    # discovered later by Design/Build, not modeled as separate repo projects.
+    _bind_story_projects_for_start(story_key, story, req.project_ids)
+
+    # 保存 PRD 到 story evidence 目录，供 design 阶段注入。
+    # 不写入被绑定服务仓库的 prd/，避免污染业务代码仓库。
     story = db.get_story(story_key)
     workspace = (story or {}).get("workspace", "") or ""
     if workspace:
-        from pathlib import Path
+        from ..story_paths import story_prd_path
 
-        prd_dir = Path(workspace) / "prd"
-        prd_dir.mkdir(parents=True, exist_ok=True)
-        prd_file = prd_dir / f"{story_key}.md"
-        prd_file.write_text(req.content, encoding="utf-8")
+        prd_file = story_prd_path(workspace, story_key, (story or {}).get("title", ""))
+        prd_file.parent.mkdir(parents=True, exist_ok=True)
+        prd_file.write_text(prd_content, encoding="utf-8")
         db.update_context(story_key, "prd_path", str(prd_file))
+        existing_prd = [
+            d for d in db.get_story_documents(story_key) if d.get("kind") == "prd"
+        ]
+        if existing_prd:
+            db.update_document(
+                existing_prd[0]["id"],
+                ref=str(prd_file),
+                summary="Intake PRD",
+                source="system",
+                verification_state="verified",
+            )
+        else:
+            db.create_document(
+                story_key,
+                "prd",
+                ref=str(prd_file),
+                summary="Intake PRD",
+                source="system",
+                verification_state="verified",
+            )
+        db.bump_context_revision(story_key)
+
+    db.update_story(story_key, intake_state="ready", status="planning")
 
     return {"ok": True, "story_key": story_key}
 

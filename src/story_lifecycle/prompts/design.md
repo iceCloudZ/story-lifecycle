@@ -1,24 +1,36 @@
-对需求进行分析与方案设计。
+对已准备好的 PRD 进行代码库调研与方案设计。
 
 ## 任务信息
 
 - Story Key: {story_key}
 - 标题: {title}
+- Story 证据目录: {story_dir}
 {prd_path_section}
-{no_prd_section}
 {skill_instruction}
 
 ## 步骤
 
-{requirement_source}
-分析需求范围，确定复杂度（S=小需求≤3文件, M=中等4-8文件, L=大需求>8文件或跨服务）和影响范围。
+1. 读取 PRD 文件。若 PRD 文件不存在或为空，停止并说明缺口，不要自行生成 PRD。
+2. 扫描代码库，记录实际使用过的 `rg`、`git`、文件阅读等证据。
+3. 将调研结论写入 `{story_dir}/research.md`。
+4. 将设计方案写入 `{story_dir}/spec.md`。
+5. 使用 `story-context` 回写 `research`、`spec` 文档引用和 gate 结果。
 
-确定需求涉及的所有 git 仓库：
-1. 扫描当前目录及子目录，找到所有 git 仓库（`git rev-parse --show-toplevel`）
-2. 对每个仓库，分析是否需要修改代码
-3. 将需要修改的仓库列在 `affected_repos` 中，包含仓库路径、名称、改动原因
+复杂度判定：
 
-将设计文档写入 `docs/` 目录。
+- S：单服务、小改动、无 DB/API 合约变化。
+- M：单服务中等改动，或新增/调整接口但影响面可控。
+- L：跨服务、DB/Nacos、金融核心参数、发布风险较高。
+
+`research.md` 必须包含：
+
+- PRD 摘要
+- 扫描命令
+- 相关仓库与模块
+- 现有实现
+- 影响面
+- 未决问题
+- 复杂度建议
 
 ## 完成后
 
@@ -26,7 +38,8 @@
 
 ```json
 {
-  "spec_path": "设计文档路径",
+  "research_path": "{story_dir}/research.md",
+  "spec_path": "{story_dir}/spec.md",
   "complexity": "S|M|L",
   "summary": "简要分析摘要",
   "affected_repos": [
@@ -45,4 +58,5 @@
 
 - 只做分析和文档，写完 `.story/done/design.json` 就停止
 - **不要安装依赖、不要修改代码、不要创建分支**
+- 不要调用 prd-generator，不要把 PRD 写入业务仓库 prd/ 目录
 - 不要执行后续阶段

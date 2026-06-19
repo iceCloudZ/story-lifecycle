@@ -421,7 +421,7 @@ def _build_agent_system_prompt(
             lines.append(f"  - {name}: {desc} (CLI: {cli})")
         stages_hint = "\n".join(lines)
     else:
-        stages_hint = "  - design: 需求澄清、方案设计\n  - implement: 编码实现\n  - test: 测试验证"
+        stages_hint = "  - design: 代码调研与方案设计\n  - build: 实施计划与编码实现\n  - verify: 验证与交付证据"
 
     return f"""你是开发任务编排 Agent。根据需求信息，用工具规划并执行开发流程。
 
@@ -755,6 +755,7 @@ def continue_orchestrator_agent(story_key: str):
                 profile_stages=profile_stages,
                 prd_path=ctx.get("prd_path", ""),
                 project_section=project_section,
+                workspace=workspace,
             )
 
             # 写入 prompt 文件
@@ -883,17 +884,21 @@ def _build_cli_prompt(
     profile_stages: dict,
     prd_path: str = "",
     project_section: str = "",
+    workspace: str = "",
 ) -> str:
     """构建给 CLI 的执行 prompt。"""
+    from ..story_paths import story_evidence_dir
+
     stage_desc = ""
     if stage in profile_stages:
         cfg = profile_stages[stage]
         stage_desc = cfg.description if hasattr(cfg, "description") else str(cfg)
 
+    story_dir = story_evidence_dir(workspace or Path.cwd(), story_key, title)
+
     # PRD 注入：只注入文件路径，让 CLI 自行读取（内联内容会把上下文撑爆）。
-    # PRD 由 /start 落地成文件（上传的文件或粘贴的内容都存为 workspace/prd/{key}.md），
-    # 路径存在 context_json.prd_path。这是 LangGraph→Agent FC 迁移时丢失的回归
-    # （legacy prompts/design.md 的 {prd_path_section} + prompt_renderer.py 曾注入路径）。
+    # PRD 在 story-lifecycle Intake 阶段落到 story evidence 目录，路径存在
+    # context_json.prd_path。
     prd_section = ""
     if prd_path:
         prd_section = (
@@ -928,6 +933,7 @@ def _build_cli_prompt(
 ### Story 信息
 - Key: {story_key}
 - 标题: {title}
+- Story 证据目录: {story_dir}
 
 ### 阶段说明
 {stage_desc}

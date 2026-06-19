@@ -1,10 +1,10 @@
 """Prompt rendering — template loading, variable substitution, stage contracts."""
 
-import json
 import re
 from pathlib import Path
 
 from ...db import models as db
+from ...story_paths import story_evidence_dir
 from .state import StoryState, STORY_HOME
 from .profile_loader import get_stage_config
 
@@ -150,32 +150,8 @@ def _derive_relevance_tags(state: StoryState, stage: str) -> list[str]:
 
 
 def _build_prd_task_section(state: StoryState, stage: str, has_prd: bool) -> str:
-    """Build AI-enhanced PRD injection section if prd-task-{story_key}.json exists."""
-    if has_prd or stage != "design":
-        return ""
-    workspace = state.get("workspace", "") or str(Path.cwd())
-    story_key = state.get("story_key", "")
-    prd_task_file = Path(workspace) / ".story" / f"prd-task-{story_key}.json"
-    if not prd_task_file.exists():
-        return ""
-    try:
-        prd_task = json.loads(prd_task_file.read_text(encoding="utf-8"))
-        description = prd_task.get("description", "")
-        section = (
-            "## AI 增强 PRD 任务\n\n"
-            f"检测到 PRD 生成任务文件: `{prd_task_file}`\n\n"
-            f"- **来源**: {prd_task.get('source', '未知')}\n"
-            f"- **平台 ID**: {prd_task.get('source_id', '')}\n"
-            f"- **标题**: {prd_task.get('title', '')}\n"
-            f"- **描述**: {description}\n\n"
-            "请执行以下步骤:\n"
-            "1. 使用 `prd-generator` skill 生成结构化 PRD\n"
-            "2. 将生成的 PRD 保存到合适位置（如 `prd/` 目录）\n"
-            "3. 在 `.story/done/` 目录写入完成标记\n"
-        )
-        return section
-    except Exception:
-        return ""
+    """Deprecated: PRD generation belongs to Intake, before AI stages start."""
+    return ""
 
 
 def _render_prompt(stage: str, state: StoryState) -> tuple[str, dict]:
@@ -317,6 +293,13 @@ Story: {state["story_key"]}
             repair_section = f"## Repair Packet（修复上下文）\n\n{repair_content}"
 
     has_prd = bool(ctx.get("prd_path"))
+    story_dir = str(
+        story_evidence_dir(
+            state.get("workspace", "") or str(Path.cwd()),
+            state["story_key"],
+            state.get("title", ""),
+        )
+    )
 
     # Get stage skill from profile
     rp = state.get("_resolved_profile")
@@ -329,6 +312,7 @@ Story: {state["story_key"]}
     vars_map = {
         "{story_key}": state["story_key"],
         "{title}": state.get("title", ""),
+        "{story_dir}": story_dir,
         "{prd_path}": ctx.get("prd_path", ""),
         "{prd_path_section}": (
             f"- PRD 文件: {ctx['prd_path']}\n  请读取该文件了解需求详情。"
@@ -338,14 +322,12 @@ Story: {state["story_key"]}
         "{no_prd_section}": (
             ""
             if has_prd
-            else "**没有提供 PRD 文件。**\n"
-            "1. 先扫描项目目录，查找已有的需求文档（`docs/`、`prd/`、`requirements/` 等），找到则直接使用\n"
-            "2. 如果没找到，向用户询问需求详情（TAPD/Jira 链接、文字描述、或其他文档）"
+            else "**没有提供 PRD 文件。请先回到 story-lifecycle Intake 准备 PRD.md。**"
         ),
         # AI-enhanced PRD injection
         "{prd_task_section}": _build_prd_task_section(state, stage, has_prd),
         "{requirement_source}": (
-            "阅读 PRD 文件" if has_prd else "查找项目已有文档或与用户对话，获取需求详情"
+            "阅读 PRD 文件" if has_prd else "停止并要求先准备 PRD.md"
         ),
         "{spec_path_section}": (
             f"- Spec 路径: {ctx['spec_path']}" if ctx.get("spec_path") else ""

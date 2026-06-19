@@ -1,5 +1,5 @@
-# Story Lifecycle — Minimal Profile (2 stages)
-# Default profile: design → implement. 最小闭环，快速验证。
+# Story Lifecycle — Minimal Profile (3 stages)
+# Default profile: design → build → verify. PRD intake is prepared before AI starts.
 version: 4
 cli: claude
 execution_mode: interactive_pty
@@ -9,7 +9,7 @@ branch_rule: "feature/{author}/{summary}_{date}"  # 占位符: {author}/{date}/{
 stages:
   design:
     order: 1
-    description: "需求澄清与方案设计"
+    description: "代码调研与方案设计"
     cli: claude
     skill: "/brainstorming"
     confirm: false
@@ -17,21 +17,37 @@ stages:
     max_retries: 2
     allowed_providers: [deepseek, zhipu]
     expected_outputs:
+      - research_path
       - spec_path
       - complexity
-    next_default: [implement]
+    next_default: [build]
 
-  implement:
+  build:
     order: 2
-    description: "编码实现"
+    description: "实施计划与编码实现"
     cli: claude
     confirm: false
     review: false
     max_retries: 3
     allowed_providers: [deepseek, zhipu, anthropic]
     expected_outputs:
+      - plan_path
       - files_changed
       - summary
+    next_default: [verify]
+
+  verify:
+    order: 3
+    description: "验证与交付资料包"
+    cli: claude
+    confirm: false
+    review: false
+    max_retries: 2
+    allowed_providers: [deepseek, zhipu, anthropic]
+    expected_outputs:
+      - test_report_path
+      - delivery_path
+      - context_pack_path
     next_default: []
 
 quality:

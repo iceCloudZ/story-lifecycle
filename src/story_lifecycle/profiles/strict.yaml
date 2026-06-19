@@ -1,6 +1,5 @@
-# Story Lifecycle — Strict Profile (4 stages with explicit review)
-# 严格路径：design → review_design → implement → review
-# 适用于高风险需求、团队协作、上线前审查。
+# Story Lifecycle — Strict Profile (3 stages with built-in review loops)
+# 严格路径：design → build → verify。评审循环内联在阶段里。
 version: 4
 cli: claude
 execution_mode: interactive_pty
@@ -10,35 +9,21 @@ branch_rule: "feature/{author}/{summary}_{date}"  # 占位符: {author}/{date}/{
 stages:
   design:
     order: 1
-    description: "需求分析与方案设计"
+    description: "代码调研与方案设计"
     skill: "/brainstorming"
     confirm: false
     review: true
     max_retries: 2
     allowed_providers: [deepseek, zhipu]
     expected_outputs:
+      - research_path
       - spec_path
       - complexity
-    next_default: [review_design]
+    next_default: [build]
 
-  review_design:
+  build:
     order: 2
-    description: "设计审查"
-    cli: codex
-    model: haiku
-    skill: ""
-    confirm: false
-    review: false
-    max_retries: 1
-    allowed_providers: [deepseek, zhipu]
-    expected_outputs:
-      - quality
-      - issues
-    next_default: [implement]
-
-  implement:
-    order: 3
-    description: "编码实现"
+    description: "实施计划与编码实现"
     cli: claude
     model: sonnet
     confirm: false
@@ -46,22 +31,23 @@ stages:
     max_retries: 3
     allowed_providers: [deepseek, zhipu, anthropic]
     expected_outputs:
+      - plan_path
       - files_changed
       - summary
-    next_default: [review]
+    next_default: [verify]
 
-  review:
-    order: 4
-    description: "代码审查"
+  verify:
+    order: 3
+    description: "验证与交付资料包"
     cli: claude
     model: haiku
-    skill: ""
     confirm: false
     review: false
-    max_retries: 1
+    max_retries: 2
     expected_outputs:
-      - quality
-      - issues
+      - test_report_path
+      - delivery_path
+      - context_pack_path
     next_default: []
 
 quality:
@@ -78,7 +64,7 @@ adversarial:
   enabled: true
   plan_loop:
     enabled: true
-    stages: [design, implement]
+    stages: [design, build]
     max_rounds: 3
     pass_condition: no_open_blocker_or_major
   code_loop:
@@ -96,7 +82,7 @@ reviewers:
     mode: api
     visible: true
     max_rounds: 3
-  implement:
+  build:
     mode: api
     visible: true
     max_rounds: 3

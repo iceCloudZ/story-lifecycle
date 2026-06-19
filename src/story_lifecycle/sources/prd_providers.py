@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .base import SourceItem
+from ..story_paths import story_prd_path
 
 
 @dataclass
@@ -86,12 +87,13 @@ def fetch_prd_content(
     return None
 
 
-def save_prd(story_key: str, prd_content: PrdContent, workspace: str) -> str:
-    prd_dir = Path(workspace) / "prd" if workspace else Path("prd")
-    prd_dir.mkdir(parents=True, exist_ok=True)
+def save_prd(
+    story_key: str, prd_content: PrdContent, workspace: str, title: str = ""
+) -> str:
     if prd_content.file_path and Path(prd_content.file_path).exists():
         return prd_content.file_path
-    prd_file = prd_dir / f"{story_key}.md"
+    prd_file = story_prd_path(workspace or ".", story_key, title)
+    prd_file.parent.mkdir(parents=True, exist_ok=True)
     prd_file.write_text(prd_content.markdown, encoding="utf-8")
     return str(prd_file)
 

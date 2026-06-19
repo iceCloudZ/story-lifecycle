@@ -171,7 +171,7 @@ def advance_cmd(key):
         console.print(f"[red]Story {key} 不存在[/]")
         raise SystemExit(1)
 
-    STAGE_ORDER = ["design", "implement", "test", "done"]
+    STAGE_ORDER = ["design", "build", "verify", "done"]
     current = s["current_stage"]
 
     if current == "done":

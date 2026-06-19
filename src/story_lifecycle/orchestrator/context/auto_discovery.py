@@ -24,7 +24,10 @@ class ScanResult:
     nacos_refs: list[dict] = field(default_factory=list)
     config_files: list[str] = field(default_factory=list)
     prd_files: list[str] = field(default_factory=list)
+    research_files: list[str] = field(default_factory=list)
     design_files: list[str] = field(default_factory=list)
+    plan_files: list[str] = field(default_factory=list)
+    test_report_files: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     fallback_mode: bool = False  # True if reading from repo_path (no worktree)
 
@@ -125,11 +128,34 @@ class Scanner:
 
         # Scan for PRD/design docs
         result.prd_files = _find_files(
-            scan_root, ["**/prd/**/*.md", "**/PRD/**/*.md", "**/docs/**/prd*.md"]
+            scan_root,
+            [
+                "**/story/**/PRD.md",
+                "**/prd/**/*.md",
+                "**/PRD/**/*.md",
+                "**/docs/**/prd*.md",
+            ],
+        )
+        result.research_files = _find_files(
+            scan_root,
+            ["**/story/**/research.md", "**/docs/**/research*.md"],
         )
         result.design_files = _find_files(
             scan_root,
-            ["**/design/**/*.md", "**/docs/**/design*.md", "**/DESIGN*.md"],
+            [
+                "**/story/**/spec.md",
+                "**/design/**/*.md",
+                "**/docs/**/design*.md",
+                "**/DESIGN*.md",
+            ],
+        )
+        result.plan_files = _find_files(
+            scan_root,
+            ["**/story/**/plan.md", "**/docs/**/plan*.md"],
+        )
+        result.test_report_files = _find_files(
+            scan_root,
+            ["**/story/**/test-report.md", "**/docs/**/test-report*.md"],
         )
 
         return result
@@ -168,14 +194,56 @@ class Decider:
                     }
                 )
 
-        # New design files
+        # New research files
+        for research in scan_result.research_files:
+            if research not in existing_doc_refs:
+                mutation.new_documents.append(
+                    {
+                        "kind": "research",
+                        "ref": research,
+                        "summary": f"Auto-discovered research: {Path(research).name}",
+                        "source": "ai",
+                        "evidence_ref": f"file scan in {scan_result.project_id}",
+                        "verification_state": "unverified",
+                    }
+                )
+
+        # New spec/design files
         for design in scan_result.design_files:
             if design not in existing_doc_refs:
                 mutation.new_documents.append(
                     {
-                        "kind": "design",
+                        "kind": "spec",
                         "ref": design,
-                        "summary": f"Auto-discovered design doc: {Path(design).name}",
+                        "summary": f"Auto-discovered spec: {Path(design).name}",
+                        "source": "ai",
+                        "evidence_ref": f"file scan in {scan_result.project_id}",
+                        "verification_state": "unverified",
+                    }
+                )
+
+        # New plan files
+        for plan in scan_result.plan_files:
+            if plan not in existing_doc_refs:
+                mutation.new_documents.append(
+                    {
+                        "kind": "plan",
+                        "ref": plan,
+                        "summary": f"Auto-discovered plan: {Path(plan).name}",
+                        "source": "ai",
+                        "evidence_ref": f"file scan in {scan_result.project_id}",
+                        "verification_state": "unverified",
+                    }
+                )
+
+        # New test reports
+        for report in scan_result.test_report_files:
+            if report not in existing_doc_refs:
+                mutation.new_documents.append(
+                    {
+                        "kind": "test_report",
+                        "ref": report,
+                        "summary": f"Auto-discovered test report: {Path(report).name}",
                         "source": "ai",
                         "evidence_ref": f"file scan in {scan_result.project_id}",
                         "verification_state": "unverified",

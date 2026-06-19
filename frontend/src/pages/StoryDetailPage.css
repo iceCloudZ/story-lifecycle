@@ -176,6 +176,73 @@
 .ac-focus { color: #374151; font-size: 13px; line-height: 1.5; padding-left: 32px; }
 .ac-reason { color: #6b7280; font-size: 12px; font-style: italic; padding-left: 32px; text-decoration: line-through; }
 
+/* Context Tab */
+.context-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ctx-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.ctx-toolbar .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ctx-skill-select {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #374151;
+}
+.ctx-manual-panel,
+.context-tab section {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+}
+.context-tab h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #111827;
+}
+.ctx-steps {
+  display: grid;
+  gap: 6px;
+  color: #374151;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.ctx-item,
+.ctx-empty {
+  color: #374151;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.ctx-empty {
+  margin: 0;
+  color: #6b7280;
+}
+.ctx-sub {
+  margin-top: 4px;
+  color: #6b7280;
+  font-size: 12px;
+}
+.ctx-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
 /* Keep old section styles for compatibility with existing sub-components */
 .sdp-section {
   margin-bottom: 20px;

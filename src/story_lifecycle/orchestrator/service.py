@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..db import models as db
+from ..story_paths import story_prd_path
 from .nodes import load_profile, get_stage_config
 
 MAX_CONTEXT_SIZE = 1 * 1024 * 1024  # 1MB
@@ -100,9 +101,8 @@ def create_and_start_story(
         p = Path(prd_path)
         if p.exists():
             prd_content = p.read_text(encoding="utf-8")
-            prd_dir = Path(ws) / "prd"
-            prd_dir.mkdir(exist_ok=True)
-            prd_file = prd_dir / f"{story_key}.md"
+            prd_file = story_prd_path(ws, story_key, title)
+            prd_file.parent.mkdir(parents=True, exist_ok=True)
             prd_file.write_text(prd_content, encoding="utf-8")
             prd_path = str(prd_file)
 
@@ -120,6 +120,14 @@ def create_and_start_story(
 
     if prd_path:
         db.update_context(story_key, "prd_path", prd_path)
+        db.create_document(
+            story_key,
+            "prd",
+            ref=prd_path,
+            summary="Intake PRD",
+            source="system",
+            verification_state="verified",
+        )
 
     return story_key
 
@@ -329,7 +337,7 @@ def create_story_from_source(
     elif generate_prd and item.item_type == "requirement":
         prd_content = fetch_prd_content(item)
         if prd_content and prd_content.markdown:
-            prd_path = save_prd(story_key, prd_content, workspace)
+            prd_path = save_prd(story_key, prd_content, workspace, title=item.title)
 
     # Bug -> resolve parent (skip when force_standalone to avoid infinite loop)
     if item.item_type == "bug" and not force_standalone:
