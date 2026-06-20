@@ -1,0 +1,42 @@
+repo: story-lifecycle
+stories:
+  - id: SL-1
+    title: v0.5.x 基线能力（Headless/Zellij 抽象层、可观测性、子故事 P0、SWE-bench Runner、Review 门禁、Planner/Reviewer 对抗循环、LLM 语义提取、StorySource 抽象、Tool Registry）
+    status: done
+    doc: docs/roadmap-v0.5-to-v1.0.md
+    priority: high
+  - id: SL-2
+    title: v0.6 Reliability Loop（可安装/可启动/可跑通/可卡住/可排查最小闭环 + setup/doctor/diagnostics/TUI 回归）
+    status: done
+    doc: docs/code-freeze-and-reliability-loop-plan.md
+    priority: high
+  - id: SL-3
+    title: v0.11.0 编排引擎迁移（LangGraph → Agent Function Calling + 多会话 PTY + StoryDetailPage 重构）
+    status: done
+    doc: CHANGELOG.md
+    priority: high
+  - id: SL-4
+    title: v0.11.5 改 bug 闭环（pack 关联需求 context、sync-related-bugs、bug resolve 一键收尾、完整度检查）
+    status: done
+    doc: CHANGELOG.md
+    priority: high
+  - id: SL-5
+    title: v0.7 Evidence & Memory Layer（SWE-bench 数据飞轮：梯度归因/反事实/模式提取/偏好数据集；Working Memory + Budget Ledger）
+    status: todo
+    doc: docs/idea-swebench-data-flywheel.md
+    priority: high
+  - id: SL-6
+    title: v0.8 Project Intelligence Input Layer（Story Source 产品化、Test Source 抽象、Project Profile seed、Project Intelligence Probe、Resource Lock dry-run）
+    status: todo
+    doc: docs/design-story-source-integration.md
+    priority: medium
+  - id: SL-7
+    title: v0.9 双飞轮治理 + 智能路由（Strategic Router shadow、Runtime Blackboard、Meta-Planner + Plan-stage Decomposition）
+    status: todo
+    doc: docs/idea-dual-flywheel-domain-and-engine.md
+    priority: medium
+  - id: SL-8
+    title: v1.0 StoryOS Baseline（Stage Graph + Graph Patch Registry + Sandbox Validation、Guarded Apply autonomy L0-L5、全平台 CI/CD、文档与稳定性）
+    status: todo
+    doc: docs/roadmap-and-priorities.md
+    priority: medium
