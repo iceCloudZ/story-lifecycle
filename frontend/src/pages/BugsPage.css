@@ -1,0 +1,160 @@
+.bugs-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.bugs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.bugs-header h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  color: #111827;
+}
+
+.bugs-meta {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.bugs-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.bugs-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+  align-items: center;
+}
+
+.filter-input,
+.filter-select {
+  color: #1f2937;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  min-width: 140px;
+}
+
+.filter-input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.filter-input:focus,
+.filter-select:focus {
+  border-color: #2563eb;
+  outline: none;
+  box-shadow: 0 0 0 3px #2563eb1a;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #374151;
+  cursor: pointer;
+}
+
+.bug-table {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.bug-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 100px 100px 120px 90px;
+  gap: 12px;
+  padding: 12px 16px;
+  align-items: center;
+  border-bottom: 1px solid #f3f4f6;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.bug-row:last-child {
+  border-bottom: none;
+}
+
+.bug-row:hover {
+  background: #f9fafb;
+}
+
+.bug-row-head {
+  background: #f9fafb;
+  font-weight: 600;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: default;
+}
+
+.bug-row-head:hover {
+  background: #f9fafb;
+}
+
+.col-pri {
+  text-align: center;
+}
+
+.col-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+  color: #1f2937;
+}
+
+.bug-table-key {
+  font-size: 12px;
+  color: #2563eb;
+  font-weight: 500;
+}
+
+.col-status,
+.col-tapd,
+.col-owner,
+.col-deadline {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.bug-pri {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+.bug-pri-urgent {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.bug-pri-high {
+  background: #ffedd5;
+  color: #ea580c;
+}
+
+.bug-pri-medium {
+  background: #fef9c3;
+  color: #ca8a04;
+}
+
+.bug-pri-low {
+  background: #f3f4f6;
+  color: #6b7280;
+}

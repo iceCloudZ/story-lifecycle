@@ -34,6 +34,12 @@ def sync_tapd(
                 result["would_create"] += 1
             continue
 
+        parent_key = ""
+        if item.item_type == "bug" and item.parent_id and item.parent_id != "0":
+            parent = db.find_by_source_id(item.source, item.parent_id)
+            if parent:
+                parent_key = parent["story_key"]
+
         if existing:
             updates = {}
             if item.title:
@@ -49,6 +55,8 @@ def sync_tapd(
             url = item.extra.get("url", "")
             if url:
                 updates["tapd_url"] = url
+            if parent_key and not existing.get("parent_key"):
+                updates["parent_key"] = parent_key
             if updates:
                 db.update_story(existing["story_key"], **updates)
             result["updated"] += 1
@@ -78,6 +86,7 @@ def sync_tapd(
                 tapd_type=tapd_type,
                 intake_state="candidate",
                 status="idle",
+                parent_key=parent_key,
             )
             result["created"] += 1
             log.info(f"Created story {story['story_key']} for {item.source}:{item.id}")

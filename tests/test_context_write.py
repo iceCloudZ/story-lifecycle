@@ -67,3 +67,25 @@ def test_set_branch_updates_existing(isolated_story_home, tmp_path):
     )
     assert r.status_code == 200
     assert r.json()["branch"] == "new-branch"
+
+
+def test_set_branch_two_projects_no_worktree_path(isolated_story_home, tmp_path):
+    """Regression: updating two bindings without sending worktree_path must not 500."""
+    _seed("W5", tmp_path)
+    db.create_project(name="p5a", repo_path=str(tmp_path / "a"))
+    db.create_project(name="p5b", repo_path=str(tmp_path / "b"))
+    client = TestClient(app)
+    r1 = client.put(
+        "/api/story/W5/context/branch",
+        json={"project_id": 1, "branch": "feature/W5-a"},
+    )
+    assert r1.status_code == 200
+    r2 = client.put(
+        "/api/story/W5/context/branch",
+        json={"project_id": 2, "branch": "feature/W5-b"},
+    )
+    assert r2.status_code == 200
+    bindings = db.get_story_projects("W5")
+    assert len(bindings) == 2
+    assert bindings[0]["branch"] == "feature/W5-a"
+    assert bindings[1]["branch"] == "feature/W5-b"

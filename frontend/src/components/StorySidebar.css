@@ -68,3 +68,20 @@
   background: #fee2e2;
   color: #dc2626;
 }
+.ss-archive {
+  margin-top: auto;
+  padding: 12px;
+  border-top: 1px solid #f3f4f6;
+}
+.btn-archive {
+  width: 100%;
+  font-size: 12px;
+  color: #6b7280;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+}
+.btn-archive:hover {
+  color: #374151;
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}

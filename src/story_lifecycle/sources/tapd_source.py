@@ -24,7 +24,7 @@ class TapdSource(StorySource):
             "bug_status", "new,reopened,assigned,resolving"
         )
 
-    def fetch_pending(self, fetch_all: bool = False) -> list[SourceItem]:
+    def fetch_pending(self, fetch_all: bool = False, item_type: str | None = None) -> list[SourceItem]:
         items = []
         if fetch_all:
             saved_story = self.story_status_filter
@@ -32,9 +32,9 @@ class TapdSource(StorySource):
             self.story_status_filter = "*"
             self.bug_status_filter = "*"
         try:
-            if self.story_status_filter:
+            if item_type in (None, "story", "requirement") and self.story_status_filter:
                 items.extend(self._fetch_stories())
-            if self.bug_status_filter:
+            if item_type in (None, "bug") and self.bug_status_filter:
                 items.extend(self._fetch_bugs())
         finally:
             if fetch_all:

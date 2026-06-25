@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard'
 import StoryDetailPage from './pages/StoryDetailPage'
 import QualityDashboard from './pages/QualityDashboard'
 import DiagnosticsPage from './pages/DiagnosticsPage'
+import BugsPage from './pages/BugsPage'
 import './App.css'
 
 const queryClient = new QueryClient({
@@ -33,6 +34,9 @@ function AppContent() {
           <NavLink to="/diagnostics" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
             Diagnostics
           </NavLink>
+          <NavLink to="/bugs" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+            缺陷
+          </NavLink>
         </nav>
       </header>
       <main className="main">
@@ -41,6 +45,7 @@ function AppContent() {
           <Route path="/story/:key" element={<StoryDetailPage />} />
           <Route path="/quality" element={<QualityDashboard />} />
           <Route path="/diagnostics" element={<DiagnosticsPage />} />
+          <Route path="/bugs" element={<BugsPage />} />
         </Routes>
       </main>
     </div>

@@ -70,6 +70,40 @@ def _extract_json_object(text: str) -> str | None:
     return None
 
 
+# Models known to support vision/multimodal input (OpenAI-compatible).
+VISION_MODELS: set[str] = {
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4-turbo",
+    "gpt-4-vision-preview",
+    "claude-sonnet-4-20250514",
+    "claude-opus-4-20250514",
+    "claude-haiku-4-5-20251001",
+    "claude-3-5-sonnet",
+    "claude-3-opus",
+    "claude-3-sonnet",
+    "claude-3-haiku",
+    "qwen-vl-max",
+    "qwen-vl-plus",
+    "qwen2-vl",
+    "qwen2-5-vl",
+    "glm-4v",
+    "glm-4v-plus",
+    "glm-4-flash",
+    "moonshot-v1-32k-vision-preview",
+    "moonshot-v1-128k-vision-preview",
+    "kimi-k2.5",
+    "kimi-k2",
+    "kimi-for-coding",
+}
+
+
+def _is_vision_model(model: str) -> bool:
+    """Best-effort check whether a model name indicates vision support."""
+    lowered = model.lower()
+    return any(vm in lowered for vm in VISION_MODELS)
+
+
 class LLMClient:
     """Thin wrapper over OpenAI-compatible API. Zero LangChain dependency."""
 
@@ -85,6 +119,13 @@ class LLMClient:
         )
         self.model = model or os.environ.get("STORY_LLM_MODEL", "deepseek-v4-pro")
 
+    def _chat_completions_url(self) -> str:
+        """Return the chat completions URL, tolerating base_urls with /v1 suffix."""
+        base = self.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            return f"{base}/chat/completions"
+        return f"{base}/v1/chat/completions"
+
     def invoke(
         self,
         prompt: str,
@@ -97,6 +138,38 @@ class LLMClient:
         """Call LLM, return text content."""
         body = self._build_body(
             prompt, system=system, temperature=temperature, max_tokens=max_tokens
+        )
+        resp_body = self._request(body, timeout=timeout)
+        return self._extract_content(resp_body)
+
+    def invoke_vision(
+        self,
+        prompt: str,
+        images: list[str],
+        *,
+        system: str = "",
+        temperature: float = 0.1,
+        timeout: int = 120,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Call a vision-capable LLM with text + image URLs or base64 data URLs.
+
+        Args:
+            prompt: Text prompt.
+            images: List of image URLs or base64 data URLs
+                (e.g. "https://..." or "data:image/png;base64,...").
+        Returns:
+            Text content from the model.
+        Raises:
+            RuntimeError: if the configured model does not appear vision-capable.
+        """
+        if not _is_vision_model(self.model):
+            log.warning(
+                "Model %s is not in the known-vision list; vision call may fail.",
+                self.model,
+            )
+        body = self._build_multimodal_body(
+            prompt, images, system=system, temperature=temperature, max_tokens=max_tokens
         )
         resp_body = self._request(body, timeout=timeout)
         return self._extract_content(resp_body)
@@ -120,7 +193,10 @@ class LLMClient:
         )
         result = self._parse_json(content)
         if result is None:
-            raise ValueError(f"Cannot parse LLM response as JSON: {content[:200]}")
+            raise ValueError(
+                f"Cannot parse LLM response as JSON. "
+                f"First 500 chars: {content[:500]!r}"
+            )
         return result
 
     def invoke_structured(
@@ -146,7 +222,10 @@ class LLMClient:
         )
         data = self._parse_json(content)
         if data is None:
-            raise ValueError(f"Cannot parse LLM response as JSON: {content[:200]}")
+            raise ValueError(
+                f"Cannot parse LLM response as JSON. "
+                f"First 500 chars: {content[:500]!r}"
+            )
         try:
             return schema.model_validate(data)
         except ValidationError:
@@ -171,7 +250,7 @@ class LLMClient:
         full: list[str] = []
         with httpx.stream(
             "POST",
-            f"{self.base_url}/v1/chat/completions",
+            self._chat_completions_url(),
             headers={"Authorization": f"Bearer {self.api_key}"},
             json=body,
             timeout=timeout,
@@ -290,6 +369,33 @@ class LLMClient:
             body["max_tokens"] = max_tokens
         return body
 
+    def _build_multimodal_body(
+        self,
+        prompt: str,
+        images: list[str],
+        *,
+        system: str = "",
+        temperature: float = 0.1,
+        max_tokens: int | None = None,
+    ) -> dict:
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        for img in images:
+            content.append({"type": "image_url", "image_url": {"url": img}})
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": content})
+
+        body: dict = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
+        return body
+
     def _request(self, body: dict, *, timeout: int = 90) -> dict:
         if not self.api_key:
             raise RuntimeError("LLM API key not configured. Run 'story setup' first.")
@@ -297,7 +403,7 @@ class LLMClient:
         t0 = time.monotonic()
         try:
             resp = httpx.post(
-                f"{self.base_url}/v1/chat/completions",
+                self._chat_completions_url(),
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 json=body,
                 timeout=timeout,
@@ -320,23 +426,33 @@ class LLMClient:
 
     @staticmethod
     def _parse_json(content: str) -> dict | None:
-        """Robust JSON parsing: direct → markdown fence → bracket counting."""
+        """Robust JSON parsing: direct → markdown fence → bracket counting.
+
+        Logs the full content on failure so callers can diagnose malformed
+        LLM output without re-running requests.
+        """
+        last_error = None
         try:
             return json.loads(content)
-        except (json.JSONDecodeError, TypeError):
-            pass
+        except (json.JSONDecodeError, TypeError) as exc:
+            last_error = exc
         m = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", content, re.DOTALL)
         if m:
             try:
                 return json.loads(m.group(1))
-            except (json.JSONDecodeError, TypeError):
-                pass
+            except (json.JSONDecodeError, TypeError) as exc:
+                last_error = exc
         extracted = _extract_json_object(content)
         if extracted:
             try:
                 return json.loads(extracted)
-            except (json.JSONDecodeError, TypeError):
-                pass
+            except (json.JSONDecodeError, TypeError) as exc:
+                last_error = exc
+        log.warning(
+            "LLM response JSON parse failed: %s\n--- content ---\n%s\n--- end ---",
+            last_error,
+            content,
+        )
         return None
 
     @staticmethod
@@ -363,6 +479,7 @@ class LLMClient:
 # ── module-level singleton ──
 
 _client: LLMClient | None = None
+_vision_client: LLMClient | None = None
 
 
 def get_llm() -> LLMClient:
@@ -370,3 +487,32 @@ def get_llm() -> LLMClient:
     if _client is None:
         _client = LLMClient()
     return _client
+
+
+def get_vision_llm() -> LLMClient | None:
+    """Return a vision-capable LLM client.
+
+    Priority:
+    1. Dedicated vision config (STORY_VISION_API_KEY / BASE_URL / MODEL).
+    2. Fallback to the main LLM config if its model appears vision-capable.
+    3. None if no vision-capable config is available.
+    """
+    global _vision_client
+    if _vision_client is not None:
+        return _vision_client
+
+    vision_key = os.environ.get("STORY_VISION_API_KEY", "")
+    vision_base = os.environ.get("STORY_VISION_BASE_URL", "")
+    vision_model = os.environ.get("STORY_VISION_MODEL", "")
+    if vision_key:
+        _vision_client = LLMClient(
+            api_key=vision_key,
+            base_url=vision_base or os.environ.get("STORY_LLM_BASE_URL", ""),
+            model=vision_model or os.environ.get("STORY_LLM_MODEL", ""),
+        )
+        return _vision_client
+
+    main = get_llm()
+    if _is_vision_model(main.model):
+        return main
+    return None

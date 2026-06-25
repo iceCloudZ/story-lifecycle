@@ -15,9 +15,11 @@ interface Props {
   modules: Module[]
   activeModule: string
   onModuleChange: (id: string) => void
+  onArchive?: () => void
 }
 
-export default function StorySidebar({ storyKey, storyTitle, storyStatus, modules, activeModule, onModuleChange }: Props) {
+export default function StorySidebar({ storyKey, storyTitle, storyStatus, modules, activeModule, onModuleChange, onArchive }: Props) {
+  const archived = storyStatus === 'archived'
   return (
     <aside className="story-sidebar">
       <div className="ss-story-info">
@@ -41,6 +43,13 @@ export default function StorySidebar({ storyKey, storyTitle, storyStatus, module
           </button>
         ))}
       </nav>
+      {onArchive && !archived && (
+        <div className="ss-archive">
+          <button className="btn btn-archive" onClick={onArchive} title="已上线并验证过，归档此 Story">
+            🗃️ 归档
+          </button>
+        </div>
+      )}
     </aside>
   )
 }

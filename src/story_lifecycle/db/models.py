@@ -468,7 +468,7 @@ def list_candidate_stories() -> list[dict]:
 def list_completed_stories(limit: int = 20) -> list[dict]:
     with _db() as conn:
         rows = conn.execute(
-            "SELECT * FROM story WHERE status IN ('completed', 'failed', 'aborted') ORDER BY updated_at DESC LIMIT ?",
+            "SELECT * FROM story WHERE status IN ('completed', 'failed', 'aborted', 'archived') ORDER BY updated_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -520,6 +520,31 @@ def get_sub_stories(parent_key: str) -> list[dict]:
         rows = conn.execute(
             "SELECT * FROM story WHERE parent_key = ? ORDER BY subtask_index",
             (parent_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_stories_by_parent(parent_key: str, item_type: str = "") -> list[dict]:
+    """List stories linked to a parent, optionally filtered by tapd_type."""
+    with _db() as conn:
+        if item_type:
+            rows = conn.execute(
+                "SELECT * FROM story WHERE parent_key = ? AND tapd_type = ? ORDER BY updated_at DESC",
+                (parent_key, item_type),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM story WHERE parent_key = ? ORDER BY updated_at DESC",
+                (parent_key,),
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_unlinked_bugs() -> list[dict]:
+    """List bugs that are not linked to any story."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM story WHERE tapd_type = 'bug' AND (parent_key IS NULL OR parent_key = '') ORDER BY updated_at DESC LIMIT 200",
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -1199,7 +1224,7 @@ def bind_story_project(
     branch: str = "",
     base_branch: str = "main",
     base_commit: str = "",
-    worktree_path: str = "",
+    worktree_path: str | None = None,
     workspace_type: str = "",
     worktree_state: str = "unprepared",
     summary: str = "",

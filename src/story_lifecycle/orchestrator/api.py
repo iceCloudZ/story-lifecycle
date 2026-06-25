@@ -1,10 +1,12 @@
 """FastAPI server — REST API for story management and terminal access."""
 
 import asyncio
+import logging
+import tempfile
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -26,6 +28,9 @@ from .graph import (
 )
 from .nodes.profile_loader import resolve_profile
 from . import planner
+
+
+log = logging.getLogger("story-lifecycle.api")
 
 
 # -------- WebSocket broadcast --------
@@ -175,6 +180,7 @@ def _serialize_story_summary(s: dict) -> dict:
         "intakeState": s.get("intake_state"),
         "sourceType": s.get("source_type"),
         "sourceId": s.get("source_id"),
+        "parentKey": s.get("parent_key"),
     }
 
 
@@ -397,6 +403,22 @@ def list_stories(
     return JSONResponse([_serialize_story_summary(s) for s in stories])
 
 
+@app.get("/api/bugs")
+def list_bugs(status: str = "", show_all: bool = False):
+    """List bug stories. Defaults to open bugs; pass show_all to include resolved/closed."""
+    stories = db.list_visible_stories(
+        show_all=show_all,
+        status=status,
+        item_type="bug",
+        show_completed=show_all,
+    )
+    # TAPD closed/resolved/rejected bugs are considered done unless show_all.
+    if not show_all:
+        done_tapd = {"closed", "resolved", "rejected"}
+        stories = [s for s in stories if (s.get("tapd_status") or "").lower() not in done_tapd]
+    return JSONResponse([_serialize_story_summary(s) for s in stories])
+
+
 @app.get("/api/story/{story_key}")
 def get_story(story_key: str):
     s = db.get_story(story_key)
@@ -555,6 +577,21 @@ def delete_story(story_key: str):
     db.delete_story(story_key)
     kill_pty(story_key)
     return {"ok": True}
+
+
+@app.put("/api/story/{story_key}/archive")
+def archive_story(story_key: str):
+    """Archive a story that has been released and verified.
+
+    Archived stories disappear from the default dashboard list but remain
+    queryable via show_all and are not deleted.
+    """
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+    db.update_story(story_key, status="archived")
+    db.log_stage(story_key, s.get("current_stage", ""), "archive", "User archived story after release")
+    return {"ok": True, "status": "archived"}
 
 
 @app.post("/api/story/{parent_key}/sub")
@@ -1307,6 +1344,7 @@ class SyncRequest(BaseModel):
     dry_run: bool = False
     status_only: bool = False
     fetch_all: bool = False
+    item_type: str = ""  # "bug" | "story" | "requirement" | ""
 
 
 @app.post("/api/sync/tapd")
@@ -1322,7 +1360,7 @@ def api_sync_tapd(req: SyncRequest):
 
     source = TapdSource(config)
     try:
-        items = source.fetch_pending(fetch_all=req.fetch_all)
+        items = source.fetch_pending(fetch_all=req.fetch_all, item_type=req.item_type or None)
     except Exception as e:
         raise HTTPException(502, f"TAPD fetch failed: {e}")
 
@@ -1334,6 +1372,62 @@ def api_sync_tapd(req: SyncRequest):
         dry_run=req.dry_run,
         status_only=req.status_only,
     )
+
+    # Also pull bugs linked to stories via TAPD get_related_bugs, which catches
+    # associations that the bug's own story_id field misses.
+    if not req.dry_run:
+        related = _sync_related_bugs_from_stories(source, item_type_filter=req.item_type)
+        result["related_bugs_synced"] = related["synced"]
+        result["related_bugs_failed"] = related["failed"]
+
+    return result
+
+
+def _sync_related_bugs_from_stories(source, item_type_filter: str = "") -> dict:
+    """For every local TAPD story, fetch related bugs and upsert them with parent_key."""
+    result = {"synced": 0, "failed": 0}
+    # Only run when syncing stories or everything; pure bug-only sync already has its own path.
+    if item_type_filter == "bug":
+        return result
+
+    stories = db.list_visible_stories(show_all=True, item_type="story")
+    stories = [s for s in stories if s.get("source_type") == "tapd" and s.get("source_id")]
+
+    # Collect related bugs first to avoid concurrent SQLite writes on the same key.
+    bug_map: dict[str, tuple[dict, str]] = {}
+    failed_stories = 0
+    for story in stories:
+        try:
+            related = source._api.get_related_bugs(story["source_id"]) or []
+            for r in related:
+                bug_id = (r.get("Bug") or r).get("id")
+                if not bug_id or bug_id in bug_map:
+                    continue
+                detail = source._api.get_bug_detail(bug_id)
+                flat = (detail.get("Bug", {}) if detail else {}) or {}
+                if flat:
+                    bug_map[bug_id] = (flat, story["story_key"])
+        except Exception:
+            failed_stories += 1
+
+    for bug_id, (flat, parent_key) in bug_map.items():
+        try:
+            db.upsert_story_from_source(
+                source_type="tapd",
+                source_id=f"bug_{bug_id}",
+                title=flat.get("title", ""),
+                tapd_type="bug",
+                tapd_status=flat.get("status", ""),
+                owner=flat.get("current_owner", ""),
+                tapd_url=f"https://www.tapd.cn/{source._api.workspace_id}/bugtrace/bugs/view?bug_id={bug_id}",
+                parent_key=parent_key,
+            )
+            result["synced"] += 1
+        except Exception:
+            result["failed"] += 1
+
+    if failed_stories:
+        result["failed"] += failed_stories
     return result
 
 
@@ -1482,6 +1576,41 @@ def api_get_context_pack(story_key: str, skill: str = ""):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@app.post("/api/story/{story_key}/context/release-prompt")
+def api_get_release_prompt(story_key: str):
+    """Render a pre-release checklist prompt for a code AI."""
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    try:
+        from .context.release_prompt import generate_release_prompt
+
+        return generate_release_prompt(story_key)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/story/{story_key}/context/post-release-prompt")
+def api_get_post_release_prompt(story_key: str):
+    """Render a post-release auto-verification prompt for a code AI."""
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    try:
+        from .context.release_prompt import generate_post_release_prompt
+
+        return generate_post_release_prompt(story_key)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/story/{story_key}/bugs")
+def api_get_related_bugs(story_key: str):
+    """List local bug stories linked to this story via parent_key."""
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    bugs = db.list_stories_by_parent(story_key, item_type="bug")
+    return JSONResponse([_serialize_story_summary(b) for b in bugs])
+
+
 @app.post("/api/story/{story_key}/sync-related-bugs")
 def api_sync_related_bugs(story_key: str):
     """Sync bugs linked to this story (via TAPD get_related_bugs), setting parent_key."""
@@ -1521,6 +1650,66 @@ def api_sync_related_bugs(story_key: str):
         )
         synced += 1
     return {"synced": synced, "story_key": story_key}
+
+
+@app.post("/api/story/{story_key}/bugs/{bug_key}/link")
+def api_link_bug_to_story(story_key: str, bug_key: str):
+    """Manually bind an unassociated bug to a story."""
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(404, "Story not found")
+    bug = db.get_story(bug_key)
+    if not bug:
+        raise HTTPException(404, "Bug not found")
+    if bug.get("tapd_type") != "bug":
+        raise HTTPException(400, "Target is not a bug")
+    db.update_story(bug_key, parent_key=story_key)
+    db.log_stage(bug_key, bug.get("current_stage", ""), "link", f"Manually linked to {story_key}")
+    return {"ok": True, "parentKey": story_key}
+
+
+@app.get("/api/story/{story_key}/available-bugs")
+def api_list_available_bugs(story_key: str):
+    """List bugs that are not linked to any story (for drag-and-drop binding)."""
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(404, "Story not found")
+    bugs = db.list_unlinked_bugs()
+    return JSONResponse([_serialize_story_summary(b) for b in bugs])
+
+
+@app.post("/api/story/{story_key}/bugs/{bug_key}/fix-prompt")
+def api_get_bugfix_prompt(story_key: str, bug_key: str):
+    """Render a bug-fix prompt for a code AI based on the parent story context."""
+    if not db.get_story(story_key):
+        raise HTTPException(404, "Story not found")
+    if not db.get_story(bug_key):
+        raise HTTPException(404, "Bug not found")
+    try:
+        from .context.release_prompt import generate_bugfix_prompt
+
+        return generate_bugfix_prompt(story_key, bug_key)
+    except ValueError as e:
+        raise HTTPException(404, detail=str(e))
+
+
+class BatchFixPromptRequest(BaseModel):
+    bug_keys: list[str]
+
+
+@app.post("/api/story/{story_key}/bugs/fix-prompt")
+def api_get_batch_bugfix_prompt(story_key: str, req: BatchFixPromptRequest):
+    """Render a combined bug-fix prompt for multiple bugs under a story."""
+    if not db.get_story(story_key):
+        raise HTTPException(404, "Story not found")
+    if not req.bug_keys:
+        raise HTTPException(400, "bug_keys is empty")
+    try:
+        from .context.release_prompt import generate_batch_bugfix_prompt
+
+        return generate_batch_bugfix_prompt(story_key, req.bug_keys)
+    except ValueError as e:
+        raise HTTPException(404, detail=str(e))
 
 
 @app.post("/api/story/{bug_key}/resolve")
@@ -1602,32 +1791,36 @@ def api_add_change_item(story_key: str, req: AddChangeItemRequest):
 class SetBranchRequest(BaseModel):
     project_id: int
     branch: str
-    worktree_path: str = ""
-    base_branch: str = "main"
+    worktree_path: str | None = None
+    base_branch: str | None = None
+    worktree_state: str | None = None
 
 
 @app.put("/api/story/{story_key}/context/branch")
 def api_set_branch(story_key: str, req: SetBranchRequest):
-    """Create or update a story-project branch binding — agent backfill."""
+    """Create or update a story-project branch binding — agent backfill.
+
+    Only writes fields that the caller explicitly provides. worktree_path is
+    managed by the worktree preparation flow; sending None leaves it untouched
+    (update) or lets bind_story_project pick a placeholder (create).
+    worktree_state (e.g. 'available') lets agent-driven flows that prepare the
+    branch themselves mark the binding ready without the worktree handler."""
     if not db.get_story(story_key):
         raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
     existing = db.get_story_project(story_key, req.project_id)
+    fields: dict = {"branch": req.branch}
+    # Treat empty string the same as "not provided" to avoid UNIQUE('') collisions.
+    if req.worktree_path:
+        fields["worktree_path"] = req.worktree_path
+    if req.base_branch is not None:
+        fields["base_branch"] = req.base_branch
+    if req.worktree_state:
+        fields["worktree_state"] = req.worktree_state
     if existing:
-        db.update_story_project(
-            story_key,
-            req.project_id,
-            branch=req.branch,
-            worktree_path=req.worktree_path,
-            base_branch=req.base_branch,
-        )
+        db.update_story_project(story_key, req.project_id, **fields)
     else:
-        db.bind_story_project(
-            story_key,
-            req.project_id,
-            branch=req.branch,
-            worktree_path=req.worktree_path,
-            base_branch=req.base_branch,
-        )
+        fields.setdefault("base_branch", "main")
+        db.bind_story_project(story_key, req.project_id, **fields)
     db.bump_context_revision(story_key)
     return db.get_story_project(story_key, req.project_id)
 
@@ -1878,12 +2071,20 @@ class IntakePreviewRequest(BaseModel):
 
 
 @app.post("/api/intake/preview")
-def api_intake_preview(req: IntakePreviewRequest):
-    """Fetch source detail and ask the built-in PRD generator to prefill Intake."""
-    source_id = req.source_id.strip()
+def api_intake_preview(
+    source_type: str = Form("tapd"),
+    source_id: str = Form(""),
+    files: list[UploadFile] = File(default_factory=list),
+):
+    """Fetch source detail and ask the built-in PRD generator to prefill Intake.
+
+    Accepts optional image uploads so users can supply screenshots that the
+    source system cannot fetch automatically (e.g. TAPD images behind login).
+    """
+    source_id = (source_id or "").strip()
     if not source_id:
         raise HTTPException(status_code=400, detail="source_id required")
-    source_type = (req.source_type or "tapd").strip().lower()
+    source_type = (source_type or "tapd").strip().lower()
 
     if source_type != "tapd":
         raise HTTPException(
@@ -1899,6 +2100,18 @@ def api_intake_preview(req: IntakePreviewRequest):
     if not item:
         raise HTTPException(status_code=404, detail="source story not found")
 
+    local_image_paths: list[str] = []
+    if files:
+        tmp_dir = Path(tempfile.gettempdir()) / "story-intake-images"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        for upload in files:
+            if not upload.filename:
+                continue
+            tmp_path = tmp_dir / f"{item.source}-{item.id}_{upload.filename}"
+            with tmp_path.open("wb") as f:
+                f.write(upload.file.read())
+            local_image_paths.append(str(tmp_path))
+
     snapshot = prd_generator.StorySourceSnapshot(
         story_key=f"{item.source}-{item.id}",
         source_type=item.source,
@@ -1909,8 +2122,16 @@ def api_intake_preview(req: IntakePreviewRequest):
         priority=item.priority,
         owner=item.owner,
         status=item.status,
+        local_image_paths=local_image_paths,
     )
-    result = prd_generator.generate_prd_from_source(snapshot)
+    try:
+        result = prd_generator.generate_prd_from_source(snapshot)
+    except Exception as exc:
+        log.exception("prd_generator failed for %s", snapshot.story_key)
+        raise HTTPException(
+            status_code=502,
+            detail=f"PRD 生成失败: {exc}",
+        )
     return {
         "storyKey": snapshot.story_key,
         "sourceType": snapshot.source_type,

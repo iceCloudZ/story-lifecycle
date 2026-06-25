@@ -11,10 +11,12 @@ import TestTab from '../components/TestTab'
 import QualityGateTab from '../components/QualityGateTab'
 import TerminalTab from '../components/TerminalTab'
 import ContextTab from '../components/ContextTab'
+import BugsTab from '../components/BugsTab'
 import './StoryDetailPage.css'
 
 const MODULES = [
   { id: 'overview', icon: '📊', label: '概览' },
+  { id: 'bugs', icon: '🐛', label: '缺陷' },
   { id: 'code', icon: '💻', label: '代码变更' },
   { id: 'loop', icon: '🔁', label: '对抗循环' },
   { id: 'test', icon: '🧪', label: '测试' },
@@ -174,6 +176,17 @@ export default function StoryDetailPage() {
     }
   }
 
+  async function handleArchive() {
+    if (!window.confirm('确定归档此 Story？归档后会从默认列表中隐藏，但不会被删除。')) return
+    const r = await fetch(`/api/story/${storyKey}/archive`, { method: 'PUT' })
+    if (r.ok) {
+      refetch()
+      qc.invalidateQueries({ queryKey: ['stories'] })
+    } else {
+      alert('归档失败')
+    }
+  }
+
   return (
     <div className="story-detail-page-v2">
       <div className="sdpv2-topbar">
@@ -191,6 +204,7 @@ export default function StoryDetailPage() {
           modules={MODULES}
           activeModule={activeTab}
           onModuleChange={setActiveTab}
+          onArchive={handleArchive}
         />
         <div className="sdpv2-content">
           {activeTab === 'overview' && (
@@ -210,6 +224,7 @@ export default function StoryDetailPage() {
           {activeTab === 'loop' && <AdversarialLoopTab storyKey={storyKey} />}
           {activeTab === 'test' && <TestTab storyKey={storyKey} />}
           {activeTab === 'quality' && <QualityGateTab storyKey={storyKey} />}
+          {activeTab === 'bugs' && <BugsTab storyKey={storyKey} />}
           {activeTab === 'context' && <ContextTab storyKey={storyKey} />}
           {activeTab === 'terminal' && (
             <TerminalTab storyKey={storyKey} status={detail.status} />

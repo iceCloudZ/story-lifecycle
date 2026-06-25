@@ -40,6 +40,22 @@ export default function ContextTab({ storyKey }: { storyKey: string }) {
     setTimeout(() => setCopiedTarget(''), 2000)
   }
 
+  async function copyReleasePrompt() {
+    const r = await fetch(`/api/story/${storyKey}/context/release-prompt`, { method: 'POST' })
+    const body = await r.json()
+    await navigator.clipboard.writeText(body.content || '')
+    setCopiedTarget('release')
+    setTimeout(() => setCopiedTarget(''), 2000)
+  }
+
+  async function copyPostReleasePrompt() {
+    const r = await fetch(`/api/story/${storyKey}/context/post-release-prompt`, { method: 'POST' })
+    const body = await r.json()
+    await navigator.clipboard.writeText(body.content || '')
+    setCopiedTarget('post-release')
+    setTimeout(() => setCopiedTarget(''), 2000)
+  }
+
   async function copyText(value: string, target: string) {
     if (!value) return
     await navigator.clipboard.writeText(value)
@@ -64,6 +80,12 @@ export default function ContextTab({ storyKey }: { storyKey: string }) {
       <div className="ctx-toolbar">
         <button className="btn btn-primary" onClick={copyPack}>
           {copied && copiedTarget === 'pack' ? '已复制资料包' : '复制上下文资料包'}
+        </button>
+        <button className="btn" onClick={copyReleasePrompt}>
+          {copiedTarget === 'release' ? '已复制上线提示词' : '复制上线准备提示词'}
+        </button>
+        <button className="btn" onClick={copyPostReleasePrompt}>
+          {copiedTarget === 'post-release' ? '已复制验证提示词' : '已经上线 · 自动验证'}
         </button>
         <button className="btn" disabled={!prdPath} onClick={() => copyText(prdPath, 'prd')}>
           {copiedTarget === 'prd' ? '已复制 PRD 路径' : '复制 PRD 路径'}

@@ -156,26 +156,68 @@ def run_setup():
     else:
         model = console.input("Model name: ").strip()
 
+    # Optional Step 5: Vision model for PRD intake with images
+    console.print()
+    console.print("[bold]Step 5 (Optional): Configure vision model for image understanding[/]")
+    console.print(
+        "Used when a TAPD story/bug contains screenshots or diagrams.\n"
+        "Leave empty to use the main model if it supports vision, or disable image understanding."
+    )
+    existing_vision = existing.get("vision", {})
+    vision_provider = console.input(
+        "Vision Provider (openai-compatible | kimi-cli, default: openai-compatible): "
+    ).strip() or existing_vision.get("provider", "openai-compatible")
+    vision_api_key = console.input(
+        f"Vision API Key (current: {'set' if existing_vision.get('api_key') else 'none'}): "
+    ).strip()
+    vision_base_url = console.input(
+        f"Vision Base URL (default: {base_url}): "
+    ).strip() or base_url
+    vision_model = console.input(
+        "Vision Model (e.g. gpt-4o, qwen-vl-max, kimi-for-coding): "
+    ).strip()
+    vision_config = {}
+    if vision_provider:
+        vision_config["provider"] = vision_provider
+    if vision_api_key:
+        vision_config["api_key"] = vision_api_key
+    if vision_base_url:
+        vision_config["base_url"] = vision_base_url
+    if vision_model:
+        vision_config["model"] = vision_model
+
     # Save config
-    config = {
+    config: dict = {
         "api_key": api_key,
         "base_url": base_url,
         "model": model,
         "provider": provider_info["name"],
     }
+    if vision_config:
+        config["vision"] = vision_config
     save_config(config)
 
     # Set env vars for current session
     os.environ["STORY_LLM_API_KEY"] = api_key
     os.environ["STORY_LLM_BASE_URL"] = base_url
     os.environ["STORY_LLM_MODEL"] = model
+    if vision_config.get("provider"):
+        os.environ["STORY_VISION_PROVIDER"] = vision_config["provider"]
+    if vision_config.get("api_key"):
+        os.environ["STORY_VISION_API_KEY"] = vision_config["api_key"]
+    if vision_config.get("base_url"):
+        os.environ["STORY_VISION_BASE_URL"] = vision_config["base_url"]
+    if vision_config.get("model"):
+        os.environ["STORY_VISION_MODEL"] = vision_config["model"]
 
     console.print()
+    vision_line = f"Vision: {vision_config.get('model', 'disabled')}\n" if vision_config else ""
     console.print(
         Panel.fit(
             f"[green]Setup complete![/]\n\n"
             f"Provider: {provider_info['name']}\n"
             f"Model: {model}\n"
+            f"{vision_line}"
             f"Config: {CONFIG_FILE}\n\n"
             f"Run [bold]story[/] to start the board.\n"
             f"Re-run [bold]story setup[/] anytime to change settings.",
@@ -206,6 +248,26 @@ def load_config_to_env():
         os.environ["STORY_LLM_BASE_URL"] = config["base_url"]
     if config.get("model") and not os.environ.get("STORY_LLM_MODEL"):
         os.environ["STORY_LLM_MODEL"] = config["model"]
+
+    # Also load optional vision config so intake image understanding works.
+    load_vision_config_to_env()
+
+
+def load_vision_config_to_env():
+    """Load optional vision config from file and set env vars."""
+    config = get_config()
+    vision = config.get("vision") or {}
+    if not vision:
+        return
+
+    if vision.get("provider") and not os.environ.get("STORY_VISION_PROVIDER"):
+        os.environ["STORY_VISION_PROVIDER"] = vision["provider"]
+    if vision.get("api_key") and not os.environ.get("STORY_VISION_API_KEY"):
+        os.environ["STORY_VISION_API_KEY"] = vision["api_key"]
+    if vision.get("base_url") and not os.environ.get("STORY_VISION_BASE_URL"):
+        os.environ["STORY_VISION_BASE_URL"] = vision["base_url"]
+    if vision.get("model") and not os.environ.get("STORY_VISION_MODEL"):
+        os.environ["STORY_VISION_MODEL"] = vision["model"]
 
 
 DEFAULT_SUB_TYPES = {

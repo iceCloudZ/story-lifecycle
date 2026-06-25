@@ -267,6 +267,7 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
   // 最终发给后端的 PRD 正文：上传文件读出的内容，或粘贴的文本。后端会存成文件、
   // 注入文件路径给 CLI（不内联内容，避免撑爆上下文）。
   const content = uploaded ? uploaded.content : paste
+  const [intakeImages, setIntakeImages] = useState<File[]>([])
   const [loading, setLoading] = useState(false)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewStartedAt, setPreviewStartedAt] = useState<number | null>(null)
@@ -303,7 +304,7 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
     setPreviewStartedAt(Date.now())
     setLocalNotice(null)
     try {
-      const preview = await storyApi.previewIntake({ source_type: 'tapd', source_id: sourceId })
+      const preview = await storyApi.previewIntake({ source_type: 'tapd', source_id: sourceId, files: intakeImages })
       if (isNew) setKey(preview.storyKey)
       if (preview.title) setTitle(preview.title)
       if (preview.action === 'generated' && preview.markdown.trim()) {
@@ -365,6 +366,16 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
     reader.onload = () =>
       setUploaded({ name: f.name, content: String(reader.result || '') })
     reader.readAsText(f)
+  }
+
+  function handleImageFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const selected = Array.from(e.target.files || [])
+    if (!selected.length) return
+    setIntakeImages((prev) => [...prev, ...selected])
+  }
+
+  function removeImage(index: number) {
+    setIntakeImages((prev) => prev.filter((_, i) => i !== index))
   }
 
   return (
@@ -453,6 +464,40 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
               )}
             </div>
           )}
+          <div className="modal-images">
+            <div className="modal-images-head">
+              <label className="modal-prd-label">需求截图（可选）</label>
+              <label className="modal-prd-upload" title="上传图片辅助理解需求">
+                🖼️ 上传图片
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageFiles}
+                  hidden
+                />
+              </label>
+            </div>
+            {intakeImages.length > 0 && (
+              <div className="modal-image-list">
+                {intakeImages.map((file, idx) => (
+                  <div key={`${file.name}-${idx}`} className="modal-image-item">
+                    <span>🖼️ {file.name}</span>
+                    <button
+                      type="button"
+                      className="modal-prd-clear"
+                      onClick={() => removeImage(idx)}
+                    >
+                      移除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="modal-images-hint">
+              若 TAPD 正文包含截图但无法自动识别，可手动上传截图，读取需求时会一并传给 AI 分析。
+            </p>
+          </div>
           <div className="modal-prd">
             <div className="modal-prd-head">
               <label className="modal-prd-label">
@@ -512,66 +557,113 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
 // ---- Swimlane layout for TAPD ----
 
 const DONE_STATUSES = new Set(['resolved', 'rejected', 'closed', 'status_21'])
+const LOCAL_DONE_STATUSES = new Set(['completed', 'failed', 'aborted', 'archived'])
 
 function groupByLane(stories: StorySummary[]) {
   const today = new Date().toISOString().slice(0, 10)
   const soon = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10)
 
   const lanes: { id: string; title: string; items: StorySummary[]; collapsed?: boolean }[] = [
-    { id: 'my-tasks', title: '我的开发任务', items: [] },
-    { id: 'testing', title: '测试任务', items: [] },
+    { id: 'candidate', title: '待确认', items: [] },
+    { id: 'planning', title: '规划中', items: [] },
+    { id: 'developing', title: '开发中', items: [] },
     { id: 'launch', title: '近期上线', items: [] },
     { id: 'bugs', title: '待修复缺陷', items: [] },
+    { id: 'done', title: '已完成 / 已归档', items: [], collapsed: true },
     { id: 'others', title: '其他需求', items: [], collapsed: true },
   ]
+
+  const sortByDeadline = (a: StorySummary, b: StorySummary) =>
+    (a.deadline || '9').localeCompare(b.deadline || '9')
+  const priOrder: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
 
   for (const s of stories) {
     const tp = s.tapdType || ''
     const st = s.tapdStatus || ''
-    const title = s.title || ''
-    const isDone = DONE_STATUSES.has(st)
-    if (isDone) continue
+    const localStatus = s.status || ''
+    const intakeState = s.intakeState || ''
+    const isDone = DONE_STATUSES.has(st) || LOCAL_DONE_STATUSES.has(localStatus)
 
-    const dl = (s.deadline || '').slice(0, 10)
-    const isToday = dl === today
-    const isSoon = dl >= today && dl <= soon
-
-    if (tp === 'subtask' && (s.owner || '').includes('赵子豪')) {
-      lanes[0].items.push(s)
-    } else if (tp === 'subtask' && title.includes('测试')) {
-      lanes[1].items.push(s)
-    } else if (tp === 'bug') {
-      lanes[3].items.push(s)
-    } else if (tp === 'story' && (isToday || isSoon)) {
-      lanes[2].items.push(s)
-    } else {
-      lanes[4].items.push(s)
+    if (isDone) {
+      lanes[5].items.push(s)
+      continue
     }
+
+    if (tp === 'bug') {
+      lanes[4].items.push(s)
+      continue
+    }
+
+    if (intakeState === 'candidate') {
+      lanes[0].items.push(s)
+      continue
+    }
+
+    if (localStatus === 'planning') {
+      lanes[1].items.push(s)
+      continue
+    }
+
+    if (['active', 'paused', 'blocked', 'waiting_subtasks'].includes(localStatus)) {
+      const dl = (s.deadline || '').slice(0, 10)
+      const isToday = dl === today
+      const isSoon = dl >= today && dl <= soon
+      if (tp === 'story' && (isToday || isSoon)) {
+        lanes[3].items.push(s)
+      } else {
+        lanes[2].items.push(s)
+      }
+      continue
+    }
+
+    lanes[6].items.push(s)
   }
 
-  const sortByDeadline = (a: StorySummary, b: StorySummary) =>
-    (a.deadline || '9').localeCompare(b.deadline || '9')
   lanes[0].items.sort(sortByDeadline)
   lanes[1].items.sort(sortByDeadline)
-  const priOrder: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
-  lanes[3].items.sort((a, b) => (priOrder[a.priority ?? ''] ?? 9) - (priOrder[b.priority ?? ''] ?? 9))
+  lanes[2].items.sort(sortByDeadline)
+  lanes[3].items.sort(sortByDeadline)
+  lanes[4].items.sort((a, b) => (priOrder[a.priority ?? ''] ?? 9) - (priOrder[b.priority ?? ''] ?? 9))
+  lanes[5].items.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
+  lanes[6].items.sort(sortByDeadline)
 
   return lanes.filter((l) => l.items.length > 0)
 }
 
 function TapdSwimlanes({ stories, onStartDev }: { stories: StorySummary[]; onStartDev: (s: StorySummary) => void }) {
+  const qc = useQueryClient()
   const lanes = groupByLane(stories)
+  const [linking, setLinking] = useState<string | null>(null)
+
+  async function handleDropBug(storyKey: string, bugKey: string) {
+    setLinking(`${bugKey} -> ${storyKey}`)
+    try {
+      await linkBugToStory(storyKey, bugKey)
+      qc.invalidateQueries({ queryKey: ['stories'] })
+    } catch (e) {
+      alert('关联失败：' + (e as Error).message)
+    } finally {
+      setLinking(null)
+    }
+  }
+
   return (
     <div className="swimlanes">
       {lanes.map((lane) => (
-        <Lane key={lane.id} {...lane} onStartDev={onStartDev} />
+        <Lane
+          key={lane.id}
+          {...lane}
+          onStartDev={onStartDev}
+          onDropBug={lane.id !== 'bugs' && lane.id !== 'done' ? handleDropBug : undefined}
+        />
       ))}
+      {linking && <div className="linking-toast">关联中 {linking}...</div>}
     </div>
   )
 }
 
-function Lane({ title, items, collapsed, onStartDev }: {
-  title: string; items: StorySummary[]; collapsed?: boolean; onStartDev: (s: StorySummary) => void
+function Lane({ title, items, collapsed, onStartDev, onDropBug }: {
+  title: string; items: StorySummary[]; collapsed?: boolean; onStartDev: (s: StorySummary) => void; onDropBug?: (storyKey: string, bugKey: string) => void
 }) {
   const [open, setOpen] = useState(!collapsed)
   return (
@@ -584,7 +676,13 @@ function Lane({ title, items, collapsed, onStartDev }: {
       {open && (
         <div className="lane-cards">
           {items.map((s) => (
-            <MiniCard key={s.storyKey} story={s} onStartDev={() => onStartDev(s)} />
+            <MiniCard
+              key={s.storyKey}
+              story={s}
+              onStartDev={() => onStartDev(s)}
+              draggable={s.tapdType === 'bug'}
+              onDropBug={onDropBug ? (bugKey) => onDropBug(s.storyKey, bugKey) : undefined}
+            />
           ))}
         </div>
       )}
@@ -592,7 +690,13 @@ function Lane({ title, items, collapsed, onStartDev }: {
   )
 }
 
-function MiniCard({ story, onStartDev }: { story: StorySummary; onStartDev: () => void }) {
+async function linkBugToStory(storyKey: string, bugKey: string) {
+  const r = await fetch(`/api/story/${storyKey}/bugs/${bugKey}/link`, { method: 'POST' })
+  if (!r.ok) throw new Error('link failed')
+  return r.json()
+}
+
+function MiniCard({ story, onStartDev, draggable, onDragStart, onDropBug }: { story: StorySummary; onStartDev: () => void; draggable?: boolean; onDragStart?: (e: React.DragEvent) => void; onDropBug?: (bugKey: string) => void }) {
   const navigate = useNavigate()
   const typeInfo = TYPE_LABELS[story.tapdType || '']
   const statusCn = TAPD_STATUS[story.tapdStatus || ''] || story.tapdStatus || ''
@@ -607,8 +711,30 @@ function MiniCard({ story, onStartDev }: { story: StorySummary; onStartDev: () =
   else if (isToday) { deadlineLabel = '今天'; deadlineClass = 'dl-today' }
   else if (dlStr) { deadlineLabel = dlStr; deadlineClass = 'dl-normal' }
 
+  const [dropOver, setDropOver] = useState(false)
+
   return (
-    <div className="mini-card" onClick={() => navigate(`/story/${story.storyKey}`)}>
+    <div
+      className={`mini-card ${draggable ? 'mini-card-draggable' : ''} ${dropOver ? 'mini-card-drop-over' : ''}`}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={(e) => {
+        if (!onDropBug) return
+        e.preventDefault()
+        setDropOver(true)
+      }}
+      onDragLeave={() => setDropOver(false)}
+      onDrop={(e) => {
+        if (!onDropBug) return
+        e.preventDefault()
+        setDropOver(false)
+        const bugKey = e.dataTransfer.getData('text/plain')
+        if (bugKey && bugKey.startsWith('tapd-bug_')) {
+          onDropBug(bugKey)
+        }
+      }}
+      onClick={() => navigate(`/story/${story.storyKey}`)}
+    >
       <div className="mini-top">
         {typeInfo && <span className="badge-type" style={{ background: typeInfo.color }}>{typeInfo.label}</span>}
         <span className="mini-status">{statusCn}</span>
@@ -618,7 +744,7 @@ function MiniCard({ story, onStartDev }: { story: StorySummary; onStartDev: () =
       <div className="mini-actions">
         {story.tapdType === 'story' && (
           <button className="btn btn-xs btn-primary" onClick={(e) => { e.stopPropagation(); onStartDev() }}>
-            开始开发
+            {story.intakeState === 'candidate' ? '确认需求' : '开始开发'}
           </button>
         )}
         {story.tapdUrl && (

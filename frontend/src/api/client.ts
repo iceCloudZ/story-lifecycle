@@ -186,12 +186,16 @@ export const storyApi = {
   create: (data: { key: string; title?: string; content?: string; profile?: string; workspace?: string; autostart?: boolean }) =>
     fetchJSON<Story>('/api/story', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   workspaces: () => fetchJSON<{ workspaces: WorkspaceOption[] }>('/api/workspaces'),
-  previewIntake: (data: { source_type?: string; source_id: string }) =>
-    fetchJSON<IntakePreview>('/api/intake/preview', {
+  previewIntake: (data: { source_type?: string; source_id: string; files?: File[] }) => {
+    const form = new FormData()
+    form.append('source_type', data.source_type || 'tapd')
+    form.append('source_id', data.source_id)
+    data.files?.forEach((file) => form.append('files', file))
+    return fetchJSON<IntakePreview>('/api/intake/preview', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    }),
+      body: form,
+    })
+  },
   advance: (key: string) => apiAction('PUT', `/api/story/${key}/advance`),
   skip: (key: string, stage: string) => apiAction('PUT', `/api/story/${key}/skip/${stage}`),
   abort: (key: string) => apiAction('POST', `/api/story/${key}/abort`),
