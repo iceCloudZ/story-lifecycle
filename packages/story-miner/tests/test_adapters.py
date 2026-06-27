@@ -88,6 +88,20 @@ def test_kimi_usage_to_tokens_not_think(tmp_path):
     assert not any(e.get("kind") == "think" for e in evs)
 
 
+KIMI_ERR = (
+    '{"type":"context.append_loop_event","time":1781688001000,"event":'
+    '{"tool_name":"Bash","result":{"output":"boom","isError":true}}}\n'
+)
+
+
+def test_kimi_iserror_to_result(tmp_path):
+    f = tmp_path / "w.jsonl"
+    f.write_text(KIMI_ERR, encoding="utf-8")
+    meta, evs, tokens = KimiAdapter().parse(str(f), "kimi:s:main")
+    results = [e for e in evs if e.get("kind") == "result"]
+    assert results and results[0]["ok"] == 0
+
+
 def test_token_usage_table_created(tmp_path):
     db = str(tmp_path / "t.db")
     store.init_db(db)

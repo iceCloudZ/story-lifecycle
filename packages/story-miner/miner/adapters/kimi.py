@@ -67,6 +67,11 @@ class KimiAdapter(SourceAdapter):
                         if nm and nm not in ('message', ''):
                             meta['ntools'] += 1
                             evs.append(dict(sid=sid, src='kimi', ws=meta['ws'], ts=line_ts, kind='tool', name=str(nm)))
+                        res = ev.get('result')
+                        if isinstance(res, dict):
+                            evs.append(dict(sid=sid, src='kimi', ws=meta['ws'], ts=line_ts,
+                                kind='result', ok=0 if res.get('isError') else 1,
+                                text=common.mask(str(res.get('output', ''))[:200])))
                 elif typ == 'usage.record':
                     u = o.get('usage') or {}
                     if u:
