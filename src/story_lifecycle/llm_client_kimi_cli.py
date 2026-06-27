@@ -113,9 +113,7 @@ class KimiCliClient:
             parts.append("\n\n图片附件：")
             for p in image_paths:
                 parts.append(f"- {p}")
-            parts.append(
-                "\n请阅读以上图片，并只根据图片内容和前文要求输出结果。"
-            )
+            parts.append("\n请阅读以上图片，并只根据图片内容和前文要求输出结果。")
         return "\n".join(parts)
 
     def _run(self, prompt: str, timeout: int) -> str:
@@ -175,5 +173,3 @@ def _data_url_to_temp_file(data_url: str) -> str:
     with os.fdopen(fd, "wb") as f:
         f.write(data)
     return tmp_path
-
-

@@ -167,7 +167,9 @@ def _extract_image_urls(html_or_md: str) -> list[str]:
     # Markdown images: ![alt](url)
     urls.extend(re.findall(r"!\[.*?\]\(([^\s)]+)\)", html_or_md))
     # HTML images: <img src="url" ...> or <img src='url' ...>
-    urls.extend(re.findall(r"<img[^>]+src=[\"']([^\"']+)[\"']", html_or_md, re.IGNORECASE))
+    urls.extend(
+        re.findall(r"<img[^>]+src=[\"']([^\"']+)[\"']", html_or_md, re.IGNORECASE)
+    )
     # Dedupe while preserving order
     seen = set()
     result = []

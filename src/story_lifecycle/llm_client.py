@@ -169,7 +169,11 @@ class LLMClient:
                 self.model,
             )
         body = self._build_multimodal_body(
-            prompt, images, system=system, temperature=temperature, max_tokens=max_tokens
+            prompt,
+            images,
+            system=system,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
         resp_body = self._request(body, timeout=timeout)
         return self._extract_content(resp_body)
@@ -194,8 +198,7 @@ class LLMClient:
         result = self._parse_json(content)
         if result is None:
             raise ValueError(
-                f"Cannot parse LLM response as JSON. "
-                f"First 500 chars: {content[:500]!r}"
+                f"Cannot parse LLM response as JSON. First 500 chars: {content[:500]!r}"
             )
         return result
 
@@ -223,8 +226,7 @@ class LLMClient:
         data = self._parse_json(content)
         if data is None:
             raise ValueError(
-                f"Cannot parse LLM response as JSON. "
-                f"First 500 chars: {content[:500]!r}"
+                f"Cannot parse LLM response as JSON. First 500 chars: {content[:500]!r}"
             )
         try:
             return schema.model_validate(data)

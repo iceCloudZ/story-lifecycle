@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.6] - 2026-06-27
+
+### Added
+- **Design prompt 共享状态影响分析** — design 阶段任务书强制触及五类符号调用 `codegraph_impact` 做共享状态影响分析，防止 AI 写出局部正确、全局崩坏的跨功能数据流污染 bug
+- **`worktree_state` 字段** — `SetBranchRequest` 新增该字段，agent 自建分支可直接标记 `available`，免走 worktree handler
+- **前端 Bugs 模块** — 新增 `BugsTab`/`BugsPage`，Dashboard/StoryDetailPage/ContextTab/StorySidebar 配套改进
+- **Kimi CLI client** — LLM 层新增 `kimi_cli` 适配，`llm_client` 同步扩展
+- **编排 / 前端 / profiles / prompts 协同开发链路** — 贯通多端协同开发流程
+
+### Changed
+- 新增 `progress.yaml` 看板元数据（github-ops Phase 2）
+
+### Fixed
+- **`test_intake_preview` 请求格式** — `/api/intake/preview` 端点改为表单上传（支持截图附件）后，测试请求由 `json=` 修正为 `data=` 对齐 `Form` 签名，恢复 200 响应
+
 ## [0.11.5] - 2026-06-17
 
 ### Added

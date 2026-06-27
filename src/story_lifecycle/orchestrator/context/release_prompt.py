@@ -35,7 +35,9 @@ def _render_release_prompt(story_key: str, bundle) -> str:
     if tapd_url:
         lines.append(f"TAPD：{tapd_url}")
     lines.append(f"工作区：{story.get('workspace', '')}")
-    lines.append(f"Profile / 当前阶段：{story.get('profile', '')} / {story.get('current_stage', '')}")
+    lines.append(
+        f"Profile / 当前阶段：{story.get('profile', '')} / {story.get('current_stage', '')}"
+    )
     lines.append("")
 
     lines.append("请基于以上 Story 的完整上下文，做上线前准备。具体任务如下：")
@@ -63,7 +65,9 @@ def _render_release_prompt(story_key: str, bundle) -> str:
     lines.append("   - 识别潜在风险（性能、兼容性、数据一致性）。")
     lines.append("   - 给出可执行的回滚步骤和止损方案。")
     lines.append("")
-    lines.append("请直接输出一份结构化的《上线前检查清单》（Markdown 格式），并给出明确的通过/阻塞结论。")
+    lines.append(
+        "请直接输出一份结构化的《上线前检查清单》（Markdown 格式），并给出明确的通过/阻塞结论。"
+    )
 
     if bundle.story_projects:
         lines.append("")
@@ -138,10 +142,14 @@ def _render_post_release_prompt(story_key: str, bundle) -> str:
     if tapd_url:
         lines.append(f"TAPD：{tapd_url}")
     lines.append(f"工作区：{story.get('workspace', '')}")
-    lines.append(f"Profile / 当前阶段：{story.get('profile', '')} / {story.get('current_stage', '')}")
+    lines.append(
+        f"Profile / 当前阶段：{story.get('profile', '')} / {story.get('current_stage', '')}"
+    )
     lines.append("")
 
-    lines.append("本次上线已完成。请基于 Story 上下文，自动执行上线后验证并输出结论。具体任务如下：")
+    lines.append(
+        "本次上线已完成。请基于 Story 上下文，自动执行上线后验证并输出结论。具体任务如下："
+    )
     lines.append("")
     lines.append("1. **服务健康检查**：")
     lines.append("   - 检查相关服务是否已正常启动，进程、端口、健康检查接口是否可用。")
@@ -250,7 +258,9 @@ def _render_bugfix_prompt(story_key: str, bundle, bug: dict) -> str:
     if story.get("tapd_url"):
         lines.append(f"Story TAPD：{story.get('tapd_url')}")
     lines.append(f"工作区：{story.get('workspace', '')}")
-    lines.append(f"缺陷状态：本地 {bug.get('status', '')} / TAPD {bug.get('tapd_status', '')}")
+    lines.append(
+        f"缺陷状态：本地 {bug.get('status', '')} / TAPD {bug.get('tapd_status', '')}"
+    )
     lines.append(f"优先级：{bug.get('priority', '')}")
     if bug.get("owner"):
         lines.append(f"负责人：{bug.get('owner', '')}")
@@ -284,7 +294,9 @@ def _render_bugfix_prompt(story_key: str, bundle, bug: dict) -> str:
     lines.append("   - 验证结果")
     lines.append("   - 是否需要回滚/灰度观察")
     lines.append("")
-    lines.append("请直接输出结构化的《缺陷修复报告》（Markdown 格式），并给出明确的修复完成/需要人工复核结论。")
+    lines.append(
+        "请直接输出结构化的《缺陷修复报告》（Markdown 格式），并给出明确的修复完成/需要人工复核结论。"
+    )
 
     if bundle.story_projects:
         lines.append("")
@@ -377,7 +389,9 @@ def _render_batch_bugfix_prompt(story_key: str, bundle, bugs: list[dict]) -> str
         lines.append(f"- **标题**：{bug.get('title', '')}")
         if bug.get("tapd_url"):
             lines.append(f"- **TAPD**：{bug.get('tapd_url')}")
-        lines.append(f"- **状态**：本地 {bug.get('status', '')} / TAPD {bug.get('tapd_status', '')}")
+        lines.append(
+            f"- **状态**：本地 {bug.get('status', '')} / TAPD {bug.get('tapd_status', '')}"
+        )
         lines.append(f"- **优先级**：{bug.get('priority', '')}")
         if bug.get("owner"):
             lines.append(f"- **负责人**：{bug.get('owner', '')}")
@@ -412,7 +426,9 @@ def _render_batch_bugfix_prompt(story_key: str, bundle, bugs: list[dict]) -> str
     lines.append("   - 验证结果")
     lines.append("   - 是否需要回滚/灰度观察")
     lines.append("")
-    lines.append("请直接输出结构化的《批量缺陷修复报告》（Markdown 格式），并给出明确的修复完成/需要人工复核结论。")
+    lines.append(
+        "请直接输出结构化的《批量缺陷修复报告》（Markdown 格式），并给出明确的修复完成/需要人工复核结论。"
+    )
 
     if bundle.story_projects:
         lines.append("")
@@ -480,7 +496,9 @@ def _render_delivery_artifacts(lines: list[str], artifacts: list[dict]) -> None:
         if state:
             lines.append(f"  - 状态：{state}")
         if evidence:
-            lines.append(f"  - 备注：{evidence[:160]}{'...' if len(evidence) > 160 else ''}")
+            lines.append(
+                f"  - 备注：{evidence[:160]}{'...' if len(evidence) > 160 else ''}"
+            )
 
 
 def _find_project(projects: list[dict], project_id: int | None) -> dict | None:

@@ -185,7 +185,7 @@ class TestContextAPI:
 
         resp = client.post(
             "/api/intake/preview",
-            json={"source_type": "tapd", "source_id": "1065618"},
+            data={"source_type": "tapd", "source_id": "1065618"},
         )
 
         assert resp.status_code == 200

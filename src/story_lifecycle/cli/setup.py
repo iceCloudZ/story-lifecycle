@@ -158,7 +158,9 @@ def run_setup():
 
     # Optional Step 5: Vision model for PRD intake with images
     console.print()
-    console.print("[bold]Step 5 (Optional): Configure vision model for image understanding[/]")
+    console.print(
+        "[bold]Step 5 (Optional): Configure vision model for image understanding[/]"
+    )
     console.print(
         "Used when a TAPD story/bug contains screenshots or diagrams.\n"
         "Leave empty to use the main model if it supports vision, or disable image understanding."
@@ -170,9 +172,9 @@ def run_setup():
     vision_api_key = console.input(
         f"Vision API Key (current: {'set' if existing_vision.get('api_key') else 'none'}): "
     ).strip()
-    vision_base_url = console.input(
-        f"Vision Base URL (default: {base_url}): "
-    ).strip() or base_url
+    vision_base_url = (
+        console.input(f"Vision Base URL (default: {base_url}): ").strip() or base_url
+    )
     vision_model = console.input(
         "Vision Model (e.g. gpt-4o, qwen-vl-max, kimi-for-coding): "
     ).strip()
@@ -211,7 +213,9 @@ def run_setup():
         os.environ["STORY_VISION_MODEL"] = vision_config["model"]
 
     console.print()
-    vision_line = f"Vision: {vision_config.get('model', 'disabled')}\n" if vision_config else ""
+    vision_line = (
+        f"Vision: {vision_config.get('model', 'disabled')}\n" if vision_config else ""
+    )
     console.print(
         Panel.fit(
             f"[green]Setup complete![/]\n\n"

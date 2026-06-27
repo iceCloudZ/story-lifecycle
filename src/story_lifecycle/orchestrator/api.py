@@ -6,7 +6,15 @@ import tempfile
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -415,7 +423,9 @@ def list_bugs(status: str = "", show_all: bool = False):
     # TAPD closed/resolved/rejected bugs are considered done unless show_all.
     if not show_all:
         done_tapd = {"closed", "resolved", "rejected"}
-        stories = [s for s in stories if (s.get("tapd_status") or "").lower() not in done_tapd]
+        stories = [
+            s for s in stories if (s.get("tapd_status") or "").lower() not in done_tapd
+        ]
     return JSONResponse([_serialize_story_summary(s) for s in stories])
 
 
@@ -590,7 +600,12 @@ def archive_story(story_key: str):
     if not s:
         raise HTTPException(404, "Story not found")
     db.update_story(story_key, status="archived")
-    db.log_stage(story_key, s.get("current_stage", ""), "archive", "User archived story after release")
+    db.log_stage(
+        story_key,
+        s.get("current_stage", ""),
+        "archive",
+        "User archived story after release",
+    )
     return {"ok": True, "status": "archived"}
 
 
@@ -1360,7 +1375,9 @@ def api_sync_tapd(req: SyncRequest):
 
     source = TapdSource(config)
     try:
-        items = source.fetch_pending(fetch_all=req.fetch_all, item_type=req.item_type or None)
+        items = source.fetch_pending(
+            fetch_all=req.fetch_all, item_type=req.item_type or None
+        )
     except Exception as e:
         raise HTTPException(502, f"TAPD fetch failed: {e}")
 
@@ -1376,7 +1393,9 @@ def api_sync_tapd(req: SyncRequest):
     # Also pull bugs linked to stories via TAPD get_related_bugs, which catches
     # associations that the bug's own story_id field misses.
     if not req.dry_run:
-        related = _sync_related_bugs_from_stories(source, item_type_filter=req.item_type)
+        related = _sync_related_bugs_from_stories(
+            source, item_type_filter=req.item_type
+        )
         result["related_bugs_synced"] = related["synced"]
         result["related_bugs_failed"] = related["failed"]
 
@@ -1391,7 +1410,9 @@ def _sync_related_bugs_from_stories(source, item_type_filter: str = "") -> dict:
         return result
 
     stories = db.list_visible_stories(show_all=True, item_type="story")
-    stories = [s for s in stories if s.get("source_type") == "tapd" and s.get("source_id")]
+    stories = [
+        s for s in stories if s.get("source_type") == "tapd" and s.get("source_id")
+    ]
 
     # Collect related bugs first to avoid concurrent SQLite writes on the same key.
     bug_map: dict[str, tuple[dict, str]] = {}
@@ -1664,7 +1685,9 @@ def api_link_bug_to_story(story_key: str, bug_key: str):
     if bug.get("tapd_type") != "bug":
         raise HTTPException(400, "Target is not a bug")
     db.update_story(bug_key, parent_key=story_key)
-    db.log_stage(bug_key, bug.get("current_stage", ""), "link", f"Manually linked to {story_key}")
+    db.log_stage(
+        bug_key, bug.get("current_stage", ""), "link", f"Manually linked to {story_key}"
+    )
     return {"ok": True, "parentKey": story_key}
 
 
