@@ -1,5 +1,8 @@
-import pickle, collections
-E=pickle.load(open(r'D:/hc-all/.claude/tmp/cache/events.pkl','rb'))
+import pickle, collections, os, sys
+_PROJ=os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0,_PROJ)
+from miner import config  # noqa: E402
+C=config.CACHE_DIR
+E=pickle.load(open(os.path.join(C,'events.pkl'),'rb'))
 def classify(c):
     c=c.strip(); parts=c.split()
     first=parts[0] if parts else ''
@@ -34,5 +37,6 @@ out.append("- `cli:skyladder` + `cli:sql` + `net:curl` 三类合计极高 → **
 out.append("- `noise:env` 占大头（cd+export+TOKEN 套餐）→ 可固化成「进入工作态」一键脚本/skill")
 out.append("- `net:ssh` 高频登固定机 → 可做 ssh 别名/跳板封装")
 out.append("- `search`(find/grep) 高频 → codegraph 已部分替代，可检查 grep→codegraph 迁移率")
-open(r'D:/hc-all/.claude/tmp/cache/d7_toolopt.md','w',encoding='utf-8').write('\n'.join(out))
+os.makedirs(C, exist_ok=True)
+open(os.path.join(C,'d7_toolopt.md'),'w',encoding='utf-8').write('\n'.join(out))
 print("d7 done; bash total:",len(bashes),"noise:",noise)

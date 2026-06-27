@@ -5,9 +5,16 @@ v2：支持 `python retrospect.py <sid>` 单会话模式；结构化输出（任
 """
 import sqlite3, os, collections, sys, re
 
-DB = 'D:/github/story-lifecycle/packages/story-miner/data/transcripts.db'
-OUT_DIR = 'D:/github/story-lifecycle/packages/story-miner/scripts/out'
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from miner import config  # noqa: E402
+from miner.common import ws_of  # noqa: E402
+
+DB = config.DB_PATH
+OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'out')
 OUT_BATCH = os.path.join(OUT_DIR, 'retrospect.md')
+# batch_top5 默认复盘的主工作区短名（hc-all）；可由 config.json 的 "primary_ws"
+# 或环境变量 MINER_PRIMARY_WS 覆盖，以复盘非 hc-all 项目。
+PRIMARY_WS = config._cfg.get('primary_ws') or os.environ.get('MINER_PRIMARY_WS') or ws_of(config.WORKSPACES[0])
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from generate_playbooks import short, THEME  # noqa: E402
@@ -175,7 +182,8 @@ def batch_top5():
     os.makedirs(OUT_DIR, exist_ok=True)
     c = sqlite3.connect(DB)
     sids = [r[0] for r in c.execute(
-        "SELECT sid FROM sessions WHERE src='claude' AND ws='hc-all' ORDER BY ntools DESC LIMIT 5"
+        "SELECT sid FROM sessions WHERE src='claude' AND ws=? ORDER BY ntools DESC LIMIT 5",
+        (PRIMARY_WS,)
     )]
     out = ["# 自动复盘（高活跃会话 Top5）\n",
            "> 数据驱动复盘：从 transcript 自动提取任务/工具/访问文件/踩坑/关键输出。"]

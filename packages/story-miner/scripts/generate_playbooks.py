@@ -27,7 +27,8 @@ default_themes = {
 }
 THEME = config._cfg.get('playbook_themes', default_themes)
 
-# 默认服务名集合，用于 short() 识别所属服务；可在 config.json 中以 "service_names" 覆盖
+# 默认服务名集合，用于 short() 识别所属服务；可在 config.json 中以 "service_names" 覆盖。
+# （旧版在此处又硬编码了一遍 _HC_SERVICES，把上面的 config 驱动值顶掉了——已删，恢复 config 驱动。）
 _HC_SERVICES = tuple(config._cfg.get('service_names', (
     'hc-order', 'hc-user', 'hc-limit', 'hc-message', 'hc-third-party',
     'hc-config', 'hc-coupon', 'hc-marketing', 'hc-gateway', 'hc-callback', 'hc-job',
@@ -38,15 +39,6 @@ def _playbook_out_dir(workspace: str) -> str:
     """Resolve playbook output directory for a workspace."""
     return os.path.join(workspace, '.story', 'knowledge', 'playbooks')
 
-THEME = {
-    'requirement-dev': ('需求开发', ['实现', '编码', 'feature', 'spec', 'story', 'tapd', '设计文档', '开发', '职业', '字段']),
-    'debug': ('排查/Debug', ['排查', 'debug', '为什么', '报错', 'bug', '日志', '没收到', '没进', '失败', '异常']),
-    'sms-marketing': ('短信/营销', ['短信', 'sms', '免息', 'mgm', '营销', '活动', '奖励']),
-    'deploy': ('部署/上线', ['deploy', '部署', '上线', 'skyladder', '发版', 'nexus']),
-    'data-sql': ('数据/SQL', ['sql', '查询', '数据', 'schema', 'ddl', '迁移']),
-    'credit-risk': ('授信/风控/清分', ['授信', '风控', '提现', '放款', '还款', '清分', '逾期']),
-    'frontend': ('前端', ['前端', 'admin', '页面', 'protable', 'proform', '组件']),
-}
 CODE_EXT = ('.java', '.ts', '.tsx', '.sql', '.xml', '.yml', '.yaml')
 
 # 角色推断：按路径关键词（basename 段或目录段）匹配，优先级从上到下
@@ -99,13 +91,6 @@ def fail_class(text):
     if 'permission' in t or 'denied' in t:
         return '权限拒绝'
     return None
-
-
-# hc-all 服务名集合，用于从路径里识别所属服务
-_HC_SERVICES = (
-    'hc-order', 'hc-user', 'hc-limit', 'hc-message', 'hc-third-party',
-    'hc-config', 'hc-coupon', 'hc-marketing', 'hc-gateway', 'hc-callback', 'hc-job',
-)
 
 
 def infer_role(p):

@@ -1,6 +1,8 @@
 """持久化后的探索性挖掘：找 9 方向之外的新方向。纯 SQL/聚合，不展开实现。"""
-import sqlite3, re, collections, statistics
-DB=r'D:/hc-all/.claude/tmp/transcripts.db'
+import sqlite3, re, collections, statistics, os, sys
+_PROJ=os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0,_PROJ)
+from miner import config  # noqa: E402
+DB=config.DB_PATH
 conn=sqlite3.connect(DB); conn.row_factory=sqlite3.Row
 out=["# 持久化后探索：新方向信号探测\n"]
 
@@ -32,7 +34,9 @@ for r in retry: out.append(f"| {r['sid']} | `{r['name']}` | {r['c']} |")
 out.append(f"\n## 候选新方向③：三端效率对比（同工作区）\n")
 out.append("| 工作区 | 端 | 会话 | avg turns | avg tools | avg errs |")
 out.append("|---|---|---|---|---|---|")
-for ws in ['hc-all','java-agent','story-lifecycle']:
+# 工作区列表由数据驱动（取库里出现过的 ws），不再硬编码 hc-all/java-agent/...
+ws_list=[r['ws'] for r in conn.execute("SELECT DISTINCT ws FROM sessions WHERE ws IS NOT NULL ORDER BY ws").fetchall()]
+for ws in ws_list:
     for r in conn.execute("SELECT src,Count(*),ROUND(Avg(turns),1),ROUND(Avg(ntools),1),ROUND(Avg(nerrs),1) FROM sessions WHERE ws=? AND turns>0 GROUP BY src",(ws,)).fetchall():
         out.append(f"| {ws} | {r[0]} | {r[1]} | {r[2]} | {r[3]} | {r[4]} |")
 
@@ -72,5 +76,6 @@ for r in bd: out.append(f"| {r[0]} | {r[1]} |")
 topdays=conn.execute("SELECT ts,Count(*) c FROM sessions WHERE ts LIKE '2026%' GROUP BY ts ORDER BY c DESC LIMIT 5").fetchall()
 out.append("最忙日期 Top5: " + ", ".join(f"{r['ts']}({r['c']})" for r in topdays))
 
-open(r'D:/hc-all/.claude/tmp/cache/explore.md','w',encoding='utf-8').write('\n'.join(out))
+os.makedirs(config.CACHE_DIR, exist_ok=True)
+open(os.path.join(config.CACHE_DIR,'explore.md'),'w',encoding='utf-8').write('\n'.join(out))
 print("explore done; multi-story:",len(multi),"retry-groups:",len(retry),"fails:",len(fails))

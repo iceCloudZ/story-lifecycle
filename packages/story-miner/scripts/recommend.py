@@ -9,9 +9,10 @@ import sqlite3, sys, os, collections, argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from generate_playbooks import short, THEME, fail_class  # noqa: E402
 from miner.common import mask  # noqa: E402
+from miner import config  # noqa: E402
 
-DB = 'D:/github/story-lifecycle/packages/story-miner/data/transcripts.db'
-OUT = 'D:/github/story-lifecycle/packages/story-miner/scripts/out/recommend.md'
+DB = config.DB_PATH
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'out', 'recommend.md')
 
 
 def classify_query(query):
@@ -172,7 +173,7 @@ def main():
     if args.package:
         out = render_context_package(query, kws, themes, match, files, fails)
         safe = query.replace(' ', '_').replace('/', '_')[:30]
-        out_path = f'D:/github/story-lifecycle/packages/story-miner/scripts/out/context-package-{safe}.md'
+        out_path = os.path.join(os.path.dirname(OUT), f'context-package-{safe}.md')
     else:
         out = render_list(query, kws, match, files, rec_pb)
         out_path = OUT

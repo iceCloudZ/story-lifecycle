@@ -1,6 +1,6 @@
 # 约束库规则表（从 transcript 沉淀）
 
-> 来源：agent-transcript-miner 中真实用户指令（ucmd）里含「必须/禁止/不要/不能」等强制语气的片段。
+> 来源：story-miner 挖掘的 transcript 中真实用户指令（ucmd）里含「必须/禁止/不要/不能」等强制语气的片段。
 > 本表把高频、可 grep 执行的约束沉淀为检查项，接入 `code-standards-check` skill。
 
 ## 统计

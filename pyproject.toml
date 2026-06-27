@@ -31,4 +31,14 @@ testpaths = [
     "packages/knowledge/tests",
     "tests/contracts",
     "tests/integration",
+    "tests/e2e",
+]
+pythonpath = [
+    "packages/story-miner",
+    "packages/knowledge/src",
+    "packages/story-lifecycle/src",
+    "packages/testing/src",
+]
+markers = [
+    "real_e2e: real-AI end-to-end (slow/costly; skipped by default, run with `pytest -m real_e2e`)",
 ]

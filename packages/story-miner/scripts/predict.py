@@ -4,9 +4,13 @@ v2：新增按「工作区 × 任务类型 × story 复杂度」的 effort-estim
 """
 import sqlite3, os, collections, statistics, sys
 
-DB = 'D:/github/story-lifecycle/packages/story-miner/data/transcripts.db'
-OUT = 'D:/github/story-lifecycle/packages/story-miner/scripts/out/predict.md'
-OUT_EFFORT = 'D:/github/story-lifecycle/packages/story-miner/scripts/out/effort-estimate.md'
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from miner import config  # noqa: E402
+
+DB = config.DB_PATH
+_OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'out')
+OUT = os.path.join(_OUT_DIR, 'predict.md')
+OUT_EFFORT = os.path.join(_OUT_DIR, 'effort-estimate.md')
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from generate_playbooks import THEME  # noqa: E402

@@ -5,10 +5,12 @@ v2：改为读取 SQLite DB（不再依赖硬编码 pickle），输出规则表 
 import sqlite3, re, collections, os, sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from miner import config  # noqa: E402
 from miner.common import mask  # noqa: E402
 
-DB = 'D:/github/story-lifecycle/packages/story-miner/data/transcripts.db'
-OUT_DOC = 'D:/github/story-lifecycle/packages/story-miner/docs/constraint-rules.md'
+_PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB = config.DB_PATH
+OUT_DOC = os.path.join(_PROJ, 'docs', 'constraint-rules.md')
 
 # 约束关键词（用户指令里表达强制/禁止的语气词）
 KW = ['必须', '禁止', '不要', '不能', '务必', '严禁', '不可', '绝不',
@@ -152,7 +154,7 @@ def main():
     clusters = cluster(dedup)
 
     out = ["# 约束库规则表（从 transcript 沉淀）\n",
-           "> 来源：agent-transcript-miner 中真实用户指令（ucmd）里含「必须/禁止/不要/不能」等强制语气的片段。",
+           "> 来源：story-miner 挖掘的 transcript 中真实用户指令（ucmd）里含「必须/禁止/不要/不能」等强制语气的片段。",
            "> 本表把高频、可 grep 执行的约束沉淀为检查项，接入 `code-standards-check` skill。",
            ""]
     out.append(f"## 统计\n")

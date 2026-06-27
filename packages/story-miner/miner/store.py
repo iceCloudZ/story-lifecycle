@@ -104,7 +104,7 @@ def main(argv=None):
         conn.execute('DELETE FROM sources WHERE path=?', (path,))
         meta, evs, tokens = ad.parse(path, sid)
         if meta is None or (meta['turns'] == 0 and meta['ntools'] == 0): continue
-        conn.execute('INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+        conn.execute('INSERT INTO sessions(sid,src,ws,ts,title,turns,ntools,nerrs,cwd,branch,first_ucmd,path) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
             (meta['sid'], meta['src'], meta['ws'], meta['ts'], meta['title'], meta['turns'],
              meta['ntools'], meta['nerrs'], meta['cwd'], meta['branch'], meta['first_ucmd'], path))
         rows = [(e.get('sid'), e.get('src'), e.get('ws'), e.get('ts'), e.get('kind'), e.get('name'),

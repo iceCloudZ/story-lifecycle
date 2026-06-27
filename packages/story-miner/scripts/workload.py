@@ -1,5 +1,8 @@
-import json, statistics, collections
-S=json.load(open(r'D:/hc-all/.claude/tmp/cache/sessions.json',encoding='utf-8'))
+import json, statistics, collections, os, sys
+_PROJ=os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0,_PROJ)
+from miner import config  # noqa: E402
+C=config.CACHE_DIR
+S=json.load(open(os.path.join(C,'sessions.json'),encoding='utf-8'))
 def med(x): return statistics.median(x) if x else 0
 def p90(x):
     if not x: return 0
@@ -33,5 +36,6 @@ out.append("|---|---|---|---|")
 rows=[(n,c,round(t/c,1) if c else 0,round(to/c,1) if c else 0) for n,(c,t,to) in bucket.items() if c>0]
 for n,c,avg,avgt in sorted(rows,key=lambda x:-x[2]):
     out.append(f"| {n} | {c} | {avg} | {avgt} |")
-open(r'D:/hc-all/.claude/tmp/cache/d4_workload.md','w',encoding='utf-8').write('\n'.join(out))
+os.makedirs(C, exist_ok=True)
+open(os.path.join(C,'d4_workload.md'),'w',encoding='utf-8').write('\n'.join(out))
 print("d4 done; groups:",len(grp),"task types:",len([r for r in rows]))

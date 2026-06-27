@@ -1,5 +1,8 @@
-import pickle, collections
-E=pickle.load(open(r'D:/hc-all/.claude/tmp/cache/events.pkl','rb'))
+import pickle, collections, os, sys
+_PROJ=os.path.dirname(os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0,_PROJ)
+from miner import config  # noqa: E402
+C=config.CACHE_DIR
+E=pickle.load(open(os.path.join(C,'events.pkl'),'rb'))
 tools=[(e['ts'],e['name']) for e in E if e.get('kind')=='tool' and e.get('ts') and e['ts'][0].isdigit()]
 first=collections.defaultdict(lambda:'9999-99-99')
 for ts,nm in tools:
@@ -32,5 +35,6 @@ for nm in sorted(first,key=lambda x:first[x]):
     rows.append((first[nm],nm,rc,status))
 for ts,nm,rc,st in sorted(rows,key=lambda x:-x[2])[:20]:
     out.append(f"| {ts} | `{nm}` | {rc} | {st} |")
-open(r'D:/hc-all/.claude/tmp/cache/d8_learn.md','w',encoding='utf-8').write('\n'.join(out))
+os.makedirs(C, exist_ok=True)
+open(os.path.join(C,'d8_learn.md'),'w',encoding='utf-8').write('\n'.join(out))
 print("d8 done; tools tracked:",len(first))

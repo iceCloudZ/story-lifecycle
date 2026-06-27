@@ -5,7 +5,7 @@ import json
 import os
 import shlex
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class BaseAdapter(ABC):
@@ -72,7 +72,9 @@ class BaseAdapter(ABC):
                 "stage": stage,
                 "adapter": adapter_name,
                 "cwd": os.path.normpath(str(cwd)),
-                "ts": datetime.now().replace(microsecond=0).isoformat(),
+                # UTC（带 +00:00）以对齐 claude/codex transcript 里的会话 ts（也是 UTC）；
+                # 否则 miner.link 按 date[:10] 比较，本地日 vs UTC 日会跨日错位导致绑定失败。
+                "ts": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 "prompt_hash": prompt_hash,
             }
             runs_dir = os.path.join(ws, ".story", "runs", story_key)

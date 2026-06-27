@@ -32,6 +32,10 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# scripts/ hosts the analysis scripts imported as modules (generate_playbooks,
+# failure_mode, ...); miner is the package; ../knowledge/src is the unified
+# knowledge layer consumed by test_knowledge_outputs.py.
+pythonpath = ["scripts", ".", "../knowledge/src"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["miner"]

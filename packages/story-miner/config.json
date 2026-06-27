@@ -1,4 +1,5 @@
 {
   "db_path": "data/transcripts.db",
+  "cache_dir": "D:/hc-all/.claude/tmp/cache",
   "workspaces": ["D:/hc-all", "D:/java-agent", "D:/github"]
 }

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "testing"
+version = "0.1.0"
+description = "Dedicated testing package: real-AI E2E harness + asserters + scenarios for story-lifecycle"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "zhaozihao"},
+]
+keywords = ["ai", "testing", "e2e", "harness", "story-lifecycle"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+]
+
+# Workspace-internal references. These are NOT published wheels — they are
+# resolved via the monorepo's top-level [tool.pytest.ini_options] pythonpath,
+# which already exposes story_lifecycle, miner, and knowledge on sys.path.
+# Listed here as documentation of the contract; no version pin needed because
+# the packages are always editable-installed from packages/.
+dependencies = [
+    # story-lifecycle: orchestrator + adapters (real AI CLI invocation)
+    # story-miner:    transcripts.db sessions/story_id linkage assertions
+    # knowledge:      unified knowledge layer (optional, for linked-knowledge asserts)
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/testing"]

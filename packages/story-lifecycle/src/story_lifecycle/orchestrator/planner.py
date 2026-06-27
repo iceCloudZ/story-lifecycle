@@ -661,7 +661,82 @@ def run_orchestrator_agent(
     return {"status": "planning", "actions": actions}
 
 
-def continue_orchestrator_agent(story_key: str):
+# headless claude/codex 是真实 AI，非确定：偶发 rc!=0 退出（API 抖动/限流/崩溃）
+# 而没写 done file。给每个 stage 最多重试这么多次（含首次），扛住瞬时抖动。
+HEADLESS_MAX_ATTEMPTS = 3
+
+
+def _kill_headless(proc):
+    """Best-effort kill of a headless AI CLI process AND its child tree.
+
+    claude/codex CLIs spawn children (node runtime, MCP servers); killing only
+    the top PID orphans them — and a claude that already wrote its done file but
+    keeps running will otherwise linger. On Windows use ``taskkill /T`` to take
+    the whole tree; elsewhere fall back to ``proc.kill()``.
+    """
+    import os as _os
+    import subprocess as _sp
+
+    try:
+        if proc.poll() is None:
+            if _os.name == "nt":
+                _sp.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    timeout=15,
+                )
+            else:
+                proc.kill()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _write_retrospect(workspace: str, story_key: str, actions: list) -> None:
+    """聚合各 stage 的 done.json 摘要，写 story 级 retrospect.md。
+
+    落到 ``<workspace>/.story/done/<story_key>/retrospect.md``，供 real-E2E 断言
+    与人工复盘读取。这是 story 完成时的轻量复盘（来自各阶段 done 产物）；基于
+    transcript 的深度复盘仍由 agent-transcript-miner 的 retrospect.py 负责。
+    best-effort：写失败只告警，不影响 story 完成状态。
+    """
+    from pathlib import Path as _P
+
+    done_dir = _P(workspace) / ".story" / "done" / story_key
+    lines = [f"# Retrospect — {story_key}", ""]
+    n = 0
+    for action in actions or []:
+        if action.get("action") != "launch":
+            continue
+        stage = action.get("stage", "")
+        dj = done_dir / f"{stage}.json"
+        if not dj.exists():
+            continue
+        try:
+            data = json.loads(dj.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        lines.append(f"## {stage}")
+        lines.append(str(data.get("summary", "（无摘要）")))
+        fc = data.get("files_changed") or []
+        if fc:
+            lines.append("")
+            lines.append("**变更文件：** " + ", ".join(f"`{f}`" for f in fc))
+        lines.append("")
+        n += 1
+    if n == 0:
+        lines.append("（未捕获到任何阶段 done 产物）")
+    try:
+        done_dir.mkdir(parents=True, exist_ok=True)
+        (done_dir / "retrospect.md").write_text("\n".join(lines), encoding="utf-8")
+        log.info("[%s] wrote retrospect.md (%d stages)", story_key, n)
+    except OSError as exc:
+        log.warning("[%s] failed to write retrospect.md: %s", story_key, exc)
+
+
+def continue_orchestrator_agent(story_key: str, headless: bool = False):
     """用户确认规划后，执行 action list。
 
     遍历 action list，逐个执行：
@@ -776,7 +851,10 @@ def continue_orchestrator_agent(story_key: str):
                 if stage in profile_stages:
                     cfg = profile_stages[stage]
                     model = cfg.model if hasattr(cfg, "model") else ""
-                launch_cmd = adapter.interactive_launch_cmd(model=model)
+                if headless:
+                    launch_cmd = adapter.headless_launch_cmd(model=model, prompt="")
+                else:
+                    launch_cmd = adapter.interactive_launch_cmd(model=model)
                 _ctx_markers = (
                     "上下文",
                     "context",
@@ -803,13 +881,55 @@ def continue_orchestrator_agent(story_key: str):
                     any(m in cli_prompt for m in _ctx_markers),
                     cli_prompt[:120],
                 )
-                ensure_agent_pty(
-                    story_key,
-                    launch_cmd,
-                    workspace,
-                    cli_prompt,  # prompt 作为第 4 个参数注入到 PTY
-                )
-                log.info("[%s] PTY session started for stage=%s", story_key, stage)
+                headless_proc = None
+                if headless:
+                    import subprocess as _sp
+                    # I2 miner binding：headless 路径不经过 adapter.inject_prompt()，
+                    # 显式补写 anchor，使 miner.link 能按 (cwd+ts) 精确回填
+                    # sessions.story_id。best-effort，绝不阻断 spawn。
+                    try:
+                        adapter.write_anchor(
+                            prompt=cli_prompt,
+                            story_key=story_key,
+                            stage=stage,
+                            cwd=workspace,
+                            workspace=workspace,
+                        )
+                    except Exception:
+                        pass
+                    log.info("[%s] HEADLESS spawn stage=%s cmd=%s", story_key, stage, launch_cmd)
+                    # 非阻塞启动：done file 才是完成信号。claude -p 写完 done file 后
+                    # 往往继续运行很久不自行退出，blocking subprocess.run 会一路卡到超时；
+                    # 改用 Popen 与 done-file 轮询并发——done file 一出现即 kill claude、
+                    # 推进下一阶段（headless_proc 在下方 poll 循环里被回收）。
+                    try:
+                        headless_proc = _sp.Popen(
+                            launch_cmd,
+                            cwd=workspace,
+                            stdin=_sp.PIPE,
+                            stdout=_sp.PIPE,
+                            stderr=_sp.PIPE,
+                        )
+                        headless_proc.stdin.write(cli_prompt.encode("utf-8"))
+                        headless_proc.stdin.close()
+                    except Exception as exc:
+                        db.update_story(
+                            story_key, status="failed",
+                            last_error=f"Stage {stage} headless spawn failed: {exc}",
+                        )
+                        return
+                    log.info(
+                        "[%s] HEADLESS pid=%s stage=%s (polling done file, not exit)",
+                        story_key, headless_proc.pid, stage,
+                    )
+                else:
+                    ensure_agent_pty(
+                        story_key,
+                        launch_cmd,
+                        workspace,
+                        cli_prompt,  # prompt 作为第 4 个参数注入到 PTY
+                    )
+                    log.info("[%s] PTY session started for stage=%s", story_key, stage)
             except Exception as exc:
                 log.error(
                     f"[{story_key}] Failed to launch {adapter_name} for {stage}: {exc}"
@@ -838,23 +958,83 @@ def continue_orchestrator_agent(story_key: str):
             poll_timeout = 30 * 60  # 30 minutes
             poll_interval = 5  # seconds
             elapsed = 0
+            headless_attempt = 1  # headless 重试计数（首次=1）
 
             while elapsed < poll_timeout:
+                # headless：claude 若已退出却没写 done file，提前失败（不等满 30min）
+                if (
+                    headless_proc is not None
+                    and headless_proc.poll() is not None
+                    and not done_path.exists()
+                ):
+                    rc = headless_proc.returncode
+                    stderr_tail, stdout_tail = b"", b""
+                    try:
+                        if headless_proc.stderr:
+                            stderr_tail = headless_proc.stderr.read()[-500:]
+                        if headless_proc.stdout:
+                            stdout_tail = headless_proc.stdout.read()[-800:]
+                    except Exception:
+                        pass
+                    # claude 非确定：偶发 rc!=0 退出（API 抖动/限流/崩溃）却没写 done
+                    # file → 重试，扛住瞬时抖动（共享下方 poll_timeout 预算，不另加时）。
+                    if headless_attempt < HEADLESS_MAX_ATTEMPTS:
+                        log.warning(
+                            "[%s] claude exited rc=%d before done file (attempt %d/%d); "
+                            "re-launching. stderr=%r stdout_tail=%r",
+                            story_key, rc, headless_attempt, HEADLESS_MAX_ATTEMPTS,
+                            stderr_tail, stdout_tail,
+                        )
+                        headless_attempt += 1
+                        try:
+                            headless_proc = _sp.Popen(
+                                launch_cmd, cwd=workspace,
+                                stdin=_sp.PIPE, stdout=_sp.PIPE, stderr=_sp.PIPE,
+                            )
+                            headless_proc.stdin.write(cli_prompt.encode("utf-8"))
+                            headless_proc.stdin.close()
+                        except Exception as exc:
+                            db.update_story(
+                                story_key, status="failed",
+                                last_error=f"Stage {stage}: headless retry spawn failed: {exc}",
+                            )
+                            return
+                        log.info(
+                            "[%s] HEADLESS retry pid=%s stage=%s (attempt %d)",
+                            story_key, headless_proc.pid, stage, headless_attempt,
+                        )
+                        continue
+                    log.warning(
+                        "[%s] claude exited rc=%d without done file after %d attempts; "
+                        "giving up. stdout_tail=%r",
+                        story_key, rc, HEADLESS_MAX_ATTEMPTS, stdout_tail,
+                    )
+                    db.update_story(
+                        story_key, status="failed",
+                        last_error=(
+                            f"Stage {stage}: claude exited (rc={rc}) without done file "
+                            f"after {HEADLESS_MAX_ATTEMPTS} attempts"
+                        ),
+                    )
+                    return
                 # 检查 done file
                 if done_path.exists():
                     try:
-                        raw = done_path.read_text(encoding="utf-8")
-                        done_data = robust_json_parse(raw) or {}
+                        # robust_json_parse 接收 Path（内部自读，并容忍 markdown 包裹/
+                        # 半写文件：解析失败会抛异常，由下方 except 捕获后轮询重试，
+                        # 等 claude 把 done file 写完整再消费）。
+                        done_data = robust_json_parse(done_path) or {}
                         db.log_event(story_key, stage, "completed", done_data)
                         log.info(
                             f"[{story_key}] Stage {stage} completed: "
                             f"{done_data.get('summary', '')[:100]}"
                         )
-                        # 清理 done file
-                        try:
-                            done_path.unlink()
-                        except OSError:
-                            pass
+                        # 保留 done file 作为阶段完成证据：real-E2E asserters 与
+                        # 审计都需要事后读取 {stage}.json。每个 stage 的 done 路径唯一，
+                        # 重跑由 reset_workspace 清理 done/ 目录，无需在此 unlink。
+                        # headless：done file 已出现 → 回收 claude 进程（它往往仍在运行）
+                        if headless_proc is not None:
+                            _kill_headless(headless_proc)
                         break
                     except Exception as exc:
                         log.error(f"[{story_key}] Error parsing done file: {exc}")
@@ -862,7 +1042,9 @@ def continue_orchestrator_agent(story_key: str):
                 time.sleep(poll_interval)
                 elapsed += poll_interval
             else:
-                # 超时
+                # 超时：回收 headless claude 进程，避免孤儿残留
+                if headless_proc is not None:
+                    _kill_headless(headless_proc)
                 log.warning(
                     f"[{story_key}] Stage {stage} timed out after {poll_timeout}s"
                 )
@@ -876,6 +1058,8 @@ def continue_orchestrator_agent(story_key: str):
     # 所有 action 执行完毕
     db.update_story(story_key, status="completed")
     log.info(f"[{story_key}] All stages completed")
+    # story 完成时生成 retrospect.md（聚合各 stage done 摘要）
+    _write_retrospect(workspace, story_key, actions)
 
 
 def _build_cli_prompt(
