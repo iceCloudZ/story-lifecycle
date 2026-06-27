@@ -3,7 +3,7 @@
 事件类型: turn.prompt(用户回合, input[]) | context.append_message(助手文本)
         | context.append_loop_event(工具循环) | usage.record(token)
 time 为 epoch 毫秒。sid='kimi:<session_uuid>:<agent>'（多 agent 会话各自独立）。"""
-import os, glob, json, datetime
+import os, glob, json
 from .. import common
 from ..base import SourceAdapter, register_adapter
 
@@ -36,10 +36,8 @@ class KimiAdapter(SourceAdapter):
                 if not line: continue
                 try: o = json.loads(line)
                 except: continue
-                t_ms = o.get('time')
-                if t_ms and not meta['ts']:
-                    try: meta['ts'] = datetime.datetime.fromtimestamp(t_ms / 1000).strftime('%Y-%m-%d')
-                    except: pass
+                line_ts = common.full_ts(o)
+                if line_ts and not meta['ts']: meta['ts'] = line_ts
                 typ = o.get('type', '')
                 if typ == 'turn.prompt':
                     inp = o.get('input'); txt = ''
@@ -50,7 +48,7 @@ class KimiAdapter(SourceAdapter):
                     if common.real_user(txt):
                         meta['turns'] += 1
                         if not meta['first_ucmd']: meta['first_ucmd'] = txt[:160]
-                        evs.append(dict(sid=sid, src='kimi', ws=meta['ws'], ts=meta['ts'], kind='ucmd', text=common.mask(txt[:600])))
+                        evs.append(dict(sid=sid, src='kimi', ws=meta['ws'], ts=line_ts, kind='ucmd', text=common.mask(txt[:600])))
                 elif typ == 'context.append_message':
                     msg = o.get('message')
                     if isinstance(msg, dict):
@@ -60,19 +58,19 @@ class KimiAdapter(SourceAdapter):
                             for q in c:
                                 if isinstance(q, dict): txt += q.get('text', '') or ''
                         if role == 'assistant' and txt:
-                            evs.append(dict(sid=sid, src='kimi', ws=meta['ws'], ts=meta['ts'], kind='atext', text=common.mask(txt[:600])))
+                            evs.append(dict(sid=sid, src='kimi', ws=meta['ws'], ts=line_ts, kind='atext', text=common.mask(txt[:600])))
                 elif typ == 'context.append_loop_event':
                     ev = o.get('event')
                     if isinstance(ev, dict):
                         nm = ev.get('tool_name') or ev.get('name') or ev.get('tool') or ''
                         if nm and nm not in ('message', ''):
                             meta['ntools'] += 1
-                            evs.append(dict(sid=sid, src='kimi', ws=meta['ws'], ts=meta['ts'], kind='tool', name=str(nm)))
+                            evs.append(dict(sid=sid, src='kimi', ws=meta['ws'], ts=line_ts, kind='tool', name=str(nm)))
                 elif typ == 'usage.record':
                     u = o.get('usage')
                     if isinstance(u, dict):
                         toks = (u.get('total') or u.get('prompt_tokens', 0) + u.get('completion_tokens', 0))
-                        evs.append(dict(sid=sid, src='kimi', ws=meta['ws'], ts=meta['ts'], kind='think',
+                        evs.append(dict(sid=sid, src='kimi', ws=meta['ws'], ts=line_ts, kind='think',
                                         text=f"[usage] model={o.get('model','')} tokens={toks}"))
                 if o.get('summary') and not meta['title']: meta['title'] = str(o['summary'])[:80]
         except Exception:

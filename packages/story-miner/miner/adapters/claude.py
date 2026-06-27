@@ -28,8 +28,9 @@ class ClaudeAdapter(SourceAdapter):
                 if not line: continue
                 try: o = json.loads(line)
                 except: continue
-                t = o.get('type'); ts = o.get('timestamp')
-                if ts and not meta['ts']: meta['ts'] = str(ts)[:10]
+                t = o.get('type')
+                line_ts = common.full_ts(o)
+                if line_ts and not meta['ts']: meta['ts'] = line_ts
                 if t == 'ai-title' and o.get('aiTitle'): meta['title'] = o['aiTitle']
                 if t == 'last-prompt' and o.get('lastPrompt') and not meta['first_ucmd']:
                     meta['first_ucmd'] = o['lastPrompt'][:160]
@@ -48,12 +49,12 @@ class ClaudeAdapter(SourceAdapter):
                         if role == 'user' and common.real_user(tx):
                             meta['turns'] += 1
                             if not meta['first_ucmd']: meta['first_ucmd'] = tx[:160]
-                            evs.append(dict(sid=sid, src='claude', ws=meta['ws'], ts=meta['ts'], kind='ucmd', text=common.mask(tx[:600])))
+                            evs.append(dict(sid=sid, src='claude', ws=meta['ws'], ts=line_ts, kind='ucmd', text=common.mask(tx[:600])))
                         elif role == 'assistant':
-                            evs.append(dict(sid=sid, src='claude', ws=meta['ws'], ts=meta['ts'], kind='atext', text=common.mask(tx[:600])))
+                            evs.append(dict(sid=sid, src='claude', ws=meta['ws'], ts=line_ts, kind='atext', text=common.mask(tx[:600])))
                     elif pt == 'tool_use':
                         nm = p.get('name', '?'); inp = p.get('input') or {}; meta['ntools'] += 1
-                        ev = dict(sid=sid, src='claude', ws=meta['ws'], ts=meta['ts'], kind='tool', name=nm)
+                        ev = dict(sid=sid, src='claude', ws=meta['ws'], ts=line_ts, kind='tool', name=nm)
                         if nm == 'Bash':
                             ev['cmd'] = common.mask((inp.get('command', '') or '')[:200])
                         elif nm in ('Read', 'Write', 'Edit', 'NotebookEdit'):
@@ -69,7 +70,7 @@ class ClaudeAdapter(SourceAdapter):
                         evs.append(ev)
                         if nm in ('Edit', 'Write', 'NotebookEdit'):
                             code = inp.get('new_string') or inp.get('content') or ''
-                            if code: evs.append(dict(sid=sid, src='claude', ws=meta['ws'], ts=meta['ts'], kind='code', name=nm, code=common.mask(code[:1500]), path=inp.get('file_path', '')))
+                            if code: evs.append(dict(sid=sid, src='claude', ws=meta['ws'], ts=line_ts, kind='code', name=nm, code=common.mask(code[:1500]), path=inp.get('file_path', '')))
                     elif pt == 'tool_result':
                         c = p.get('content'); txt = ''
                         if isinstance(c, str): txt = c
@@ -78,7 +79,7 @@ class ClaudeAdapter(SourceAdapter):
                                 if isinstance(q, dict) and q.get('type') == 'text': txt += q.get('text', '')
                         ok = not p.get('is_error')
                         if not ok: meta['nerrs'] += 1
-                        evs.append(dict(sid=sid, src='claude', ws=meta['ws'], ts=meta['ts'], kind='result', ok=ok, text=common.mask(txt[:200])))
+                        evs.append(dict(sid=sid, src='claude', ws=meta['ws'], ts=line_ts, kind='result', ok=ok, text=common.mask(txt[:200])))
         except Exception:
             pass
         return meta, evs, []

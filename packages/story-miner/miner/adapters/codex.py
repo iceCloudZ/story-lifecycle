@@ -27,8 +27,8 @@ class CodexAdapter(SourceAdapter):
                 if not line: continue
                 try: o = json.loads(line)
                 except: continue
-                ts = o.get('timestamp')
-                if ts and not meta['ts']: meta['ts'] = str(ts)[:10]
+                line_ts = common.full_ts(o)
+                if line_ts and not meta['ts']: meta['ts'] = line_ts
                 pl = o.get('payload')
                 if not isinstance(pl, dict): continue
                 pt = pl.get('type'); cwd = pl.get('cwd') or pl.get('workdir')
@@ -45,12 +45,12 @@ class CodexAdapter(SourceAdapter):
                     if 'user' in str(role).lower() and common.real_user(txt):
                         meta['turns'] += 1
                         if not meta['first_ucmd']: meta['first_ucmd'] = txt[:160]
-                        evs.append(dict(sid=sid, src='codex', ws=meta['ws'], ts=meta['ts'], kind='ucmd', text=common.mask(txt[:600])))
+                        evs.append(dict(sid=sid, src='codex', ws=meta['ws'], ts=line_ts, kind='ucmd', text=common.mask(txt[:600])))
                     elif 'assistant' in str(role).lower() and txt:
-                        evs.append(dict(sid=sid, src='codex', ws=meta['ws'], ts=meta['ts'], kind='atext', text=common.mask(txt[:600])))
+                        evs.append(dict(sid=sid, src='codex', ws=meta['ws'], ts=line_ts, kind='atext', text=common.mask(txt[:600])))
                 elif pt in ('function_call', 'custom_tool_call', 'mcp_tool_call', 'local_shell_call'):
                     nm = pl.get('name', '?'); meta['ntools'] += 1
-                    ev = dict(sid=sid, src='codex', ws=meta['ws'], ts=meta['ts'], kind='tool', name=nm)
+                    ev = dict(sid=sid, src='codex', ws=meta['ws'], ts=line_ts, kind='tool', name=nm)
                     args = pl.get('arguments', '{}'); ad = json.loads(args) if isinstance(args, str) else (args or {})
                     if isinstance(ad, dict) and ad.get('command'): ev['cmd'] = common.mask(ad['command'][:200])
                     evs.append(ev)
@@ -60,7 +60,7 @@ class CodexAdapter(SourceAdapter):
                     m = re.search(r'exit code:\s*(\d+)', out_s.lower())
                     ok = (m.group(1) == '0') if m else not any(e in out_s.lower() for e in ['traceback', 'exception', 'error:'])
                     if not ok: meta['nerrs'] += 1
-                    evs.append(dict(sid=sid, src='codex', ws=meta['ws'], ts=meta['ts'], kind='result', ok=ok, text=common.mask(str(out)[:200])))
+                    evs.append(dict(sid=sid, src='codex', ws=meta['ws'], ts=line_ts, kind='result', ok=ok, text=common.mask(str(out)[:200])))
         except Exception:
             pass
         return meta, evs, []

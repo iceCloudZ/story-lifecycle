@@ -13,7 +13,7 @@
 统一 session meta (dict):
   sid, src, ws, ts, title, turns, ntools, nerrs, cwd, branch, first_ucmd
 """
-import os, re
+import os, re, datetime
 
 SYS_PREFIX = ('<task-notification','<system-reminder','<command-name','<command-message',
               '<local-command','<bash-input','<bash-stdout','<environment_context','<task-')
@@ -49,3 +49,17 @@ def mask(s):
     s=re.sub(r'\b\d{11,}\b',lambda m:m.group()[:3]+'*'*8,s)
     s=re.sub(r'[\w.+-]+@[\w-]+\.[\w.-]+','***@***.***',s)
     return s
+
+def full_ts(o, fallback=''):
+    """从事件 dict 提取完整 ISO 时间戳(Claude/Codex 的 timestamp;Kimi 的 time 毫秒)。"""
+    ts = o.get('timestamp')
+    if ts:
+        return str(ts)
+    t_ms = o.get('time')
+    if t_ms:
+        try:
+            return datetime.datetime.fromtimestamp(
+                t_ms / 1000, tz=datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.') + f'{int(t_ms) % 1000:03d}Z'
+        except Exception:
+            return fallback
+    return fallback
