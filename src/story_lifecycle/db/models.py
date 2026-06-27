@@ -818,6 +818,16 @@ def upsert_story_from_source(
     Returns (story_dict, was_created).
     """
     existing = find_by_source_id(source_type, source_id)
+    if not existing:
+        # story_key may already exist without source_id linked (hand-created,
+        # historical, or duplicate items in one sync batch). Fall back to a key
+        # lookup so upsert stays idempotent instead of crashing on UNIQUE
+        # story_key in create_story().
+        key = f"{source_type}-{source_id}"
+        existing_by_key = get_story(key)
+        if existing_by_key:
+            update_story(key, source_type=source_type, source_id=source_id)
+            existing = existing_by_key
     if existing:
         updates = {}
         if title:

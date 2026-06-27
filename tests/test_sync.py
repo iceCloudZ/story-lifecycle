@@ -50,6 +50,27 @@ class TestSyncService:
         assert s2 is not None
         assert s2["title"] == "白屏问题"
 
+    def test_upsert_idempotent_when_key_exists_without_source_id(self, isolated_story_home):
+        """Regression: a hand-created story with story_key='tapd-X' but no
+        source_id must not UNIQUE-crash when upsert links the same source.
+        Root cause: create_story() doesn't store source_type/source_id, so
+        find_by_source_id misses it and the create branch hits UNIQUE."""
+        db.create_story(
+            story_key="tapd-9999",
+            title="手工创建",
+            workspace="/tmp/ws",
+            current_stage="design",
+        )
+        story, created = db.upsert_story_from_source(
+            source_type="tapd",
+            source_id="9999",
+            title="更新标题",
+            workspace="/tmp/ws",
+        )
+        assert created is False
+        assert story["story_key"] == "tapd-9999"
+        assert story["source_id"] == "9999"  # source_id now linked
+
     def test_sync_updates_existing_stories(self, isolated_story_home):
         from story_lifecycle.orchestrator.sync_service import sync_tapd
 
