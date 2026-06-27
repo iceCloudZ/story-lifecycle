@@ -3,6 +3,7 @@
 import re
 from pathlib import Path
 
+from ... import context_providers
 from ...db import models as db
 from ...story_paths import story_evidence_dir
 from .state import StoryState, STORY_HOME
@@ -82,6 +83,10 @@ def _build_plan_executor_prompt(
     support_sections: list[str] = []
     if skill_instruction:
         support_sections.insert(0, skill_instruction)
+    if metadata.get("transcript_context"):
+        support_sections.append(
+            "## 历史上下文（来自既往 transcript）\n\n" + metadata["transcript_context"]
+        )
     if metadata.get("quality_packet_text"):
         support_sections.append(metadata["quality_packet_text"])
     if metadata.get("checklist_text"):
@@ -309,6 +314,10 @@ Story: {state["story_key"]}
         stage_cfg = get_stage_config(state.get("profile", "minimal"), stage)
     skill = stage_cfg.get("skill", "")
 
+    transcript_context = context_providers.get_transcript_context(
+        state["story_key"], state.get("workspace", ""), stage
+    )
+
     vars_map = {
         "{story_key}": state["story_key"],
         "{title}": state.get("title", ""),
@@ -342,6 +351,7 @@ Story: {state["story_key"]}
         "{quality_packet_section}": quality_section,
         "{quality_checklist}": checklist,
         "{repair_packet_section}": repair_section,
+        "{transcript_context}": (transcript_context + "\n") if transcript_context else "",
     }
     _had_repair_placeholder = "{repair_packet_section}" in template
     for key, value in vars_map.items():
@@ -352,6 +362,7 @@ Story: {state["story_key"]}
         template = f"{template}\n\n{repair_section}"
 
     metadata = {
+        "transcript_context": transcript_context or "",
         "quality_packet_injected": quality_packet_injected,
         "quality_checklist_injected": quality_checklist_injected,
         "quality_packet_text": quality_section,

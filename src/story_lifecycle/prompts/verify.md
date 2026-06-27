@@ -7,6 +7,7 @@
 - Story 证据目录: {story_dir}
 {prd_path_section}
 {spec_path_section}
+{transcript_context}
 
 ## 步骤
 
