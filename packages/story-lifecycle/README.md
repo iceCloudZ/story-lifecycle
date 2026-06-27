@@ -2,15 +2,40 @@
 
 **Story 级 AI 编排器** — 把一个需求交给 AI，让它走完设计→实现→测试→审查的完整生命周期。
 
+> 本包是 [`dev-flywheel`](https://github.com/iceCloudZ/story-lifecycle) monorepo 的一部分，与 [`packages/story-miner`](../story-miner) 共用统一知识飞轮。当前版本：**v0.12.0**。
+
 ## 安装 & 快速开始
 
+在 monorepo 根目录（推荐）：
+
 ```bash
-pip install story-lifecycle
+cd ..
+python -m venv .venv-monorepo-test
+source .venv-monorepo-test/Scripts/activate   # Windows Git Bash
+pip install -e packages/story-lifecycle
+pip install -e packages/story-miner
+pip install -e packages/knowledge
+
 story setup           # 配置 LLM API Key（必填）
 story demo            # 0 依赖体验完整流程
 story serve           # 启动编排服务 (localhost:8180)
 story                 # 打开 TUI 面板
 ```
+
+单独安装：
+
+```bash
+pip install story-lifecycle
+```
+
+## 与 story-miner 的集成（v0.12.0+）
+
+- **I1 定时扫描**：`story-miner` 通过 `scripts/refresh.sh` 每日增量/每周全量扫描本地 transcript。
+- **I2 精确绑定**：本包在 `inject_prompt` 时写 `anchors.jsonl`，`story-miner` 优先用锚点把 session 绑到 story，hc-all 工作区 story-sign 会话绑定率 80.4%。
+- **I3 历史上下文注入**：`design/build/verify` prompt 自动注入 `{transcript_context}`（来自 `story-miner` 的 `TranscriptStoryContextProvider`）。
+- **I4 Done 复盘**：`story done <key>` 自动调用 `story-miner/scripts/retrospect.py --story <key>` 生成合并复盘。
+
+详见顶层 [`docs/INTEGRATION.md`](../docs/INTEGRATION.md) 与 [`docs/ADOPTION.md`](../docs/ADOPTION.md)。
 
 ## 核心理念
 
