@@ -1,0 +1,17 @@
+# 🔴 数据绝不入库：含真实开发对话 + 金融 PII（手机号/cid/生产排查）
+data/*.db
+data/cache/
+*.pkl
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# 本地分析输出
+scripts/out/
