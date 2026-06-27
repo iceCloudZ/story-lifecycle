@@ -1,5 +1,6 @@
 """Adapter 单测：合成 sanitized fixture，绝不内联真实对话(PII 红线)。"""
-from miner import common
+import sqlite3
+from miner import common, store
 from miner.adapters.claude import ClaudeAdapter
 
 CLAUDE_FIXTURE = (
@@ -29,3 +30,14 @@ def test_full_ts_ms():
 
 def test_full_ts_fallback():
     assert common.full_ts({}, "FB") == "FB"
+
+
+def test_token_usage_table_created(tmp_path):
+    db = str(tmp_path / "t.db")
+    store.init_db(db)
+    conn = sqlite3.connect(db)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(token_usage)")]
+    conn.close()
+    for c in ("sid", "src", "ts", "model", "input_tokens", "output_tokens",
+              "cache_read_tokens", "cache_creation_tokens", "reasoning_tokens"):
+        assert c in cols

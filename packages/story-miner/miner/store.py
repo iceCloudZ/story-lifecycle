@@ -23,6 +23,11 @@ CREATE TRIGGER IF NOT EXISTS events_ai AFTER INSERT ON events BEGIN
   INSERT INTO events_fts(rowid,text,code,cmd) VALUES (new.id,new.text,new.code,new.cmd); END;
 CREATE TRIGGER IF NOT EXISTS events_ad AFTER DELETE ON events BEGIN
   INSERT INTO events_fts(events_fts,rowid,text,code,cmd) VALUES('delete',old.id,old.text,old.code,old.cmd); END;
+CREATE TABLE IF NOT EXISTS token_usage(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, sid TEXT, src TEXT, ts TEXT, model TEXT,
+  input_tokens INT, output_tokens INT,
+  cache_read_tokens INT, cache_creation_tokens INT, reasoning_tokens INT);
+CREATE INDEX IF NOT EXISTS idx_tu_sid ON token_usage(sid);
 """
 
 def discover():
@@ -94,9 +99,10 @@ def main(argv=None):
         if path not in to_up:
             continue
         conn.execute('DELETE FROM events WHERE sid=?', (sid,))
+        conn.execute('DELETE FROM token_usage WHERE sid=?', (sid,))
         conn.execute('DELETE FROM sessions WHERE sid=?', (sid,))
         conn.execute('DELETE FROM sources WHERE path=?', (path,))
-        meta, evs, _tokens = ad.parse(path, sid)
+        meta, evs, tokens = ad.parse(path, sid)
         if meta is None or (meta['turns'] == 0 and meta['ntools'] == 0): continue
         conn.execute('INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
             (meta['sid'], meta['src'], meta['ws'], meta['ts'], meta['title'], meta['turns'],
@@ -104,12 +110,22 @@ def main(argv=None):
         rows = [(e.get('sid'), e.get('src'), e.get('ws'), e.get('ts'), e.get('kind'), e.get('name'),
                  e.get('cmd'), e.get('code'), e.get('ok'), e.get('text'), e.get('path')) for e in evs]
         conn.executemany('INSERT INTO events(sid,src,ws,ts,kind,name,cmd,code,ok,text,path) VALUES(?,?,?,?,?,?,?,?,?,?,?)', rows)
+        if tokens:
+            trows = [(t.get('sid'), t.get('src'), t.get('ts'), t.get('model'),
+                      t.get('input_tokens'), t.get('output_tokens'),
+                      t.get('cache_read_tokens'), t.get('cache_creation_tokens'),
+                      t.get('reasoning_tokens')) for t in tokens]
+            conn.executemany(
+                'INSERT INTO token_usage(sid,src,ts,model,input_tokens,output_tokens,'
+                'cache_read_tokens,cache_creation_tokens,reasoning_tokens) '
+                'VALUES(?,?,?,?,?,?,?,?,?)', trows)
         conn.execute('INSERT INTO sources VALUES(?,?,?,?,?,?,?)',
             (path, src, sid, disk[path][0], disk[path][1], len(evs), time.strftime('%Y-%m-%dT%H:%M:%S')))
         n_ev += len(evs); n_sess += 1
     for p in to_del:
         for sid, in conn.execute('SELECT sid FROM sources WHERE path=?', (p,)):
             conn.execute('DELETE FROM events WHERE sid=?', (sid,))
+            conn.execute('DELETE FROM token_usage WHERE sid=?', (sid,))
             conn.execute('DELETE FROM sessions WHERE sid=?', (sid,))
         conn.execute('DELETE FROM sources WHERE path=?', (p,))
     conn.commit()
