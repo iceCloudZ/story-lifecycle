@@ -14,7 +14,13 @@ console = Console()
 @click.option(
     "--all", "-a", "fetch_all", is_flag=True, help="拉取全部需求/缺陷（忽略状态过滤）"
 )
-def sync_cmd(dry_run, status_only, workspace, fetch_all):
+@click.option(
+    "--id",
+    "story_id",
+    default=None,
+    help="按 TAPD id 拉单个需求/缺陷，绕过 owner/状态过滤（fetch_pending 漏拉时用）",
+)
+def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id):
     """拉取 TAPD 待处理需求/缺陷，同步为本地 story。"""
     from ..db.models import init_db
     from ..sources.tapd_source import TapdSource
@@ -31,21 +37,33 @@ def sync_cmd(dry_run, status_only, workspace, fetch_all):
         )
         raise SystemExit(1)
 
-    console.print("[bold cyan]正在拉取 TAPD 数据...[/]")
-
     source = TapdSource(config)
-    try:
-        items = source.fetch_pending(fetch_all=fetch_all)
-    except Exception as e:
-        console.print(f"[red]TAPD 拉取失败: {e}[/]")
-        raise SystemExit(1)
 
-    if not items:
-        console.print("[green]没有待处理的需求或缺陷。[/]")
-        return
-
-    label = "全量" if fetch_all else "待处理"
-    console.print(f"  拉取到 [cyan]{len(items)}[/] 个{label}项")
+    if story_id:
+        # Pull one by id, bypassing fetch_pending's owner (custom_field_25) /
+        # parent_id filters — covers stories those filters skip.
+        try:
+            item = source.get_detail(story_id)
+        except Exception as e:
+            console.print(f"[red]TAPD 拉取失败: {e}[/]")
+            raise SystemExit(1)
+        if not item:
+            console.print(f"[red]TAPD 未找到 id={story_id}[/]")
+            raise SystemExit(1)
+        items = [item]
+        console.print(f"[cyan]按 id 拉取: {item.id} | {item.title}[/]")
+    else:
+        console.print("[bold cyan]正在拉取 TAPD 数据...[/]")
+        try:
+            items = source.fetch_pending(fetch_all=fetch_all)
+        except Exception as e:
+            console.print(f"[red]TAPD 拉取失败: {e}[/]")
+            raise SystemExit(1)
+        if not items:
+            console.print("[green]没有待处理的需求或缺陷。[/]")
+            return
+        label = "全量" if fetch_all else "待处理"
+        console.print(f"  拉取到 [cyan]{len(items)}[/] 个{label}项")
 
     if dry_run:
         _show_dry_run(items)
