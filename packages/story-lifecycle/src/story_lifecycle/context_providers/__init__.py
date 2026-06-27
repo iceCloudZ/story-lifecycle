@@ -49,15 +49,36 @@ def _load_provider(cfg: dict) -> BaseStoryContextProvider:
     return provider
 
 
+def _default_provider_cfg() -> dict | None:
+    """Auto-enable transcript context provider when story-miner is installed.
+
+    If the user hasn't configured a provider, but ``miner`` is importable,
+    default to ``TranscriptStoryContextProvider`` backed by ``miner.config.DB_PATH``.
+    This keeps {transcript_context} injection on by default in the monorepo.
+    """
+    try:
+        import miner.config as _mc
+
+        return {
+            "module": "miner.story_context_provider",
+            "class": "TranscriptStoryContextProvider",
+            "db_path": _mc.DB_PATH,
+        }
+    except Exception:
+        return None
+
+
 def get_transcript_context(
     story_key: str, workspace: str, stage: str
 ) -> str | None:
     """Return historical transcript context for this story/stage, or None.
 
-    Returns None when no provider is configured (default — injection off), or
-    when the provider could not be loaded / raised. Never raises.
+    If no provider is explicitly configured, falls back to the bundled
+    ``miner.story_context_provider`` when ``story-miner`` is available.
+    Any failure (missing config, import error, provider exception) returns None
+    so prompt rendering is NEVER blocked by a provider.
     """
-    cfg = get_config().get("context_provider") or {}
+    cfg = get_config().get("context_provider") or _default_provider_cfg() or {}
     if not (cfg.get("module") and cfg.get("class")):
         return None
     try:

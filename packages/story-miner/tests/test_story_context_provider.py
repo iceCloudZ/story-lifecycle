@@ -5,6 +5,7 @@ Run from the project root: ``PYTHONPATH=. python -m pytest tests/``
 
 import os
 import re
+import sqlite3
 
 import pytest
 
@@ -13,8 +14,22 @@ from miner.story_context_provider import TranscriptStoryContextProvider
 _PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(_PROJ, "data", "transcripts.db")
 
+
+def _db_has_stories(path: str) -> bool:
+    if not os.path.exists(path):
+        return False
+    try:
+        conn = sqlite3.connect(path)
+        cur = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='stories'")
+        ok = cur.fetchone() is not None
+        conn.close()
+        return ok
+    except Exception:
+        return False
+
+
 pytestmark = pytest.mark.skipif(
-    not os.path.exists(DB), reason="data/transcripts.db not present"
+    not _db_has_stories(DB), reason="data/transcripts.db not present or has no stories table"
 )
 
 

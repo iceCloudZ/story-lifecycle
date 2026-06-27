@@ -1,7 +1,8 @@
-# agent-transcript-miner 落地 adoption 指南
+# dev-flywheel 落地 adoption 指南
 
+> Monorepo：`packages/story-lifecycle`（流程引擎）+ `packages/story-miner`（对话挖掘）。
 > 本仓库分析产物已经跑通，现在说明**怎么在日常工作流里用起来**。
-> 先读 `CONTEXT.md` 了解项目结构，再读 `ROADMAP.md` 了解任务卡。
+> 先读 `packages/story-miner/CONTEXT.md` 了解项目结构，再读 `packages/story-miner/docs/ROADMAP.md` 了解任务卡。
 
 ---
 
@@ -24,19 +25,21 @@
 
 ### 2.1 开新任务前：找历史上下文 + 估工时
 
-**找相关历史会话：**
+**找相关历史会话（在 venv 中）：**
 ```bash
-export PYTHONPATH=D:/github/agent-transcript-miner
-python scripts/recommend.py "你的任务关键词"
+cd D:/github/story-lifecycle
+source .venv-monorepo-test/Scripts/activate   # Windows Git Bash
+# 或 .venv-monorepo-test/bin/activate         # Linux/macOS
+python packages/story-miner/scripts/recommend.py "你的任务关键词"
 # 列表模式
-python scripts/recommend.py "免息 清分" --package
+python packages/story-miner/scripts/recommend.py "免息 清分" --package
 # 上下文包模式（<500 字，可注入 prompt）
 ```
 
 **估工作量：**
 ```bash
-python scripts/predict.py
-# 看 scripts/out/effort-estimate.md
+python packages/story-miner/scripts/predict.py
+# 看 packages/story-miner/scripts/out/effort-estimate.md
 ```
 
 用法：
@@ -67,7 +70,7 @@ rg -n '\.valueOf\(' --type java -g '!**/test/**'
 rg -n '\.docx?|\.tmp|\.log|/tmp/|\.claude/tmp|\.story/.*\.json|\.pyc|node_modules' --type java --type ts -g '!**/test/**'
 ```
 
-更系统的方式：调用 hc-all skill `code-standards-check`（已更新第 5 节「流程/提交/部署约束」）。
+更系统的方式：调用 `code-standards-check` skill（规则来源见 `packages/story-miner/docs/constraint-rules.md`）。
 
 ---
 
@@ -108,25 +111,25 @@ python scripts/debt.py
 
 **单会话复盘：**
 ```bash
-python scripts/retrospect.py <sid>
-# 输出 scripts/out/retrospect_<sid_safe>.md
+python -m miner.story_ingest          # 先刷新 stories 表
+python -m miner.link                  # 刷新 session↔story 绑定
+python packages/story-miner/scripts/retrospect.py <sid>
+# 输出 packages/story-miner/scripts/out/retrospect_<sid_safe>.md
 ```
 
 **批量 Top5：**
 ```bash
-python scripts/retrospect.py
-# 输出 scripts/out/retrospect.md
+python packages/story-miner/scripts/retrospect.py
+# 输出 packages/story-miner/scripts/out/retrospect.md
 ```
 
 **Story 级复盘：**
 ```bash
-python scripts/retrospect.py --story <story_key>
+python packages/story-miner/scripts/retrospect.py --story <story_key>
 # 输出 <ws>/.story/done/<story_key>/retrospect.md
 ```
 
-也已接入 story-lifecycle `story done <key>`：标记完成时会自动调用上述命令生成合并复盘。
-
-要求：先跑 `python -m miner.link` 把 session↔story 绑定率提起来（当前 widow 绑定 ~10-30%，等 story-lifecycle 写 anchors 后可到 >80%）。
+也已接入 story-lifecycle `story done <key>`：标记完成时会自动调用上述命令生成合并复盘（使用当前 venv 的 `sys.executable`）。
 
 ---
 
@@ -145,7 +148,7 @@ from datasets import load_dataset
 
 ds = load_dataset(
     "json",
-    data_files="D:/github/agent-transcript-miner/data/distill/sft-20260627_114642.jsonl"
+    data_files="D:/github/story-lifecycle/packages/story-miner/data/distill/sft-<timestamp>.jsonl"
 )
 ```
 
@@ -171,23 +174,26 @@ ds = load_dataset(
 
 ## 三、如何保持数据新鲜
 
-当前脚本都是**离线**跑。建议定时刷新：
+已提供定时脚本，建议由 Hermes / cron / Windows 计划任务调用：
 
 ```bash
-# 每日增量入库
-python -m miner.store
+# 每日增量入库 + 重算 playbook
+cd D:/github/story-lifecycle
+source .venv-monorepo-test/Scripts/activate
+packages/story-miner/scripts/refresh.sh
 
-# 每周全量 + 重算 playbook
-python -m miner.store
-python -m miner.story_ingest
-python -m miner.link
-python scripts/generate_playbooks.py
+# 每周全量 + 重算 playbook/failure
+cd D:/github/story-lifecycle
+source .venv-monorepo-test/Scripts/activate
+packages/story-miner/scripts/refresh.sh full
+```
 
-# 按需重跑分析
-python scripts/constraint.py
-python scripts/debt.py
-python scripts/predict.py
-python scripts/failure_mode.py
+**按需重跑分析：**
+```bash
+python packages/story-miner/scripts/constraint.py
+python packages/story-miner/scripts/debt.py
+python packages/story-miner/scripts/predict.py
+python packages/story-miner/scripts/failure_mode.py
 ```
 
 > 增量细节和自动化方案见 `docs/INTEGRATION.md` I1。
@@ -203,9 +209,11 @@ python scripts/failure_mode.py
 2. **ntools/nerrs 列值不可靠**
    - 所有分析脚本已从 `events` 表重算，不要直接信 `sessions.ntools` / `sessions.nerrs`。
 
-3. **story 关联率 ~18%**
-   - T6 复杂度维度、T8 三端 benchmark 都受限于这个基数。
-   - 提升方案：`docs/INTEGRATION.md` I2（story-lifecycle 主动写锚点）。
+3. **story 关联率**
+   - 全库：67/331 sessions 已绑定（20.2%）。
+   - 有 `.story/` 目录的工作区（hc-all）：story-sign 会话绑定率 80.4%，已满足 I2 指标。
+   - 其他工作区（story-lifecycle/java-agent/github）目前无 `.story/` story 记录，因此无绑定目标。
+   - 提升方案见 `docs/INTEGRATION.md` I2（story-lifecycle 主动写锚点）。
 
 4. **路径展示**
    - T3/T4 已使用 `generate_playbooks.short()`，保留服务前缀和 basename，不再丢首字母。
@@ -221,17 +229,27 @@ A: 可以。每个脚本独立，只读 db，写 `scripts/out/` 或 `data/distil
 A: 产物是历史高频访问/债务标记，代码可能已变。实际改动前用 codegraph/IDE 二次确认。
 
 **Q: 想新增一条约束检查？**  
-A: 改 `scripts/constraint.py` 的 `EXECUTABLE_RULES`，再同步到 `D:/hc-all/.agents/skills/code-standards-check/SKILL.md`。
+A: 改 `packages/story-miner/scripts/constraint.py` 的 `EXECUTABLE_RULES`，再同步到对应工作区的 `.agents/skills/code-standards-check/SKILL.md`。
 
 **Q: 想扩大 SFT 语料规模？**  
-A: 调 `scripts/distill.py` 里的 `MIN_TURNS` / `MAX_TURNS` / `MIN_TOOLS` / `MAX_ERR_RATIO`，重新导出后再次人工复核。
+A: 调 `packages/story-miner/scripts/distill.py` 里的 `MIN_TURNS` / `MAX_TURNS` / `MIN_TOOLS` / `MAX_ERR_RATIO`，重新导出后再次人工复核。
 
 ---
 
-## 六、下一步可推进
+## 六、I1–I4 已完成
 
-- **I1 定时扫描**：让 db 和 playbook 自动跟最新对话走（`docs/INTEGRATION.md`）
-- **I2 story↔session 主动绑定**：把关联率从 ~18% 提到 >80%
-- **I3 provider 注入**：把 T4 上下文包接入 story-lifecycle prompt
-- **I4 done 复盘钩子**：Story 结束时自动生成合并复盘
-- **T8 三端 benchmark**：等样本充足后做同题对比评分卡
+- **I1 定时扫描**：`packages/story-miner/scripts/refresh.sh`（每日增量 / 每周全量）。
+- **I2 story↔session 主动绑定**：`miner/link.py` 读 `story-lifecycle` 写的 `anchors.jsonl`，hc-all 工作区 story-sign 会话绑定率 80.4%。
+- **I3 provider 注入**：`story-lifecycle` 默认启用 `miner.story_context_provider`，自动注入 `{transcript_context}`。
+- **I4 done 复盘钩子**：`story done <key>` 自动调用 `retrospect.py --story <key>`。
+
+验证文档：`packages/story-miner/scripts/out/i2-i4-verify.md`。
+
+## 七、下一步可推进（ROADMAP）
+
+- **T1 约束库产品化**：把约束规则挂到 skill，自动检查。
+- **T4 任务上下文包**：把 `recommend.py --package` 输出对齐到 `{transcript_context}`，和 I3 自然衔接。
+- **T7 失败模式避坑清单**：把高频失败转成 `pre-release-review` / `build-check` 检查项。
+- **T2 债务雷达打磨**：去噪声，只扫真实源码文件。
+- **T6 工作量预估**：按 ws × 任务类型 × 复杂度 出基线表。
+- **T8 三端 benchmark**：等样本充足后做同题对比评分卡。

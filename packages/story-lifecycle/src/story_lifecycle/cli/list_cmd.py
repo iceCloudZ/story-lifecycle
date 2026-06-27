@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 
 import click
 from rich.console import Console
@@ -32,7 +33,7 @@ def _run_miner_retrospect(story_key: str) -> None:
         return
     try:
         result = subprocess.run(
-            ["python", _MINER_RETROSPECT_SCRIPT, "--story", story_key],
+            [sys.executable, _MINER_RETROSPECT_SCRIPT, "--story", story_key],
             capture_output=True,
             text=True,
             timeout=120,

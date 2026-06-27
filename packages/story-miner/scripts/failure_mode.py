@@ -7,17 +7,32 @@ git冲突 / token失效 / 用户拒绝 / 工具未找到 等），用关键词�
 
 工具名恢复：result 事件的 name 列为 NULL，但其前一个 tool 事件携带工具名 ——
 按 (sid, id) 顺序扫描，维护"本 session 最后一个 tool 事件的 name"，命中失败 result 时取该名。
+
+v2 (M6): 工作区改为 config 驱动，统一失败知识写入 <workspace>/.story/knowledge/failures/。
 """
-import os, sys, sqlite3, time, collections, re
+import os, sys, sqlite3, time, collections, re, json, argparse
 
 _PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _PROJ)
 from miner import config  # noqa: E402
+from miner.common import ws_of  # noqa: E402
 
 OUT_DIR = os.path.join(_PROJ, 'scripts', 'out')
 OUT_FILE = os.path.join(OUT_DIR, 'failure_mode.md')
+OUT_JSON = os.path.join(OUT_DIR, 'failure-knowledge.json')
 DOCS_DIR = os.path.join(_PROJ, 'docs')
 CHECKLIST_FILE = os.path.join(DOCS_DIR, 'failure-checklist.md')
+
+
+def _failure_out_paths(workspace: str | None):
+    """Resolve output paths for a workspace (None = global fallback)."""
+    if workspace:
+        failures_dir = os.path.join(workspace, '.story', 'knowledge', 'failures')
+        return (
+            os.path.join(failures_dir, 'failure-mode.md'),
+            os.path.join(failures_dir, 'failure-knowledge.json'),
+        )
+    return OUT_FILE, OUT_JSON
 
 
 def connect():
@@ -314,40 +329,93 @@ def write_checklist(total, by_cat, by_tool_cat, by_src_cat, by_src_ws_tool_cat):
     print(f'[failure_mode] wrote {CHECKLIST_FILE}')
 
 
-def main():
-    os.makedirs(OUT_DIR, exist_ok=True)
-    conn = connect()
+def write_failure_knowledge(total, by_cat, by_tool_cat, by_src_cat, by_ws_cat,
+                            out_json: str = OUT_JSON):
+    """Write unified failure-knowledge.json for the knowledge layer."""
+    os.makedirs(os.path.dirname(out_json) or '.', exist_ok=True)
+
+    # Aggregate tool counts per category
+    tools_by_cat = collections.defaultdict(collections.Counter)
+    for (tool, cat), n in by_tool_cat.items():
+        tools_by_cat[cat][tool] += n
+
+    failures = []
+    for cat, n in by_cat.most_common():
+        ws_freq = {}
+        for (ws, c), cnt in by_ws_cat.items():
+            if c == cat:
+                ws_freq[ws] = cnt
+        src_freq = {}
+        for (src, c), cnt in by_src_cat.items():
+            if c == cat:
+                src_freq[src] = cnt
+
+        failures.append({
+            "id": f"failure:{cat}",
+            "type": "failure",
+            "title": f"{cat} 失败模式",
+            "source": "dynamic",
+            "category": cat,
+            "display_category": cat,
+            "detail": f"transcript 中归类为「{cat}」的失败共 {n} 次",
+            "frequency": ws_freq or src_freq,
+            "common_tools": [t for t, _ in tools_by_cat[cat].most_common(5)],
+            "stages_affected": ["build", "verify"],
+            "mitigations": [],
+            "counterfactuals": [],
+            "source_refs": ["scripts/failure_mode.py"],
+        })
+
+    payload = {
+        "version": 1,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "total_failures": total,
+        "failures": failures,
+    }
+    with open(out_json, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    print(f'[failure_mode] wrote {out_json}')
+
+
+def _collect_failures(conn, ws_filter: str | None = None):
+    """Collect and classify failure results, optionally filtered by workspace tag."""
     c = conn.cursor()
 
-    # 取所有事件按 (sid, id) 顺序，恢复每个 result 前最近的 tool name
-    # 只需要 result 与 tool 两类；为内存安全用流式 fetch
     c.execute(
         "SELECT id, sid, kind, name, ok, text FROM events "
         "WHERE kind IN ('tool','result') ORDER BY sid, id"
     )
-    last_tool_by_sid = {}      # sid -> last seen tool name
-    failures = []              # (src, ws, tool, category, text)
+    last_tool_by_sid = {}
+    failures = []
     for _id, sid, kind, name, ok, text in c.fetchall():
         if kind == 'tool':
             last_tool_by_sid[sid] = name
             continue
-        # result
         if ok == 0 and text and len(text) > 5:
             tool = last_tool_by_sid.get(sid)
             cat = classify(text)
             failures.append((sid, tool, cat))
 
-    # 失败记录本身没有 src/ws（避免再一次 join），用 sessions 表回填
     sid2srcws = {}
-    c.execute("SELECT sid, src, ws FROM sessions")
+    if ws_filter:
+        c.execute("SELECT sid, src, ws FROM sessions WHERE ws=?", (ws_filter,))
+    else:
+        c.execute("SELECT sid, src, ws FROM sessions")
     for sid, src, ws in c.fetchall():
         sid2srcws[sid] = (src, ws)
 
     enriched = []
     for sid, tool, cat in failures:
-        src, ws = sid2srcws.get(sid, ('?', '?'))
+        src_ws = sid2srcws.get(sid)
+        if not src_ws:
+            continue
+        src, ws = src_ws
         enriched.append((src, ws, tool or '(unknown)', cat))
+    return enriched
 
+
+def _render_failure_report(enriched):
+    """Render markdown report from enriched failure tuples."""
     total = len(enriched)
     by_cat = collections.Counter(r[3] for r in enriched)
     by_src = collections.Counter(r[0] for r in enriched)
@@ -362,7 +430,6 @@ def main():
     out.append('> 工具名通过"同 session 内最近一个 tool 事件"恢复（result.name 为 NULL）。')
     out.append('> 失败类型用关键词匹配，多类取首个命中（规则按特异性排序）。\n')
 
-    # 1. 失败类型总分布
     out.append('## 1. 失败类型总分布\n')
     out.append('| 失败类型 | 次数 | 占比 |')
     out.append('|---|---|---|')
@@ -371,7 +438,6 @@ def main():
         out.append(f'| {cat} | {n} | {pct:.1f}% |')
     out.append('')
 
-    # 2. 按端
     out.append('## 2. 按端（src）的失败类型分布\n')
     out.append('每端失败总数与 Top 失败类型。')
     out.append('')
@@ -385,7 +451,6 @@ def main():
         out.append(f'| {src} | {by_src[src]} | {cells} |')
     out.append('')
 
-    # 按端的完整类型表
     out.append('### 2.1 各端 × 失败类型明细\n')
     all_cats = [c for c, _ in by_cat.most_common()]
     out.append('| 端 | ' + ' | '.join(all_cats) + ' | 合计 |')
@@ -395,7 +460,6 @@ def main():
         out.append(f'| {src} | ' + ' | '.join(cells) + f' | {by_src[src]} |')
     out.append('')
 
-    # 3. 按工作区
     out.append('## 3. 按工作区（ws）的失败类型分布\n')
     out.append('| 工作区 | 失败总数 | Top1 类型(次数) | Top2 类型(次数) | Top3 类型(次数) |')
     out.append('|---|---|---|---|---|')
@@ -408,7 +472,6 @@ def main():
         out.append(f'| {ws} | {ws_tot[ws]} | {cells} |')
     out.append('')
 
-    # 4. Top 工具 × 失败类型组合（核心问题）
     out.append('## 4. 最常失败的「工具 × 失败类型」组合 Top 20\n')
     out.append('| 排名 | 工具 | 失败类型 | 次数 | 占比 |')
     out.append('|---|---|---|---|---|')
@@ -417,7 +480,6 @@ def main():
         out.append(f'| {i} | {tool} | {cat} | {n} | {pct:.1f}% |')
     out.append('')
 
-    # 5. Top 端 × 工作区 × 工具 × 类型（细粒度）
     out.append('## 5. 最常失败的「端 × 工作区 × 工具 × 类型」组合 Top 20\n')
     out.append('| 排名 | 端 | 工作区 | 工具 | 失败类型 | 次数 |')
     out.append('|---|---|---|---|---|---|')
@@ -425,13 +487,10 @@ def main():
         out.append(f'| {i} | {src} | {ws} | {tool} | {cat} | {n} |')
     out.append('')
 
-    # 6. 每端最突出组合（一句话洞察）
     out.append('## 6. 每端"头号失败组合"\n')
     out.append('| 端 | 头号工具 | 头号失败类型 | 次数 | 占该端失败比 |')
     out.append('|---|---|---|---|---|')
     for src, _ in by_src.most_common():
-        sub = [(t, n) for (s, w, t, cat), n in by_src_ws_tool_cat.items() if s == src]
-        # 按 tool 维度聚合
         tool_tot = collections.Counter()
         for (s, w, t, cat), n in by_src_ws_tool_cat.items():
             if s == src:
@@ -440,7 +499,7 @@ def main():
         cat_sub = collections.Counter()
         for (s, cat), n in by_src_cat.items():
             if s == src:
-                cat_sub[cat] = n
+                cat_sub[cat] += n
         top_cat = cat_sub.most_common(1)[0] if cat_sub else ('—', 0)
         denom = by_src[src] or 1
         out.append(
@@ -449,18 +508,63 @@ def main():
         )
     out.append('')
 
-    conn.close()
-    with open(OUT_FILE, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(out))
-    print(f'[failure_mode] wrote {OUT_FILE}; total failures = {total}')
-    print('=== failure_mode top categories ===')
-    for cat, n in by_cat.most_common(8):
-        print(f'  {cat}: {n} ({(n/total*100) if total else 0:.1f}%)')
-    print('=== top tool x cat (top 6) ===')
-    for (tool, cat), n in by_tool_cat.most_common(6):
-        print(f'  {tool} | {cat}: {n}')
+    return out, total, by_cat, by_src, by_src_cat, by_ws_cat, by_tool_cat, by_src_ws_tool_cat
 
-    write_checklist(total, by_cat, by_tool_cat, by_src_cat, by_src_ws_tool_cat)
+
+def _analyze_and_write(conn, ws_tag: str | None = None, workspace: str | None = None):
+    """Analyze failures for a workspace and write report + unified failure knowledge."""
+    enriched = _collect_failures(conn, ws_filter=ws_tag)
+    if not enriched:
+        print(f'[{ws_tag or "global"}] no failures found')
+        return
+
+    out, total, by_cat, by_src, by_src_cat, by_ws_cat, by_tool_cat, by_src_ws_tool_cat = _render_failure_report(enriched)
+
+    md_path, json_path = _failure_out_paths(workspace)
+    os.makedirs(os.path.dirname(md_path), exist_ok=True)
+    with open(md_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(out))
+    print(f'[failure_mode] wrote {md_path}; total failures = {total}')
+
+    write_failure_knowledge(total, by_cat, by_tool_cat, by_src_cat, by_ws_cat, out_json=json_path)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Analyze transcript failure modes")
+    parser.add_argument(
+        "--workspace", "-w", dest="workspaces", action="append", default=None,
+        help="Target workspace path (may repeat; defaults to config.WORKSPACES)",
+    )
+    args = parser.parse_args()
+
+    workspaces = args.workspaces if args.workspaces else config.WORKSPACES
+    conn = connect()
+    try:
+        for ws in workspaces:
+            ws_tag = ws_of(ws)
+            try:
+                _analyze_and_write(conn, ws_tag=ws_tag, workspace=ws)
+            except Exception as exc:
+                print(f"[{ws_tag}] skipped: {exc}")
+
+        # Global fallback report + checklist in scripts/out (backward compatibility)
+        enriched = _collect_failures(conn)
+        if enriched:
+            out, total, by_cat, by_src, by_src_cat, by_ws_cat, by_tool_cat, by_src_ws_tool_cat = _render_failure_report(enriched)
+            os.makedirs(OUT_DIR, exist_ok=True)
+            with open(OUT_FILE, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(out))
+            print(f'[failure_mode] wrote {OUT_FILE}; total failures = {total}')
+            print('=== failure_mode top categories ===')
+            for cat, n in by_cat.most_common(8):
+                print(f'  {cat}: {n} ({(n/total*100) if total else 0:.1f}%)')
+            print('=== top tool x cat (top 6) ===')
+            for (tool, cat), n in by_tool_cat.most_common(6):
+                print(f'  {tool} | {cat}: {n}')
+            write_checklist(total, by_cat, by_tool_cat, by_src_cat, by_src_ws_tool_cat)
+            write_failure_knowledge(total, by_cat, by_tool_cat, by_src_cat, by_ws_cat)
+    finally:
+        conn.close()
 
 
 if __name__ == '__main__':

@@ -6,6 +6,7 @@ This test locks the CLI invocation contract.
 """
 import os
 import subprocess
+import sys
 from unittest.mock import patch
 
 from story_lifecycle.cli import list_cmd
@@ -22,7 +23,7 @@ def test_done_cmd_calls_retrospect_script_with_story_key():
     mock_run.assert_called_once()
     args, kwargs = mock_run.call_args
     cmd = args[0]
-    assert cmd[0] == "python"
+    assert cmd[0] == sys.executable
     assert cmd[1].endswith(os.path.join("packages", "story-miner", "scripts", "retrospect.py"))
     assert "--story" in cmd
     assert "STORY-1065518" in cmd

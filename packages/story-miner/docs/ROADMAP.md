@@ -1,22 +1,28 @@
-# agent-transcript-miner 方向路线图（派发用）
+> # dev-flywheel / story-miner 方向路线图（派发用）
 
 > 把已验证的方向固化成可独立领的任务卡。其他 AI/subagent 领卡推进，主窗口汇总验收。
+> **I1–I4 与 M1–M6 已完成**，见 `docs/INTEGRATION.md`、`docs/MIGRATION.md`、`packages/story-miner/scripts/out/i2-i4-verify.md`。
 
 ## 如何用本文档
-- **领卡前**：先读 `CONTEXT.md` 上手（项目结构/db schema/运行方式/已知坑）
+- **领卡前**：先读 `packages/story-miner/CONTEXT.md` 上手（项目结构/db schema/运行方式/已知坑）
 - **每卡独立**：标注 `[并行]` 的可同时派给多个 agent；`[依赖]` 需先完成前置
-- **产出统一**：分析类产出写到 `scripts/out/<task-id>.md`；反哺 hc-all 的写到对应位置；每份含「做法/关键发现/数字/未决问题」
+- **产出统一**：分析类产出写到 `packages/story-miner/scripts/out/<task-id>.md`；反哺 skill 的写到对应工作区 `.agents/skills/`；每份含「做法/关键发现/数字/未决问题」
 - **约束通用**：只读 db（除明确要改 schema 的卡）；不改 adapter 已验证逻辑；金融 PII 红线（见 CONTEXT.md）
-- **运行**：`export PYTHONPATH=D:/github/story-lifecycle/packages/story-miner`
+- **运行**：先激活 monorepo venv，再执行脚本
+  ```bash
+  cd D:/github/story-lifecycle
+  source .venv-monorepo-test/Scripts/activate   # Windows Git Bash
+  # 或 .venv-monorepo-test/bin/activate         # Linux/macOS
+  ```
 
 ---
 
-## T1 约束库产品化 `[并行]` `[高ROI]`
+## T1 约束库产品化 `[并行]` `[高ROI]` `[规则表已完成，skill 接入待跟进]`
 - **现状**：`constraint.py` 已从真实 user 指令抽 162 条约束（6 主题：分支git/数据库SQL/skill流程/配置/代码质量/部署），散落在对话里没结构化。
-- **目标**：把高频约束转成可 lint 检查的规则，挂到 hc-all `code-standards-check` skill，新代码自动检查是否违反。
-- **输入**：`scripts/out/d6_constraint.md`（或重跑 constraint.py）+ hc-all `.agents/skills/code-standards-check/SKILL.md`
+- **目标**：把高频约束转成可 lint 检查的规则，挂到 `code-standards-check` skill，新代码自动检查是否违反。
+- **输入**：`packages/story-miner/scripts/constraint.py` + 工作区 `.agents/skills/code-standards-check/SKILL.md`
 - **步骤**：① 按主题把约束归成规则（每条：规则文本/检查方式：静态grep或语义/严重级）；② 挑可自动 grep 的（如"doc不提交git""不在test直接改"）做成检查项；③ 接入 code-standards-check（加引导，遵循其现有风格）；④ 用最近 commit 验证能否检出。
-- **产出**：`docs/constraint-rules.md`（规则表）+ code-standards-check 改动 + 验证结果
+- **产出**：`packages/story-miner/docs/constraint-rules.md`（规则表，已沉淀 8 条 grep 规则）+ skill 改动 + 验证结果
 - **验收**：至少 5 条约束变成可执行检查项，且在样本 commit 上能跑
 
 ## T2 债务雷达打磨 `[并行]`
@@ -27,20 +33,22 @@
 - **产出**：`scripts/out/debt.md`（干净版）+ debt.py 改动
 - **验收**：命中全部是真实源码文件，无自生成脚本噪声
 
-## T3 自动复盘产品化 `[并行]`
-- **现状**：`retrospect.py` 给 Top5 高活跃会话生成复盘，精准还原了免息 bug 根因/设计/上线判断。但是批处理式，不能按需查指定会话。
-- **目标**：做成可调用工具——给定 sid（或"最近一个 hc-order 会话"）生成该会话复盘 md，可接入 skill-retro 或 ⑩b provider。
-- **输入**：`scripts/retrospect.py` + db
-- **步骤**：① retrospect.py 支持 `python retrospect.py <sid>` 单会话模式；② 复盘结构化（任务/做了什么/关键决策/踩坑/访问文件/结论）；③ 路径展示复用 generate_playbooks 的 `short()`（修丢首字母问题）。
-- **产出**：retrospect.py 改动 + 一份样本复盘
-- **验收**：给定任一 sid 能产出可读复盘，文件名不丢首字母
+## T3 自动复盘产品化 `[已完成]`
+- **状态**：`packages/story-miner/scripts/retrospect.py` 已支持单会话、批量 Top5、Story 级三种模式；输出结构化（任务/做了什么/关键决策/踩坑/访问文件/结论）；路径使用 `generate_playbooks.short()`，不再丢首字母。
+- **用法**：
+  ```bash
+  python packages/story-miner/scripts/retrospect.py <sid>
+  python packages/story-miner/scripts/retrospect.py
+  python packages/story-miner/scripts/retrospect.py --story <story_key>
+  ```
+- **验收**：给定任一 sid / story_key 能产出可读复盘。
 
-## T4 智能推荐 → 任务上下文包 `[并行]` `[⑩b可复用]`
-- **现状**：`recommend.py` 按关键词找相关会话+必看文件+playbook，但输出是列表，没沉淀成"上下文包"。
-- **目标**：给定任务描述，生成一份精炼"任务上下文包"md（相关历史会话摘要 + 必看文件 + 推荐 playbook + 常见踩坑），可被 ⑩b 的 story_context_provider 直接用作注入内容。
-- **输入**：`scripts/recommend.py` + db + playbooks/
-- **步骤**：① recommend.py 增加"生成上下文包"模式（控制 <500 字）；② 摘要相关会话的 first_ucmd + 高频文件 + 失败；③ 路径用 short()；④ 输出格式对齐 ⑩b provider 期望。
-- **产出**：recommend.py 改动 + 一份样本上下文包（如"免息清分"任务）
+## T4 智能推荐 → 任务上下文包 `[并行]` `[可复用至 I3 provider]`
+- **现状**：`recommend.py` 已支持 `--package` 生成 <500 字上下文包。`story-lifecycle` I3 默认使用 `miner.story_context_provider`（按 story_key 聚合历史 session）。
+- **目标**：让 `recommend.py --package` 的输出与 `story_context_provider` 互补——`story_context_provider` 服务已走 story 的需求，`recommend.py --package` 服务排查/小需求/无 story 任务。
+- **输入**：`packages/story-miner/scripts/recommend.py` + db + `packages/story-miner/playbooks/`
+- **步骤**：① 校验 `--package` 输出格式稳定；② 补充"常见踩坑"（failure checklist）和"必看文件"；③ 输出可直接注入 prompt 的 markdown 段；④ 提供一份样本（如"免息清分"）。
+- **产出**：`recommend.py` 改动 + 一份样本上下文包
 - **验收**：上下文包 <500 字、相关、可读，能直接喂 prompt
 
 ## T5 蒸馏脱敏管线做实 `[依赖mask增强]` `[门槛]`
@@ -60,10 +68,10 @@
 - **产出**：`scripts/out/effort-estimate.md`（预估表）+ predict.py 改动
 - **验收**：预估表覆盖主要任务类型，每类有中位/P90/样本数
 
-## T7（可选）失败模式 → 避坑检查项 `[并行]`
-- **现状**：`failure_mode.py` 找出真实失败 Top（Bash×编译 100/Git冲突 89/Edit×File not read 66）。
-- **目标**：把高频失败转成"预防检查项"，挂 pre-release-review 或 build-check（如"提交前确认无未读 Edit""编译前拉最新"）。
-- **产出**：`docs/failure-checklist.md` + skill 接入建议
+## T7（可选）失败模式 → 避坑检查项 `[已完成]`
+- **状态**：`packages/story-miner/docs/failure-checklist.md` 已产出，含失败分布、10 条检查项、`build-check` / `pre-release-review` skill 接入建议。
+- **产出**：`packages/story-miner/docs/failure-checklist.md`
+- **待跟进**：实际把清单挂到具体工作区 skill（视各项目需要）。
 
 ## T8（可选）三端 benchmark 产品化 `[并行]`
 - **现状**：`tri_efficiency.py` 有三端效率画像（Claude 工具广度33/Codex 多轮低密度/Kimi 单轮短）。
@@ -73,9 +81,10 @@
 ---
 
 ## 依赖与并行
-- **可立即并行**（只读 db + 不同输出）：T1 T2 T3 T4 T6 T7
+- **已完成**：T3、T7；I1–I4 与 M1–M6。
+- **可立即并行**（只读 db + 不同输出）：T1（skill 接入部分）、T2、T4、T6
 - **有依赖**：T5 需先增强 mask（可由 T5 自己含）；T8 需更多同题样本
-- **⑩b**（story-lifecycle prompt 关联）：独立窗口进行中，T4 的上下文包可被它复用
+- **story-lifecycle 联动**：I3 默认 provider 已启用；T4 的上下文包可作为通用/排查类任务的补充注入源
 
 ## 汇总约定
 - 每卡完成后产出 md，主窗口按「做法/发现/数字/未决」验收

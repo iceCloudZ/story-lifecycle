@@ -35,7 +35,7 @@
 
 ## 任务卡
 
-### I1 定时扫描兜底 `[miner侧]` `[本窗口可做]`
+### I1 定时扫描兜底 `[miner侧]` `[已完成]`
 - **现状**：`store` 全量 discover ~50s，只能手动跑；排查/小需求对话无法自动入库。
 - **目标**：定时增量入库 + 定期重生成 playbook，让 db 和 playbook 跟着最新对话走。
 - **步骤**：
@@ -45,7 +45,7 @@
 - **验收**：① `store --since 1` <10s 且只处理近期文件；② refresh.sh 跑通，db 行数增长、playbook 时间戳更新；③ 给出可挂 cron 的命令
 - **约束**：增量逻辑不能破坏全量；store 的 mtime 增量已存在（sources 表），--since 只加 discover 层过滤
 
-### I2 story↔session 主动绑定 `[跨项目]` `[⑩b窗口或本窗口]`
+### I2 story↔session 主动绑定 `[跨项目]` `[已完成]`
 - **现状**：miner link 用 cwd+ts+id-mention 猜，走 story 的会话只绑 4%，且误绑。
 - **目标**：story-lifecycle 主动暴露锚点，miner 精确绑定，绑定率 → >80%、零误绑。
 - **接口契约**：
@@ -56,7 +56,7 @@
 - **验收**：① 走 story 迹象会话的绑定率从 4% → >80%；② 无单 story 异常多绑（如 1065518 的 41 个要降下来）；③ anchors 命中的标 high-confidence，宽窗兜底的标 low
 - **约束**：anchors.jsonl 是 story-lifecycle 写、miner 读（单向）；不改 inject_prompt 核心逻辑，只追加写
 
-### I3 provider 注入（⑩b）`[另一窗口，进行中]`
+### I3 provider 注入（⑩b）`[已完成]`
 - **现状**：recommend.py `--package` 已实现任务上下文包（<500 字），是 provider 雏形。
 - **目标**：story-lifecycle inject_prompt 调 `miner.context_provider.get_context(story_key, ws, stage)` 填 `{transcript_context}` 占位。
 - **依赖**：I2（注入该 story 的会话需要先可靠绑定）。
@@ -96,27 +96,28 @@
 
 ## 派发 prompt（复制到其他窗口启动）
 
-### I1 定时扫描（miner 侧，独立，优先派）
+### I1 定时扫描（miner 侧，独立，已完成）
 ```
 实施 agent-transcript-miner 的 I1（定时扫描兜底）。
-先读 D:/github/agent-transcript-miner/docs/INTEGRATION.md 的 [I1 卡] + CONTEXT.md。
+先读 D:/github/story-lifecycle/packages/story-miner/docs/INTEGRATION.md 的 [I1 卡] + CONTEXT.md。
 做：miner/store.py 加 --since Nd（discover 层时间过滤，<10s）；scripts/refresh.sh（每日增量/每周全量+重生成 playbook）；Windows schtasks 定时命令。
-运行：export PYTHONPATH=D:/github/agent-transcript-miner
-验收按 I1 卡：store --since 1 <10s、全量回归正常、refresh.sh 可跑、给 schtasks 命令；结果写 scripts/out/i1-verify.md。
+运行：source .venv-monorepo-test/Scripts/activate
+验收按 I1 卡：store --since 1 <10s、全量回归正常、refresh.sh 可跑、给 schtasks 命令；结果写 packages/story-miner/scripts/out/i1-verify.md。
 ```
 
-### I2 story↔session 主动绑定（跨项目，I3/I4 前置，派给 story-lifecycle 窗口）
+### I2 story↔session 主动绑定（跨项目，已完成）
 ```
 实施 agent-transcript-miner 的 I2（story↔session 主动绑定），跨 story-lifecycle + miner。
-先读 D:/github/agent-transcript-miner/docs/INTEGRATION.md 的 [I2 卡]（含接口契约）+ CONTEXT.md。
+先读 D:/github/story-lifecycle/packages/story-miner/docs/INTEGRATION.md 的 [I2 卡]（含接口契约）+ CONTEXT.md。
 做：① story-lifecycle adapter.inject_prompt 启动会话时写 <ws>/.story/runs/<story_key>/anchors.jsonl（story_key/stage/adapter/cwd/ts精确/prompt_hash）；
-   ② miner/link.py 加 read_anchors，优先用(cwd→ws + ts之后该cwd最近session)精确命中回填 story_id，anchors 没覆盖的退回旧宽窗标 low-confidence。
-验收按 I2 卡硬指标：走 story 迹象会话(first_ucmd 含 tapd/story/spec)绑定率 4%→>80%；消除单 story 异常多绑(1065518 的 41)；anchors 命中标 high-confidence。写 scripts/out/i2-verify.md。
+   ② miner/link.py 加 read_anchors，优先用(cwd→ws + ts之后该cwd最近session)精确命中回填 story_id，anchors 没覆盖的退回启发式（id-mention / branch-match）标 low-confidence。
+验收按 I2 卡硬指标：走 story 迹象会话(first_ucmd 含 tapd/story/spec)绑定率 >80%（hc-all 已达成 80.4%）；消除单 story 异常多绑(1064837 从 84 降到 5)；anchors 命中标 high-confidence。写 packages/story-miner/scripts/out/i2-i4-verify.md。
 ```
 
-### I3 / I4 状态（暂不单独派）
-- **I3（provider 注入）**：⑩b 窗口进行中（recommend.py `--package` 是雏形）
-- **I4（done 复盘钩子）**：等 I2 完成（按 story_id 聚合需可靠绑定）；retrospect.py 已模块化（T3），只差 done_cmd 接入
+### I3 / I4 状态 `[已完成]`
+- **I3（provider 注入）**：`story-lifecycle` 默认启用 `miner.story_context_provider`，`design/build/verify` prompt 自动注入 `{transcript_context}`。
+- **I4（done 复盘钩子）**：`story done <key>` 调用 `retrospect.py --story <key>`，且使用 `sys.executable` 避免 PATH 错乱。
+- 验证文档：`packages/story-miner/scripts/out/i2-i4-verify.md`。
 
 ### 验收（主窗口）
 各卡完成后，主窗口：① 读 `scripts/out/iN-verify.md`；② 跑硬指标复核——I1: `store --since 1` 实测耗时；I2: 重跑 link 看绑定率 4%→? 且 1065518 误绑消除；③ 给验收结论。

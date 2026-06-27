@@ -1,19 +1,42 @@
-"""⑩a: 从 transcript 挖"任务类型 → 必看文件/常用命令/常见失败"，反哺 hc-all/.story/knowledge/playbooks/。
+"""⑩a: 从 transcript 挖"任务类型 → 必看文件/常用命令/常见失败"，反哺 <workspace>/.story/knowledge/playbooks/。
 
 按 first_ucmd 主题给 session 打标，聚合该类 session 的 events：
-  - playbooks/<theme>.md      按任务类型的 playbook（文件名稳定，hc-all skill 引用）
+  - playbooks/<theme>.md      按任务类型的 playbook（文件名稳定，skill 引用）
   - playbooks/by-story/<id>.md 按 story 聚合的 playbook（仅对关联了 story_id 的 session）
 
-v2 优化：
-  1. short() 改为规整展示「服务/模块/类名」，不再丢首字母、不再硬截断
-  2. 新增 by-story/ 粒度，从 stories 表取 title/branch
-  3. 高频文件标注角色（Controller/ServiceImpl/Entity/...）
+v3 (M6): 工作区与输出路径改为 config 驱动，不再硬编码 hc-all。
 """
-import sqlite3, collections, re, os
+import sqlite3, collections, re, os, json, sys, argparse
 
-DB = 'D:/github/story-lifecycle/packages/story-miner/data/transcripts.db'
-OUT = 'D:/hc-all/.story/knowledge/playbooks'
-OUT_STORY = os.path.join(OUT, 'by-story')
+_PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _PROJ)
+from miner import config  # noqa: E402
+from miner.common import ws_of  # noqa: E402
+
+DB = config.DB_PATH
+
+# 默认主题分类；可在 config.json 中以 "playbook_themes" 覆盖
+default_themes = {
+    'requirement-dev': ('需求开发', ['实现', '编码', 'feature', 'spec', 'story', 'tapd', '设计文档', '开发', '职业', '字段']),
+    'debug': ('排查/Debug', ['排查', 'debug', '为什么', '报错', 'bug', '日志', '没收到', '没进', '失败', '异常']),
+    'sms-marketing': ('短信/营销', ['短信', 'sms', '免息', 'mgm', '营销', '活动', '奖励']),
+    'deploy': ('部署/上线', ['deploy', '部署', '上线', 'skyladder', '发版', 'nexus']),
+    'data-sql': ('数据/SQL', ['sql', '查询', '数据', 'schema', 'ddl', '迁移']),
+    'credit-risk': ('授信/风控/清分', ['授信', '风控', '提现', '放款', '还款', '清分', '逾期']),
+    'frontend': ('前端', ['前端', 'admin', '页面', 'protable', 'proform', '组件']),
+}
+THEME = config._cfg.get('playbook_themes', default_themes)
+
+# 默认服务名集合，用于 short() 识别所属服务；可在 config.json 中以 "service_names" 覆盖
+_HC_SERVICES = tuple(config._cfg.get('service_names', (
+    'hc-order', 'hc-user', 'hc-limit', 'hc-message', 'hc-third-party',
+    'hc-config', 'hc-coupon', 'hc-marketing', 'hc-gateway', 'hc-callback', 'hc-job',
+)))
+
+
+def _playbook_out_dir(workspace: str) -> str:
+    """Resolve playbook output directory for a workspace."""
+    return os.path.join(workspace, '.story', 'knowledge', 'playbooks')
 
 THEME = {
     'requirement-dev': ('需求开发', ['实现', '编码', 'feature', 'spec', 'story', 'tapd', '设计文档', '开发', '职业', '字段']),
@@ -59,14 +82,22 @@ def cmd_class(cmd):
 
 
 def fail_class(text):
+    """Classify a failure text; categories align with failure_mode.py for linking."""
     t = (text or '').lower()
-    if 'exit code: 0' in t: return None  # 误标(已修)，跳过
-    if 'cannot find symbol' in t or 'compile' in t or 'BUILD FAIL' in t: return '编译错误'
-    if 'conflict' in t or 'merge' in t: return 'Git冲突'
-    if 'no such file' in t or 'filenotfound' in t or 'does not exist' in t: return '文件不存在'
-    if 'timeout' in t or 'timed out' in t: return '超时'
-    if 'nullpointer' in t or 'classcast' in t or 'illegalarg' in t: return '运行时异常'
-    if 'permission' in t or 'denied' in t: return '权限拒绝'
+    if 'exit code: 0' in t:
+        return None  # 误标(已修)，跳过
+    if 'cannot find symbol' in t or 'compile' in t or 'build fail' in t:
+        return '编译/构建错误'
+    if 'conflict' in t or 'merge' in t:
+        return 'Git冲突/状态'
+    if 'no such file' in t or 'filenotfound' in t or 'does not exist' in t:
+        return '文件/路径不存在'
+    if 'timeout' in t or 'timed out' in t:
+        return '超时/被kill'
+    if 'nullpointer' in t or 'classcast' in t or 'illegalarg' in t:
+        return '类型错误'
+    if 'permission' in t or 'denied' in t:
+        return '权限拒绝'
     return None
 
 
@@ -234,20 +265,37 @@ def render_files_table(files, file_display, file_roles, top=15):
     return out
 
 
-def main():
-    c = sqlite3.connect(DB)
-    sessions = list(c.execute("SELECT sid, first_ucmd FROM sessions WHERE ws='hc-all' AND first_ucmd IS NOT NULL"))
+def _write_meta(path, meta):
+    """Write JSON sidecar metadata for a playbook markdown.
+
+    This allows the unified knowledge layer (packages/knowledge) to index
+    playbooks without parsing markdown tables.
+    """
+    meta_path = path + ".json"
+    with open(meta_path, "w", encoding="utf-8") as fh:
+        json.dump(meta, fh, ensure_ascii=False, indent=2)
+
+
+def _write_playbooks_for_workspace(c, workspace: str, ws_tag: str):
+    """Generate theme and by-story playbooks for a single workspace."""
+    out_dir = _playbook_out_dir(workspace)
+    out_story_dir = os.path.join(out_dir, 'by-story')
+    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(out_story_dir, exist_ok=True)
+
+    sessions = list(c.execute(
+        "SELECT sid, first_ucmd FROM sessions WHERE ws=? AND first_ucmd IS NOT NULL",
+        (ws_tag,)
+    ))
     sid_theme = {}
     for sid, fu in sessions:
         fl = (fu or '').lower()
         for theme, (_, kws) in THEME.items():
             if any(k.lower() in fl for k in kws):
                 sid_theme[sid] = theme; break
-    os.makedirs(OUT, exist_ok=True)
-    os.makedirs(OUT_STORY, exist_ok=True)
 
     index = ["# Playbooks Index", "",
-             "> 从 agent-transcript-miner 挖掘的历史任务上下文（按 first_ucmd 主题 / story 聚类）。"
+             "> 从 transcript 挖掘的历史任务上下文（按 first_ucmd 主题 / story 聚类）。"
              "文件为历史高频访问，**代码可能已变，使用前用 codegraph 核验当前状态**。", ""]
     index.append("## 按任务类型")
     n_written = 0
@@ -258,22 +306,43 @@ def main():
         files, file_display, file_roles, cmds, fails = aggregate(c, sids)
         if not files:
             continue
-        out = [f"# {label} Playbook", ""]
-        out.append(f"> 从历史 transcript 挖掘：**{len(sids)}** 个 hc-all 会话归此类"
+        md_lines = [f"# {label} Playbook", ""]
+        md_lines.append(f"> 从历史 transcript 挖掘：**{len(sids)}** 个 {ws_tag} 会话归此类"
                    f"（first_ucmd 含：{', '.join(kws[:5])}）。文件为历史高频访问，"
                    f"**代码可能已变，使用前用 codegraph 核验**。角色由路径关键词推断，仅供参考。")
-        out.append("")
-        out.append("## 必看文件 Top（历史高频访问）")
-        out.extend(render_files_table(files, file_display, file_roles))
+        md_lines.append("")
+        md_lines.append("## 必看文件 Top（历史高频访问）")
+        md_lines.extend(render_files_table(files, file_display, file_roles))
         if cmds:
-            out.append("\n## 常用操作")
+            md_lines.append("\n## 常用操作")
             for cls, n in cmds.most_common(8):
-                out.append(f"- {cls}: {n}")
+                md_lines.append(f"- {cls}: {n}")
         if fails:
-            out.append("\n## 常见失败（历史踩坑）")
+            md_lines.append("\n## 常见失败（历史踩坑）")
             for fc, n in fails.most_common(6):
-                out.append(f"- {fc}: {n}")
-        open(os.path.join(OUT, f'{theme}.md'), 'w', encoding='utf-8').write('\n'.join(out))
+                md_lines.append(f"- {fc}: {n}")
+        md_path = os.path.join(out_dir, f'{theme}.md')
+        open(md_path, 'w', encoding='utf-8').write('\n'.join(md_lines))
+        _write_meta(md_path, {
+            "id": f"playbook:{theme}",
+            "type": "playbook",
+            "title": f"{label} Playbook",
+            "source": "dynamic",
+            "theme": theme,
+            "session_count": len(sids),
+            "top_files": [
+                {"path": file_display[key], "role": file_roles.get(key) or "", "count": n}
+                for key, n in files.most_common(15)
+            ],
+            "common_commands": [
+                {"class": cls, "count": n}
+                for cls, n in cmds.most_common(8)
+            ],
+            "common_failures": [
+                {"category": fc, "count": n}
+                for fc, n in fails.most_common(6)
+            ],
+        })
         index.append(f"- [{label}]({theme}.md) — {len(sids)} 会话，{len(files)} 文件")
         n_written += 1
 
@@ -283,41 +352,85 @@ def main():
     n_story = 0
     rows = list(c.execute("""SELECT s.story_id, st.title, st.branch, st.dir_path
                              FROM (SELECT DISTINCT story_id FROM sessions
-                                   WHERE ws='hc-all' AND story_id IS NOT NULL) s
-                             LEFT JOIN stories st USING(story_id)"""))
+                                   WHERE ws=? AND story_id IS NOT NULL) s
+                             LEFT JOIN stories st USING(story_id)""", (ws_tag,)))
     for story_id, raw_title, branch, dir_path in rows:
         story_sids = [r[0] for r in c.execute(
-            "SELECT sid FROM sessions WHERE ws='hc-all' AND story_id=?", (story_id,))]
+            "SELECT sid FROM sessions WHERE ws=? AND story_id=?", (ws_tag, story_id))]
         if len(story_sids) < 3:  # 会话太少不单列
             continue
         files, file_display, file_roles, cmds, fails = aggregate(c, story_sids)
         if not files:
             continue
         title = clean_title(raw_title) or f"Story {story_id}"
-        out = [f"# Story {story_id} Playbook", ""]
-        out.append(f"> **{title}**")
+        md_lines = [f"# Story {story_id} Playbook", ""]
+        md_lines.append(f"> **{title}**")
         if branch:
-            out.append(f"> 分支：`{branch}`")
-        out.append(f"> 关联会话：**{len(story_sids)}**（hc-all transcript 中 story_id={story_id}）。"
+            md_lines.append(f"> 分支：`{branch}`")
+        md_lines.append(f"> 关联会话：**{len(story_sids)}**（{ws_tag} transcript 中 story_id={story_id}）。"
                    f"文件为历史高频访问，**代码可能已变，使用前用 codegraph 核验**。")
-        out.append("")
-        out.append("## 必看文件 Top")
-        out.extend(render_files_table(files, file_display, file_roles))
+        md_lines.append("")
+        md_lines.append("## 必看文件 Top")
+        md_lines.extend(render_files_table(files, file_display, file_roles))
         if cmds:
-            out.append("\n## 常用操作")
+            md_lines.append("\n## 常用操作")
             for cls, n in cmds.most_common(8):
-                out.append(f"- {cls}: {n}")
+                md_lines.append(f"- {cls}: {n}")
         if fails:
-            out.append("\n## 常见失败（历史踩坑）")
+            md_lines.append("\n## 常见失败（历史踩坑）")
             for fc, n in fails.most_common(6):
-                out.append(f"- {fc}: {n}")
-        open(os.path.join(OUT_STORY, f'{story_id}.md'), 'w', encoding='utf-8').write('\n'.join(out))
-        index.append(f"- [Story {story_id}]({os.path.relpath(OUT_STORY, OUT)}/{story_id}.md) — {title}（{len(story_sids)} 会话，{len(files)} 文件）")
+                md_lines.append(f"- {fc}: {n}")
+        md_path = os.path.join(out_story_dir, f'{story_id}.md')
+        open(md_path, 'w', encoding='utf-8').write('\n'.join(md_lines))
+        _write_meta(md_path, {
+            "id": f"playbook:story:{story_id}",
+            "type": "playbook",
+            "title": f"Story {story_id} Playbook",
+            "source": "dynamic",
+            "linked_story": story_id,
+            "session_count": len(story_sids),
+            "top_files": [
+                {"path": file_display[key], "role": file_roles.get(key) or "", "count": n}
+                for key, n in files.most_common(15)
+            ],
+            "common_commands": [
+                {"class": cls, "count": n}
+                for cls, n in cmds.most_common(8)
+            ],
+            "common_failures": [
+                {"category": fc, "count": n}
+                for fc, n in fails.most_common(6)
+            ],
+        })
+        index.append(f"- [Story {story_id}](by-story/{story_id}.md) — {title}（{len(story_sids)} 会话，{len(files)} 文件）")
         n_story += 1
 
-    open(os.path.join(OUT, 'INDEX.md'), 'w', encoding='utf-8').write('\n'.join(index))
-    print(f"written {n_written} task playbooks + {n_story} story playbooks to {OUT}")
-    print('\n'.join(index[4:]))
+    open(os.path.join(out_dir, 'INDEX.md'), 'w', encoding='utf-8').write('\n'.join(index))
+    print(f"[{ws_tag}] written {n_written} task playbooks + {n_story} story playbooks to {out_dir}")
+    return n_written, n_story
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate playbooks from transcripts")
+    parser.add_argument(
+        "--workspace", "-w", dest="workspaces", action="append", default=None,
+        help="Target workspace path (may repeat; defaults to config.WORKSPACES)",
+    )
+    args = parser.parse_args()
+
+    workspaces = args.workspaces if args.workspaces else config.WORKSPACES
+    c = sqlite3.connect(DB)
+    total_written = 0
+    total_story = 0
+    for ws in workspaces:
+        ws_tag = ws_of(ws)
+        try:
+            nw, ns = _write_playbooks_for_workspace(c, ws, ws_tag)
+            total_written += nw
+            total_story += ns
+        except Exception as exc:
+            print(f"[{ws_tag}] skipped: {exc}")
+    print(f"TOTAL {total_written} task + {total_story} story playbooks")
 
 
 if __name__ == '__main__':
