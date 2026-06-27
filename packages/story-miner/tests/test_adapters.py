@@ -32,6 +32,24 @@ def test_full_ts_fallback():
     assert common.full_ts({}, "FB") == "FB"
 
 
+CLAUDE_USAGE = (
+    '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],'
+    '"usage":{"input_tokens":100,"cache_read_input_tokens":200,'
+    '"cache_creation_input_tokens":0,"output_tokens":50}},'
+    '"timestamp":"2026-06-27T10:00:01.000Z","cwd":"D:/github"}\n'
+)
+
+
+def test_claude_usage_to_tokens(tmp_path):
+    f = tmp_path / "s.jsonl"
+    f.write_text(CLAUDE_USAGE, encoding="utf-8")
+    meta, evs, tokens = ClaudeAdapter().parse(str(f), "claude:s")
+    assert len(tokens) == 1
+    t = tokens[0]
+    assert t["input_tokens"] == 100 and t["cache_read_tokens"] == 200
+    assert t["output_tokens"] == 50 and t["src"] == "claude"
+
+
 def test_token_usage_table_created(tmp_path):
     db = str(tmp_path / "t.db")
     store.init_db(db)
