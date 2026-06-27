@@ -28,4 +28,5 @@ packages = []
 testpaths = [
     "packages/story-lifecycle/tests",
     "packages/story-miner/tests",
+    "tests/contracts",
 ]

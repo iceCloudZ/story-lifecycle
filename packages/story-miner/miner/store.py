@@ -31,6 +31,20 @@ def discover():
         for path, sid in ad.discover():
             yield path, ad.name, ad, sid
 
+
+def init_db(db_path=None):
+    """Create the miner schema at ``db_path`` (defaults to config.DB_PATH).
+
+    Safe to call repeatedly; uses CREATE TABLE IF NOT EXISTS.
+    """
+    path = db_path or DB
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.executescript(SCHEMA)
+    conn.commit()
+    conn.close()
+
+
 def main():
     os.makedirs(os.path.dirname(DB), exist_ok=True)
     conn = sqlite3.connect(DB); conn.executescript(SCHEMA)

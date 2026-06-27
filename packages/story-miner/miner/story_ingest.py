@@ -319,6 +319,16 @@ def _connect():
     raise RuntimeError('db locked after retries')
 
 
+def init_db(db_path=None):
+    """Create the stories table at ``db_path`` (defaults to config.DB_PATH)."""
+    path = db_path or DB
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.executescript(SCHEMA_STORIES)
+    conn.commit()
+    conn.close()
+
+
 def main():
     os.makedirs(os.path.dirname(DB), exist_ok=True)
     conn = _connect()
