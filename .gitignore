@@ -1,42 +1,43 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
+dist/
+build/
 *.egg
 
-# Virtual environments
+# Virtual env
 .venv/
 venv/
-ENV/
-env/
 
-# IDEs
-.idea/
+# IDE
 .vscode/
-*.swp
-*.swo
-*~
+.idea/
+
+# Story Lifecycle local data (user-level, not in repo)
+.story/
+story.db
+checkpoint.db
+.story-context/
+.story-knowledge/
+.story-done/
+.story-runs/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Project-specific
-*.log
-.tmp/
+# Stray output files
+Done
+Installing
+Stopping
+To
+.worktrees/
+
+# Playwright MCP artifacts
+.playwright-mcp/
+context-tab.png
+
+# 运行日志 / 崩溃产物
+.story-serve.*.log
+*.stackdump
