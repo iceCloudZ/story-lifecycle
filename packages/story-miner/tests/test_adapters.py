@@ -102,6 +102,30 @@ def test_kimi_iserror_to_result(tmp_path):
     assert results and results[0]["ok"] == 0
 
 
+def test_story_token_aggregation(tmp_path):
+    db = str(tmp_path / "t.db")
+    store.init_db(db)
+    conn = sqlite3.connect(db)
+    # 生产里 link.py 用 ALTER 给 sessions 加 story_id 列；测试模拟该 post-link schema
+    conn.execute("ALTER TABLE sessions ADD COLUMN story_id TEXT")
+    conn.execute("INSERT INTO sessions(sid,story_id) VALUES('claude:a','S1'),('kimi:b',NULL)")
+    conn.execute("INSERT INTO sessions(sid,story_id) VALUES('claude:c','S1')")
+    conn.execute("INSERT INTO token_usage(sid,src,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens) "
+                 "VALUES('claude:a','claude',100,50,200,0),('kimi:b','kimi',40,10,0,0),('claude:c','claude',60,30,100,0)")
+    conn.commit(); conn.close()
+    import importlib.util, os
+    spec = importlib.util.spec_from_file_location("st",
+        os.path.join("packages", "story-miner", "scripts", "story_token.py"))
+    st = importlib.util.module_from_spec(spec); spec.loader.exec_module(st)
+    per_story, unlinked = st.aggregate(db)
+    # S1 = a+c: input 160, output 80, cache_read 300
+    assert per_story["S1"]["input_tokens"] == 160 and per_story["S1"]["output_tokens"] == 80
+    assert per_story["S1"]["cache_read_tokens"] == 300
+    assert 0 < per_story["S1"]["cache_hit"] < 1   # 效率列存在
+    # 未关联 = b
+    assert unlinked["input_tokens"] == 40
+
+
 def test_token_usage_table_created(tmp_path):
     db = str(tmp_path / "t.db")
     store.init_db(db)
