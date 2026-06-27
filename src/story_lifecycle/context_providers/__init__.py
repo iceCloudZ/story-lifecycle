@@ -18,6 +18,7 @@ prompt rendering is NEVER blocked by a provider.
 
 import importlib
 import logging
+import sys
 
 from ..cli.setup import get_config
 from .base import BaseStoryContextProvider
@@ -29,11 +30,18 @@ _PROVIDERS: dict[str, BaseStoryContextProvider] = {}
 
 
 def _load_provider(cfg: dict) -> BaseStoryContextProvider:
-    """Import + instantiate the configured provider, cached by module:class."""
+    """Import + instantiate the configured provider, cached by module:class.
+
+    If ``path`` is set, it is prepended to sys.path so providers in packages
+    that aren't pip-installed (e.g. a local transcript miner) can be imported.
+    """
     key = f"{cfg.get('module')}:{cfg.get('class')}"
     cached = _PROVIDERS.get(key)
     if cached is not None:
         return cached
+    extra = cfg.get("path")
+    if extra and extra not in sys.path:
+        sys.path.insert(0, extra)
     module = importlib.import_module(cfg["module"])
     cls = getattr(module, cfg["class"])
     provider = cls(config=cfg)

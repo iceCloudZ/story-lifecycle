@@ -44,6 +44,29 @@ class TestContextProviderLoader:
         })
         assert get_transcript_context("k", "ws", "design") is None
 
+    def test_path_config_enables_external_package(self, monkeypatch, tmp_path):
+        """Provider in a package NOT on sys.path — loader adds config 'path'."""
+        pkg = tmp_path / "extpkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "mod.py").write_text(
+            "class ExtProvider:\n"
+            "    def __init__(self, config=None):\n"
+            "        self.config = config or {}\n"
+            "    def get_context(self, story_key, workspace, stage):\n"
+            "        return 'EXT_OK'\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(cp, "get_config", lambda: {
+            "context_provider": {
+                "module": "extpkg.mod",
+                "class": "ExtProvider",
+                "path": str(tmp_path),
+            }
+        })
+        assert "extpkg.mod:ExtProvider" not in cp._PROVIDERS
+        assert get_transcript_context("k", "ws", "design") == "EXT_OK"
+
 
 class TestBaseStoryContextProvider:
     def test_abstract_cannot_instantiate(self):
