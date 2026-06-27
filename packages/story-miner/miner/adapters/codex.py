@@ -63,4 +63,4 @@ class CodexAdapter(SourceAdapter):
                     evs.append(dict(sid=sid, src='codex', ws=meta['ws'], ts=meta['ts'], kind='result', ok=ok, text=common.mask(str(out)[:200])))
         except Exception:
             pass
-        return meta, evs
+        return meta, evs, []

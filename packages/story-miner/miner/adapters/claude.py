@@ -81,4 +81,4 @@ class ClaudeAdapter(SourceAdapter):
                         evs.append(dict(sid=sid, src='claude', ws=meta['ws'], ts=meta['ts'], kind='result', ok=ok, text=common.mask(txt[:200])))
         except Exception:
             pass
-        return meta, evs
+        return meta, evs, []

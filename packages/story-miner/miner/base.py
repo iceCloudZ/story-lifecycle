@@ -26,6 +26,9 @@ class SourceAdapter(abc.ABC):
 
     @abc.abstractmethod
     def parse(self, path, sid):
-        """解析单个源文件 -> (meta_dict, [event_dict,...])，映射到 common.py 的统一 schema。
-        meta 无有效内容时返回 (None, [])，store 会跳过。"""
+        """解析单个源文件 -> (meta_dict, [event_dict,...], [token_dict,...])，映射到 common.py 的统一 schema。
+        meta 无有效内容时返回 (None, [], [])，store 会跳过。
+        token_dict: {sid,src,ts,model,input_tokens,output_tokens,
+                     cache_read_tokens,cache_creation_tokens,reasoning_tokens}。
+        不支持 token 的端返回 []。"""
         ...

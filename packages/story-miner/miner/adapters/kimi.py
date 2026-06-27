@@ -77,4 +77,4 @@ class KimiAdapter(SourceAdapter):
                 if o.get('summary') and not meta['title']: meta['title'] = str(o['summary'])[:80]
         except Exception:
             pass
-        return meta, evs
+        return meta, evs, []

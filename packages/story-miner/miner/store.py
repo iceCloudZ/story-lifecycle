@@ -96,7 +96,7 @@ def main(argv=None):
         conn.execute('DELETE FROM events WHERE sid=?', (sid,))
         conn.execute('DELETE FROM sessions WHERE sid=?', (sid,))
         conn.execute('DELETE FROM sources WHERE path=?', (path,))
-        meta, evs = ad.parse(path, sid)
+        meta, evs, _tokens = ad.parse(path, sid)
         if meta is None or (meta['turns'] == 0 and meta['ntools'] == 0): continue
         conn.execute('INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
             (meta['sid'], meta['src'], meta['ws'], meta['ts'], meta['title'], meta['turns'],
