@@ -746,6 +746,9 @@ def continue_orchestrator_agent(story_key: str):
             project_section = "\n".join(project_lines)
 
             # 构建 CLI prompt
+            from ..context_providers import get_transcript_context
+
+            transcript_ctx = get_transcript_context(story_key, workspace, stage)
             cli_prompt = _build_cli_prompt(
                 story_key=story_key,
                 title=title,
@@ -756,6 +759,7 @@ def continue_orchestrator_agent(story_key: str):
                 prd_path=ctx.get("prd_path", ""),
                 project_section=project_section,
                 workspace=workspace,
+                transcript_section=transcript_ctx or "",
             )
 
             # 写入 prompt 文件
@@ -885,6 +889,7 @@ def _build_cli_prompt(
     prd_path: str = "",
     project_section: str = "",
     workspace: str = "",
+    transcript_section: str = "",
 ) -> str:
     """构建给 CLI 的执行 prompt。"""
     from ..story_paths import story_evidence_dir
@@ -938,6 +943,7 @@ def _build_cli_prompt(
 ### 阶段说明
 {stage_desc}
 {prd_section}
+{transcript_section}
 ### 关键要点
 {focus}
 {worktree_section}

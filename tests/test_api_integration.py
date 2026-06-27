@@ -324,6 +324,40 @@ class TestBuildCliPromptPrd:
         assert "PRD / 需求详情" not in prompt
 
 
+class TestBuildCliPromptTranscript:
+    def test_transcript_section_injected(self):
+        from story_lifecycle.orchestrator.planner import _build_cli_prompt
+
+        prompt = _build_cli_prompt(
+            story_key="X",
+            title="T",
+            stage="design",
+            focus="要点",
+            done_file="d",
+            profile_stages={},
+            transcript_section=(
+                "### 历史上下文（来自既往 transcript）\n"
+                "- 曾调研 hc-user 模块"
+            ),
+        )
+        assert "历史上下文" in prompt
+        assert "曾调研 hc-user" in prompt
+
+    def test_no_transcript_section_when_empty(self):
+        from story_lifecycle.orchestrator.planner import _build_cli_prompt
+
+        prompt = _build_cli_prompt(
+            story_key="X",
+            title="T",
+            stage="design",
+            focus="要点",
+            done_file="d",
+            profile_stages={},
+            transcript_section="",
+        )
+        assert "历史上下文" not in prompt
+
+
 class TestFindingsAPI:
     def test_findings_returns_dict(self, api_client, seeded_story, isolated_story_home):
         db.create_finding(
