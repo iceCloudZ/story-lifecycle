@@ -3,6 +3,7 @@ import sqlite3
 from miner import common, store
 from miner.adapters.claude import ClaudeAdapter
 from miner.adapters.codex import CodexAdapter
+from miner.adapters.kimi import KimiAdapter
 
 CLAUDE_FIXTURE = (
     '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]},'
@@ -67,6 +68,24 @@ def test_codex_usage_to_tokens(tmp_path):
     t = tokens[0]
     assert t["input_tokens"] == 12191 and t["cache_read_tokens"] == 9600
     assert t["reasoning_tokens"] == 94
+
+
+KIMI_USAGE = (
+    '{"type":"usage.record","time":1781688000000,"model":"kimi-for-coding",'
+    '"usage":{"inputOther":3825,"output":185,"inputCacheRead":14848,'
+    '"inputCacheCreation":0}}\n'
+)
+
+
+def test_kimi_usage_to_tokens_not_think(tmp_path):
+    f = tmp_path / "w.jsonl"
+    f.write_text(KIMI_USAGE, encoding="utf-8")
+    meta, evs, tokens = KimiAdapter().parse(str(f), "kimi:s:main")
+    assert len(tokens) == 1
+    assert tokens[0]["output_tokens"] == 185
+    assert tokens[0]["cache_read_tokens"] == 14848
+    # 不再产生 think 事件
+    assert not any(e.get("kind") == "think" for e in evs)
 
 
 def test_token_usage_table_created(tmp_path):
