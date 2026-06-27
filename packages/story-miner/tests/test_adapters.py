@@ -55,8 +55,10 @@ def test_claude_usage_to_tokens(tmp_path):
 CODEX_USAGE = (
     '{"type":"event_msg","timestamp":"2026-05-23T02:01:55.865Z",'
     '"payload":{"type":"token_count","cwd":"D:/github","info":{'
-    '"total_token_usage":{"input_tokens":12191,"cached_input_tokens":9600,'
-    '"output_tokens":343,"reasoning_output_tokens":94}}}}\n'
+    '"total_token_usage":{"input_tokens":37372,"cached_input_tokens":31360,'
+    '"output_tokens":828,"reasoning_output_tokens":94},'
+    '"last_token_usage":{"input_tokens":12730,"cached_input_tokens":9600,'
+    '"output_tokens":137,"reasoning_output_tokens":30}}}}\n'
 )
 
 
@@ -66,8 +68,9 @@ def test_codex_usage_to_tokens(tmp_path):
     meta, evs, tokens = CodexAdapter().parse(str(f), "codex:r")
     assert len(tokens) == 1
     t = tokens[0]
-    assert t["input_tokens"] == 12191 and t["cache_read_tokens"] == 9600
-    assert t["reasoning_tokens"] == 94
+    # 必须采 last_token_usage(per-turn 增量),不是 total_token_usage(session 累积,会虚高 ~120x)
+    assert t["input_tokens"] == 12730 and t["cache_read_tokens"] == 9600
+    assert t["reasoning_tokens"] == 30
 
 
 KIMI_USAGE = (

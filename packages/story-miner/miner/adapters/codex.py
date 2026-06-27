@@ -63,7 +63,8 @@ class CodexAdapter(SourceAdapter):
                     if not ok: meta['nerrs'] += 1
                     evs.append(dict(sid=sid, src='codex', ws=meta['ws'], ts=line_ts, kind='result', ok=ok, text=common.mask(str(out)[:200])))
                 elif pt == 'token_count':
-                    u = (pl.get('info') or {}).get('total_token_usage') or {}
+                    # last_token_usage = 本 turn 增量;total_token_usage 是 session 累积(直接相加会虚高 ~120x)
+                    u = (pl.get('info') or {}).get('last_token_usage') or {}
                     if u:
                         tokens.append(dict(sid=sid, src='codex', ts=line_ts,
                             model=pl.get('model', '') or o.get('model', ''),
