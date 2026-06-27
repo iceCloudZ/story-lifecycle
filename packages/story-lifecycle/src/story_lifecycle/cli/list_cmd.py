@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 
 import click
 from rich.console import Console
@@ -13,8 +14,16 @@ from rich.table import Table
 
 console = Console()
 
-# miner 复盘钩子路径（硬编码，因两仓库位置固定）
-_MINER_RETROSPECT_SCRIPT = "D:/github/agent-transcript-miner/scripts/retrospect.py"
+# miner 复盘钩子路径（硬编码到 monorepo 子包位置；M6 改为 config 驱动）
+# list_cmd.py 位于 packages/story-lifecycle/src/story_lifecycle/cli/
+# 上溯 4 层到 packages/，再进入 story-miner
+_MINER_RETROSPECT_SCRIPT = os.path.normpath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "..", "..", "..", "..",
+        "story-miner", "scripts", "retrospect.py",
+    )
+)
 
 
 def _run_miner_retrospect(story_key: str) -> None:
@@ -24,7 +33,7 @@ def _run_miner_retrospect(story_key: str) -> None:
         return
     try:
         result = subprocess.run(
-            ["python", _MINER_RETROSPECT_SCRIPT, "--story", story_key],
+            [sys.executable, _MINER_RETROSPECT_SCRIPT, "--story", story_key],
             capture_output=True,
             text=True,
             timeout=120,

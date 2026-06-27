@@ -102,3 +102,28 @@ class TestDoneCmd:
         s = db.get_story("tapd-1001")
         assert s["status"] == "completed"
         assert s["current_stage"] == "done"
+
+    def test_done_uses_current_python_executable(self, runner, seeded_db, monkeypatch):
+        """I4: done_cmd 必须使用当前解释器调用 retrospect，避免 PATH 错乱。"""
+        import subprocess
+        import sys
+        from story_lifecycle.cli import list_cmd
+
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(args)
+            class _R:
+                returncode = 0
+                stdout = "ok"
+                stderr = ""
+            return _R()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        # ensure script path exists so the hook actually runs
+        monkeypatch.setattr(list_cmd, "_MINER_RETROSPECT_SCRIPT", __file__)
+
+        runner.invoke(list_cmd.done_cmd, ["tapd-1001"])
+
+        assert calls, "subprocess.run should have been called"
+        assert calls[0][0] == sys.executable, "first arg must be sys.executable"
