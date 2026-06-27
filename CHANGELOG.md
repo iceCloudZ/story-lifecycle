@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 新增 `progress.yaml` 看板元数据（github-ops Phase 2）
 
 ### Fixed
+- **声明 `python-multipart` 依赖** — `/api/intake/preview` 改用 `Form`/`File` 上传后依赖 `python-multipart`，此前缺失导致全新环境（CI 全矩阵）测试收集阶段即报错 `Form data requires python-multipart`，现补进 `dependencies`
 - **`test_intake_preview` 请求格式** — `/api/intake/preview` 端点改为表单上传（支持截图附件）后，测试请求由 `json=` 修正为 `data=` 对齐 `Form` 签名，恢复 200 响应
 
 ## [0.11.5] - 2026-06-17
