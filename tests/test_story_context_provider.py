@@ -47,3 +47,14 @@ class TestTranscriptContextProvider:
     def test_unknown_story_returns_none(self, provider):
         ctx = provider.get_context("NONEXISTENT-ZZZ-99999", "D:/no-such-ws", "design")
         assert ctx is None
+
+    def test_unrelated_story_does_not_match_same_workspace_neighbor(self, provider):
+        """Regression: a story_key with no direct record must NOT fall back to a
+        different story in the same workspace (cross-story contamination).
+
+        1066988 has no row in `stories`; 1064837 lives in the same D:/hc-all
+        workspace. The provider must return None for 1066988, not silently serve
+        1064837's history.
+        """
+        ctx = provider.get_context("1066988", "D:/hc-all", "design")
+        assert ctx is None

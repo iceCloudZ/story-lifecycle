@@ -83,7 +83,7 @@ class TranscriptStoryContextProvider:
         conn = self._connect()
         try:
             cur = conn.cursor()
-            story = self._match_story(cur, story_key, workspace)
+            story = self._match_story(cur, story_key)
             if not story:
                 return None
             sessions = self._find_sessions(cur, story, workspace)
@@ -94,7 +94,7 @@ class TranscriptStoryContextProvider:
         finally:
             conn.close()
 
-    def _match_story(self, cur, story_key, workspace):
+    def _match_story(self, cur, story_key):
         rows = list(
             cur.execute(
                 "SELECT story_id,workspace,title,status,stage,first_ts,last_ts FROM stories"
@@ -104,18 +104,15 @@ class TranscriptStoryContextProvider:
         for r in rows:
             if r[0] == story_key:
                 return _row_to_story(r)
-        # 2. numeric part match
+        # 2. numeric part match (handles tapd-<id>, tapd-bug_<id> variants)
         d = _digits(story_key)
         if d:
             for r in rows:
                 if _digits(r[0]) == d:
                     return _row_to_story(r)
-        # 3. workspace tail match
-        if workspace:
-            ws_tail = ws_of(workspace)
-            for r in rows:
-                if r[1] and ws_of(r[1]) == ws_tail:
-                    return _row_to_story(r)
+        # Deliberately NO workspace fallback: a story_key with no direct record
+        # returns None rather than silently binding to a neighboring story in
+        # the same workspace (cross-story contamination).
         return None
 
     def _find_sessions(self, cur, story, workspace):
