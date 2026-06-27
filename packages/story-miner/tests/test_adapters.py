@@ -52,6 +52,35 @@ def test_claude_usage_to_tokens(tmp_path):
     assert t["output_tokens"] == 50 and t["src"] == "claude"
 
 
+CLAUDE_USAGE_DUP = (
+    # 同一 assistant turn 写成多行(thinking/text/tool_use),共享 message.id,重复带同一 usage
+    '{"type":"assistant","message":{"role":"assistant","id":"msg_T1",'
+    '"content":[{"type":"thinking","thinking":"x"}],'
+    '"usage":{"input_tokens":100,"cache_read_input_tokens":200,'
+    '"cache_creation_input_tokens":0,"output_tokens":50}},'
+    '"timestamp":"2026-06-27T10:00:01.000Z","cwd":"D:/github"}\n'
+    '{"type":"assistant","message":{"role":"assistant","id":"msg_T1",'
+    '"content":[{"type":"text","text":"ok"}],'
+    '"usage":{"input_tokens":100,"cache_read_input_tokens":200,'
+    '"cache_creation_input_tokens":0,"output_tokens":50}},'
+    '"timestamp":"2026-06-27T10:00:02.000Z","cwd":"D:/github"}\n'
+    '{"type":"assistant","message":{"role":"assistant","id":"msg_T1",'
+    '"content":[{"type":"tool_use","name":"Bash","input":{}}],'
+    '"usage":{"input_tokens":100,"cache_read_input_tokens":200,'
+    '"cache_creation_input_tokens":0,"output_tokens":50}},'
+    '"timestamp":"2026-06-27T10:00:03.000Z","cwd":"D:/github"}\n'
+)
+
+
+def test_claude_usage_dedup_per_turn(tmp_path):
+    f = tmp_path / "s.jsonl"
+    f.write_text(CLAUDE_USAGE_DUP, encoding="utf-8")
+    meta, evs, tokens = ClaudeAdapter().parse(str(f), "claude:s")
+    # 同一 turn(message.id 相同)的 3 行只采一次 usage(原来采 3 次,虚高 ~3x)
+    assert len(tokens) == 1
+    assert tokens[0]["input_tokens"] == 100
+
+
 CODEX_USAGE = (
     '{"type":"event_msg","timestamp":"2026-05-23T02:01:55.865Z",'
     '"payload":{"type":"token_count","cwd":"D:/github","info":{'

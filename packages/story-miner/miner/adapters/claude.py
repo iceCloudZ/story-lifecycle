@@ -23,6 +23,7 @@ class ClaudeAdapter(SourceAdapter):
                     ntools=0, nerrs=0, cwd=None, branch=None, first_ucmd=None)
         evs = []
         tokens = []
+        seen_usage_keys = set()
         try:
             for line in open(f, encoding='utf-8', errors='ignore'):
                 line = line.strip()
@@ -84,13 +85,18 @@ class ClaudeAdapter(SourceAdapter):
                 if role == 'assistant':
                     u = msg.get('usage') or {}
                     if u:
-                        tokens.append(dict(sid=sid, src='claude', ts=line_ts,
-                            model=msg.get('model', ''),
-                            input_tokens=u.get('input_tokens') or 0,
-                            output_tokens=u.get('output_tokens') or 0,
-                            cache_read_tokens=u.get('cache_read_input_tokens') or 0,
-                            cache_creation_tokens=u.get('cache_creation_input_tokens') or 0,
-                            reasoning_tokens=u.get('reasoning_tokens') or 0))
+                        # 同一 assistant turn 会被写成多行(thinking/text/tool_use 各一行),
+                        # 每行重复带同一个 message.usage;按 message.id 去重,id 缺失时退回 usage 三元组
+                        key = msg.get('id') or (u.get('input_tokens'), u.get('cache_read_input_tokens'), u.get('output_tokens'))
+                        if key not in seen_usage_keys:
+                            seen_usage_keys.add(key)
+                            tokens.append(dict(sid=sid, src='claude', ts=line_ts,
+                                model=msg.get('model', ''),
+                                input_tokens=u.get('input_tokens') or 0,
+                                output_tokens=u.get('output_tokens') or 0,
+                                cache_read_tokens=u.get('cache_read_input_tokens') or 0,
+                                cache_creation_tokens=u.get('cache_creation_input_tokens') or 0,
+                                reasoning_tokens=u.get('reasoning_tokens') or 0))
         except Exception:
             pass
         return meta, evs, tokens
