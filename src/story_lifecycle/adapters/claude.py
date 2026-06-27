@@ -9,6 +9,8 @@ from ..terminal.platform_ops import resolve_executable
 class ClaudeAdapter(BaseAdapter):
     """Adapter for Claude Code CLI (claude)."""
 
+    name = "claude"
+
     def switch_provider(self, provider: str) -> str | None:
         try:
             subprocess.run(
@@ -36,6 +38,9 @@ class ClaudeAdapter(BaseAdapter):
         ]
 
     def inject_prompt(self, prompt: str, story_key: str, stage: str) -> str:
+        # I2: record a story<->session anchor for miner.link (best-effort,
+        # never affects the returned None / paste-based injection).
+        self.write_anchor(prompt, story_key, stage)
         return None
 
     def cleanup(self, story_key: str, stage: str):

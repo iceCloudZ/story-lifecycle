@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 
 import click
 from rich.console import Console
@@ -10,6 +12,30 @@ from rich.panel import Panel
 from rich.table import Table
 
 console = Console()
+
+# miner 复盘钩子路径（硬编码，因两仓库位置固定）
+_MINER_RETROSPECT_SCRIPT = "D:/github/agent-transcript-miner/scripts/retrospect.py"
+
+
+def _run_miner_retrospect(story_key: str) -> None:
+    """story done 时调用 agent-transcript-miner 生成合并复盘。"""
+    if not os.path.exists(_MINER_RETROSPECT_SCRIPT):
+        console.print("[dim]miner 复盘脚本未找到，跳过自动生成 retrospect.md[/]")
+        return
+    try:
+        result = subprocess.run(
+            ["python", _MINER_RETROSPECT_SCRIPT, "--story", story_key],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if result.returncode == 0:
+            console.print(f"[dim]{result.stdout.strip()}[/]")
+        else:
+            console.print(f"[yellow]miner 复盘生成失败: {result.stderr[:200]}[/]")
+    except Exception as e:
+        console.print(f"[yellow]miner 复盘调用异常: {e}[/]")
 
 
 @click.command("list")
@@ -211,6 +237,9 @@ def done_cmd(key):
     db.log_stage(key, "done", "complete", "手动标记完成")
 
     console.print(f"[green]Story {key} 已标记完成[/]")
+
+    # agent-transcript-miner I4：自动生成 story 级合并复盘
+    _run_miner_retrospect(key)
 
     if s.get("source_type") == "tapd" and s.get("source_id"):
         console.print(

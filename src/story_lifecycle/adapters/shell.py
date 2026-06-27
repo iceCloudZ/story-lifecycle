@@ -38,6 +38,10 @@ class ShellAdapter(BaseAdapter):
         self._config = config or {}
         self._name = name
 
+    @property
+    def name(self) -> str:  # noqa: D401 - short descriptor
+        return self._name
+
     def switch_provider(self, provider: str) -> str | None:
         return None
 
@@ -46,6 +50,8 @@ class ShellAdapter(BaseAdapter):
         return template.format(model=model)
 
     def inject_prompt(self, prompt: str, story_key: str, stage: str) -> str | None:
+        # I2: record anchor (best-effort, before any core logic).
+        self.write_anchor(prompt, story_key, stage)
         method = self._config.get("inject_method", "paste")
         if method == "stdin":
             from pathlib import Path
