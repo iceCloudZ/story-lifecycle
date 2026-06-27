@@ -7,8 +7,8 @@ import sqlite3, collections, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from miner.common import mask  # noqa: E402
 
-DB = 'D:/github/agent-transcript-miner/data/transcripts.db'
-OUT = 'D:/github/agent-transcript-miner/scripts/out/debt.md'
+DB = 'D:/github/story-lifecycle/packages/story-miner/data/transcripts.db'
+OUT = 'D:/github/story-lifecycle/packages/story-miner/scripts/out/debt.md'
 
 DEBT = ['TODO', 'FIXME', 'HACK', 'XXX', '暂时', '临时方案',
         '硬编码', 'workaround', '先这样', '后续优化', 'deprecated', 'MagicNumber']

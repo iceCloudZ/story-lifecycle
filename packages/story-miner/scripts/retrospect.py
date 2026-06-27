@@ -5,8 +5,8 @@ v2：支持 `python retrospect.py <sid>` 单会话模式；结构化输出（任
 """
 import sqlite3, os, collections, sys, re
 
-DB = 'D:/github/agent-transcript-miner/data/transcripts.db'
-OUT_DIR = 'D:/github/agent-transcript-miner/scripts/out'
+DB = 'D:/github/story-lifecycle/packages/story-miner/data/transcripts.db'
+OUT_DIR = 'D:/github/story-lifecycle/packages/story-miner/scripts/out'
 OUT_BATCH = os.path.join(OUT_DIR, 'retrospect.md')
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

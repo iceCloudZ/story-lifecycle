@@ -7,7 +7,7 @@
 - **每卡独立**：标注 `[并行]` 的可同时派给多个 agent；`[依赖]` 需先完成前置
 - **产出统一**：分析类产出写到 `scripts/out/<task-id>.md`；反哺 hc-all 的写到对应位置；每份含「做法/关键发现/数字/未决问题」
 - **约束通用**：只读 db（除明确要改 schema 的卡）；不改 adapter 已验证逻辑；金融 PII 红线（见 CONTEXT.md）
-- **运行**：`export PYTHONPATH=D:/github/agent-transcript-miner`
+- **运行**：`export PYTHONPATH=D:/github/story-lifecycle/packages/story-miner`
 
 ---
 

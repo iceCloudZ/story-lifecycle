@@ -7,7 +7,7 @@
 
 ## 快速上手
 ```bash
-export PYTHONPATH=D:/github/agent-transcript-miner
+export PYTHONPATH=D:/github/story-lifecycle/packages/story-miner
 python -m miner.store                    # 增量入库（按 mtime；adapter 改了要删 data/transcripts.db 重建）
 python -m miner.story_ingest             # 解析各工作区 .story/ → stories 表
 python -m miner.link                     # session↔story 关联（回填 sessions.story_id）

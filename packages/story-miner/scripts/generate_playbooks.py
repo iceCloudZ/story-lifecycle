@@ -11,7 +11,7 @@ v2 优化：
 """
 import sqlite3, collections, re, os
 
-DB = 'D:/github/agent-transcript-miner/data/transcripts.db'
+DB = 'D:/github/story-lifecycle/packages/story-miner/data/transcripts.db'
 OUT = 'D:/hc-all/.story/knowledge/playbooks'
 OUT_STORY = os.path.join(OUT, 'by-story')
 

@@ -7,8 +7,8 @@ import sqlite3, re, collections, os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from miner.common import mask  # noqa: E402
 
-DB = 'D:/github/agent-transcript-miner/data/transcripts.db'
-OUT_DOC = 'D:/github/agent-transcript-miner/docs/constraint-rules.md'
+DB = 'D:/github/story-lifecycle/packages/story-miner/data/transcripts.db'
+OUT_DOC = 'D:/github/story-lifecycle/packages/story-miner/docs/constraint-rules.md'
 
 # 约束关键词（用户指令里表达强制/禁止的语气词）
 KW = ['必须', '禁止', '不要', '不能', '务必', '严禁', '不可', '绝不',

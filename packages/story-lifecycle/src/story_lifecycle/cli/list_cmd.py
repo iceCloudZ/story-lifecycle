@@ -13,8 +13,16 @@ from rich.table import Table
 
 console = Console()
 
-# miner 复盘钩子路径（硬编码，因两仓库位置固定）
-_MINER_RETROSPECT_SCRIPT = "D:/github/agent-transcript-miner/scripts/retrospect.py"
+# miner 复盘钩子路径（硬编码到 monorepo 子包位置；M6 改为 config 驱动）
+# list_cmd.py 位于 packages/story-lifecycle/src/story_lifecycle/cli/
+# 上溯 4 层到 packages/，再进入 story-miner
+_MINER_RETROSPECT_SCRIPT = os.path.normpath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "..", "..", "..", "..",
+        "story-miner", "scripts", "retrospect.py",
+    )
+)
 
 
 def _run_miner_retrospect(story_key: str) -> None:
