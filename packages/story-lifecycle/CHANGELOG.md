@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.0] - 2026-06-27
+
+### Added
+- **Monorepo 迁移完成（M1–M6）** — `story-lifecycle` 与 `agent-transcript-miner` 合并到 `packages/story-lifecycle` / `packages/story-miner`，新增共享 `packages/knowledge` 统一知识层（统一 schema、INDEX、失败知识合并）。
+- **定时扫描兜底（I1）** — `miner/store.py` 支持 `--since-days` 增量入库；新增 `packages/story-miner/scripts/refresh.sh`，每日增量 + 每周全量并重算 playbook/failure。
+- **Anchor-first story↔session 绑定（I2）** — `story-lifecycle` 在 `inject_prompt` 时写 `anchors.jsonl`，`miner/link.py` 优先读锚点精确绑定，去掉旧 uniq-window 宽窗兜底；hc-all 工作区 story-sign 会话绑定率达到 80.4%。
+- **Transcript 上下文注入（I3）** — `story-lifecycle` 默认启用 `miner.story_context_provider`，`design/build/verify` prompt 自动注入 `{transcript_context}`。
+- **Done 复盘钩子（I4）** — `story done <key>` 使用 `sys.executable` 稳定调用 `retrospect.py --story <key>`，自动生成 story 级合并复盘。
+- 新增契约测试：`tests/contracts/test_anchors_contract.py`、`test_provider_contract.py`、`test_done_retrospect_contract.py`、`test_store_link_schema_contract.py`。
+- 新增 miner 测试：`test_link_anchors.py`、`test_knowledge_outputs.py`。
+
+### Changed
+- 刷新项目级文档：`docs/MIGRATION.md`、`docs/INTEGRATION.md`、`docs/ADOPTION.md`、`packages/story-miner/docs/ROADMAP.md`、顶层 `README.md`。
+- `packages/story-miner` 脚本改为 config 驱动，不再硬编码 hc-all 路径。
+
+### Fixed
+- `miner/link.py` 旧宽窗兜底导致 `1064837` 误绑 84 个 session，现降到 5 个。
+- `story done` 复盘调用由硬编码 `"python"` 改为 `sys.executable`，避免 venv/PATH 错乱。
+
 ## [0.11.6] - 2026-06-27
 
 ### Added
