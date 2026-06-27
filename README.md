@@ -42,7 +42,7 @@ python -m pytest packages/story-lifecycle/tests packages/story-miner/tests packa
 - Docs refreshed: `docs/MIGRATION.md`, `docs/INTEGRATION.md`, `docs/ADOPTION.md`, `packages/story-miner/docs/ROADMAP.md`.
 - Tests: `660 passed, 2 skipped`.
 
-See [GitHub Releases](https://github.com/iceCloudZ/story-lifecycle/releases) for assets and notes.
+See [v0.12.0 release](https://github.com/iceCloudZ/story-lifecycle/releases/tag/v0.12.0) and the [releases page](https://github.com/iceCloudZ/story-lifecycle/releases) for assets and notes.
 
 ## License
 
