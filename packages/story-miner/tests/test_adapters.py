@@ -2,6 +2,7 @@
 import sqlite3
 from miner import common, store
 from miner.adapters.claude import ClaudeAdapter
+from miner.adapters.codex import CodexAdapter
 
 CLAUDE_FIXTURE = (
     '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]},'
@@ -48,6 +49,24 @@ def test_claude_usage_to_tokens(tmp_path):
     t = tokens[0]
     assert t["input_tokens"] == 100 and t["cache_read_tokens"] == 200
     assert t["output_tokens"] == 50 and t["src"] == "claude"
+
+
+CODEX_USAGE = (
+    '{"type":"event_msg","timestamp":"2026-05-23T02:01:55.865Z",'
+    '"payload":{"type":"token_count","cwd":"D:/github","info":{'
+    '"total_token_usage":{"input_tokens":12191,"cached_input_tokens":9600,'
+    '"output_tokens":343,"reasoning_output_tokens":94}}}}\n'
+)
+
+
+def test_codex_usage_to_tokens(tmp_path):
+    f = tmp_path / "r.jsonl"
+    f.write_text(CODEX_USAGE, encoding="utf-8")
+    meta, evs, tokens = CodexAdapter().parse(str(f), "codex:r")
+    assert len(tokens) == 1
+    t = tokens[0]
+    assert t["input_tokens"] == 12191 and t["cache_read_tokens"] == 9600
+    assert t["reasoning_tokens"] == 94
 
 
 def test_token_usage_table_created(tmp_path):

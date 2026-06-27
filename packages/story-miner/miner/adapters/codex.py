@@ -21,6 +21,7 @@ class CodexAdapter(SourceAdapter):
         meta = dict(sid=sid, src='codex', ws='?', ts=None, title=None, turns=0,
                     ntools=0, nerrs=0, cwd=None, branch=None, first_ucmd=None)
         evs = []
+        tokens = []
         try:
             for line in open(f, encoding='utf-8', errors='ignore'):
                 line = line.strip()
@@ -61,6 +62,16 @@ class CodexAdapter(SourceAdapter):
                     ok = (m.group(1) == '0') if m else not any(e in out_s.lower() for e in ['traceback', 'exception', 'error:'])
                     if not ok: meta['nerrs'] += 1
                     evs.append(dict(sid=sid, src='codex', ws=meta['ws'], ts=line_ts, kind='result', ok=ok, text=common.mask(str(out)[:200])))
+                elif pt == 'token_count':
+                    u = (pl.get('info') or {}).get('total_token_usage') or {}
+                    if u:
+                        tokens.append(dict(sid=sid, src='codex', ts=line_ts,
+                            model=pl.get('model', '') or o.get('model', ''),
+                            input_tokens=u.get('input_tokens') or 0,
+                            output_tokens=u.get('output_tokens') or 0,
+                            cache_read_tokens=u.get('cached_input_tokens') or 0,
+                            cache_creation_tokens=u.get('cache_creation_input_tokens') or 0,
+                            reasoning_tokens=u.get('reasoning_output_tokens') or 0))
         except Exception:
             pass
-        return meta, evs, []
+        return meta, evs, tokens
