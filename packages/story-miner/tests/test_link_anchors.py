@@ -169,3 +169,16 @@ def test_story_sign_sessions_binding_rate_above_eighty(link_env):
     linked_count = sum(1 for sid in sign_sids if rows.get(sid))
     rate = linked_count / len(sign_sids)
     assert rate >= 0.8, f"story-sign binding rate {rate:.0%} below 80%"
+
+
+def test_to_datetime_normalizes_mixed_tz_awareness():
+    """_to_datetime must return offset-aware datetimes for both Z (full ISO) and
+    naive inputs, so aware session ts can be compared with naive anchor ts without
+    raising TypeError. Regression: full_ts emits aware ts; anchors are naive."""
+    from miner import link
+    aware = link._to_datetime("2026-06-22T16:13:11.475Z")
+    naive = link._to_datetime("2026-06-17T12:00:00")
+    assert aware is not None and aware.tzinfo is not None
+    assert naive is not None and naive.tzinfo is not None
+    # this comparison raised TypeError before the fix
+    assert aware >= naive

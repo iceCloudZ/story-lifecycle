@@ -58,13 +58,21 @@ def _to_date(ts):
 
 
 def _to_datetime(ts):
-    """Parse iso datetime; return None on failure."""
+    """Parse iso datetime; return None on failure.
+
+    Normalizes to offset-aware (naive input assumed UTC) so aware session ts
+    (full ISO with Z, from common.full_ts) and naive anchor ts can be compared
+    without raising TypeError. Handles 'Z' for Python <3.11 via replace.
+    """
     if not ts:
         return None
     try:
-        return datetime.datetime.fromisoformat(ts)
+        dt = datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))
     except ValueError:
         return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
 
 
 def _link_anchors(conn, sessions):
