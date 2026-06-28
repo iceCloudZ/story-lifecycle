@@ -8,6 +8,9 @@
 {prd_path_section}
 {spec_path_section}
 {transcript_context}
+{knowledge_context}
+
+{quality_checklist}
 
 ## 步骤
 

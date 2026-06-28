@@ -8,6 +8,7 @@
 {prd_path_section}
 {skill_instruction}
 {transcript_context}
+{knowledge_context}
 
 ## 步骤
 

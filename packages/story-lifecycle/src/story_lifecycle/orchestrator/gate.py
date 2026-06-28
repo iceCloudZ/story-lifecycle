@@ -184,6 +184,96 @@ def write_gate_report(gd: GateDecision, workspace: str) -> Path:
     return report_path
 
 
+# ---- Verify-stage gate ----
+
+
+def run_verify_gate(
+    story_key: str,
+    stage: str,
+    workspace: str,
+    context: dict,
+    quality_cfg: dict | None = None,
+    max_retries: int = 2,
+) -> dict:
+    """Run verify-stage gate: HIGH-severity findings block and trigger repair round.
+
+    Returns a dict with ``decision`` in {"advance", "retry", "fail"}.
+    On "retry", the caller should re-run the verify stage with the returned
+    ``repair_packet_path`` injected into the next prompt.
+    """
+    from ..db import models as db
+    from .evaluator_loop import build_repair_packet
+
+    quality_cfg = quality_cfg or {}
+    if not quality_cfg.get("enabled"):
+        return {"decision": "advance", "reason": "quality gate disabled"}
+    if not quality_cfg.get("block_on_open_high_findings"):
+        return {"decision": "advance", "reason": "block_on_open_high_findings disabled"}
+
+    high_findings = db.get_open_findings(story_key, min_severity="high")
+    if not high_findings:
+        return {"decision": "advance", "reason": "no open HIGH findings"}
+
+    round_count = increment_review_round_count(context, stage)
+    if round_count > max_retries:
+        return {
+            "decision": "fail",
+            "reason": f"HIGH findings persist after {max_retries} repair rounds",
+            "findings": high_findings,
+        }
+
+    ctx = context
+    plan_summary = ctx.get("plan_summary", "")
+    stage_output_summary = ctx.get("last_verify_summary", "verify stage completed")
+
+    repair_path = build_repair_packet(
+        story_key=story_key,
+        stage=stage,
+        workspace=workspace,
+        plan_summary=plan_summary,
+        stage_output_summary=stage_output_summary,
+        findings=high_findings,
+        verification={"status": "blocked_by_gate"},
+        round_num=round_count,
+        write_file=True,
+    )
+    if repair_path:
+        rel_path = Path(repair_path).relative_to(Path(workspace).resolve())
+        ctx["repair_packet_path"] = str(rel_path)
+
+    # Record a gate decision event for observability
+    gd = GateDecision(
+        story_key=story_key,
+        stage=stage,
+        gate_name="verify_quality_gate",
+        decision="retry_stage",
+        reason_code="open_high_findings",
+        human_message=f"{len(high_findings)} HIGH finding(s) block verify; repair round {round_count}/{max_retries}",
+        review_round_count=round_count,
+        retry_limit=max_retries,
+        reviewer={"kind": "rule", "adapter": "system", "model": ""},
+        evidence={
+            "done_consumed": True,
+            "open_findings": high_findings,
+            "repair_packet_path": repair_path,
+        },
+    )
+    db.log_event(story_key, stage, "gate_decision", gd.to_dict())
+    report_path = write_gate_report(gd, workspace)
+    if report_path and repair_path:
+        gd.evidence["report_path"] = str(report_path)
+
+    return {
+        "decision": "retry",
+        "reason": gd.human_message,
+        "round": round_count,
+        "retry_limit": max_retries,
+        "repair_packet_path": repair_path,
+        "report_path": str(report_path) if report_path else None,
+        "findings": high_findings,
+    }
+
+
 # ---- Factory helper ----
 
 

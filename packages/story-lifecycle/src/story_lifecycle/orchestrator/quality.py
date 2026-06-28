@@ -2,9 +2,47 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
+from pathlib import Path
 
 from ..db import models as db
+
+
+_FAILURE_CHECKLIST_PATH = (
+    Path(__file__).parents[4] / "story-miner" / "docs" / "failure-checklist.md"
+)
+
+
+def _load_failure_checklist_items(task_type: str | None = None, limit: int = 5) -> list[str]:
+    """Load preventive checklist items from failure-checklist.md.
+
+    Falls back to the generic items if no task_type-specific file exists.
+    """
+    items: list[str] = []
+    if _FAILURE_CHECKLIST_PATH.exists():
+        text = _FAILURE_CHECKLIST_PATH.read_text(encoding="utf-8")
+        # Parse the markdown table under "## 预防检查项"
+        in_table = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("## 预防检查项"):
+                in_table = True
+                continue
+            if in_table and stripped.startswith("|"):
+                # Skip header and separator rows
+                if re.match(r"^\|\s*-+\s*\|", stripped):
+                    continue
+                cols = [c.strip() for c in stripped.strip("|").split("|")]
+                if len(cols) >= 2 and cols[0] not in ("优先级", ""):
+                    item = cols[1]
+                    if item and item != "检查项":
+                        items.append(item)
+            elif in_table and stripped.startswith("##"):
+                break
+    # TODO: load task_type-specific failure checklists from knowledge/playbooks
+    # when Brief F produces them.
+    return items[:limit]
 
 
 def record_finding(story_key: str, stage: str, finding: dict) -> str:
@@ -187,14 +225,29 @@ def build_quality_packet(
 def build_quality_checklist(story_key: str, stage: str) -> str:
     """Build compact Quality Checklist for executor task file."""
     findings = db.get_open_findings(story_key)
-    if not findings:
-        return ""
+
+    story = db.get_story(story_key) or {}
+    ctx = json.loads(story.get("context_json") or "{}")
+    task_type = ctx.get("task_type")
 
     lines = ["## Quality Checklist", ""]
-    for f in findings[:5]:
-        lines.append(f"- [ ] Fix: {f['description']}")
-        if f.get("recommendation"):
-            lines.append(f"      Approach: {f['recommendation']}")
+
+    # Inject mined failure-mode preventive checks
+    failure_items = _load_failure_checklist_items(task_type=task_type, limit=5)
+    if failure_items:
+        lines.append("### 失败模式预防检查项")
+        for item in failure_items:
+            lines.append(f"- [ ] {item}")
+        lines.append("")
+
+    if findings:
+        lines.append("### 当前 Open Findings")
+        for f in findings[:5]:
+            lines.append(f"- [ ] Fix: {f['description']}")
+            if f.get("recommendation"):
+                lines.append(f"      Approach: {f['recommendation']}")
+        lines.append("")
+
     lines.append("- [ ] Run: pytest && ruff check src tests")
     lines.append("")
     return "\n".join(lines)

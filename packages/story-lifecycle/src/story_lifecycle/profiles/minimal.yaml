@@ -4,7 +4,7 @@ version: 4
 cli: claude
 execution_mode: interactive_pty
 author: zzh                                       # 作者标识，进分支名
-branch_rule: "feature/{author}/{summary}_{date}"  # 占位符: {author}/{date}/{summary}/{story_key}/{project}
+branch_rule: "feature/{author}/{story_key}_{summary}_{date}"  # 占位符: {author}/{date}/{summary}/{story_key}/{project}
 
 stages:
   design:

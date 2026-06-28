@@ -15,7 +15,7 @@ from rich.console import Console
 
 from ..db.models import init_db
 from .setup import is_configured, load_config_to_env, run_setup
-from .doctor import run_doctor, run_doctor_fix, has_missing_tools
+from .doctor import run_doctor, run_doctor_fix, has_missing_tools, run_linkage_health
 
 console = Console()
 
@@ -410,6 +410,12 @@ def paths():
     from ..orchestrator.doctor_paths import run_doctor_paths
 
     run_doctor_paths()
+
+
+@doctor.command()
+def linkage():
+    """Check story↔git hard-linkage health (% hard / orphan branches)."""
+    run_linkage_health()
 
 
 def _run_web_board(host, port):

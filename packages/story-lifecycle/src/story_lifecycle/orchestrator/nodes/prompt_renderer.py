@@ -317,6 +317,9 @@ Story: {state["story_key"]}
     transcript_context = context_providers.get_transcript_context(
         state["story_key"], state.get("workspace", ""), stage
     )
+    knowledge_context = context_providers.get_knowledge_context(
+        state["story_key"], state.get("workspace", ""), stage
+    )
 
     vars_map = {
         "{story_key}": state["story_key"],
@@ -352,6 +355,7 @@ Story: {state["story_key"]}
         "{quality_checklist}": checklist,
         "{repair_packet_section}": repair_section,
         "{transcript_context}": (transcript_context + "\n") if transcript_context else "",
+        "{knowledge_context}": (knowledge_context + "\n") if knowledge_context else "",
     }
     _had_repair_placeholder = "{repair_packet_section}" in template
     for key, value in vars_map.items():
@@ -363,6 +367,7 @@ Story: {state["story_key"]}
 
     metadata = {
         "transcript_context": transcript_context or "",
+        "knowledge_context": knowledge_context or "",
         "quality_packet_injected": quality_packet_injected,
         "quality_checklist_injected": quality_checklist_injected,
         "quality_packet_text": quality_section,

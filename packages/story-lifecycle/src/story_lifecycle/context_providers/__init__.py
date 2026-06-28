@@ -89,4 +89,22 @@ def get_transcript_context(
         return None
 
 
-__all__ = ["BaseStoryContextProvider", "get_transcript_context"]
+def get_knowledge_context(
+    story_key: str, workspace: str, stage: str
+) -> str | None:
+    """Return mined knowledge context for this story/stage, or None.
+
+    Reads story-miner output artifacts and returns a task_type-specific
+    summary. Any failure returns None so prompt rendering is never blocked.
+    """
+    try:
+        from .knowledge_provider import KnowledgeContextProvider
+
+        provider = KnowledgeContextProvider()
+        return provider.get_context(story_key, workspace, stage)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("knowledge context provider failed for %s/%s: %s", story_key, stage, exc)
+        return None
+
+
+__all__ = ["BaseStoryContextProvider", "get_transcript_context", "get_knowledge_context"]

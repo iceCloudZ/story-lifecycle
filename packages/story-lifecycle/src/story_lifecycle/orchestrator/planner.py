@@ -779,21 +779,26 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
         status="active",
     )
 
-    # 解析 profile 用于生成 prompt
+    # 解析 profile 用于生成 prompt 和质量门禁配置
     profile_stages = {}
+    quality_cfg = {}
     try:
         rp = resolve_profile(profile_name)
         profile_stages = {name: cfg for name, cfg in rp.stages.items()}
+        quality_cfg = rp.quality or {}
     except Exception:
         pass
 
-    # 逐个执行 action
-    for idx, action in enumerate(actions):
+    # 逐个执行 action；使用 while 以便在 verify gate 触发 retry 时插入重试 action
+    idx = 0
+    while idx < len(actions):
+        action = actions[idx]
         if action.get("action") == "skip":
             stage = action.get("stage", f"stage_{idx}")
             reason = action.get("reason", "")
             db.log_event(story_key, stage, "skipped", {"reason": reason})
             log.info(f"[{story_key}] Skipped stage {stage}: {reason}")
+            idx += 1
             continue
 
         if action.get("action") == "launch":
@@ -1055,6 +1060,64 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 )
                 return
 
+            # Verify-stage quality gate: HIGH findings block and trigger repair round
+            if stage == "verify":
+                from ..orchestrator.gate import run_verify_gate
+
+                stage_cfg = profile_stages.get(stage)
+                max_retries = (
+                    stage_cfg.max_retries
+                    if hasattr(stage_cfg, "max_retries")
+                    else 2
+                )
+                ctx["last_verify_summary"] = done_data.get("summary", "")
+                gate_result = run_verify_gate(
+                    story_key=story_key,
+                    stage=stage,
+                    workspace=workspace,
+                    context=ctx,
+                    quality_cfg=quality_cfg,
+                    max_retries=max_retries,
+                )
+                if gate_result["decision"] == "retry":
+                    retry_done_file = (
+                        f".story/done/{story_key}/verify"
+                        f"-round{gate_result['round']}.json"
+                    )
+                    actions.insert(
+                        idx + 1,
+                        {
+                            "action": "launch",
+                            "stage": "verify",
+                            "adapter": adapter_name,
+                            "focus": (
+                                f"repair round {gate_result['round']}/"
+                                f"{gate_result['retry_limit']} — address HIGH findings"
+                            ),
+                            "done_file": retry_done_file,
+                        },
+                    )
+                    ctx["_agent_actions"] = actions
+                    db.update_story(
+                        story_key,
+                        context_json=json.dumps(ctx, ensure_ascii=False),
+                    )
+                    log.info(
+                        "[%s] Verify gate blocked (round %d/%d); retry scheduled",
+                        story_key,
+                        gate_result["round"],
+                        gate_result["retry_limit"],
+                    )
+                elif gate_result["decision"] == "fail":
+                    db.update_story(
+                        story_key,
+                        status="failed",
+                        last_error=gate_result["reason"],
+                    )
+                    return
+
+        idx += 1
+
     # 所有 action 执行完毕
     db.update_story(story_key, status="completed")
     log.info(f"[{story_key}] All stages completed")
@@ -1077,6 +1140,7 @@ def _build_cli_prompt(
 ) -> str:
     """构建给 CLI 的执行 prompt。"""
     from ..story_paths import story_evidence_dir
+    from ..orchestrator.quality import build_quality_checklist
 
     stage_desc = ""
     if stage in profile_stages:
@@ -1093,6 +1157,14 @@ def _build_cli_prompt(
         prd_section = (
             f"\n### PRD / 需求详情\n请读取 PRD 文件了解完整需求: `{prd_path}`\n"
         )
+
+    # Quality checklist injection for verify stage (uses existing quality_checklist slot
+    # semantics without touching prompt_renderer vars_map).
+    quality_section = ""
+    if stage == "verify":
+        checklist = build_quality_checklist(story_key, stage)
+        if checklist.strip():
+            quality_section = f"\n{checklist}\n"
 
     # 项目仓库与分支隔离：注入每个绑定仓库的分支/基线/路径，由 CLI 自行判断
     # 是否需要 worktree 或切分支。后端的 prepare_worktrees 仍是可选的手动 API，
@@ -1128,6 +1200,7 @@ def _build_cli_prompt(
 {stage_desc}
 {prd_section}
 {transcript_section}
+{quality_section}
 ### 关键要点
 {focus}
 {worktree_section}

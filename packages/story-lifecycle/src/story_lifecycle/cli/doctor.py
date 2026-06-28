@@ -1,7 +1,11 @@
 """Doctor — check system environment and available CLI tools."""
 
+import os
+import re
 import shutil
+import sqlite3
 import subprocess
+from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
@@ -235,6 +239,10 @@ def run_doctor():
             )
         )
 
+    # Linkage health check
+    console.print()
+    run_linkage_health()
+
 
 def run_doctor_fix(interactive: bool = True):
     """Check and auto-install missing tools."""
@@ -335,3 +343,125 @@ def run_doctor_fix(interactive: bool = True):
         console.print(f"[dim]Skipped ({len(skipped)}):[/] {names}")
     if not installed_ok and not installed_fail and not skipped:
         console.print("[green]All tools already installed.[/]")
+
+
+# ---------------------------------------------------------------------------
+# Linkage health — hard association between story_key and git branches/commits
+# ---------------------------------------------------------------------------
+
+_REPOS = [
+    "hc-order", "hc-user", "hc-risk-management", "hc-message", "hc-config",
+    "hc-limit", "hc-third-party", "hc-coupon", "hc-marketing", "hc-callback",
+    "hc-gateway", "hc-job", "hc-audit", "hc-aiops", "hc-pytest",
+    "story-board", "ys-frame-parent",
+]
+
+
+def _story_db_path() -> Path:
+    return Path.home() / ".story-lifecycle" / "story.db"
+
+
+def _extract_short_id(story_key: str) -> str:
+    m = re.search(r"(\d+)$", story_key or "")
+    return m.group(1) if m else ""
+
+
+def _repo_has_grep_match(repo_path: Path, short_id: str) -> bool:
+    if not (repo_path / ".git").is_dir() or not short_id:
+        return False
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo_path), "log", "master", "--grep", short_id, "--oneline", "-n", "1"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+        )
+        return r.returncode == 0 and bool(r.stdout.strip())
+    except Exception:
+        return False
+
+
+def run_linkage_health():
+    """Report hard-linkage health: branch names include story_key and git log finds them."""
+    db_path = _story_db_path()
+    if not db_path.exists():
+        console.print("[dim]Linkage health: story.db not found, skipping.[/]")
+        return
+
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT DISTINCT story_key, branch FROM story_project WHERE branch IS NOT NULL AND branch != ''"
+        ).fetchall()
+    except Exception as exc:
+        console.print(f"[red]Linkage health: failed to read story.db: {exc}[/]")
+        return
+
+    if not rows:
+        console.print("[dim]Linkage health: no story branches recorded.[/]")
+        return
+
+    base = Path("D:/hc-all")
+    hard_branch = 0
+    orphan_branch = 0
+    hard_commit = 0
+    total = len(rows)
+
+    for row in rows:
+        story_key = row["story_key"]
+        branch = row["branch"]
+        short_id = _extract_short_id(story_key)
+        is_hard_branch = short_id and short_id in branch
+        if is_hard_branch:
+            hard_branch += 1
+
+        # 在 17 个子仓里找该分支或 grep story_key
+        found_repo = None
+        if is_hard_branch:
+            for repo_name in _REPOS:
+                repo_path = base / repo_name
+                if not (repo_path / ".git").is_dir():
+                    continue
+                if _repo_has_grep_match(repo_path, short_id):
+                    found_repo = repo_name
+                    break
+        else:
+            # 旧规则分支：直接 rev-parse 分支存在性
+            for repo_name in _REPOS:
+                repo_path = base / repo_name
+                if not (repo_path / ".git").is_dir():
+                    continue
+                try:
+                    r = subprocess.run(
+                        ["git", "-C", str(repo_path), "rev-parse", "--verify", branch],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+                    )
+                    if r.returncode == 0:
+                        found_repo = repo_name
+                        break
+                except Exception:
+                    pass
+
+        if found_repo:
+            hard_commit += 1
+        else:
+            orphan_branch += 1
+
+    pct_hard_branch = round(100.0 * hard_branch / total, 1) if total else 0.0
+    pct_hard_commit = round(100.0 * hard_commit / total, 1) if total else 0.0
+
+    console.print("[bold]Linkage Health[/]")
+    table = Table(show_header=True, padding=(0, 1))
+    table.add_column("Metric")
+    table.add_column("Count")
+    table.add_column("Rate")
+    table.add_row("Stories with branch", str(total), "—")
+    table.add_row("Hard branch (story_key in branch)", f"{hard_branch}/{total}", f"{pct_hard_branch}%")
+    table.add_row("Merge commit reachable (git log --grep)", f"{hard_commit}/{total}", f"{pct_hard_commit}%")
+    table.add_row("Orphan / not found", str(orphan_branch), "—")
+    console.print(table)
+
+    if pct_hard_branch < 50:
+        console.print(
+            "[yellow]  Tip: hard linkage is low. New stories use branch_rule with {story_key} "
+            "(e.g. feature/{author}/{story_key}_{summary}_{date}).[/]"
+        )

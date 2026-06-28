@@ -8,6 +8,7 @@
 {prd_path_section}
 {spec_path_section}
 {transcript_context}
+{knowledge_context}
 
 ## 前置检查
 
