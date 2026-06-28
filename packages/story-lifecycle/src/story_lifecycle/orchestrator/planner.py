@@ -1140,7 +1140,7 @@ def _build_cli_prompt(
 ) -> str:
     """构建给 CLI 的执行 prompt。"""
     from ..story_paths import story_evidence_dir
-    from ..orchestrator.quality import build_quality_checklist
+    from .prompt_sections import build_knowledge_section, build_quality_section
 
     stage_desc = ""
     if stage in profile_stages:
@@ -1160,11 +1160,21 @@ def _build_cli_prompt(
 
     # Quality checklist injection for verify stage (uses existing quality_checklist slot
     # semantics without touching prompt_renderer vars_map).
+    # section 内容走共享 helper（与 _render_prompt 同一份），verify 门控留在本调用点。
     quality_section = ""
     if stage == "verify":
-        checklist = build_quality_checklist(story_key, stage)
+        checklist = build_quality_section(story_key, stage)
         if checklist.strip():
             quality_section = f"\n{checklist}\n"
+
+    # Knowledge context injection（冷启动 outcome/process 知识，按 task_type）。
+    # 镜像 quality_section：经共享 helper 取、failsafe（任何异常不阻塞 prompt 渲染）。
+    # 注意：G-build 原本只接进了 legacy _render_prompt/design.md，没接 live 的
+    # _build_cli_prompt（agent-mode 实际用的）——这里补上，否则注入 inert。
+    knowledge_section = ""
+    _kctx = build_knowledge_section(story_key, workspace, stage)
+    if _kctx and _kctx.strip():
+        knowledge_section = f"\n{_kctx}\n"
 
     # 项目仓库与分支隔离：注入每个绑定仓库的分支/基线/路径，由 CLI 自行判断
     # 是否需要 worktree 或切分支。后端的 prepare_worktrees 仍是可选的手动 API，
@@ -1200,6 +1210,7 @@ def _build_cli_prompt(
 {stage_desc}
 {prd_section}
 {transcript_section}
+{knowledge_section}
 {quality_section}
 ### 关键要点
 {focus}

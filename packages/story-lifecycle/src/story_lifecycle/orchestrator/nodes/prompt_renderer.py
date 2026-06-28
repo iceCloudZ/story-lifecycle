@@ -3,9 +3,13 @@
 import re
 from pathlib import Path
 
-from ... import context_providers
 from ...db import models as db
 from ...story_paths import story_evidence_dir
+from ..prompt_sections import (
+    build_knowledge_section,
+    build_quality_section,
+    build_transcript_section,
+)
 from .state import StoryState, STORY_HOME
 from .profile_loader import get_stage_config
 
@@ -260,7 +264,7 @@ Story: {state["story_key"]}
     learned_patterns_count = 0
     relevance_tags: list[str] = []
     try:
-        from ..quality import build_quality_packet, build_quality_checklist
+        from ..quality import build_quality_packet
 
         relevance_tags = _derive_relevance_tags(state, stage)
         quality_packet = build_quality_packet(
@@ -272,7 +276,8 @@ Story: {state["story_key"]}
         if quality_packet.strip() != empty_marker.strip():
             quality_section = f"## Quality Packet\n\n{quality_packet}"
             quality_packet_injected = True
-        checklist = build_quality_checklist(state["story_key"], stage)
+        # checklist 经共享 section helper 取（与 _build_cli_prompt 同一份实现）。
+        checklist = build_quality_section(state["story_key"], stage)
         if checklist.strip():
             quality_checklist_injected = True
         # Count findings and patterns from the packet for metadata
@@ -314,10 +319,10 @@ Story: {state["story_key"]}
         stage_cfg = get_stage_config(state.get("profile", "minimal"), stage)
     skill = stage_cfg.get("skill", "")
 
-    transcript_context = context_providers.get_transcript_context(
+    transcript_context = build_transcript_section(
         state["story_key"], state.get("workspace", ""), stage
     )
-    knowledge_context = context_providers.get_knowledge_context(
+    knowledge_context = build_knowledge_section(
         state["story_key"], state.get("workspace", ""), stage
     )
 
