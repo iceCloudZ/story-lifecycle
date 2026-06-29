@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .resolver import ContextResolver
+from ..prompt_sections import build_knowledge_section, build_transcript_section
 
 
 def generate_release_prompt(story_key: str) -> dict:
@@ -108,6 +109,8 @@ def _render_release_prompt(story_key: str, bundle) -> str:
                 lines.append(f"  - 变更摘要：{ci.get('summary', '')}")
 
     _render_delivery_artifacts(lines, bundle.delivery_artifacts)
+
+    _inject_flywheel_sections(lines, story_key, story.get("workspace", ""), story.get("current_stage", ""))
 
     return "\n".join(lines)
 
@@ -219,6 +222,8 @@ def _render_post_release_prompt(story_key: str, bundle) -> str:
                 lines.append(f"  - 变更摘要：{ci.get('summary', '')}")
 
     _render_delivery_artifacts(lines, bundle.delivery_artifacts)
+
+    _inject_flywheel_sections(lines, story_key, story.get("workspace", ""), story.get("current_stage", ""))
 
     return "\n".join(lines)
 
@@ -337,6 +342,13 @@ def _render_bugfix_prompt(story_key: str, bundle, bug: dict) -> str:
                 lines.append(f"  - 变更摘要：{ci.get('summary', '')}")
 
     _render_delivery_artifacts(lines, bundle.delivery_artifacts)
+
+    _inject_flywheel_sections(
+        lines,
+        story_key,
+        story.get("workspace", ""),
+        story.get("current_stage", "") or bug.get("current_stage", "") or "verify",
+    )
 
     return "\n".join(lines)
 
@@ -470,7 +482,32 @@ def _render_batch_bugfix_prompt(story_key: str, bundle, bugs: list[dict]) -> str
 
     _render_delivery_artifacts(lines, bundle.delivery_artifacts)
 
+    _inject_flywheel_sections(lines, story_key, story.get("workspace", ""), story.get("current_stage", "") or "verify")
+
     return "\n".join(lines)
+
+
+def _inject_flywheel_sections(
+    lines: list[str], story_key: str, workspace: str, stage: str
+) -> None:
+    """Append mined knowledge + historical transcript sections to a prompt.
+
+    Failsafe: both ``build_knowledge_section`` / ``build_transcript_section``
+    never raise and return ``""`` when there is nothing to inject or the
+    underlying provider/DB errors — in that case nothing is appended and the
+    prompt is unchanged. The returned text already carries its own ``##`` header
+    (e.g. ``## 飞轮知识上下文``), so we only prepend a blank separator line,
+    mirroring the prompt-renderer path (see prompt_renderer.py).
+    """
+    kctx = build_knowledge_section(story_key, workspace, stage)
+    if kctx and kctx.strip():
+        lines.append("")
+        lines.append(kctx.strip())
+
+    tctx = build_transcript_section(story_key, workspace, stage)
+    if tctx and tctx.strip():
+        lines.append("")
+        lines.append(tctx.strip())
 
 
 def _render_delivery_artifacts(lines: list[str], artifacts: list[dict]) -> None:

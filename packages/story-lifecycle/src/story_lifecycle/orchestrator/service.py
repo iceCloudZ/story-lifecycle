@@ -80,6 +80,7 @@ def create_and_start_story(
     prd_path: str | None = None,
     parent_key: str | None = None,
     subtask_index: int = 0,
+    description: str = "",
 ) -> str:
     """Create a story via service layer. Writes to DB and returns story_key.
 
@@ -117,6 +118,18 @@ def create_and_start_story(
         parent_key=parent_key,
         subtask_index=subtask_index,
     )
+
+    # Auto-tag task_type via pure keyword classifier so brand-new stories get a
+    # non-None task_type — otherwise knowledge injection returns None (no-op).
+    # Pure keywords, no LLM: must stay fast/cheap at creation time.
+    try:
+        from .prompt_sections import classify_task_type
+
+        task_type = classify_task_type(title, description)
+        if task_type:
+            db.update_context(story_key, "task_type", task_type)
+    except Exception:  # noqa: BLE001 — tagging must never block story creation
+        pass
 
     if prd_path:
         db.update_context(story_key, "prd_path", prd_path)
@@ -400,6 +413,7 @@ def create_story_from_source(
         profile=profile,
         workspace=workspace,
         prd_path=prd_path,
+        description=item.description or "",
     )
     db.update_story(key, source_type=item.source, source_id=item.id)
 

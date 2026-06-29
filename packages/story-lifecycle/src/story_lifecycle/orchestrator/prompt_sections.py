@@ -21,6 +21,48 @@ from __future__ import annotations
 
 from .. import context_providers
 
+# Pure keyword classifier for task_type — mirrors the controlled vocabulary in
+# ``packages/story-miner/scripts/task_type_playbooks.py::TASK_TYPE_KEYWORDS``.
+# Kept here (not imported from story-miner) so story-lifecycle has zero runtime
+# dependency on the miner package, and so story creation stays fast/cheap.
+#
+# Order matters: the first task_type whose keyword set hits wins. ``debug`` /
+# ``data-sql`` / ``frontend`` / ``deploy`` are placed late because their keywords
+# ("日志", "表结构", "页面", "上线"…) are common across many stories and should
+# not steal a story from a more specific business domain.
+TASK_TYPE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    ("credit-limit", ("授信", "额度", "风控", "增信", "提额", "credit", "limit", "risk", "授信节点")),
+    ("fund-flow", ("放款", "还款", "提现", "清分", "对账", "借贷", "repay", "withdraw", "loan", "fund")),
+    ("marketing", ("营销", "活动", "MGM", "券", "免息", "奖励", "coupon", "activity", "marketing")),
+    ("user-profile", ("用户", "资料", "认证", "隐私", "KYC", "user", "profile", "联系人")),
+    ("order", ("订单", "交易", "order", "borrow", "liquidate")),
+    ("integration", ("三方", "对接", "回调", "third-party", "callback", "integration")),
+    ("gateway-infra", ("网关", "限流", "配置", "调度", "状态机", "gateway", "config", "infra")),
+    ("message-notify", ("短信", "OTP", "通知", "模板", "whatsapp", "sms", "message", "notify", "路由")),
+    ("deploy", ("部署", "上线", "发版", "deploy", "release", "skyladder", "nexus")),
+    ("data-sql", ("SQL", "查询", "迁移", "schema", "sql", "data", "DDL", "表结构")),
+    ("frontend", ("前端", "admin", "页面", "frontend", "protable", "proform", "组件")),
+    ("debug", ("排查", "定位", "debug", "为什么", "报错", "日志", "异常")),
+]
+
+
+def classify_task_type(title: str, description: str = "") -> str | None:
+    """Classify a story title (+description) into a task_type via pure keywords.
+
+    Returns the first matching task_type, or ``None`` if no keyword hits (the
+    caller should then leave ``context_json.task_type`` unset so downstream
+    providers fall back gracefully). Pure string matching — no LLM, no DB — so
+    it is safe to call at story-creation time.
+    """
+    if not title and not description:
+        return None
+    haystack = f"{title or ''} {description or ''}".lower()
+    for task_type, kws in TASK_TYPE_KEYWORDS:
+        for kw in kws:
+            if kw.lower() in haystack:
+                return task_type
+    return None
+
 
 def build_knowledge_section(story_key: str, workspace: str, stage: str) -> str:
     """Return mined knowledge context for this story/stage, or ``""``.
