@@ -1152,25 +1152,41 @@ def create_project(
     availability: str = "unknown",
     availability_reason: str = "",
 ) -> dict:
-    """Create a project record. Returns the created row as dict."""
+    """Get-or-create a project by repo_path（idempotent）. Returns the row as dict.
+
+    repo_path 有 UNIQUE 约束——已存在则更新 name/default_branch/remote_url（保留
+    availability，它由 check_project_availability 管），不再 INSERT 撞约束 500。
+    """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with _db() as conn:
-        conn.execute(
-            """INSERT INTO project (name, repo_path, default_branch, remote_url,
-               availability, availability_reason, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                name,
-                repo_path,
-                default_branch,
-                remote_url,
-                availability,
-                availability_reason,
-                now,
-                now,
-            ),
-        )
-        row = conn.execute("SELECT * FROM project WHERE name = ?", (name,)).fetchone()
+        existing = conn.execute(
+            "SELECT * FROM project WHERE repo_path = ?", (repo_path,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE project SET name=?, default_branch=?, remote_url=?, updated_at=? "
+                "WHERE repo_path=?",
+                (name, default_branch, remote_url, now, repo_path),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO project (name, repo_path, default_branch, remote_url,
+                   availability, availability_reason, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    name,
+                    repo_path,
+                    default_branch,
+                    remote_url,
+                    availability,
+                    availability_reason,
+                    now,
+                    now,
+                ),
+            )
+        row = conn.execute(
+            "SELECT * FROM project WHERE repo_path = ?", (repo_path,)
+        ).fetchone()
     return dict(row) if row else {}
 
 
