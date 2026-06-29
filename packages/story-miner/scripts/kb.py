@@ -18,6 +18,12 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+# 强制 UTF-8 输出——agent 从 hc-all 调时控制台可能默认 GBK，不设会乱码。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 _PROJ = Path(__file__).resolve().parents[1]
 OUT = _PROJ / "scripts" / "out"
 GRAPH = Path(os.environ.get("HC_STORY_KNOWLEDGE", "D:/hc-all/.story/knowledge"))
