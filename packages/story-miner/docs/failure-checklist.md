@@ -1,23 +1,23 @@
 # 失败模式 → 避坑检查项
 
 > 来源：`scripts/failure_mode.py` 对 `events where kind='result' and ok=0 and length(text)>5` 的细化分析。
-> 样本：共 **1598** 条失败记录，覆盖主要端和工作区。
+> 样本：共 **2020** 条失败记录，覆盖主要端和工作区。
 > 用途：把高频失败转成可执行的预防检查项，建议挂载到 `pre-release-review` 或 `build-check` skill。
 
 ## 核心失败分布（用于优先级排序）
 
 | 失败类型 | 次数 | 占比 |
 |---|---|---|
-| 命令非零退出(软) | 487 | 30.5% |
-| 编译/构建错误 | 233 | 14.6% |
-| Python异常 | 170 | 10.6% |
-| 文件/路径不存在 | 136 | 8.5% |
-| Git冲突/状态 | 115 | 7.2% |
-| 用户拒绝/中断 | 96 | 6.0% |
-| 工具前置约束 | 85 | 5.3% |
-| 参数/用法错误 | 66 | 4.1% |
-| 超时/被kill | 59 | 3.7% |
-| 其他 | 45 | 2.8% |
+| 命令非零退出(软) | 513 | 25.4% |
+| 编译/构建错误 | 286 | 14.2% |
+| Python异常 | 213 | 10.5% |
+| 文件/路径不存在 | 209 | 10.3% |
+| 其他 | 147 | 7.3% |
+| Git冲突/状态 | 137 | 6.8% |
+| 超时/被kill | 111 | 5.5% |
+| 用户拒绝/中断 | 104 | 5.1% |
+| 工具前置约束 | 83 | 4.1% |
+| 参数/用法错误 | 68 | 3.4% |
 
 ## 预防检查项
 
@@ -25,16 +25,16 @@
 
 | 优先级 | 检查项 | 针对的失败模式 | 数据依据 | 建议宿主 skill | 自动/人工 | 检查时机 |
 |---|---|---|---|---|---|---|
-| 1 | Edit/Write 文件前先 Read | 工具前置约束（Edit 未读先写） | Edit × 工具前置约束 64 次（全端） | build-check（本地即时拦截）/ pre-release-review（最终把关） | 可自动：检测 Edit/Write 前同 session 是否存在对应 Read | 每次 Edit/Write 调用前 |
-| 2 | 编译/构建前清理旧产物并确认依赖版本 | 编译/构建错误 | 编译/构建错误 233 次；Bash×编译 100、codegraph_context×编译 35、shell_command×编译 56、Write×编译 22 | build-check | CI 自动：mvn clean install / tsc --noEmit / yarn build | 本地修改后、PR 合并前 |
-| 3 | Bash 命令失败后先解析退出码与 stderr，再决定重试或修复 | 命令非零退出(软) | 命令非零退出(软) 487 次，占全部失败 30.5%；shell_command 354、Bash 128 | build-check | 半自动：捕获 exit code，强制要求查看最近 20 行 stderr | 脚本/命令返回非零后 |
-| 4 | 提交/编译前处理 Git 冲突并拉取最新代码 | Git冲突/状态 | Git冲突/状态 115 次；Bash×Git冲突 100 次，多集中在 hc-all | build-check | 可自动：git status --porcelain 检查无 UU/AA/DD 冲突标记 | 本地构建前、提交前、发版前 |
-| 5 | Python 脚本运行前检查虚拟环境与依赖 | Python异常 | Python异常 170 次；Bash×Python异常 89、shell_command×Python异常 74 | build-check | 可自动：import 检查、requirements 对齐 | 运行 .py 脚本或 CI 步骤前 |
-| 6 | Read/Bash/cat 访问文件前先校验路径存在性 | 文件/路径不存在 | 文件/路径不存在 136 次；shell_command 44、Bash 42、Read 38 | build-check | 部分自动：静态路径存在性检查 | 访问非当前目录文件前 |
-| 7 | 长耗时/批量命令加 timeout 与重试策略 | 超时/被kill | 超时/被kill 59 次；shell_command 36、Bash 16 | build-check | 可自动：timeout 命令包装、CI timeout 配置 | 执行测试、批量脚本、远程命令时 |
-| 8 | 破坏性/敏感操作前显式向用户确认 | 用户拒绝/中断 | 用户拒绝/中断 96 次；Bash×用户拒绝 59 次 | pre-release-review | 人工/流程：git push -f、drop table、删除分支、覆盖配置前必须确认 | 发布前 review、危险命令执行前 |
-| 9 | CLI/工具参数变更后核对 usage | 参数/用法错误 | 参数/用法错误 66 次；Bash×参数错误 59 次 | build-check | 半自动：变更脚本后跑一次 --help / dry-run | 修改脚本入参或调用新工具时 |
-| 10 | Token/认证过期前主动刷新或使用长期凭证 | Token/认证失效 | Token/认证失效 41 次；Bash×Token失效 27 次 | build-check / pre-release-review | 可自动：检测 401/403 后触发重新登录 | 调用需登录态接口前、流水线配置时 |
+| 1 | Edit/Write 文件前先 Read | 工具前置约束（Edit 未读先写） | Edit × 工具前置约束 63 次（全端） | build-check（本地即时拦截）/ pre-release-review（最终把关） | 可自动：检测 Edit/Write 前同 session 是否存在对应 Read | 每次 Edit/Write 调用前 |
+| 2 | 编译/构建前清理旧产物并确认依赖版本 | 编译/构建错误 | 编译/构建错误 286 次；Bash×编译 151、codegraph_context×编译 35、shell_command×编译 56、Write×编译 23 | build-check | CI 自动：mvn clean install / tsc --noEmit / yarn build | 本地修改后、PR 合并前 |
+| 3 | Bash 命令失败后先解析退出码与 stderr，再决定重试或修复 | 命令非零退出(软) | 命令非零退出(软) 513 次，占全部失败 25.4%；shell_command 354、Bash 152 | build-check | 半自动：捕获 exit code，强制要求查看最近 20 行 stderr | 脚本/命令返回非零后 |
+| 4 | 提交/编译前处理 Git 冲突并拉取最新代码 | Git冲突/状态 | Git冲突/状态 137 次；Bash×Git冲突 122 次，多集中在 hc-all | build-check | 可自动：git status --porcelain 检查无 UU/AA/DD 冲突标记 | 本地构建前、提交前、发版前 |
+| 5 | Python 脚本运行前检查虚拟环境与依赖 | Python异常 | Python异常 213 次；Bash×Python异常 120、shell_command×Python异常 74 | build-check | 可自动：import 检查、requirements 对齐 | 运行 .py 脚本或 CI 步骤前 |
+| 6 | Read/Bash/cat 访问文件前先校验路径存在性 | 文件/路径不存在 | 文件/路径不存在 209 次；shell_command 44、Bash 73、Read 62 | build-check | 部分自动：静态路径存在性检查 | 访问非当前目录文件前 |
+| 7 | 长耗时/批量命令加 timeout 与重试策略 | 超时/被kill | 超时/被kill 111 次；shell_command 36、Bash 60 | build-check | 可自动：timeout 命令包装、CI timeout 配置 | 执行测试、批量脚本、远程命令时 |
+| 8 | 破坏性/敏感操作前显式向用户确认 | 用户拒绝/中断 | 用户拒绝/中断 104 次；Bash×用户拒绝 66 次 | pre-release-review | 人工/流程：git push -f、drop table、删除分支、覆盖配置前必须确认 | 发布前 review、危险命令执行前 |
+| 9 | CLI/工具参数变更后核对 usage | 参数/用法错误 | 参数/用法错误 68 次；Bash×参数错误 61 次 | build-check | 半自动：变更脚本后跑一次 --help / dry-run | 修改脚本入参或调用新工具时 |
+| 10 | Token/认证过期前主动刷新或使用长期凭证 | Token/认证失效 | Token/认证失效 42 次；Bash×Token失效 27 次 | build-check / pre-release-review | 可自动：检测 401/403 后触发重新登录 | 调用需登录态接口前、流水线配置时 |
 
 ## 高频「工具 × 失败类型」组合 Top 10
 
@@ -42,16 +42,16 @@
 
 | 排名 | 工具 | 失败类型 | 次数 | 占比 | 建议检查项 |
 |---|---|---|---|---|---|
-| 1 | shell_command | 命令非零退出(软) | 354 | 22.2% | 失败后解析 stderr |
-| 2 | Bash | 命令非零退出(软) | 128 | 8.0% | 失败后解析 stderr |
-| 3 | Bash | Git冲突/状态 | 100 | 6.3% | 提交前处理冲突、拉最新 |
-| 4 | Bash | 编译/构建错误 | 100 | 6.3% | 构建前清理、依赖对齐 |
-| 5 | Bash | Python异常 | 89 | 5.6% | 检查 venv/依赖/PYTHONPATH |
-| 6 | shell_command | Python异常 | 74 | 4.6% | 检查 venv/依赖/PYTHONPATH |
-| 7 | Edit | 工具前置约束 | 64 | 4.0% | Edit 前先 Read |
-| 8 | Bash | 用户拒绝/中断 | 59 | 3.7% | 敏感操作前确认 |
-| 9 | Bash | 参数/用法错误 | 59 | 3.7% | 变更后核对 usage |
-| 10 | shell_command | 编译/构建错误 | 56 | 3.5% | 构建前清理、依赖对齐 |
+| 1 | shell_command | 命令非零退出(软) | 354 | 17.5% | 失败后解析 stderr |
+| 2 | Bash | 命令非零退出(软) | 152 | 7.5% | 失败后解析 stderr |
+| 3 | Bash | 编译/构建错误 | 151 | 7.5% | 构建前清理、依赖对齐 |
+| 4 | Bash | Git冲突/状态 | 122 | 6.0% | 提交前处理冲突、拉最新 |
+| 5 | Bash | Python异常 | 120 | 5.9% | 检查 venv/依赖/PYTHONPATH |
+| 6 | Bash | 其他 | 74 | 3.7% |  |
+| 7 | shell_command | Python异常 | 74 | 3.7% | 检查 venv/依赖/PYTHONPATH |
+| 8 | Bash | 文件/路径不存在 | 73 | 3.6% | 访问前校验路径 |
+| 9 | Bash | 用户拒绝/中断 | 66 | 3.3% | 敏感操作前确认 |
+| 10 | Edit | 工具前置约束 | 63 | 3.1% | Edit 前先 Read |
 
 ## Skill 接入建议
 
@@ -74,4 +74,4 @@
 
 ---
 
-*Generated by scripts/failure_mode.py at 2026-06-27 11:28:43*
+*Generated by scripts/failure_mode.py at 2026-06-29 10:49:44*
