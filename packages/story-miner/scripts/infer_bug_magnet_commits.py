@@ -418,6 +418,11 @@ def infer_story_commits(story_key: str, title: str, since: str | None, until: st
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--top-n", type=int, default=11, help="取 bug_count top N 作为磁铁")
+    ap.add_argument(
+        "--all-branchless",
+        action="store_true",
+        help="推断所有无 branch 的 story（不只 top 磁铁）；慢，建议 full refresh 用",
+    )
     ap.add_argument("--out", default=str(_PROJ / "scripts" / "out" / "story_commits_inferred.json"))
     ap.add_argument("--report", default=str(_PROJ / "scripts" / "out" / "infer_bug_magnet_report.md"))
     args = ap.parse_args()
@@ -426,8 +431,29 @@ def main():
     with open(graph_path, "r", encoding="utf-8") as f:
         graph = json.load(f)
     stories = sorted(graph["stories"], key=lambda s: -s["bug_count"])
-    magnets = stories[:args.top_n]
-    print(f"selected top {len(magnets)} bug magnets")
+
+    # branch_map 先建（用于 --all-branchless 筛选 + 后续验证）
+    home = Path.home()
+    conn = sqlite3.connect(str(home / ".story-lifecycle" / "story.db"))
+    cur = conn.cursor()
+    all_keys = [s["story_key"] for s in stories]
+    ph_all = ",".join("?" * len(all_keys)) if all_keys else "''"
+    cur.execute(
+        f"SELECT story_key, branch, base_branch FROM story_project WHERE story_key IN ({ph_all})",
+        all_keys,
+    )
+    branch_map = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+    conn.close()
+    branched_keys = {sk for sk, (b, _) in branch_map.items() if b}
+
+    if args.all_branchless:
+        magnets = [s for s in stories if s["story_key"] not in branched_keys]
+        print(
+            f"--all-branchless: {len(magnets)} 个无 branch story（排除 {len(branched_keys)} 个有 branch）"
+        )
+    else:
+        magnets = stories[:args.top_n]
+        print(f"selected top {len(magnets)} bug magnets")
 
     src = TapdSource({"workspace_id": "44381896", "owner": "赵子豪", "story_status": "*", "bug_status": "*"})
     story_meta = {}
@@ -446,15 +472,6 @@ def main():
             "custom_field_190": tapd.get("custom_field_190"),
             "iteration_id": tapd.get("iteration_id"),
         }
-
-    home = Path.home()
-    conn = sqlite3.connect(str(home / ".story-lifecycle" / "story.db"))
-    cur = conn.cursor()
-    keys = [s["story_key"] for s in magnets]
-    ph = ",".join("?" * len(keys))
-    cur.execute(f"SELECT story_key, branch, base_branch FROM story_project WHERE story_key IN ({ph})", keys)
-    branch_map = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
-    conn.close()
 
     known_path = _PROJ / "scripts" / "out" / "known_magnet_commits.json"
     known_data = []

@@ -19,20 +19,36 @@ echo "cwd: $(pwd)"
 echo "python: $PYTHON"
 
 if [[ "$MODE" == "full" ]]; then
-    echo "[1/5] full ingest ..."
+    echo "[1/10] full ingest ..."
     "$PYTHON" -m miner.store
 
-    echo "[2/5] ingest stories from .story/ ..."
+    echo "[2/10] ingest stories from .story/ ..."
     "$PYTHON" -m miner.story_ingest
 
-    echo "[3/5] link sessions to stories ..."
+    echo "[3/10] link sessions to stories ..."
     "$PYTHON" -m miner.link
 
-    echo "[4/5] generate playbooks ..."
+    echo "[4/10] generate playbooks ..."
     "$PYTHON" scripts/generate_playbooks.py
 
-    echo "[5/5] analyze failure modes ..."
+    echo "[5/10] analyze failure modes ..."
     "$PYTHON" scripts/failure_mode.py
+
+    # 结果轴 outcome mining（full 才跑——TAPD/git/LLM，慢；每步容错，单失败不中断）
+    echo "[6/10] bug↔story (TAPD reverse) ..."
+    "$PYTHON" scripts/bug_story_graph.py --no-detail || echo "  (bug_story_graph failed, skip)"
+
+    echo "[7/10] task_type classify (LLM) ..."
+    "$PYTHON" scripts/classify_story_task_type.py || echo "  (classify failed, skip)"
+
+    echo "[8/10] story→commit (branch) ..."
+    "$PYTHON" scripts/story_commits.py || echo "  (story_commits failed, skip)"
+
+    echo "[9/10] infer branchless commits (--all-branchless, slow) ..."
+    "$PYTHON" scripts/infer_bug_magnet_commits.py --all-branchless || echo "  (infer failed, skip)"
+
+    echo "[10/10] result-axis phase2 (bug-prone/cycle-time/churn) ..."
+    "$PYTHON" scripts/result_axis_phase2.py || echo "  (result_axis_phase2 failed, skip)"
 else
     echo "[1/4] incremental ingest (since 1 day) ..."
     "$PYTHON" -m miner.store --since-days 1
