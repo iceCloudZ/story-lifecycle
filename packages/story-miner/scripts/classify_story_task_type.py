@@ -195,8 +195,8 @@ def normalize_type(raw: str) -> str:
     for k, desc in TYPE_DESC.items():
         if key in k or key in desc:
             return k
-    # 兜底
-    return "debug"
+    # 兜底：unknown（不是 debug），让无法归类的可见、不静默塌缩
+    return "unknown"
 
 
 def main() -> None:
@@ -226,9 +226,14 @@ def main() -> None:
         try:
             raw_results = classify_batch(client, model, batch)
         except Exception as e:
-            print(f"  ERROR batch failed: {e}")
-            # 失败时该批全部记为 debug，避免中断
-            raw_results = [{"story_key": it["story_key"], "task_type": "debug"} for it in batch]
+            # 重试一次（refresh 时 API 偶发失败）
+            try:
+                time.sleep(args.sleep * 2)
+                raw_results = classify_batch(client, model, batch)
+            except Exception as e2:
+                print(f"  ERROR batch failed (重试后仍失败): {e2}")
+                # 标 unknown（不是 debug），让失败可见、不静默塌缩成单一类型
+                raw_results = [{"story_key": it["story_key"], "task_type": "unknown"} for it in batch]
         for r in raw_results:
             results.append({
                 "story_key": r.get("story_key", ""),
@@ -241,7 +246,7 @@ def main() -> None:
     missing = {it["story_key"] for it in items} - {r["story_key"] for r in results}
     for key in missing:
         title = next(it["title"] for it in items if it["story_key"] == key)
-        results.append({"story_key": key, "title": title, "task_type": "debug"})
+        results.append({"story_key": key, "title": title, "task_type": "unknown"})
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
