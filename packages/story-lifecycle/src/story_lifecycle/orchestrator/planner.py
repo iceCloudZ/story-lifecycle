@@ -1140,7 +1140,7 @@ def _build_cli_prompt(
 ) -> str:
     """构建给 CLI 的执行 prompt。"""
     from ..story_paths import story_evidence_dir
-    from .prompt_sections import build_knowledge_section, build_quality_section
+    from .prompt_sections import build_kb_tool_section, build_knowledge_section, build_quality_section
 
     stage_desc = ""
     if stage in profile_stages:
@@ -1169,12 +1169,9 @@ def _build_cli_prompt(
 
     # Knowledge context injection（冷启动 outcome/process 知识，按 task_type）。
     # 镜像 quality_section：经共享 helper 取、failsafe（任何异常不阻塞 prompt 渲染）。
-    # 注意：G-build 原本只接进了 legacy _render_prompt/design.md，没接 live 的
-    # _build_cli_prompt（agent-mode 实际用的）——这里补上，否则注入 inert。
-    knowledge_section = ""
-    _kctx = build_knowledge_section(story_key, workspace, stage)
-    if _kctx and _kctx.strip():
-        knowledge_section = f"\n{_kctx}\n"
+    # Agentic RAG：不预注入死包，给 agent kb.py 工具引导（agent 自己决定查什么）。
+    # task_type 让 agent 知道查哪个域；kb.py 做精确取数（graph/bugs/playbook）。
+    knowledge_section = build_kb_tool_section(story_key, workspace, stage)
 
     # 项目仓库与分支隔离：注入每个绑定仓库的分支/基线/路径，由 CLI 自行判断
     # 是否需要 worktree 或切分支。后端的 prepare_worktrees 仍是可选的手动 API，

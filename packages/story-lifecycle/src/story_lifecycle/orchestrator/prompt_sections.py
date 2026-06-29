@@ -64,6 +64,64 @@ def classify_task_type(title: str, description: str = "") -> str | None:
     return None
 
 
+# Path to kb.py — the executor (claude) calls this via bash for on-demand retrieval.
+_KB_PY = "D:/github/story-lifecycle/packages/story-miner/scripts/kb.py"
+
+
+def build_kb_tool_section(story_key: str, workspace: str, stage: str) -> str:
+    """Build kb.py tool-guidance (agentic RAG: agent queries on-demand).
+
+    Replaces the pre-injected knowledge_section in the FULL-AUTO executor path.
+    The agent gets: its task_type + the kb.py CLI + a "must-query-before-coding"
+    nudge. The agent decides when/what to query (semantic by LLM); kb.py does
+    exact fetch (graph/bugs/playbook).
+    """
+    import json as _json
+
+    task_type = None
+    try:
+        from ..db import models as _db
+
+        story = _db.get_story(story_key) or {}
+        ctx = _json.loads(story.get("context_json") or "{}")
+        task_type = ctx.get("task_type")
+    except Exception:
+        pass
+    if not task_type:
+        # Fallback: story_task_types.json（LLM 分类的产物）
+        try:
+            from pathlib import Path as _Path
+
+            _p = _Path(
+                __import__("os").environ.get(
+                    "STORY_MINER_OUT",
+                    "D:/github/story-lifecycle/packages/story-miner/scripts/out",
+                )
+            ) / "story_task_types.json"
+            if _p.exists():
+                for _r in _json.loads(_p.read_text(encoding="utf-8")):
+                    if _r.get("story_key") == story_key:
+                        task_type = _r.get("task_type")
+                        break
+        except Exception:
+            pass
+    if not task_type:
+        return ""
+
+    return (
+        f"\n## 项目知识工具（按需查询，动手前必查）\n"
+        f"本 story 归类：`{task_type}`\n\n"
+        f"CLI（按需调用，别全查）：\n"
+        f"```bash\n"
+        f"python {_KB_PY} graph <service|table>     # 结构：调用方/表/MQ\n"
+        f"python {_KB_PY} bugs {task_type}          # 风险：bug-prone 文件/磁铁\n"
+        f"python {_KB_PY} bugs <file_name>          # 特定文件的 bug 历史\n"
+        f"python {_KB_PY} playbook {task_type}      # 过程：高频文件/命令\n"
+        f"```\n\n"
+        f"**动手改代码前，先 `python {_KB_PY} bugs {task_type}` 查高风险文件 + 评估回归。**\n"
+    )
+
+
 def build_knowledge_section(story_key: str, workspace: str, stage: str) -> str:
     """Return mined knowledge context for this story/stage, or ``""``.
 
