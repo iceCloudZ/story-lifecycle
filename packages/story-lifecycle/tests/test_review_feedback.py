@@ -1,6 +1,5 @@
 """Tests for Phase 1: Review Feedback Intake Loop."""
 
-import inspect
 import json
 import os
 from unittest.mock import patch, MagicMock
@@ -327,19 +326,6 @@ def test_import_review_creates_candidate_findings(tmp_path):
 
 
 # ── Task 5: Reviewer role guardrail ──
-
-
-def test_review_prompt_contains_readonly_guardrail():
-    """Review prompt in planner.py must contain reviewer read-only constraint."""
-    from story_lifecycle.orchestrator.planner import review_stage
-
-    source = inspect.getsource(review_stage)
-    assert (
-        "只读" in source
-        or "read-only" in source.lower()
-        or "不改代码" in source
-        or "不要修改" in source
-    )
 
 
 # ── Task 3: CLI commands ──

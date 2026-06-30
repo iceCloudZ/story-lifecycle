@@ -39,6 +39,9 @@ pip install story-lifecycle
 
 ## 核心理念
 
+> ⚠️ **本节及下方"对抗循环"段描述的是 LangGraph 时代的 Planner/Reviewer 三角色架构，已于 cb6f9cd (2026-06-13) 被 Function Calling 模式取代。** `plan_stage`/`review_stage`/`run_plan_loop`/`run_code_review_loop` 已删除或不再接入主流程。当前真实架构见 `docs/design-agent-orchestrator.md`（FC 模式：`run_orchestrator_agent` + 六工具 + `_plan_confirmed` HITL + `run_verify_gate` 硬闸）。本段保留待重写，详见 engineering backlog。
+
+
 每个 Story 都经历多个阶段（design → implement → test → review），每个阶段由独立的 AI 会话处理。编排器负责：
 
 - **规划**：每阶段开始前，Planner LLM 分析 story 上下文，生成任务书
@@ -201,6 +204,9 @@ my-tool:
 ```
 
 ## 架构
+
+> ⚠️ **下方架构图过时： depicts LangGraph + plan_stage/review_stage 链路，已被 cb6f9cd 的 FC 重写取代。** 当前架构：`run_orchestrator_agent`（FC 规划，agent_tools 六工具）→ `_plan_confirmed` 暂停等前端确认 → `continue_orchestrator_agent` 执行 action list + `run_verify_gate` 硬闸。两种工作流并存：全自动(FC) / 半自动(release_prompt 模板 + 人工拷贝)。详见 `docs/design-agent-orchestrator.md`。本图待重写。
+
 
 ```
 ┌───────────────────────────────────────────────────┐

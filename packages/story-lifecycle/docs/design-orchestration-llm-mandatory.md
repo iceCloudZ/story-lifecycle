@@ -1,5 +1,8 @@
 # 编排 LLM 必填化
 
+> ⚠️ **历史快照（LangGraph 时代设计，已过时）**：本文描述的编排架构（LangGraph 状态机 / plan_stage / review_stage / run_plan_loop / router 等）已于 cb6f9cd (2026-06-13) 被 Function Calling 模式取代，相应代码已删除或不再接入主流程。本文保留作架构演进决策记录（ADR），**请勿据此理解当前代码**。当前架构见 `design-agent-orchestrator.md`。
+
+
 ## 背景
 
 Story Lifecycle 的编排器 LLM（通过 `STORY_LLM_API_KEY` 配置，默认使用 DeepSeek）目前是**可选**的。当用户未配置 API Key 时，各模块存在 rule-based 回退路径：

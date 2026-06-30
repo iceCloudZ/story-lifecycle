@@ -2,6 +2,9 @@
 
 > 写给 10 年 Java 开发者的代码导航指南。用 Java 生态的概念类比，把隐式变显式。
 
+> ⚠️ **本文档基于 LangGraph 时代的架构编写，已于 cb6f9cd (2026-06-13) 过时。** 文中 `plan_stage`/`review_stage`/`interrupt()`/`router_node` 等描述的节点链路、`planner.py` 行号均已失效。当前架构为 Function Calling 模式（`run_orchestrator_agent` + agent_tools 六工具 + `_plan_confirmed` HITL）。本文保留作 LangGraph→FC 迁移的对照参考，**请勿据此理解当前代码**。当前架构见 `docs/design-agent-orchestrator.md`。
+
+
 ## 1. 类型地图：StoryState 在运行时到底长什么样
 
 Python 的 `TypedDict(total=False)` 对 Java 开发者来说是噩梦——所有字段可选，运行时动态注入。下面是它在运行时的**真实形态**，用 Java 表达：
