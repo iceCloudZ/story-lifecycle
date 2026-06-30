@@ -49,6 +49,29 @@ class ShellAdapter(BaseAdapter):
         template = self._config.get("launch_cmd", "")
         return template.format(model=model)
 
+    def headless_launch_cmd(self, model: str, prompt: str) -> list[str] | None:
+        """Headless mode launch command.
+
+        Default: ``[binary, '-p']`` — prompt piped via stdin (works for claude).
+        If config has ``stdin_to_prompt_arg: true``: wraps in a Python subprocess
+        that reads stdin → passes as the -p CLI argument (for kimi, where -p
+        takes an argument, not stdin).
+        """
+        binary = self._config.get("binary", self._name)
+
+        if self._config.get("stdin_to_prompt_arg"):
+            wrapper = (
+                f"import sys, subprocess; "
+                f"subprocess.run(['{binary}', '-p', sys.stdin.read()])"
+            )
+            return ["python", "-c", wrapper]
+
+        cmd = [binary, "-p"]
+        model_flag = self._config.get("model_flag")
+        if model_flag and model:
+            cmd += [model_flag, model]
+        return cmd
+
     def inject_prompt(self, prompt: str, story_key: str, stage: str) -> str | None:
         # I2: record anchor (best-effort, before any core logic).
         self.write_anchor(prompt, story_key, stage)
