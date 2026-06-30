@@ -19,7 +19,7 @@ import httpx
 
 from pydantic import BaseModel, Field
 
-from ..llm_client import LLMClient, get_llm, get_vision_llm
+from ..llm_client import LLMClient, get_llm, get_vision_llm, story_key_context
 
 log = logging.getLogger("story-lifecycle.prd-generator")
 
@@ -84,13 +84,14 @@ def generate_prd_from_source(source: StorySourceSnapshot) -> PrdGenerationResult
             source.story_key,
             len(images),
         )
-        content = vision_llm.invoke_vision(
-            prompt,
-            images,
-            temperature=0.1,
-            timeout=180,
-            max_tokens=4000,
-        )
+        with story_key_context(source.story_key):
+            content = vision_llm.invoke_vision(
+                prompt,
+                images,
+                temperature=0.1,
+                timeout=180,
+                max_tokens=4000,
+            )
         data = _parse_json_or_none(content)
         if data is None:
             raise ValueError(
@@ -109,13 +110,14 @@ def generate_prd_from_source(source: StorySourceSnapshot) -> PrdGenerationResult
             len(images),
         )
 
-    result = get_llm().invoke_structured(
-        prompt,
-        PrdGenerationResult,
-        temperature=0.1,
-        timeout=120,
-        max_tokens=3000,
-    )
+    with story_key_context(source.story_key):
+        result = get_llm().invoke_structured(
+            prompt,
+            PrdGenerationResult,
+            temperature=0.1,
+            timeout=120,
+            max_tokens=3000,
+        )
     return result
 
 

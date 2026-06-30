@@ -176,9 +176,13 @@ class Decider:
         """
         mutation = ContextMutation()
 
-        # Existing document refs for dedup
-        existing_doc_refs = {d.get("ref", "") for d in current_documents}
-        existing_change_refs = {c.get("ref", "") for c in current_change_items}
+        # Existing document refs for dedup (normalize separators defensively)
+        existing_doc_refs = {
+            _normalize_path(d.get("ref", "")) for d in current_documents
+        }
+        existing_change_refs = {
+            _normalize_path(c.get("ref", "")) for c in current_change_items
+        }
 
         # New PRD files
         for prd in scan_result.prd_files:
@@ -304,6 +308,7 @@ class Handler:
         with db._db() as conn:
             # Apply new documents
             for doc in mutation.new_documents:
+                ref = _normalize_path(doc["ref"])
                 conn.execute(
                     """INSERT INTO story_document
                        (story_key, project_id, kind, ref, summary, source,
@@ -312,7 +317,7 @@ class Handler:
                     (
                         story_key,
                         doc["kind"],
-                        doc["ref"],
+                        ref,
                         doc["summary"],
                         doc["source"],
                         doc["evidence_ref"],
@@ -324,6 +329,7 @@ class Handler:
 
             # Apply new change items
             for ci in mutation.new_change_items:
+                ref = _normalize_path(ci["ref"])
                 conn.execute(
                     """INSERT INTO story_change_item
                        (story_key, project_id, kind, ref, summary,
@@ -333,7 +339,7 @@ class Handler:
                     (
                         story_key,
                         ci["kind"],
-                        ci["ref"],
+                        ref,
                         ci["summary"],
                         ci["lifecycle_state"],
                         ci["verification_state"],
@@ -381,8 +387,24 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _normalize_path(ref: str) -> str:
+    """Normalize a filesystem ref to POSIX form for stable comparison."""
+    if not ref:
+        return ref
+    if ref.startswith("http://") or ref.startswith("https://"):
+        return ref
+    try:
+        return Path(ref).resolve().as_posix()
+    except Exception:
+        return ref.replace("\\", "/")
+
+
 def _find_files(root: str, patterns: list[str]) -> list[str]:
-    """Find files matching glob patterns under root."""
+    """Find files matching glob patterns under root.
+
+    Returns POSIX-style absolute paths so equivalent files compare equal
+    regardless of OS path separators.
+    """
     from pathlib import Path
 
     results: set[str] = set()
@@ -391,7 +413,7 @@ def _find_files(root: str, patterns: list[str]) -> list[str]:
         try:
             for match in root_path.glob(pattern):
                 if match.is_file():
-                    results.add(str(match))
+                    results.add(match.resolve().as_posix())
         except Exception:
             pass
     return sorted(results)

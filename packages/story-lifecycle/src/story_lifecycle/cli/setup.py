@@ -255,6 +255,32 @@ def load_config_to_env():
 
     # Also load optional vision config so intake image understanding works.
     load_vision_config_to_env()
+    load_gitlab_config_to_env()
+
+
+def load_gitlab_config_to_env():
+    """Load GitLab integration config from file and set env vars."""
+    config = get_config()
+    gitlab = config.get("gitlab") or {}
+    if not gitlab:
+        return
+
+    if gitlab.get("token") and not os.environ.get("GITLAB_TOKEN"):
+        os.environ["GITLAB_TOKEN"] = gitlab["token"]
+    if gitlab.get("url") and not os.environ.get("GITLAB_URL"):
+        os.environ["GITLAB_URL"] = gitlab["url"]
+
+
+def save_gitlab_config(token: str = "", url: str = "") -> None:
+    """Persist GitLab token/url to config file."""
+    existing = get_config()
+    gitlab = dict(existing.get("gitlab") or {})
+    if token:
+        gitlab["token"] = token
+    if url:
+        gitlab["url"] = url
+    if gitlab:
+        save_config({"gitlab": gitlab})
 
 
 def load_vision_config_to_env():

@@ -486,6 +486,7 @@ def get_story_stats(story_key: str):
         code_changes: delivery artifacts (PRs/MRs) — units of code change.
         loop_rounds: adversarial plan↔review / code↔review iterations logged.
         findings_open: unresolved findings (status == 'open').
+        tokens: aggregated LLM token usage and estimated cost (CNY).
     """
     s = db.get_story(story_key)
     if not s:
@@ -501,11 +502,40 @@ def get_story_stats(story_key: str):
         1 for ev in db.get_story_events(story_key) if db.is_adversarial_loop_event(ev)
     )
 
+    tokens = db.get_story_token_usage(story_key)
+
     return {
         "code_changes": code_changes,
         "loop_rounds": loop_rounds,
         "findings_open": findings_open,
+        "tokens": tokens,
     }
+
+
+@app.get("/api/story/{story_key}/diff")
+def get_story_diff(story_key: str):
+    """Return git diff for the story's workspace branch vs its base branch.
+
+    Query params (future):
+        base: override base branch/ref.
+
+    Returns:
+        current_branch, base_branch, diff_range, files[], total_additions,
+        total_deletions, total_changes, diff (raw unified diff text).
+    """
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+
+    try:
+        result = db.get_story_workspace_diff(story_key)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        log.exception("failed to get workspace diff for %s", story_key)
+        raise HTTPException(500, f"diff failed: {e}")
+
+    return result
 
 
 @app.post("/api/story")

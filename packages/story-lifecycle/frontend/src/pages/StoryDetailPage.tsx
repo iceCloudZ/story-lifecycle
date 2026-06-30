@@ -14,15 +14,14 @@ import ContextTab from '../components/ContextTab'
 import BugsTab from '../components/BugsTab'
 import './StoryDetailPage.css'
 
+// Visible modules for the semi-automatic workflow. Legacy modules (loop,
+// quality, terminal, context) are kept renderable below so direct URLs still
+// work, but they are hidden from the sidebar.
 const MODULES = [
   { id: 'overview', icon: '📊', label: '概览' },
   { id: 'bugs', icon: '🐛', label: '缺陷' },
   { id: 'code', icon: '💻', label: '代码变更' },
-  { id: 'loop', icon: '🔁', label: '对抗循环' },
   { id: 'test', icon: '🧪', label: '测试' },
-  { id: 'quality', icon: '🛡', label: '质量 & Gate' },
-  { id: 'context', icon: '📄', label: '上下文' },
-  { id: 'terminal', icon: '💻', label: '终端' },
 ]
 
 const ACTIONS: Record<string, ActionButton[]> = {
@@ -135,7 +134,7 @@ export default function StoryDetailPage() {
     const r = await fetch(`/api/story/${storyKey}/plan/confirm`, { method: 'POST' })
     if (r.ok) {
       refetch()
-      setActiveTab('terminal')
+      setActiveTab('overview')
     } else {
       alert(`确认失败: ${(await r.json()).detail || '未知错误'}`)
     }

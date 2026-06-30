@@ -6,6 +6,7 @@ import StoryDetailPage from './pages/StoryDetailPage'
 import QualityDashboard from './pages/QualityDashboard'
 import DiagnosticsPage from './pages/DiagnosticsPage'
 import BugsPage from './pages/BugsPage'
+import DiffPreviewPage from './pages/DiffPreviewPage'
 import './App.css'
 
 const queryClient = new QueryClient({
@@ -46,6 +47,7 @@ function AppContent() {
           <Route path="/quality" element={<QualityDashboard />} />
           <Route path="/diagnostics" element={<DiagnosticsPage />} />
           <Route path="/bugs" element={<BugsPage />} />
+          <Route path="/diff-preview/:key" element={<DiffPreviewPage />} />
         </Routes>
       </main>
     </div>

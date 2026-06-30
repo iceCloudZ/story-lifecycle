@@ -1,5 +1,6 @@
 """SQLite data models — single-file, zero-ORM."""
 
+import re
 import sqlite3
 import json
 from contextlib import contextmanager
@@ -34,6 +35,29 @@ VALID_COLUMNS = frozenset(
         "context_revision",
     }
 )
+
+# Default pricing in CNY per 1M tokens. Override via STORY_TOKEN_PRICING_JSON env.
+MODEL_PRICING_CNY: dict[str, dict[str, float]] = {
+    "default": {"input": 5.0, "output": 5.0},
+    "deepseek-v3": {"input": 2.0, "output": 8.0},
+    "deepseek-chat": {"input": 1.0, "output": 5.0},
+    "deepseek-reasoner": {"input": 4.0, "output": 16.0},
+    "deepseek-v4-pro": {"input": 2.0, "output": 8.0},
+    "kimi-k2.5": {"input": 10.0, "output": 30.0},
+    "kimi-k2": {"input": 10.0, "output": 30.0},
+    "kimi-for-coding": {"input": 10.0, "output": 30.0},
+    "moonshot-v1-8k": {"input": 6.0, "output": 6.0},
+    "moonshot-v1-32k": {"input": 12.0, "output": 12.0},
+    "moonshot-v1-128k": {"input": 24.0, "output": 24.0},
+    "qwen-max": {"input": 20.0, "output": 60.0},
+    "qwen-plus": {"input": 8.0, "output": 20.0},
+    "qwen-turbo": {"input": 2.0, "output": 6.0},
+    "qwen-coder-plus": {"input": 8.0, "output": 20.0},
+    "gpt-4o": {"input": 35.0, "output": 105.0},
+    "gpt-4o-mini": {"input": 1.5, "output": 6.0},
+    "claude-3-5-sonnet": {"input": 21.0, "output": 105.0},
+    "claude-3-5-sonnet-20241022": {"input": 21.0, "output": 105.0},
+}
 
 
 def get_db_path() -> Path:
@@ -130,6 +154,10 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_lt_story ON llm_trace(story_key)"
+        )
+        _backfill_llm_trace_story_keys(conn)
         # Finding table for quality flywheel
         conn.execute("""
             CREATE TABLE IF NOT EXISTS finding (
@@ -327,6 +355,23 @@ def init_db():
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sd_kind ON story_document(kind)")
 
+        # Migration: normalize path separators, dedupe, then enforce uniqueness.
+        conn.execute(
+            "UPDATE story_document SET ref = REPLACE(ref, '\\', '/') WHERE ref LIKE '%\\%'"
+        )
+        conn.execute("""
+            DELETE FROM story_document
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM story_document
+                GROUP BY story_key, kind, ref
+            )
+        """)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_sd_story_kind_ref"
+            " ON story_document(story_key, kind, ref)"
+        )
+
         # 5. story_change_item — DDL / Nacos configuration changes
         conn.execute("""
             CREATE TABLE IF NOT EXISTS story_change_item (
@@ -491,15 +536,19 @@ def list_visible_stories(
     two can't drift apart — the CLI previously omitted candidate stories that the
     API included, and COMPLETED_STATES was hardcoded in both places.
 
-    show_all: include completed/failed/aborted stories.
+    show_all: include failed/aborted/archived stories (completed shows by default).
     status: filter by lifecycle status (active/paused/blocked/planning/...).
     item_type: filter by tapd_type (story/bug/subtask).
     show_completed: keep resolved/rejected/closed TAPD stories (hidden by default).
     overdue: only stories past their deadline.
     """
     stories = list_active_stories() + list_candidate_stories()
+    # completed (successfully finished) shows by default so done work isn't buried;
+    # failed/aborted/archived only appear with show_all to keep the worklist focused.
+    completed_pool = list_completed_stories(limit=100)
+    stories = stories + [s for s in completed_pool if s.get("status") == "completed"]
     if show_all:
-        stories = stories + list_completed_stories(limit=100)
+        stories = stories + [s for s in completed_pool if s.get("status") != "completed"]
 
     if status:
         stories = [s for s in stories if s["status"] == status]
@@ -522,6 +571,301 @@ def get_sub_stories(parent_key: str) -> list[dict]:
             (parent_key,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _local_git_diff(repo: Path, base_branch: str, current: str) -> dict:
+    """Fallback helper: produce a diff dict from local git."""
+    import subprocess
+
+    def _git(args: list[str], check: bool = True) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=check,
+        )
+
+    diff_range = f"{base_branch}..{current}" if current else base_branch
+
+    try:
+        diff_text = _git(["diff", diff_range]).stdout
+    except subprocess.CalledProcessError:
+        diff_text = ""
+
+    files: list[dict] = []
+    # Parse full file paths and line stats from the actual diff output instead of
+    # relying on `git diff --stat`, which truncates long paths with ".../".
+    current_path = ""
+    current_additions = 0
+    current_deletions = 0
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git"):
+            if current_path:
+                files.append(
+                    {
+                        "path": current_path,
+                        "additions": current_additions,
+                        "deletions": current_deletions,
+                        "changes": current_additions + current_deletions,
+                    }
+                )
+            match = re.match(r"^diff --git a/(.+?) b/(.+)$", line)
+            current_path = match.group(2) if match else line
+            current_additions = 0
+            current_deletions = 0
+        elif line.startswith("+") and not line.startswith("+++"):
+            current_additions += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            current_deletions += 1
+    if current_path:
+        files.append(
+            {
+                "path": current_path,
+                "additions": current_additions,
+                "deletions": current_deletions,
+                "changes": current_additions + current_deletions,
+            }
+        )
+
+    total_additions = sum(f["additions"] for f in files)
+    total_deletions = sum(f["deletions"] for f in files)
+
+    return {
+        "diff_range": diff_range,
+        "files": files,
+        "total_additions": total_additions,
+        "total_deletions": total_deletions,
+        "total_changes": total_additions + total_deletions,
+        "diff": diff_text,
+        "is_empty": not diff_text.strip(),
+    }
+
+
+def get_story_workspace_diff(story_key: str) -> dict:
+    """Return git diff between a story's workspace branch and its base branch.
+
+    Prefers GitLab API when GITLAB_TOKEN is configured and the story's project
+    remote_url points to GitLab. Falls back to local ``git diff`` otherwise.
+    """
+    import subprocess
+
+    from ..integrations import gitlab
+
+    story = get_story(story_key)
+    if not story:
+        raise ValueError(f"story not found: {story_key}")
+
+    workspace = story.get("workspace", "")
+    if not workspace or not Path(workspace).exists():
+        raise ValueError(f"invalid workspace: {workspace}")
+
+    repo = Path(workspace)
+    # If the workspace itself is not a git repo, try the first bound project path.
+    if not (repo / ".git").exists():
+        for sp in get_story_projects(story_key):
+            proj = get_project(sp.get("project_id"))
+            if not proj:
+                continue
+            candidate = Path(proj.get("repo_path", ""))
+            if candidate.exists() and (candidate / ".git").exists():
+                repo = candidate
+                break
+
+    if not (repo / ".git").exists():
+        raise ValueError(f"workspace is not a git repository: {workspace}")
+
+    def _git(args: list[str], check: bool = True) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=check,
+        )
+
+    # Current branch
+    try:
+        current = _git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+    except subprocess.CalledProcessError:
+        current = ""
+
+    # Base branch: prefer story_project binding, then repo default, then main/master.
+    base_branch = ""
+    source_branch = ""
+    for sp in get_story_projects(story_key):
+        if sp.get("branch"):
+            source_branch = sp["branch"]
+        if sp.get("base_branch"):
+            base_branch = sp["base_branch"]
+            break
+
+    if not base_branch:
+        try:
+            sym = _git(["symbolic-ref", "refs/remotes/origin/HEAD"]).stdout.strip()
+            if sym.startswith("refs/remotes/origin/"):
+                base_branch = sym.split("/")[-1]
+        except subprocess.CalledProcessError:
+            pass
+
+    if not base_branch:
+        for candidate in ("main", "master"):
+            try:
+                _git(["rev-parse", "--verify", candidate])
+                base_branch = candidate
+                break
+            except subprocess.CalledProcessError:
+                continue
+
+    if not base_branch:
+        base_branch = "HEAD"
+
+    # Try GitLab first when a token is present.
+    gitlab_result = _try_gitlab_diff(story_key, repo, source_branch or current, base_branch)
+    if gitlab_result:
+        return gitlab_result
+
+    # Fallback to local git diff.
+    local = _local_git_diff(repo, base_branch, current)
+    return {
+        "source": "local",
+        "current_branch": current,
+        "base_branch": base_branch,
+        "mr_iid": None,
+        "mr_url": "",
+        "gitlab_url": "",
+        **local,
+    }
+
+
+def _try_gitlab_diff(
+    story_key: str, repo: Path, source_branch: str, base_branch: str
+) -> dict | None:
+    """Attempt to fetch the diff from GitLab API. Returns None on any failure."""
+    from ..integrations import gitlab
+
+    if not gitlab._token():
+        return None
+
+    # Try story_project bindings first; if none, fall back to repo path match.
+    project = None
+    bound_projects = get_story_projects(story_key)
+    for sp in bound_projects:
+        proj = get_project(sp.get("project_id"))
+        if proj and proj.get("remote_url"):
+            project = proj
+            break
+
+    if not project:
+        # Fallback: find a registered project whose repo_path contains this repo.
+        for sp in bound_projects:
+            proj = get_project(sp.get("project_id"))
+            if not proj:
+                continue
+            proj_path = Path(proj.get("repo_path", ""))
+            if proj_path.exists() and (repo == proj_path or proj_path in repo.parents):
+                project = proj
+                break
+
+    if not project:
+        return None
+
+    remote_url = project.get("remote_url", "")
+    project_path = gitlab.parse_project_path(remote_url)
+    if not project_path:
+        return None
+
+    gl_project = gitlab.get_project(project_path)
+    if not gl_project:
+        return None
+
+    gl_project_id = gl_project.get("id")
+    if not gl_project_id:
+        return None
+
+    mr = gitlab.find_merge_request(gl_project_id, source_branch)
+    if not mr:
+        return None
+
+    mr_iid = mr.get("iid")
+    changes_data = gitlab.get_mr_changes(gl_project_id, mr_iid)
+    if not changes_data:
+        return None
+
+    files = []
+    diff_parts = []
+    for change in changes_data.get("changes", []):
+        new_path = change.get("new_path", "")
+        old_path = change.get("old_path", "")
+        diff_text = change.get("diff", "")
+
+        # GitLab /changes returns hunks without the git file header.
+        # Reconstruct a valid unified-diff header so diff2html can render it.
+        is_new = change.get("new_file", False)
+        is_deleted = change.get("deleted_file", False)
+        display_path = new_path or old_path
+
+        header_lines = [f"diff --git a/{old_path or new_path} b/{new_path or old_path}"]
+        if is_new:
+            header_lines.append("new file mode 100644")
+            header_lines.append("--- /dev/null")
+            header_lines.append(f"+++ b/{new_path}")
+        elif is_deleted:
+            header_lines.append("deleted file mode 100644")
+            header_lines.append(f"--- a/{old_path}")
+            header_lines.append("+++ /dev/null")
+        else:
+            header_lines.append(f"--- a/{old_path}")
+            header_lines.append(f"+++ b/{new_path}")
+
+        header = "\n".join(header_lines) + "\n"
+        full_file_diff = header + diff_text + "\n"
+        diff_parts.append(full_file_diff)
+
+        # GitLab /changes endpoint does not always include additions/deletions,
+        # so estimate from the diff text hunk headers.
+        additions = 0
+        deletions = 0
+        for line in diff_text.splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                additions += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                deletions += 1
+        files.append(
+            {
+                "path": display_path,
+                "old_path": old_path,
+                "new_path": new_path,
+                "additions": additions,
+                "deletions": deletions,
+                "changes": additions + deletions,
+                "new_file": is_new,
+                "deleted_file": is_deleted,
+                "renamed_file": change.get("renamed_file", False),
+            }
+        )
+
+    total_additions = sum(f["additions"] for f in files)
+    total_deletions = sum(f["deletions"] for f in files)
+
+    return {
+        "source": "gitlab",
+        "current_branch": source_branch,
+        "base_branch": changes_data.get("target_branch") or base_branch,
+        "diff_range": f"{base_branch}...{source_branch}",
+        "mr_iid": mr_iid,
+        "mr_url": gitlab.build_mr_url(project_path, mr_iid),
+        "gitlab_url": gitlab._gitlab_url(),
+        "project_path": project_path,
+        "files": files,
+        "total_additions": total_additions,
+        "total_deletions": total_deletions,
+        "total_changes": total_additions + total_deletions,
+        "diff": "".join(diff_parts),
+        "is_empty": not diff_parts,
+    }
 
 
 def list_stories_by_parent(parent_key: str, item_type: str = "") -> list[dict]:
@@ -703,6 +1047,145 @@ def log_llm_trace(
                 error,
             ),
         )
+
+
+def _backfill_llm_trace_story_keys(conn) -> None:
+    """Best-effort backfill: attribute untraced llm_client rows to nearby stories.
+
+    Old code logged token usage in llm_client without story_key, while planner.py
+    logged a separate row with story_key but zero usage. This function pairs the
+    two by timestamp proximity (within 5 minutes). It is idempotent and only
+    touches rows whose story_key is still empty.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    traced = conn.execute(
+        "SELECT id, story_key, model, created_at FROM llm_trace WHERE story_key != ''"
+    ).fetchall()
+    if not traced:
+        return
+
+    untraced = conn.execute(
+        "SELECT id, created_at FROM llm_trace WHERE story_key = ''"
+    ).fetchall()
+    if not untraced:
+        return
+
+    def _parse(dt_str: str) -> datetime:
+        # SQLite timestamps are UTC; ensure timezone-aware comparison.
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    threshold = timedelta(minutes=5)
+    for u in untraced:
+        u_dt = _parse(u["created_at"])
+        best = None
+        best_diff = threshold
+        for t in traced:
+            t_dt = _parse(t["created_at"])
+            diff = abs(u_dt - t_dt)
+            if diff < best_diff:
+                best_diff = diff
+                best = t
+        if best:
+            conn.execute(
+                "UPDATE llm_trace SET story_key = ?, model = ? WHERE id = ?",
+                (best["story_key"], best["model"], u["id"]),
+            )
+
+
+def _pricing_for_model(model: str) -> dict[str, float]:
+    """Return CNY pricing per 1M tokens for a model name.
+
+    Falls back to longest prefix match, then default. Env var
+    STORY_TOKEN_PRICING_JSON can override or extend the table.
+    """
+    import os
+
+    pricing = dict(MODEL_PRICING_CNY)
+    env_json = os.environ.get("STORY_TOKEN_PRICING_JSON", "")
+    if env_json:
+        try:
+            pricing.update(json.loads(env_json))
+        except Exception:
+            pass
+
+    normalized = (model or "").lower().strip()
+    if normalized in pricing:
+        return pricing[normalized]
+
+    # Longest prefix match
+    best = None
+    best_len = 0
+    for key in pricing:
+        if key == "default":
+            continue
+        if normalized.startswith(key.lower()) and len(key) > best_len:
+            best = pricing[key]
+            best_len = len(key)
+
+    return best if best else pricing["default"]
+
+
+def get_story_token_usage(story_key: str) -> dict:
+    """Aggregate LLM token usage and estimated cost for a story.
+
+    Returns:
+        {
+            "prompt_tokens": int,
+            "completion_tokens": int,
+            "total_tokens": int,
+            "calls": int,
+            "cost_cny": float,
+            "by_stage": dict[str, int],
+            "by_model": dict[str, int],
+        }
+    """
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT stage, model, prompt_tokens, completion_tokens, total_tokens
+               FROM llm_trace
+               WHERE story_key = ?""",
+            (story_key,),
+        ).fetchall()
+
+    total_prompt = 0
+    total_completion = 0
+    total_tokens = 0
+    calls = 0
+    by_stage: dict[str, int] = {}
+    by_model: dict[str, int] = {}
+    cost_cny = 0.0
+
+    for r in rows:
+        model = r["model"] or ""
+        stage = r["stage"] or "unknown"
+        prompt = r["prompt_tokens"] or 0
+        completion = r["completion_tokens"] or 0
+        total = r["total_tokens"] or 0
+
+        total_prompt += prompt
+        total_completion += completion
+        total_tokens += total
+        calls += 1
+
+        by_stage[stage] = by_stage.get(stage, 0) + total
+        by_model[model] = by_model.get(model, 0) + total
+
+        p = _pricing_for_model(model)
+        cost_cny += (prompt * p["input"] + completion * p["output"]) / 1_000_000
+
+    return {
+        "prompt_tokens": total_prompt,
+        "completion_tokens": total_completion,
+        "total_tokens": total_tokens,
+        "calls": calls,
+        "cost_cny": round(cost_cny, 4),
+        "by_stage": by_stage,
+        "by_model": by_model,
+    }
 
 
 def get_story_events(story_key: str) -> list[dict]:
@@ -1423,6 +1906,16 @@ def get_runtime_facts(project_id: int) -> list[dict]:
 # -------- Story document CRUD --------
 
 
+def _normalize_doc_ref(ref: str) -> str:
+    """Normalize a document ref so equivalent paths compare equal."""
+    if not ref:
+        return ref
+    # Use POSIX separators; preserve http(s) refs untouched.
+    if ref.startswith("http://") or ref.startswith("https://"):
+        return ref
+    return Path(ref).as_posix()
+
+
 def create_document(
     story_key: str,
     kind: str,
@@ -1433,9 +1926,21 @@ def create_document(
     evidence_ref: str = "",
     verification_state: str = "unverified",
 ) -> dict:
-    """Create a story document (PRD / design). Returns the created row."""
+    """Create a story document (PRD / design). Returns the created row.
+
+    Idempotent: if the same (story_key, kind, ref) already exists, the existing
+    row is returned and no insert happens.
+    """
+    ref = _normalize_doc_ref(ref)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with _db() as conn:
+        existing = conn.execute(
+            "SELECT * FROM story_document WHERE story_key = ? AND kind = ? AND ref = ?",
+            (story_key, kind, ref),
+        ).fetchone()
+        if existing:
+            return dict(existing)
+
         conn.execute(
             """INSERT INTO story_document
                (story_key, project_id, kind, ref, summary, source,
@@ -1497,6 +2002,8 @@ def update_document(doc_id: int, **kwargs) -> None:
     invalid = set(kwargs.keys()) - valid
     if invalid:
         raise ValueError(f"Invalid story_document columns: {invalid}")
+    if "ref" in kwargs:
+        kwargs["ref"] = _normalize_doc_ref(kwargs["ref"])
     kwargs["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     values = list(kwargs.values()) + [doc_id]

@@ -37,7 +37,7 @@
   padding: 16px;
 }
 .tab-content {
-  height: 100%;
+  min-height: 100%;
 }
 .tab-placeholder {
   display: flex;
@@ -143,6 +143,41 @@
   font-size: 11px;
   color: #6b7280;
   margin-top: 4px;
+}
+.ot-stat-card-static {
+  cursor: default;
+}
+.ot-stat-card-static:hover {
+  border-color: #e5e7eb;
+  background: #ffffff;
+}
+
+.ot-token-breakdown {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.ot-token-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  color: #374151;
+}
+.ot-token-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #f3f4f6;
+}
+.ot-token-group-title {
+  font-size: 11px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+.ot-context-section {
+  margin-top: 8px;
 }
 
 /* Action Cards (from old CSS, keep) */

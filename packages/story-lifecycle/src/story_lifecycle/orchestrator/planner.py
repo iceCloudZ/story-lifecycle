@@ -13,7 +13,7 @@ import logging
 import time
 from pathlib import Path
 
-from ..llm_client import get_llm
+from ..llm_client import get_llm, with_story_key
 from ..schemas import PlanResult, ReviewResult, PlanReviewResult
 from .agent_tools import ORCHESTRATOR_TOOLS
 
@@ -87,6 +87,7 @@ def build_plan_prompt(
     return prompt
 
 
+@with_story_key(from_state=True)
 def plan_stage(
     state: dict,
     stage_config: dict,
@@ -103,30 +104,11 @@ def plan_stage(
         prompt += f"\n\n{retry_hint}"
 
     llm = get_llm()
-    t0 = time.monotonic()
-    try:
-        result = llm.invoke_structured(prompt, PlanResult, temperature=0.1, timeout=90)
-        _trace_llm(
-            model=llm.model,
-            usage={},
-            duration_ms=int((time.monotonic() - t0) * 1000),
-            story_key=state.get("story_key", ""),
-            stage=state.get("current_stage", ""),
-        )
-        return result.model_dump()
-    except Exception as exc:
-        _trace_llm(
-            model=llm.model,
-            usage={},
-            duration_ms=int((time.monotonic() - t0) * 1000),
-            success=False,
-            error=type(exc).__name__,
-            story_key=state.get("story_key", ""),
-            stage=state.get("current_stage", ""),
-        )
-        raise
+    result = llm.invoke_structured(prompt, PlanResult, temperature=0.1, timeout=90)
+    return result.model_dump()
 
 
+@with_story_key(from_state=True)
 def review_stage(
     state: dict, stage_config: dict, stage_output: dict, *, reviewer_model: str = ""
 ) -> dict:
@@ -204,32 +186,13 @@ def review_stage(
   - <0.5: 方向跑偏或质量问题严重，需要重新规划"""
 
     llm = get_llm()
-    t0 = time.monotonic()
-    try:
-        result = llm.invoke_structured(
-            prompt, ReviewResult, temperature=0.1, timeout=90
-        )
-        _trace_llm(
-            model=llm.model,
-            usage={},
-            duration_ms=int((time.monotonic() - t0) * 1000),
-            story_key=state.get("story_key", ""),
-            stage=state.get("current_stage", ""),
-        )
-        return result.model_dump()
-    except Exception as exc:
-        _trace_llm(
-            model=llm.model,
-            usage={},
-            duration_ms=int((time.monotonic() - t0) * 1000),
-            success=False,
-            error=type(exc).__name__,
-            story_key=state.get("story_key", ""),
-            stage=state.get("current_stage", ""),
-        )
-        raise
+    result = llm.invoke_structured(
+        prompt, ReviewResult, temperature=0.1, timeout=90
+    )
+    return result.model_dump()
 
 
+@with_story_key(from_state=True)
 def review_plan(
     state: dict,
     plan: dict,
@@ -288,32 +251,11 @@ def review_plan(
 - 优先检查：adapter 是否有效、extra_instructions 是否具体可操作、是否遗漏 stage_config 要求的步骤"""
 
     llm = get_llm()
-    t0 = time.monotonic()
-    try:
-        result = llm.invoke_structured(
-            prompt, PlanReviewResult, temperature=0.1, timeout=90
-        )
-        _trace_llm(
-            model=llm.model,
-            usage={},
-            duration_ms=int((time.monotonic() - t0) * 1000),
-            story_key=state.get("story_key", ""),
-            stage=state.get("current_stage", ""),
-        )
-        return result.model_dump()
-    except Exception as exc:
-        _trace_llm(
-            model=llm.model,
-            usage={},
-            duration_ms=int((time.monotonic() - t0) * 1000),
-            success=False,
-            error=type(exc).__name__,
-            story_key=state.get("story_key", ""),
-            stage=state.get("current_stage", ""),
-        )
-        raise
+    result = llm.invoke_structured(prompt, PlanReviewResult, temperature=0.1, timeout=90)
+    return result.model_dump()
 
 
+@with_story_key
 def compress_context(workspace: str, story_key: str, current_stage: str) -> str | None:
     """Condenser：将历史 context 文件压缩为知识库摘要。
 
@@ -365,39 +307,6 @@ def compress_context(workspace: str, story_key: str, current_stage: str) -> str 
             shutil.move(str(f), str(archive / f.name))
 
     return str(compressed_file.relative_to(workspace))
-
-
-# ── tracing ──
-
-
-def _trace_llm(
-    *,
-    model: str,
-    usage: dict,
-    duration_ms: int,
-    operation: str = "plan_stage",
-    story_key: str = "",
-    stage: str = "",
-    success: bool = True,
-    error: str = "",
-):
-    try:
-        from ..db.models import log_llm_trace
-
-        log_llm_trace(
-            story_key=story_key,
-            stage=stage,
-            operation=operation,
-            model=model,
-            prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=usage.get("completion_tokens", 0),
-            total_tokens=usage.get("total_tokens", 0),
-            duration_ms=duration_ms,
-            success=success,
-            error=error,
-        )
-    except Exception:
-        pass
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -472,6 +381,7 @@ def _build_agent_user_message(
     return "\n".join(parts)
 
 
+@with_story_key
 def run_orchestrator_agent(
     story_key: str,
     *,
@@ -624,24 +534,7 @@ def run_orchestrator_agent(
                         ),
                     }
                 )
-
-        _trace_llm(
-            model=llm.model,
-            usage={},
-            duration_ms=int((time.monotonic() - t0) * 1000),
-            operation="agent_plan",
-            story_key=story_key,
-        )
-    except Exception as exc:
-        _trace_llm(
-            model=llm.model,
-            usage={},
-            duration_ms=int((time.monotonic() - t0) * 1000),
-            operation="agent_plan",
-            story_key=story_key,
-            success=False,
-            error=str(exc),
-        )
+    except Exception:
         raise
 
     # 写入 DB：暂停等用户确认
@@ -736,6 +629,7 @@ def _write_retrospect(workspace: str, story_key: str, actions: list) -> None:
         log.warning("[%s] failed to write retrospect.md: %s", story_key, exc)
 
 
+@with_story_key
 def continue_orchestrator_agent(story_key: str, headless: bool = False):
     """用户确认规划后，执行 action list。
 
@@ -1219,6 +1113,7 @@ def _build_cli_prompt(
 注意：JSON 必须是纯 JSON，不要包裹在 markdown 代码块中。"""
 
 
+@with_story_key
 def run_orchestrator_agent_async(story_key: str, *, on_action=None) -> dict:
     """同步版本的 Agent 规划（直接调用，不进线程池）。
 
