@@ -14,13 +14,12 @@ import time
 from pathlib import Path
 
 from ..llm_client import get_llm, with_story_key
-from ..schemas import PlanResult, ReviewResult, PlanReviewResult
+from ..schemas import PlanResult
 from .agent_tools import ORCHESTRATOR_TOOLS
 
 log = logging.getLogger("story-lifecycle.planner")
 
 STORY_HOME = Path.home() / ".story-lifecycle"
-MAX_REVIEW_RETRIES = 3
 
 
 def _load_team_knowledge() -> str:
@@ -107,152 +106,6 @@ def plan_stage(
     result = llm.invoke_structured(prompt, PlanResult, temperature=0.1, timeout=90)
     return result.model_dump()
 
-
-@with_story_key(from_state=True)
-def review_stage(
-    state: dict, stage_config: dict, stage_output: dict, *, reviewer_model: str = ""
-) -> dict:
-    """QA/评审员角色：结构化审查阶段产出质量。"""
-    execution_count = state.get("execution_count", 0)
-    workspace = state.get("workspace", "")
-    story_key = state.get("story_key", "")
-
-    story_knowledge = _load_story_knowledge(workspace, story_key)
-
-    fatigue_hint = ""
-    if execution_count >= MAX_REVIEW_RETRIES - 1:
-        fatigue_hint = f"""
-## ⚠️ 重试疲劳警告
-该阶段已经重试了 {execution_count} 次，接近 {MAX_REVIEW_RETRIES} 次上限。
-如果问题仍然无法解决，请务必返回 quality: "fail"，让人工介入。"""
-
-    prev_score = state.get("trajectory_score")
-    score_hint = ""
-    if prev_score is not None and prev_score < 0.5:
-        score_hint = f"""
-## ⚠️ 路径评分偏低
-前序阶段路径评分: {prev_score}/1.0。如果当前产出仍未改善，建议 quality: "fail" 以触发重新规划或切换工具。"""
-
-    prompt = f"""你是一个开发团队的 QA/评审员。你是评审员，只读不改——你不修改任何代码或文件，只负责审查、记录问题和建议。
-
-一个阶段刚刚完成，请进行质量审查。
-
-## Story 信息
-- Key: {state.get("story_key")}
-- 阶段: {state.get("current_stage")}
-- 已重试次数: {execution_count} / {MAX_REVIEW_RETRIES}
-- 阶段描述: {stage_config.get("description", "")}
-
-## 阶段产出
-{json.dumps(stage_output, ensure_ascii=False, indent=2)}
-
-## 预期产出字段
-{json.dumps(stage_config.get("expected_outputs", []))}
-
-## 已有上下文索引
-{json.dumps(state.get("context", {}), ensure_ascii=False, indent=2)}
-
-## Story 知识库
-{story_knowledge}
-{fatigue_hint}
-{score_hint}
-
-请审查产出质量。返回 JSON：
-{{{{
-  "quality": "pass|revise|fail",
-  "summary": "一句话审查结论（存入 state context）",
-  "feedback": "详细审查意见（写入文件）",
-  "issues": [
-    {{{{
-      "type": "问题类型（如 missing_error_handling, missing_test, wrong_api 等）",
-      "severity": "high|medium|low",
-      "location": "文件:位置",
-      "description": "问题描述"
-    }}}}
-  ],
-  "suggestions": ["具体改进建议，可操作"],
-  "trajectory_score": 0.8,
-  "context_updates": {{{{}}}},
-  "reasoning": "判断理由"
-}}}}
-
-判断标准：
-- pass: 产出满足预期，可以 advance。仍可记录低优先级 issues 和 suggestions 供后续参考。
-- revise: 产出存在明显缺陷（issues 中至少一个 severity=high），需要返工
-- fail: 不可恢复的问题，或已达到重试上限
-- trajectory_score: 路径评分 (0-1)，反映从 Story 开始到现在的整体质量趋势
-  - 1.0: 完美，一切按预期进行
-  - 0.5-0.8: 有小问题但方向正确
-  - <0.5: 方向跑偏或质量问题严重，需要重新规划"""
-
-    llm = get_llm()
-    result = llm.invoke_structured(
-        prompt, ReviewResult, temperature=0.1, timeout=90
-    )
-    return result.model_dump()
-
-
-@with_story_key(from_state=True)
-def review_plan(
-    state: dict,
-    plan: dict,
-    stage_config: dict,
-    reviewer_model: str = "",
-) -> dict:
-    """Plan Reviewer 角色：对执行计划进行对抗性审查。"""
-    workspace = state.get("workspace", "")
-    story_key = state.get("story_key", "")
-
-    story_knowledge = _load_story_knowledge(workspace, story_key)
-
-    prompt = f"""你是一个开发团队的技术评审员，专门负责审查执行计划的质量。你的职责是确保计划具备足够的范围覆盖、上下文完整性和可行性。
-
-一份执行计划刚刚生成，请进行质量审查。
-
-## Story 信息
-- Key: {state.get("story_key")}
-- 标题: {state.get("title")}
-- 当前阶段: {state.get("current_stage")}
-- 阶段描述: {stage_config.get("description", "")}
-
-## 执行计划
-{json.dumps(plan, ensure_ascii=False, indent=2)}
-
-## 已有上下文索引
-{json.dumps(state.get("context", {}), ensure_ascii=False, indent=2)}
-
-## Story 知识库
-{story_knowledge}
-
-请审查计划质量。返回 JSON：
-{{{{
-  "quality": "pass|revise",
-  "blockers": [
-    {{{{
-      "severity": "high|medium|low",
-      "category": "scope|context|feasibility",
-      "description": "问题描述"
-    }}}}
-  ],
-  "suggestions": ["具体改进建议，可操作"],
-  "reasoning": "判断理由"
-}}}}
-
-判断标准：
-- pass: 计划范围合理、指令具体明确、与知识库对齐，可以执行
-- revise: 计划存在严重问题（blockers 中至少一个 severity=high），需要重新生成
-  - scope 问题：计划范围过大或过小，遗漏关键步骤
-  - context 问题：计划缺少必要的前序上下文或团队规范
-  - feasibility 问题：计划中包含不可行的技术方案或不存在的工具/接口
-
-注意：
-- 只关注严重问题（severity=high），中等和低等问题记入 suggestions 即可
-- 不要因为风格偏好或非关键细节而触发 revise
-- 优先检查：adapter 是否有效、extra_instructions 是否具体可操作、是否遗漏 stage_config 要求的步骤"""
-
-    llm = get_llm()
-    result = llm.invoke_structured(prompt, PlanReviewResult, temperature=0.1, timeout=90)
-    return result.model_dump()
 
 
 @with_story_key

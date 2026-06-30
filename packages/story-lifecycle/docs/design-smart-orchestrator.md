@@ -1,5 +1,8 @@
 # Smart Orchestrator 设计文档
 
+> ⚠️ **历史快照（LangGraph 时代设计，已过时）**：本文描述的编排架构（LangGraph 状态机 / plan_stage / review_stage / run_plan_loop / router 等）已于 cb6f9cd (2026-06-13) 被 Function Calling 模式取代，相应代码已删除或不再接入主流程。本文保留作架构演进决策记录（ADR），**请勿据此理解当前代码**。当前架构见 `design-agent-orchestrator.md`。
+
+
 ## 1. 背景与问题
 
 当前编排器是一个机械的状态机：
