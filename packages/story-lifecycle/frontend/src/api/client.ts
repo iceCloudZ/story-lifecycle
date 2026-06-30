@@ -119,10 +119,45 @@ export interface DebugPacket {
   [key: string]: unknown
 }
 
+export interface TokenUsage {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  calls: number
+  cost_cny: number
+  by_stage: Record<string, number>
+  by_model: Record<string, number>
+}
+
 export interface Stats {
   code_changes: number
   loop_rounds: number
   findings_open: number
+  tokens: TokenUsage
+}
+
+export interface DiffFile {
+  path: string
+  additions: number
+  deletions: number
+  changes: number
+}
+
+export interface DiffResponse {
+  source: 'gitlab' | 'local'
+  current_branch: string
+  base_branch: string
+  diff_range: string
+  mr_iid: number | null
+  mr_url: string
+  gitlab_url: string
+  project_path?: string
+  files: DiffFile[]
+  total_additions: number
+  total_deletions: number
+  total_changes: number
+  diff: string
+  is_empty: boolean
 }
 
 export interface IntakePreview {
@@ -241,6 +276,11 @@ export const planApi = {
 // Stats API
 export const statsApi = {
   get: (key: string) => fetchJSON<Stats>(`/api/story/${key}/stats`),
+}
+
+// Diff API
+export const diffApi = {
+  get: (key: string) => fetchJSON<DiffResponse>(`/api/story/${key}/diff`),
 }
 
 // Multi-session PTY API

@@ -3,6 +3,7 @@ import { statsApi } from '../api/client'
 import type { Story, AgentAction, ActionButton } from '../api/client'
 import StageProgress from './StageProgress'
 import ActionCard from './ActionCard'
+import ContextTab from './ContextTab'
 
 interface Props {
   storyKey: string
@@ -106,18 +107,61 @@ export default function OverviewTab({
             <div className="ot-stat-num">{stats.code_changes}</div>
             <div className="ot-stat-label">代码变更</div>
           </button>
-          <button className="ot-stat-card" onClick={() => onTabChange('loop')}>
-            <div className="ot-stat-num">{stats.loop_rounds}</div>
-            <div className="ot-stat-label">循环轮次</div>
+          <button className="ot-stat-card" onClick={() => onTabChange('test')}>
+            <div className="ot-stat-num">{stats.tokens.calls}</div>
+            <div className="ot-stat-label">LLM 调用</div>
           </button>
-          <button className="ot-stat-card" onClick={() => onTabChange('quality')}>
-            <div className="ot-stat-num" style={{ color: stats.findings_open > 0 ? '#f85149' : '#3fb950' }}>
-              {stats.findings_open}
+          <div className="ot-stat-card ot-stat-card-static">
+            <div className="ot-stat-num">
+              {stats.tokens.total_tokens >= 1000
+                ? `${(stats.tokens.total_tokens / 1000).toFixed(1)}K`
+                : stats.tokens.total_tokens}
             </div>
-            <div className="ot-stat-label">Findings 待处理</div>
-          </button>
+            <div className="ot-stat-label">Token · ¥{stats.tokens.cost_cny.toFixed(2)}</div>
+          </div>
         </div>
       )}
+
+      {/* Token breakdown */}
+      {stats && stats.tokens.total_tokens > 0 && (
+        <div className="ot-token-breakdown">
+          <div className="ot-token-row">
+            <span>Prompt</span>
+            <span>{stats.tokens.prompt_tokens.toLocaleString()}</span>
+          </div>
+          <div className="ot-token-row">
+            <span>Completion</span>
+            <span>{stats.tokens.completion_tokens.toLocaleString()}</span>
+          </div>
+          {Object.entries(stats.tokens.by_stage).length > 0 && (
+            <div className="ot-token-group">
+              <div className="ot-token-group-title">按阶段</div>
+              {Object.entries(stats.tokens.by_stage).map(([stage, tokens]) => (
+                <div key={stage} className="ot-token-row">
+                  <span>{stage}</span>
+                  <span>{tokens.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {Object.entries(stats.tokens.by_model).length > 0 && (
+            <div className="ot-token-group">
+              <div className="ot-token-group-title">按模型</div>
+              {Object.entries(stats.tokens.by_model).map(([model, tokens]) => (
+                <div key={model} className="ot-token-row">
+                  <span>{model || '未知模型'}</span>
+                  <span>{tokens.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Context content merged into overview */}
+      <div className="ot-context-section">
+        <ContextTab storyKey={storyKey} />
+      </div>
     </div>
   )
 }

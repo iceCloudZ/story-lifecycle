@@ -6,6 +6,7 @@ Supports DeepSeek, Qwen, Zhipu, and any OpenAI-compatible endpoint.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -19,6 +20,74 @@ from pydantic import BaseModel, ValidationError
 log = logging.getLogger("story-lifecycle.llm")
 
 T = TypeVar("T", bound=BaseModel)
+
+# Propagate the current story key from orchestrators down to the low-level
+# LLM client so token usage can be attributed to the right story.
+CURRENT_STORY_KEY: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "current_story_key", default=None
+)
+
+
+def set_current_story_key(story_key: str) -> contextvars.Token:
+    """Set the story key for the current execution context.
+
+    Returns a token that can be passed to reset_current_story_key().
+    """
+    return CURRENT_STORY_KEY.set(story_key)
+
+
+def reset_current_story_key(token: contextvars.Token) -> None:
+    """Reset the story key context variable using a token."""
+    CURRENT_STORY_KEY.reset(token)
+
+
+class story_key_context:
+    """Context manager that sets the current story key for LLM tracing."""
+
+    def __init__(self, story_key: str):
+        self.story_key = story_key
+        self._token: contextvars.Token | None = None
+
+    def __enter__(self):
+        self._token = set_current_story_key(self.story_key)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._token is not None:
+            reset_current_story_key(self._token)
+        return False
+
+
+def with_story_key(arg_name: str = "story_key", *, from_state: bool = False):
+    """Decorator that sets the current story key for the duration of a function.
+
+    Args:
+        arg_name: Keyword argument name to read story_key from (when not from_state).
+        from_state: If True, read story_key from the first positional arg dict.
+    """
+    import functools
+
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            if from_state:
+                state = args[0] if args else kwargs.get("state", {})
+                story_key = (
+                    state.get("story_key", "")
+                    if isinstance(state, dict)
+                    else ""
+                )
+            else:
+                story_key = kwargs.get(arg_name, "")
+                if not story_key and args:
+                    story_key = args[0]
+                story_key = story_key or ""
+            with story_key_context(str(story_key)):
+                return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 def _extract_json_object(text: str) -> str | None:
@@ -412,10 +481,16 @@ class LLMClient:
             )
             resp.raise_for_status()
             result = resp.json()
-            self._trace(result.get("usage", {}), int((time.monotonic() - t0) * 1000))
+            self._trace(
+                result.get("usage", {}),
+                int((time.monotonic() - t0) * 1000),
+                model=self.model,
+            )
             return result
         except Exception as exc:
-            self._trace({}, int((time.monotonic() - t0) * 1000), error=str(exc))
+            self._trace(
+                {}, int((time.monotonic() - t0) * 1000), model=self.model, error=str(exc)
+            )
             raise
 
     @staticmethod
@@ -458,15 +533,18 @@ class LLMClient:
         return None
 
     @staticmethod
-    def _trace(usage: dict, duration_ms: int, error: str = ""):
+    def _trace(
+        usage: dict, duration_ms: int, *, model: str = "", error: str = ""
+    ):
         try:
             from .db.models import log_llm_trace
 
+            story_key = CURRENT_STORY_KEY.get() or ""
             log_llm_trace(
-                story_key="",
+                story_key=story_key,
                 stage="",
                 operation="llm_client",
-                model="",
+                model=model,
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
                 total_tokens=usage.get("total_tokens", 0),
