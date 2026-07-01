@@ -36,6 +36,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# ISS-009 9b: the `knowledge` contract package is an OPTIONAL dependency.
+# KnowledgeContextProvider surfaces playbook/scenario/failure knowledge via
+# KnowledgeIndex.retrieve() when this is installed (pip install story-lifecycle[knowledge]);
+# otherwise it degrades gracefully (try/except ImportError). Keeps lifecycle
+# independently installable while making the ④ knowledge layer a real runtime contract.
+knowledge = [
+    "story-knowledge>=0.1.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",

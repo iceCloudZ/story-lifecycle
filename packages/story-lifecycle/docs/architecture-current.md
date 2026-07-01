@@ -43,9 +43,9 @@ orchestrator/
 
 `story-lifecycle` ↔ `story-miner` coupling is all graceful now (ISS-007): `cli/list_cmd.py` resolves the miner retrospect script via `STORY_RETROSPECT_SCRIPT` env → `config.retrospect_script` → monorepo-relative fallback; `context_providers` try/except-imports `miner.config`; `knowledge_provider` reads miner JSON via `STORY_MINER_OUT`. Reverse HARD dep (miner scripts `import story_lifecycle.sources.tapd_source`) is offline scripts only.
 
-## Knowledge layer (④) — still aspirational, not a runtime contract (ISS-009 open)
+## Knowledge layer (④) — now a runtime contract (ISS-009 9a/9b done)
 
-The `knowledge` contract package (`KnowledgeIndex.retrieve()`) is implemented + tested but **not wired** — `context_providers/knowledge_provider.py` still reads raw miner JSON. §3.0 finding: wiring is **partial** — `KnowledgeIndex` models playbook/scenario/failure, but the provider also consumes outcome metrics (`result_axis_phase2`) + structure (`manifest`) the package doesn't model. ISS-009 needs a design decision (partial wiring vs extend the schema) before implementation.
+`context_providers/knowledge_provider.py::get_context()` surfaces playbook/scenario/failure knowledge via the `knowledge` contract package's `KnowledgeIndex.retrieve()` (new "### 知识库" section) when `story-knowledge` is installed (`pip install story-lifecycle[knowledge]`; declared as an optional dep in 9b). The wiring is **additive** over the raw outcome-metric reads (result_axis_phase2 / bug_story_graph) and the bootstrap structure section — §3.0 finding: `KnowledgeIndex` models playbook/scenario/failure, while the provider still needs raw outcome metrics + manifest structure the package doesn't model, so both coexist. Graceful `try/except ImportError`: lifecycle running standalone silently skips the section (same degrade pattern as the miner soft-seam). Covering tests: `tests/test_knowledge_wiring.py`.
 
 ## Infra (⑤) — extracted in ISS-006
 
