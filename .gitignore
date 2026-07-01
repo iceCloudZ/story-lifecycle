@@ -46,3 +46,11 @@ context-tab.png
 
 # Real-E2E calculator scenario: AI 生成的产物（每次跑前 reset 回 red）
 packages/testing/src/testing/scenarios/calculator/calculator.py
+
+# AI tool runtime artifacts (brainstorm sessions, plans — process not product)
+.superpowers/
+.qoder/
+.hermes/
+.workbuddy/
+.codex/
+.kimi-code/
