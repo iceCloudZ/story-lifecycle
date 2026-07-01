@@ -104,16 +104,6 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
         mock_planner.compress_context.return_value = None
 
         # Always provide mocked planner returns
-        mock_planner.plan_stage.return_value = {
-            "adapter": "claude",
-            "provider": "deepseek",
-            "model": "sonnet",
-            "skip": False,
-            "summary": "E2E plan",
-            "extra_instructions": "",
-            "reasoning": "test",
-            "trajectory_score": 0.8,
-        }
         mock_planner.review_stage.return_value = {
             "quality": "pass",
             "summary": "E2E review pass",
