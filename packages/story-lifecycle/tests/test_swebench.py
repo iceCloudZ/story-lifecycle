@@ -576,7 +576,7 @@ class TestRegressionValidation:
 
     def test_stage_scoped_synthetic_isolation(self):
         """synthetic flag from design stage must not affect implement validation."""
-        from story_lifecycle.orchestrator.validation import validate_stage_outputs
+        from story_lifecycle.orchestrator.evaluation.validation import validate_stage_outputs
 
         # design had synthetic output
         state = {
@@ -596,7 +596,7 @@ class TestRegressionValidation:
 
     def test_finalize_hard_gate_blocks_empty_patch(self, tmp_path):
         """SWE-bench finalize must block when no model_patch and no git diff."""
-        from story_lifecycle.orchestrator.validation import validate_stage_outputs
+        from story_lifecycle.orchestrator.evaluation.validation import validate_stage_outputs
 
         ws = tmp_path / "workspace"
         ws.mkdir()

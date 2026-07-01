@@ -448,7 +448,7 @@ def run_llm_analysis(
     model: str,
 ) -> dict:
     """Call LLM to analyze story context and generate proposed findings and patterns."""
-    from .engine import planner
+    from ..engine import planner
 
     prompt = _ANALYST_PROMPT.format(
         story_key=manifest["story_key"],
@@ -828,7 +828,7 @@ def apply_reviewed(proposal: dict) -> dict:
             # Preserve evidence chain in event log
             if evidence_list or p.get("confidence"):
                 try:
-                    from ..db import models as db
+                    from ...db import models as db
 
                     db.log_event(
                         story_key,
@@ -848,7 +848,7 @@ def apply_reviewed(proposal: dict) -> dict:
 
     # Log apply event
     try:
-        from ..db import models as db
+        from ...db import models as db
 
         db.log_event(
             story_key,

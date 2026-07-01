@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from .nodes import get_stage_config
+from ..nodes import get_stage_config
 
 log = logging.getLogger("story-lifecycle.validation")
 
@@ -85,7 +85,7 @@ def _resolve_artifact_gates(
 def _check_artifact_gates(state: dict, gates: dict) -> ValidationResult:
     """Check artifact-level gates (e.g. model_patch presence)."""
     if gates.get("require_model_patch"):
-        from ..benchmarks.artifacts import extract_model_patch
+        from ...benchmarks.artifacts import extract_model_patch
 
         result = extract_model_patch(
             workspace=state["workspace"],

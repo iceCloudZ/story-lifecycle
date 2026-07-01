@@ -6,7 +6,7 @@ during dev setup or from the CLI. All functions are idempotent.
 
 from __future__ import annotations
 
-from ..db import models as db
+from ...db import models as db
 
 # -------- Seed Findings --------
 

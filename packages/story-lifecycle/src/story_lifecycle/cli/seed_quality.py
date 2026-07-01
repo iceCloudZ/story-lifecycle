@@ -44,7 +44,7 @@ def analyze(manifest, dry_run, workspace):
     By default runs in dry-run mode (prints proposal, does not write).
     Use --write to generate the proposal file.
     """
-    from ..orchestrator.seed_pipeline import (
+    from ..orchestrator.evaluation.seed_pipeline import (
         load_manifest,
         load_artifacts,
         summarize_context,
@@ -160,7 +160,7 @@ def apply(reviewed_file, yes):
     REVIEWED_FILE should be a JSON file from the review queue with
     review_status completed.
     """
-    from ..orchestrator.seed_pipeline import load_reviewed_proposal, apply_reviewed
+    from ..orchestrator.evaluation.seed_pipeline import load_reviewed_proposal, apply_reviewed
 
     # 1. Load and validate the reviewed file
     try:
