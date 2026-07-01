@@ -18,7 +18,7 @@ from pathlib import Path
 from ..engine import planner as planner  # noqa: F401
 from ..engine import router as llm_router  # noqa: F401
 from ...terminal import ttyd as ttyd
-from ..notify import send as notify  # noqa: F401
+from ..engine.notify import send as notify  # noqa: F401
 
 # ---- Config loaders (used by 5+ external files) ----
 from .profile_loader import (

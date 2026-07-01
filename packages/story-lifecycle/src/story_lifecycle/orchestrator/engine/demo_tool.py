@@ -6,7 +6,7 @@ Writes .story/done files with predefined payloads, no real AI needed.
 import json
 from pathlib import Path
 
-from ..db import models as db
+from ...db import models as db
 
 # Predefined payloads for demo profiles (design, implement, review)
 _DEMO_PAYLOADS = {

@@ -10,7 +10,7 @@ from rich.console import Console
 
 from ..db import models as db
 from ..orchestrator.engine import graph as graph_mod
-from ..orchestrator.demo_tool import DemoTool
+from ..orchestrator.engine.demo_tool import DemoTool
 
 console = Console()
 

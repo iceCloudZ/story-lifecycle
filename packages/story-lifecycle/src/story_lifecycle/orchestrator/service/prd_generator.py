@@ -19,7 +19,7 @@ import httpx
 
 from pydantic import BaseModel, Field
 
-from ..llm_client import LLMClient, get_llm, get_vision_llm, story_key_context
+from ...llm_client import LLMClient, get_llm, get_vision_llm, story_key_context
 
 log = logging.getLogger("story-lifecycle.prd-generator")
 
@@ -146,7 +146,7 @@ def _use_kimi_cli_vision() -> bool:
 
 def _invoke_kimi_cli_vision(prompt: str, images: list[str]) -> str:
     """Run a headless Kimi CLI prompt with images and return its text answer."""
-    from ..llm_client_kimi_cli import KimiCliClient
+    from ...llm_client_kimi_cli import KimiCliClient
 
     # Prefer the configured vision model if present, otherwise default.
     import os

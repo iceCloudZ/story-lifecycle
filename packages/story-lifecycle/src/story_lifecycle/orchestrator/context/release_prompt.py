@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .resolver import ContextResolver
-from ..prompt_sections import build_knowledge_section, build_transcript_section
+from ..engine.prompt_sections import build_knowledge_section, build_transcript_section
 
 
 def generate_release_prompt(story_key: str) -> dict:

@@ -1,6 +1,6 @@
 """FakeStageTool — writes .story/done without real AI, for headless E2E."""
 
-from story_lifecycle.orchestrator.demo_tool import DemoTool
+from story_lifecycle.orchestrator.engine.demo_tool import DemoTool
 
 
 class FakeStageTool(DemoTool):

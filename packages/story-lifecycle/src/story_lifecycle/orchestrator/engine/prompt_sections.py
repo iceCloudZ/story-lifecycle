@@ -19,7 +19,7 @@ by a provider or DB error.
 
 from __future__ import annotations
 
-from .. import context_providers
+from ... import context_providers
 
 # Pure keyword classifier for task_type — mirrors the controlled vocabulary in
 # ``packages/story-miner/scripts/task_type_playbooks.py::TASK_TYPE_KEYWORDS``.
@@ -80,7 +80,7 @@ def build_kb_tool_section(story_key: str, workspace: str, stage: str) -> str:
 
     task_type = None
     try:
-        from ..db import models as _db
+        from ...db import models as _db
 
         story = _db.get_story(story_key) or {}
         ctx = _json.loads(story.get("context_json") or "{}")
@@ -149,7 +149,7 @@ def build_quality_section(story_key: str, stage: str) -> str:
     ``if stage == "verify"``) without one's semantics leaking into the other.
     """
     try:
-        from .evaluation.quality import build_quality_checklist
+        from ..evaluation.quality import build_quality_checklist
 
         return build_quality_checklist(story_key, stage) or ""
     except Exception:  # noqa: BLE001 — never block prompt rendering

@@ -827,7 +827,7 @@ def _build_cli_prompt(
 ) -> str:
     """构建给 CLI 的执行 prompt。"""
     from ...story_paths import story_evidence_dir
-    from ..prompt_sections import build_kb_tool_section, build_knowledge_section, build_quality_section
+    from .prompt_sections import build_kb_tool_section, build_knowledge_section, build_quality_section
 
     stage_desc = ""
     if stage in profile_stages:

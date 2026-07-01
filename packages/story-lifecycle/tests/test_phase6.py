@@ -26,7 +26,7 @@ from story_lifecycle.orchestrator.engine.meta_planner import (
     should_decompose,
     generate_task_packets,
 )
-from story_lifecycle.orchestrator.stage_library import (
+from story_lifecycle.orchestrator.engine.stage_library import (
     StageCategory,
     BUILTIN_STAGES,
     get_stage_definition,

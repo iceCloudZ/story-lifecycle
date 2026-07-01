@@ -132,7 +132,7 @@ def create_and_start_story(
     # non-None task_type — otherwise knowledge injection returns None (no-op).
     # Pure keywords, no LLM: must stay fast/cheap at creation time.
     try:
-        from ..prompt_sections import classify_task_type
+        from ..engine.prompt_sections import classify_task_type
 
         task_type = classify_task_type(title, description)
         if task_type:

@@ -2052,7 +2052,7 @@ def api_prepare_worktrees(
 def api_cleanup_preview(story_key: str):
     """Preview worktree cleanup for a story."""
     from ..workspace.worktree.resolver import resolve_story_worktree
-    from ..delivery import can_cleanup_worktree
+    from .delivery import can_cleanup_worktree
 
     worktree_states = resolve_story_worktree(story_key)
     can_clean, reason = can_cleanup_worktree(story_key)
@@ -2113,7 +2113,7 @@ class CreateDeliveryRequest(BaseModel):
 @app.get("/api/story/{story_key}/delivery-artifacts")
 def api_list_delivery_artifacts(story_key: str):
     """List all delivery artifacts for a story."""
-    from ..delivery import list_delivery_artifacts
+    from .delivery import list_delivery_artifacts
 
     return {"artifacts": list_delivery_artifacts(story_key)}
 
@@ -2121,7 +2121,7 @@ def api_list_delivery_artifacts(story_key: str):
 @app.post("/api/story/{story_key}/delivery-artifacts")
 def api_create_delivery_artifact(story_key: str, req: CreateDeliveryRequest):
     """Register a delivery artifact."""
-    from ..delivery import register_delivery
+    from .delivery import register_delivery
 
     try:
         artifact = register_delivery(
@@ -2152,7 +2152,7 @@ class UpdateDeliveryRequest(BaseModel):
 @app.put("/api/story/{story_key}/delivery-artifacts/{artifact_id}")
 def api_update_delivery(story_key: str, artifact_id: int, req: UpdateDeliveryRequest):
     """Update delivery artifact state."""
-    from ..delivery import update_delivery_state
+    from .delivery import update_delivery_state
 
     if req.delivery_state:
         try:
@@ -2201,7 +2201,7 @@ def api_intake_preview(
 
     source_id = source_id.removeprefix("tapd-")
     from ...sources import tapd_source
-    from .. import prd_generator
+    from . import prd_generator
 
     source = tapd_source.TapdSource(_load_tapd_config())
     item = source.get_detail(source_id)
@@ -2320,7 +2320,7 @@ def _prepare_intake_prd_content(story_key: str, story: dict, content: str):
             },
         )
 
-    from .. import prd_generator
+    from . import prd_generator
 
     try:
         result = prd_generator.generate_prd_from_source(source_snapshot)
@@ -2370,7 +2370,7 @@ def _prepare_intake_prd_content(story_key: str, story: dict, content: str):
 
 
 def _load_story_source_snapshot(story_key: str, story: dict):
-    from .. import prd_generator
+    from . import prd_generator
 
     source_type = story.get("source_type") or ""
     source_id = story.get("source_id") or ""
