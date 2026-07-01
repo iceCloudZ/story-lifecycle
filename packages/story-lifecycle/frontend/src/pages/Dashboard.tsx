@@ -396,7 +396,6 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
 
   function handleConfirm() {
     if (isNew && (!key.trim() || !workspace.trim() || !content.trim())) return
-    if (isNew && selectedProjects.length === 0) return
     setLoading(true)
     Promise.resolve(onConfirm({
       key: key.trim(),
@@ -501,8 +500,8 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
                       })}
                     </div>
                   )}
-                  {workspaceProjects.length > 0 && selectedProjects.length === 0 && (
-                    <p className="hint danger">请至少选择一个受影响的项目</p>
+                  {workspaceProjects.length > 0 && (
+                    <p className="hint">受影响项目可选；不选时后续可在代码变更阶段再指定</p>
                   )}
                 </div>
               )}
@@ -627,7 +626,7 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
           <button className="btn" onClick={onClose}>取消</button>
           <button
             className="btn btn-primary"
-            disabled={(isNew && (!key.trim() || !workspace.trim() || !content.trim() || selectedProjects.length === 0)) || loading}
+            disabled={(isNew && (!key.trim() || !workspace.trim() || !content.trim())) || loading}
             onClick={handleConfirm}
           >
             {loading ? '处理中...' : '准备 PRD 并进入规划'}
