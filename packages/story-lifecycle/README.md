@@ -39,13 +39,13 @@ pip install story-lifecycle
 
 ## 核心理念
 
-> ⚠️ **本节及下方"对抗循环"段描述的是 LangGraph 时代的 Planner/Reviewer 三角色架构，已于 cb6f9cd (2026-06-13) 被 Function Calling 模式取代。** `plan_stage`/`review_stage`/`run_plan_loop`/`run_code_review_loop` 已删除或不再接入主流程。当前真实架构见 `docs/design-agent-orchestrator.md`（FC 模式：`run_orchestrator_agent` + 六工具 + `_plan_confirmed` HITL + `run_verify_gate` 硬闸）。本段保留待重写，详见 engineering backlog。
+> ⚠️ **本节及下方"对抗循环"段描述的是 LangGraph 时代的 Planner/Reviewer 三角色架构，已于 cb6f9cd (2026-06-13) 被 Function Calling 模式取代。** 三角色在 FC 下被 LLM 内化（非独立函数）。当前真实架构见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。本段保留作历史背景，待重写。
 
 
 每个 Story 都经历多个阶段（design → implement → test → review），每个阶段由独立的 AI 会话处理。编排器负责：
 
 - **规划**：每阶段开始前，Planner LLM 分析 story 上下文，生成任务书
-- **执行**：AI CLI（Claude Code / Codex / Aider 等）在隔离的 Zellij session 中工作
+- **执行**：AI CLI（Claude Code / Codex / Kimi 等）在隔离会话中工作（python 自管 CLI 进程，`terminal/pty.py`）
 - **审查**：Reviewer LLM 审查阶段产出，识别问题
 - **路由**：LLM 决定 advance / retry / skip / fail
 
@@ -93,7 +93,7 @@ execute → review → revise → review → pass
 - `no_progress`：连续无改善，自动终止等人工
 - `max_rounds`：达到上限，自动终止等人工
 
-完整对抗循环的设计文档见 `docs/superpowers/specs/2026-05-24-evaluator-optimizer-loop-design.md`。对抗循环以 `evaluator_loop.run_plan_loop()` / `run_code_review_loop()` 的 while 循环实现，支持不同 CLI 间通过 done-file 协议轮询。
+FC 模式下，"对抗循环"由 LLM 内化：gate 返回 retry 时，planner 往 action 队列插入新 launch action，由 LLM agent 自行重跑修复（无独立 Python review loop 函数）。收敛靠 gate 硬闸（`round_count > max_retries` 强制 fail）。详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
 ## 质量飞轮
 
@@ -205,36 +205,13 @@ my-tool:
 
 ## 架构
 
-> ⚠️ **下方架构图过时： depicts LangGraph + plan_stage/review_stage 链路，已被 cb6f9cd 的 FC 重写取代。** 当前架构：`run_orchestrator_agent`（FC 规划，agent_tools 六工具）→ `_plan_confirmed` 暂停等前端确认 → `continue_orchestrator_agent` 执行 action list + `run_verify_gate` 硬闸。两种工作流并存：全自动(FC) / 半自动(release_prompt 模板 + 人工拷贝)。详见 `docs/design-agent-orchestrator.md`。本图待重写。
+story-lifecycle 是 Function-Calling 编排引擎，5 层结构：①入口(cli/web) → ②源头(sources/planner) → ③编排引擎(orchestrator: FC agent 规划+执行+gate 硬闸) → ④知识消费(context_providers/adapters) → ⑤基础设施(config/json_helpers/db/terminal)。
 
+两种工作流并存：**全自动**(FC agent 规划 → 前端确认 HITL → 后台执行 + verify gate) / **半自动**(release_prompt 模板 → 人工拷贝 CLI)。
 
-```
-┌───────────────────────────────────────────────────┐
-│                    story serve                      │
-│               (FastAPI + LangGraph)                 │
-│                                                     │
-│  plan_stage → execute_and_wait → review_stage → router → advance
-│       │              │                │            │
-│       │   adversarial while loop:     │            │
-│       │   evaluator_loop.run_plan_loop /            │
-│       │   run_code_review_loop        │            │
-│       │                               │            │
-│       └── retry / skip / fail / wait_confirm ──────┘
-│                                                     │
-│  ResolvedProfile (v0.9.0) — 启动时解析一次，只读     │
-│  NodeError (v0.9.0) — 统一错误处理                   │
-│  LLM 必填 — 无 fallback，不可用时报错暂停             │
-└──────────┬───────────┬──────────────┬───────────────┘
-           │           │              │
-     ┌─────┴──┐  ┌─────┴──┐   ┌─────┴──┐
-     │Claude  │  │Codex   │   │Aider   │   ← Adapters
-     │Code    │  │CLI     │   │        │
-     └────────┘  └────────┘   └────────┘
-           │           │             │
-     ┌─────┴───────────┴─────────────┴──┐
-     │       Zellij session 管理         │  ← 终端复用
-     └──────────────────────────────────┘
-```
+本包是 `dev-flywheel` monorepo 一部分，与 `story-miner`(生产) + `knowledge`(契约) + `testing`(E2E) 协作。跨包知识飞轮靠 2 个 SOFT 缝运转。
+
+**完整架构、codemap、不变量见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。**
 
 ## CLI 参考
 
@@ -256,9 +233,9 @@ story approvals list           待审批队列
 
 | 平台 | CLI + TUI | AI 执行 |
 |------|-----------|---------|
-| Linux | ✓ | Zellij |
-| macOS | ✓ | Zellij |
-| Windows | ✓ | Zellij (Git Bash) |
+| Linux | ✓ | python pty |
+| macOS | ✓ | python pty |
+| Windows | ✓ | python pty (pywinpty, Git Bash) |
 
 ## License
 
