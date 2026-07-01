@@ -398,6 +398,14 @@ def run_orchestrator_agent(
         pass
     ctx["_agent_actions"] = actions
     ctx["_plan_confirmed"] = False
+    # FC 路径补写 plan_summary：把所有 launch action 的 "stage: focus"
+    # 拼成总览，修复下游 verify gate / repair packet 的 Plan 断链
+    # （ISS-004）。同时让 GET /plan 的 plan_summary UI 字段非空。
+    ctx["plan_summary"] = "; ".join(
+        f"{a.get('stage', '')}: {a.get('focus', '')}"
+        for a in actions
+        if a.get("action") == "launch"
+    )
     db.update_story(
         story_key,
         context_json=json.dumps(ctx, ensure_ascii=False),
