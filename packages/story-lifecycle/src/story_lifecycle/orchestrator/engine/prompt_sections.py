@@ -80,7 +80,7 @@ def build_kb_tool_section(story_key: str, workspace: str, stage: str) -> str:
 
     task_type = None
     try:
-        from ...db import models as _db
+        from ...infra.db import models as _db
 
         story = _db.get_story(story_key) or {}
         ctx = _json.loads(story.get("context_json") or "{}")

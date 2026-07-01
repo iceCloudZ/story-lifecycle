@@ -3,7 +3,7 @@
 import time
 import subprocess
 from .base import BaseAdapter
-from ..terminal.platform_ops import resolve_executable
+from ..infra.terminal.platform_ops import resolve_executable
 
 
 class ClaudeAdapter(BaseAdapter):

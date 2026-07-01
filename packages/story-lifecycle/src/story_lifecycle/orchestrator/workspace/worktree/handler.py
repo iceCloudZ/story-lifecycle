@@ -32,7 +32,7 @@ def prepare_worktrees(story_key: str, worktree_root: str = "") -> list[dict]:
         worktree_path: final path (if created/reused)
         error: error message (if rejected/failed)
     """
-    from ....db import models as db
+    from ....infra.db import models as db
 
     bindings = db.get_story_projects(story_key)
     results: list[dict] = []
@@ -168,7 +168,7 @@ def cleanup_worktree(
     Returns:
         dict with keys: action (cleanup/reject), reason, worktree_path
     """
-    from ....db import models as db
+    from ....infra.db import models as db
 
     sp = db.get_story_project(story_key, project_id)
     if not sp:

@@ -6,7 +6,7 @@ Enforces rule: AI cannot set delivery_state="abandoned".
 
 from __future__ import annotations
 
-from ...db import models as db
+from ...infra.db import models as db
 
 
 def register_delivery(
@@ -122,7 +122,7 @@ def can_cleanup_worktree(story_key: str) -> tuple[bool, str]:
 
 def _get_story_delivery_artifacts(story_key: str) -> list[dict]:
     """Get all delivery artifacts for a story."""
-    from ...db import models as db
+    from ...infra.db import models as db
 
     with db._db() as conn:
         rows = conn.execute(

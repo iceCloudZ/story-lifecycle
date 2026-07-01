@@ -109,6 +109,6 @@ class BaseAdapter(ABC):
 
     def enter_session_cmd(self, session_name: str, workspace: str) -> str:
         """Command to create and enter a multiplexer session."""
-        from ..terminal import ttyd
+        from ..infra.terminal import ttyd
 
         return ttyd.enter_session_cmd(session_name, workspace)

@@ -298,7 +298,7 @@ class Handler:
 
         Returns the new context_revision.
         """
-        from ...db import models as db
+        from ...infra.db import models as db
 
         import json
         from datetime import datetime, timezone

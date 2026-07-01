@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from rich.console import Console
 
-from ..db import models as db
+from ..infra.db import models as db
 from ..orchestrator.engine import graph as graph_mod
 
 console = Console()

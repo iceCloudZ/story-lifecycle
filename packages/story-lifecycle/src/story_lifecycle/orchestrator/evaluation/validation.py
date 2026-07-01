@@ -85,7 +85,7 @@ def _resolve_artifact_gates(
 def _check_artifact_gates(state: dict, gates: dict) -> ValidationResult:
     """Check artifact-level gates (e.g. model_patch presence)."""
     if gates.get("require_model_patch"):
-        from ...benchmarks.artifacts import extract_model_patch
+        from ...infra.benchmarks.artifacts import extract_model_patch
 
         result = extract_model_patch(
             workspace=state["workspace"],

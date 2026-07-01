@@ -9,7 +9,7 @@ import tempfile
 
 from click.testing import CliRunner
 
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 from story_lifecycle.sources.base import SourceItem
 
 

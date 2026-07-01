@@ -17,7 +17,7 @@ from pathlib import Path
 # ---- Module-level attributes (tests access nodes.planner, nodes.ttyd, etc.) ----
 from ..engine import planner as planner  # noqa: F401
 from ..engine import router as llm_router  # noqa: F401
-from ...terminal import ttyd as ttyd
+from ...infra.terminal import ttyd as ttyd
 from ..engine.notify import send as notify  # noqa: F401
 
 # ---- Config loaders (used by 5+ external files) ----

@@ -2,7 +2,7 @@
 
 import pytest
 from click.testing import CliRunner
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 
 
 @pytest.fixture
@@ -136,7 +136,7 @@ class TestRetrospectScriptResolution:
     def test_env_override_takes_priority(self, monkeypatch):
         import os
         from story_lifecycle.cli.list_cmd import _resolve_retrospect_script
-        import story_lifecycle.config as cfg
+        import story_lifecycle.infra.config as cfg
 
         monkeypatch.setenv("STORY_RETROSPECT_SCRIPT", "/custom/retrospect.py")
         # config must NOT win over env
@@ -146,7 +146,7 @@ class TestRetrospectScriptResolution:
     def test_config_used_when_no_env(self, monkeypatch):
         import os
         from story_lifecycle.cli.list_cmd import _resolve_retrospect_script
-        import story_lifecycle.config as cfg
+        import story_lifecycle.infra.config as cfg
 
         monkeypatch.delenv("STORY_RETROSPECT_SCRIPT", raising=False)
         monkeypatch.setattr(cfg, "get_config", lambda: {"retrospect_script": "/from-config.py"})
@@ -155,7 +155,7 @@ class TestRetrospectScriptResolution:
     def test_monorepo_fallback(self, monkeypatch):
         import os
         from story_lifecycle.cli.list_cmd import _resolve_retrospect_script
-        import story_lifecycle.config as cfg
+        import story_lifecycle.infra.config as cfg
 
         monkeypatch.delenv("STORY_RETROSPECT_SCRIPT", raising=False)
         monkeypatch.setattr(cfg, "get_config", lambda: {})

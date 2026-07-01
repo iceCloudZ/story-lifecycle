@@ -12,7 +12,7 @@ import logging
 import time
 from pathlib import Path
 
-from ...llm_client import get_llm, with_story_key
+from ...infra.llm_client import get_llm, with_story_key
 from .agent_tools import ORCHESTRATOR_TOOLS
 
 log = logging.getLogger("story-lifecycle.planner")
@@ -184,7 +184,7 @@ def run_orchestrator_agent(
     Returns:
         {"status": "planning", "actions": [...]}
     """
-    from ...db import models as db
+    from ...infra.db import models as db
 
     story = db.get_story(story_key)
     if not story:
@@ -432,11 +432,11 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
 
     执行在后台线程中运行。
     """
-    from ...db import models as db
+    from ...infra.db import models as db
     from ...adapters import get_adapter
     from ..engine.profile_loader import resolve_profile
-    from ...json_helpers import robust_json_parse
-    from ...terminal.pty import ensure_agent_pty
+    from ...infra.json_helpers import robust_json_parse
+    from ...infra.terminal.pty import ensure_agent_pty
 
     story = db.get_story(story_key)
     if not story:
@@ -826,7 +826,7 @@ def _build_cli_prompt(
     transcript_section: str = "",
 ) -> str:
     """构建给 CLI 的执行 prompt。"""
-    from ...story_paths import story_evidence_dir
+    from ...infra.story_paths import story_evidence_dir
     from .prompt_sections import build_kb_tool_section, build_knowledge_section, build_quality_section
 
     stage_desc = ""

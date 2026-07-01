@@ -28,7 +28,7 @@ class ContextResolver:
     """Read-only resolver that assembles a ContextBundle from the database."""
 
     def __init__(self):
-        from ...db import models as _db
+        from ...infra.db import models as _db
 
         self._db = _db
 

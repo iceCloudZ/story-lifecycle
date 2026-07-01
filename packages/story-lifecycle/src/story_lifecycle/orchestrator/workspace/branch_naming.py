@@ -109,7 +109,7 @@ def _translate_summary(title: str, story_key: str) -> str:
     if not title:
         return _fallback_summary(story_key)
     try:
-        from ...llm_client import get_llm
+        from ...infra.llm_client import get_llm
 
         llm = get_llm()
         # DeepSeek-v4-pro 是 reasoning 模型，会先输出推理过程。用 ANSWER: 标记

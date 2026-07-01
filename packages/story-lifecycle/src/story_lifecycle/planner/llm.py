@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from ..llm_client import get_llm
+from ..infra.llm_client import get_llm
 
 log = logging.getLogger(__name__)
 

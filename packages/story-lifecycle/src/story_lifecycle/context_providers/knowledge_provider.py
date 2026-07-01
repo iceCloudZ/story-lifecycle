@@ -78,7 +78,7 @@ class KnowledgeContextProvider:
     def _task_type_from_db(self, story_key: str) -> str | None:
         """Read task_type from the live story.context_json (source of truth)."""
         try:
-            from ..db import models as db
+            from ..infra.db import models as db
 
             story = db.get_story(story_key)
             if not story:

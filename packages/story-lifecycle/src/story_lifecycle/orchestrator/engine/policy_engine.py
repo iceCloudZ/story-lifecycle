@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from ...db import models as db
+from ...infra.db import models as db
 
 
 class AutonomyLevel(str, Enum):

@@ -6,7 +6,7 @@ from story_lifecycle.orchestrator.observability.debug_packet import (
     redact_text,
     redact_mapping,
 )
-from story_lifecycle.db.models import init_db
+from story_lifecycle.infra.db.models import init_db
 
 
 class TestBuildDebugPacket:
@@ -22,7 +22,7 @@ class TestBuildDebugPacket:
 
     def test_packet_schema_keys(self, tmp_path):
         """build_debug_packet returns all required top-level keys."""
-        from story_lifecycle.db.models import create_story
+        from story_lifecycle.infra.db.models import create_story
 
         ws = str(tmp_path)
         create_story("TEST-001", "Test Story", ws)
@@ -52,7 +52,7 @@ class TestBuildDebugPacket:
             "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             lambda: False,
         )
-        from story_lifecycle.db.models import create_story
+        from story_lifecycle.infra.db.models import create_story
 
         ws = str(tmp_path)
         create_story("TEST-002", "Test", ws)
@@ -75,7 +75,7 @@ class TestStuckReasons:
         init_db()
 
     def test_done_malformed(self, tmp_path):
-        from story_lifecycle.db.models import create_story
+        from story_lifecycle.infra.db.models import create_story
 
         ws = str(tmp_path)
         create_story("TEST-MAL", "Malformed Done", ws)
@@ -90,7 +90,7 @@ class TestStuckReasons:
         assert packet["stuck_reason"]["code"] == "done_malformed"
 
     def test_story_blocked(self, tmp_path):
-        from story_lifecycle.db.models import create_story, update_story
+        from story_lifecycle.infra.db.models import create_story, update_story
 
         ws = str(tmp_path)
         create_story("TEST-BLK", "Blocked", ws)
@@ -101,7 +101,7 @@ class TestStuckReasons:
         assert packet["stuck_reason"]["code"] == "story_blocked"
 
     def test_story_ok(self, tmp_path):
-        from story_lifecycle.db.models import create_story
+        from story_lifecycle.infra.db.models import create_story
 
         ws = str(tmp_path)
         create_story("TEST-OK", "Fine", ws)

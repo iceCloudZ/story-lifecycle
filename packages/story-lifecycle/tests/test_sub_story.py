@@ -10,7 +10,7 @@ def _init_fresh_db(tmp_path):
 
     Returns (module, original_get_db_path) so caller can restore.
     """
-    import story_lifecycle.db.models as m
+    import story_lifecycle.infra.db.models as m
 
     original = m.get_db_path
     m.get_db_path = lambda: tmp_path / "story.db"

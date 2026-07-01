@@ -18,7 +18,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from ...db import models as db
+from ...infra.db import models as db
 
 # ── data structures ──
 

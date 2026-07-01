@@ -2,7 +2,7 @@
 
 from unittest.mock import patch, MagicMock
 
-from story_lifecycle.schemas import (
+from story_lifecycle.infra.schemas import (
     BugContextResult,
     PatternMatch,
     PatternRecurrenceResult,

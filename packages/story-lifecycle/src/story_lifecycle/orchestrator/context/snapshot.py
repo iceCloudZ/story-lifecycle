@@ -18,7 +18,7 @@ def generate_snapshot(story_key: str) -> dict:
         revision: the context_revision used
         story_key: the story key
     """
-    from ...db import models as db
+    from ...infra.db import models as db
 
     resolver = ContextResolver()
     bundle = resolver.resolve(story_key)

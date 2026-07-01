@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 def _setup_db(tmp_path):
     """Common DB setup: set STORY_HOME, init_db."""
     os.environ["STORY_HOME"] = str(tmp_path)
-    from story_lifecycle.db import models as db
+    from story_lifecycle.infra.db import models as db
 
     db.init_db()
     return db
@@ -504,7 +504,7 @@ def test_cli_approvals_decide(tmp_path):
 def _get_api_client(tmp_path):
     """Create a TestClient with fresh DB."""
     os.environ["STORY_HOME"] = str(tmp_path)
-    from story_lifecycle.db.models import init_db
+    from story_lifecycle.infra.db.models import init_db
 
     init_db()
     from story_lifecycle.orchestrator.service.api import app
@@ -515,7 +515,7 @@ def _get_api_client(tmp_path):
 def test_api_import_review_feedback(tmp_path):
     """POST /api/story/{key}/review-feedback imports review content."""
     client = _get_api_client(tmp_path)
-    from story_lifecycle.db import models as db
+    from story_lifecycle.infra.db import models as db
 
     db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
 
@@ -546,7 +546,7 @@ def test_api_import_review_feedback(tmp_path):
 def test_api_list_review_feedback(tmp_path):
     """GET /api/story/{key}/review-feedback returns imported findings."""
     client = _get_api_client(tmp_path)
-    from story_lifecycle.db import models as db
+    from story_lifecycle.infra.db import models as db
 
     db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
     db.create_finding(
@@ -569,7 +569,7 @@ def test_api_list_review_feedback(tmp_path):
 def test_api_decide_finding(tmp_path):
     """PUT /api/finding/{id}/decide updates finding status."""
     client = _get_api_client(tmp_path)
-    from story_lifecycle.db import models as db
+    from story_lifecycle.infra.db import models as db
 
     db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
     fid = db.create_finding(
@@ -591,7 +591,7 @@ def test_api_decide_finding(tmp_path):
 def test_api_decide_finding_reject(tmp_path):
     """PUT /api/finding/{id}/decide rejects finding."""
     client = _get_api_client(tmp_path)
-    from story_lifecycle.db import models as db
+    from story_lifecycle.infra.db import models as db
 
     db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
     fid = db.create_finding(
@@ -613,7 +613,7 @@ def test_api_decide_finding_reject(tmp_path):
 def test_api_decide_finding_downgrade(tmp_path):
     """PUT /api/finding/{id}/decide downgrades finding severity."""
     client = _get_api_client(tmp_path)
-    from story_lifecycle.db import models as db
+    from story_lifecycle.infra.db import models as db
 
     db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
     fid = db.create_finding(
@@ -635,7 +635,7 @@ def test_api_decide_finding_downgrade(tmp_path):
 def test_api_approvals_queue(tmp_path):
     """GET /api/approvals returns pending findings across stories."""
     client = _get_api_client(tmp_path)
-    from story_lifecycle.db import models as db
+    from story_lifecycle.infra.db import models as db
 
     db.create_finding("S1", "review", "review_feedback", "high", "routing", "S1 issue")
     db.create_finding("S2", "review", "review_feedback", "medium", "style", "S2 issue")
@@ -668,7 +668,7 @@ def test_api_decide_finding_not_found(tmp_path):
 def test_api_mark_verified_with_evidence(tmp_path):
     """PUT /api/finding/{id}/decide mark_verified writes verification_event_id."""
     client = _get_api_client(tmp_path)
-    from story_lifecycle.db import models as db
+    from story_lifecycle.infra.db import models as db
 
     db.upsert_story("S1", title="Test", workspace=str(tmp_path), current_stage="impl")
     fid = db.create_finding(

@@ -37,7 +37,7 @@ def test_cli_module_imports():
 
 
 def test_db_module_imports():
-    from story_lifecycle.db.models import init_db
+    from story_lifecycle.infra.db.models import init_db
 
     assert callable(init_db)
 
@@ -115,7 +115,7 @@ def test_service_imports():
 
 
 def test_upsert_story():
-    from story_lifecycle.db.models import init_db, upsert_story, get_story
+    from story_lifecycle.infra.db.models import init_db, upsert_story, get_story
 
     init_db()
     upsert_story("SMOKE-001", title="Smoke test", workspace="/tmp", status="active")

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from click.testing import CliRunner
 
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 
 
 @pytest.fixture

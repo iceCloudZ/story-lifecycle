@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 from story_lifecycle.orchestrator.service.api import app
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 
 
 def _seed(key, tmp_path):

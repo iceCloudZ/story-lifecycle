@@ -2,7 +2,7 @@
 
 import pytest
 
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 from story_lifecycle.orchestrator.service.delivery import (
     register_delivery,
     update_delivery_state,

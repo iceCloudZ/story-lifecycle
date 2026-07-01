@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 from story_lifecycle.orchestrator.context.resolver import ContextResolver
 from story_lifecycle.orchestrator.context.snapshot import generate_snapshot
 

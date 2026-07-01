@@ -16,7 +16,7 @@ def generate_pack(story_key: str, skill: str = "") -> dict:
     Returns {"content": <markdown>, "revision": N, "story_key": story_key}.
     Raises ValueError if story not found.
     """
-    from ...db import models as db
+    from ...infra.db import models as db
 
     bundle = ContextResolver().resolve(story_key)
     content = _render_pack(story_key, bundle, skill)

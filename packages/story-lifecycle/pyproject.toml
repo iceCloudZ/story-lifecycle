@@ -63,4 +63,4 @@ pythonpath = ["src"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/story_lifecycle"]
-artifacts = ["src/story_lifecycle/profiles/**", "src/story_lifecycle/prompts/**", "src/story_lifecycle/web/**"]
+artifacts = ["src/story_lifecycle/profiles/**", "src/story_lifecycle/infra/prompts/**", "src/story_lifecycle/web/**"]

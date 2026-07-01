@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .debug_packet import build_debug_packet, redact_text, redact_mapping
-from ...db import models as db
+from ...infra.db import models as db
 
 
 def create_story_diagnostics_bundle(

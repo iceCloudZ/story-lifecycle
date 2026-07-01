@@ -8,7 +8,7 @@ from story_lifecycle.orchestrator.observability.diagnostics import (
     create_story_diagnostics_bundle,
     create_global_diagnostics_bundle,
 )
-from story_lifecycle.db.models import init_db
+from story_lifecycle.infra.db.models import init_db
 
 
 class TestStoryDiagnosticsBundle:
@@ -25,7 +25,7 @@ class TestStoryDiagnosticsBundle:
 
     def test_bundle_structure(self, tmp_path):
         """Bundle contains manifest, summary, debug_packet, and other expected files."""
-        from story_lifecycle.db.models import create_story
+        from story_lifecycle.infra.db.models import create_story
 
         ws = str(tmp_path)
         create_story("TEST-DIAG", "Diag Test", ws)
@@ -53,7 +53,7 @@ class TestStoryDiagnosticsBundle:
 
     def test_bundle_zip(self, tmp_path):
         """Bundle can be created as a zip file."""
-        from story_lifecycle.db.models import create_story
+        from story_lifecycle.infra.db.models import create_story
 
         ws = str(tmp_path)
         create_story("TEST-ZIP", "Zip Test", ws)
@@ -73,7 +73,7 @@ class TestStoryDiagnosticsBundle:
 
     def test_summary_includes_stuck_reason(self, tmp_path):
         """summary.md references the stuck_reason code."""
-        from story_lifecycle.db.models import create_story
+        from story_lifecycle.infra.db.models import create_story
 
         ws = str(tmp_path)
         create_story("TEST-STUCK", "Stuck Test", ws)

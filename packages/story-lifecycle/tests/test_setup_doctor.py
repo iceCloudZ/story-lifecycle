@@ -10,7 +10,7 @@ from story_lifecycle.cli.main import cli
 from story_lifecycle.cli.setup import (
     is_configured,
 )
-from story_lifecycle.config import (
+from story_lifecycle.infra.config import (
     get_config,
     save_config,
     _merge_config,
@@ -33,8 +33,8 @@ def _tmp_config(tmp_path, monkeypatch):
     """
     cfg_dir = tmp_path / ".story-lifecycle"
     cfg_file = cfg_dir / "config.yaml"
-    monkeypatch.setattr("story_lifecycle.config.CONFIG_DIR", cfg_dir)
-    monkeypatch.setattr("story_lifecycle.config.CONFIG_FILE", cfg_file)
+    monkeypatch.setattr("story_lifecycle.infra.config.CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr("story_lifecycle.infra.config.CONFIG_FILE", cfg_file)
     monkeypatch.setattr("story_lifecycle.cli.setup.CONFIG_DIR", cfg_dir)
     monkeypatch.setattr("story_lifecycle.cli.setup.CONFIG_FILE", cfg_file)
     yield cfg_file

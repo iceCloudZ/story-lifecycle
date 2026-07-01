@@ -25,7 +25,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from ...db import models as db
+from ...infra.db import models as db
 from .stage_graph import StageGraph, build_default_graph
 
 # ── data structures ──

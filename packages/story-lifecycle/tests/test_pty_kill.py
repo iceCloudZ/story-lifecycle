@@ -7,7 +7,7 @@ import time
 def test_kill_terminates_spawned_process(tmp_path):
     """kill() must stop the spawned process. On Windows it goes through the
     KILL_ON_JOB_CLOSE Job Object (or taskkill /T fallback); on Unix, killpg."""
-    from story_lifecycle.terminal.pty import ManagedPty
+    from story_lifecycle.infra.terminal.pty import ManagedPty
 
     cmd = [sys.executable, "-c", "import time; time.sleep(60)"]
     pty = ManagedPty("kill-test", cmd, str(tmp_path), purpose="test")

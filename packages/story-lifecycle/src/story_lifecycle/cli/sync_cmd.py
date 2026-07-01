@@ -23,7 +23,7 @@ console = Console()
 )
 def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id):
     """拉取 TAPD 待处理需求/缺陷，同步为本地 story。"""
-    from ..db.models import init_db
+    from ..infra.db.models import init_db
     from ..sources.tapd_source import TapdSource
 
     init_db()
@@ -111,7 +111,7 @@ def _load_tapd_config() -> dict:
 
 
 def _show_dry_run(items):
-    from ..db import models as db
+    from ..infra.db import models as db
 
     table = Table(title="Dry Run 预览")
     table.add_column("ID", style="cyan")

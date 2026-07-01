@@ -7,7 +7,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from ..db.models import init_db
+from ..infra.db.models import init_db
 
 console = Console()
 
@@ -29,7 +29,7 @@ def import_cmd(story_key, review_file):
       story review-feedback import STORY-123 review.md
       story review-feedback import STORY-123 review.json
     """
-    from ..db import models as db
+    from ..infra.db import models as db
     from ..orchestrator.evaluation.review_feedback import import_review
 
     story = db.get_story(story_key)
@@ -73,7 +73,7 @@ def import_cmd(story_key, review_file):
 @click.argument("story_key")
 def list_findings(story_key):
     """List all findings for a story."""
-    from ..db import models as db
+    from ..infra.db import models as db
 
     findings = db.get_findings_by_story(story_key)
     db.enrich_findings_with_evidence(findings)
@@ -146,7 +146,7 @@ def decide(finding_id, action, reason, verification_event_id):
       story review-feedback decide finding-www --downgrade
       story review-feedback decide finding-xxx --verify --reason "test passed"
     """
-    from ..db import models as db
+    from ..infra.db import models as db
     from ..orchestrator.evaluation.quality import update_finding_status
 
     if not action:
@@ -217,7 +217,7 @@ def approvals_group(ctx):
 @approvals_group.command("list")
 def approvals_list():
     """List all pending findings (open + accepted) across stories."""
-    from ..db import models as db
+    from ..infra.db import models as db
 
     pending = db.get_all_pending_findings()
     db.enrich_findings_with_evidence(pending)
@@ -284,7 +284,7 @@ def decide_approval(finding_id, action, reason, verification_event_id):
       story approvals decide finding-zzz --defer
       story approvals decide finding-www --verify --reason "tested"
     """
-    from ..db import models as db
+    from ..infra.db import models as db
     from ..orchestrator.evaluation.quality import update_finding_status
 
     if not action:
@@ -352,7 +352,7 @@ def findings_cmd(story_key):
     Examples:
       story findings STORY-123
     """
-    from ..db import models as db
+    from ..infra.db import models as db
 
     findings = db.get_findings_by_story(story_key)
     if not findings:

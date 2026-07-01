@@ -1,6 +1,6 @@
 """Test intake_state boundary — candidate/ready guards."""
 
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 from story_lifecycle.orchestrator.engine.graph import start_story_async, recover_orphan_stories
 
 

@@ -9,7 +9,7 @@ Provides:
 import subprocess
 from pathlib import Path
 
-from ...db import models as db
+from ...infra.db import models as db
 
 
 def register_project(

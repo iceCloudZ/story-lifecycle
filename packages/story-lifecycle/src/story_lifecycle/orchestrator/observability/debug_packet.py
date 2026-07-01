@@ -11,7 +11,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ...db import models as db
+from ...infra.db import models as db
 from ..paths import (
     stage_done_file,
     done_snapshot_file,
@@ -33,7 +33,7 @@ def _check_llm_configured() -> bool:
     if os.environ.get("STORY_LLM_API_KEY"):
         return True
     try:
-        from ...config import get_config
+        from ...infra.config import get_config
 
         cfg = get_config()
         if cfg.get("api_key") or cfg.get("STORY_LLM_API_KEY"):
@@ -187,7 +187,7 @@ def build_debug_packet(story_key: str) -> dict:
     done_exists = done_path.exists()
     done_valid = None
     if done_exists:
-        from ...json_helpers import robust_json_parse
+        from ...infra.json_helpers import robust_json_parse
 
         try:
             data = robust_json_parse(done_path)
@@ -210,7 +210,7 @@ def build_debug_packet(story_key: str) -> dict:
     session_alive = False
     session_name = ""
     try:
-        from ...terminal import ttyd
+        from ...infra.terminal import ttyd
 
         session_name = ttyd.session_name(story_key)
         session_alive = ttyd.session_alive(session_name)

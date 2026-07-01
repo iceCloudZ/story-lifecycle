@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from ...db import models as db
+from ...infra.db import models as db
 
 
 _FAILURE_CHECKLIST_PATH = (

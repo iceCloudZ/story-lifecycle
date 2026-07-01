@@ -13,7 +13,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..orchestrator.paths import stage_done_file
+from ...orchestrator.paths import stage_done_file
 
 log = logging.getLogger("story-lifecycle.artifacts")
 

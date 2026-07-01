@@ -5,14 +5,14 @@ import click
 from pathlib import Path
 from rich.console import Console
 
-from ..benchmarks.swebench import (
+from ..infra.benchmarks.swebench import (
     load_instances_jsonl,
     RunStore,
     checkout_instance,
     prepare_instance,
     export_predictions,
 )
-from ..db.models import init_db
+from ..infra.db.models import init_db
 
 console = Console()
 
@@ -179,7 +179,7 @@ def solve(run_id, workspace_root):
             console.print(f"  [green]→[/] {instance_id} 执行中...")
             run_story(entry["story_key"])
             # Check actual result from DB
-            from ..db import models as db
+            from ..infra.db import models as db
 
             story = db.get_story(entry["story_key"])
             final_status = (story or {}).get("status", "unknown")
@@ -334,7 +334,7 @@ def eval(run_id, workspace_root, extra_args):
 )
 def summarize_cmd(run_id, workspace_root):
     """生成 run summary（含失败聚合、轮次/耗时汇总）。"""
-    from ..db import models as db
+    from ..infra.db import models as db
 
     store = RunStore(workspace_root)
     manifest = store.load_manifest(run_id)

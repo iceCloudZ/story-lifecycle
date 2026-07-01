@@ -20,9 +20,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ...adapters import get_adapter
-from ...db import models as db
-from ...db.models import init_db
-from ...terminal.pty import (
+from ...infra.db import models as db
+from ...infra.db.models import init_db
+from ...infra.terminal.pty import (
     get_pty,
     ensure_agent_pty,
     kill_pty,
@@ -2502,7 +2502,7 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
                 },
             )
 
-        from ...story_paths import story_prd_path
+        from ...infra.story_paths import story_prd_path
 
         prd_file = story_prd_path(workspace, story_key, (story or {}).get("title", ""))
         prd_file.parent.mkdir(parents=True, exist_ok=True)

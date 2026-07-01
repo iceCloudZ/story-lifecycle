@@ -1,4 +1,4 @@
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 
 
 def test_source_id_columns(isolated_story_home):

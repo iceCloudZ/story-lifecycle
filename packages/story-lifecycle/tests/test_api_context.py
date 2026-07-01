@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 from story_lifecycle.orchestrator.service.api import app
 
 

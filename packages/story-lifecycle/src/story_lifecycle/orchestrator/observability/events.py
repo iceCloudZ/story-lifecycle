@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ...db import models as db
+from ...infra.db import models as db
 
 
 # -------- attempt_id --------

@@ -651,7 +651,7 @@ def get_story_workspace_diff(story_key: str) -> dict:
     """
     import subprocess
 
-    from ..integrations import gitlab
+    from ...integrations import gitlab
 
     story = get_story(story_key)
     if not story:
@@ -744,7 +744,7 @@ def _try_gitlab_diff(
     story_key: str, repo: Path, source_branch: str, base_branch: str
 ) -> dict | None:
     """Attempt to fetch the diff from GitLab API. Returns None on any failure."""
-    from ..integrations import gitlab
+    from ...integrations import gitlab
 
     if not gitlab._token():
         return None

@@ -11,7 +11,7 @@ def test_import_service():
 
 def test_create_and_start_story():
     from story_lifecycle.orchestrator.service.story_service import create_and_start_story
-    from story_lifecycle.db.models import get_story, init_db
+    from story_lifecycle.infra.db.models import get_story, init_db
 
     init_db()
     with tempfile.TemporaryDirectory() as tmp:
@@ -32,7 +32,7 @@ def test_create_and_start_story():
 
 class TestStoryNewFields:
     def test_upsert_story_from_source_creates_new(self, isolated_story_home):
-        from story_lifecycle.db import models as db
+        from story_lifecycle.infra.db import models as db
 
         story, created = db.upsert_story_from_source(
             source_type="tapd",
@@ -50,7 +50,7 @@ class TestStoryNewFields:
         assert story["source_type"] == "tapd"
 
     def test_upsert_story_from_source_updates_existing(self, isolated_story_home):
-        from story_lifecycle.db import models as db
+        from story_lifecycle.infra.db import models as db
 
         db.upsert_story_from_source(
             source_type="tapd", source_id="1123456700002", title="原始标题"

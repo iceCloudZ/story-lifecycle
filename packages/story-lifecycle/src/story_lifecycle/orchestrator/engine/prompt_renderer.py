@@ -4,8 +4,8 @@ import re
 from pathlib import Path
 from typing import TypedDict, Optional
 
-from ...db import models as db
-from ...story_paths import story_evidence_dir
+from ...infra.db import models as db
+from ...infra.story_paths import story_evidence_dir
 from .prompt_sections import (
     build_knowledge_section,
     build_quality_section,
@@ -201,7 +201,7 @@ def _render_prompt(stage: str, state: StoryState) -> tuple[str, dict]:
         try:
             import importlib.resources as _ir
 
-            ref = _ir.files("story_lifecycle.prompts").joinpath(f"{stage}.md")
+            ref = _ir.files("story_lifecycle.infra.prompts").joinpath(f"{stage}.md")
             template = ref.read_text(encoding="utf-8")
         except (FileNotFoundError, TypeError):
             pass
@@ -301,7 +301,7 @@ Story: {state["story_key"]}
             quality_checklist_injected = True
         # Count findings and patterns from the packet for metadata
         try:
-            from ...db import models as _qdb
+            from ...infra.db import models as _qdb
 
             findings = _qdb.get_open_findings(state["story_key"])
             open_findings_count = len(findings)

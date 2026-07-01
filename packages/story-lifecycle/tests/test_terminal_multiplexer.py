@@ -5,7 +5,7 @@ import pytest
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows-specific")
 def test_zellij_create_session_uses_session_name_as_attach_argument(monkeypatch):
-    from story_lifecycle.terminal import ttyd
+    from story_lifecycle.infra.terminal import ttyd
 
     calls = []
 

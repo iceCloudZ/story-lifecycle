@@ -6,8 +6,8 @@ Delegates LLM calls to LLMClient. Uses Pydantic RouteDecision for structured out
 import json
 import logging
 
-from ...llm_client import get_llm
-from ...schemas import RouteDecision
+from ...infra.llm_client import get_llm
+from ...infra.schemas import RouteDecision
 
 log = logging.getLogger("story-lifecycle.router")
 

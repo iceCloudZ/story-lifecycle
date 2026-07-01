@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from story_lifecycle.llm_client import LLMClient
+from story_lifecycle.infra.llm_client import LLMClient
 
 
 def _mock_response(tool_calls=None, content=""):

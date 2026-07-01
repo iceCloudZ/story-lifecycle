@@ -11,8 +11,8 @@ import json
 import logging
 from typing import Literal, TypedDict
 
-from ...llm_client import get_llm
-from ...schemas import (
+from ...infra.llm_client import get_llm
+from ...infra.schemas import (
     BugContextResult,
     PatternRecurrenceResult,
     RerankResult,

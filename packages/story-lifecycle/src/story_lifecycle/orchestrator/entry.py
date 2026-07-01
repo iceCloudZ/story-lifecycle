@@ -44,7 +44,7 @@ def validate_stage_done(story: dict) -> DoneValidationResult:
     if not done.exists():
         return DoneValidationResult(status=DoneStatus.MISSING)
 
-    from ..json_helpers import robust_json_parse
+    from ..infra.json_helpers import robust_json_parse
 
     try:
         data = robust_json_parse(done)
@@ -96,24 +96,24 @@ class TtydSessionBackend:
     """Default implementation wrapping the ttyd module."""
 
     def is_healthy(self, session_id: str) -> bool:
-        from ..terminal import ttyd
+        from ..infra.terminal import ttyd
 
         return ttyd.session_alive(session_id)
 
     def resolve_session_state(self, session_id: str) -> str:
-        from ..terminal import ttyd
+        from ..infra.terminal import ttyd
 
         return ttyd.resolve_session_state(session_id)
 
     def attach_foreground(self, session_id: str) -> list[str]:
-        from ..terminal import ttyd
+        from ..infra.terminal import ttyd
 
         return ttyd.attach_args(session_id)
 
     def launch_independent_terminal(
         self, story_key: str, workspace: str, launch_cmd: str, prompt_file: str
     ) -> None:
-        from ..terminal import ttyd
+        from ..infra.terminal import ttyd
 
         ttyd.launch_cli(story_key, workspace, launch_cmd, prompt_file)
 
@@ -173,7 +173,7 @@ def _is_in_gate_wait(story: dict) -> bool:
 
 
 def _session_id_for_story(story: dict) -> str:
-    from ..terminal import ttyd
+    from ..infra.terminal import ttyd
 
     return ttyd.session_name(story.get("story_key", ""))
 

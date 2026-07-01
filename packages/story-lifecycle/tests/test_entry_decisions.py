@@ -18,7 +18,7 @@ from story_lifecycle.orchestrator.entry import (
     decide_resume_action,
     entry_action_notice,
 )
-from story_lifecycle.terminal.ttyd import SessionState, resolve_session_state
+from story_lifecycle.infra.terminal.ttyd import SessionState, resolve_session_state
 
 
 def _make_story(
@@ -135,7 +135,7 @@ class TestTtydSessionBackend:
             called_with["name"] = name
             return True
 
-        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
 
         monkeypatch.setattr(ttyd_mod, "session_alive", fake_session_alive)
 
@@ -144,7 +144,7 @@ class TestTtydSessionBackend:
         assert called_with["name"] == "s-TEST-001"
 
     def test_is_healthy_false(self, monkeypatch):
-        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
 
         monkeypatch.setattr(ttyd_mod, "session_alive", lambda n: False)
 
@@ -154,7 +154,7 @@ class TestTtydSessionBackend:
     def test_zellij_exited_session_is_not_healthy(self, monkeypatch):
         import subprocess
 
-        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
 
         monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
         monkeypatch.setattr(
@@ -174,7 +174,7 @@ class TestTtydSessionBackend:
     def test_delete_exited_session_removes_only_dead_zellij_session(self, monkeypatch):
         import subprocess
 
-        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
 
         calls = []
 
@@ -200,7 +200,7 @@ class TestTtydSessionBackend:
     ):
         import subprocess
 
-        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
 
         calls = []
 
@@ -227,7 +227,7 @@ class TestTtydSessionBackend:
         def fake_launch_cli(story_key, workspace, launch_cmd, prompt_file):
             calls.append((story_key, workspace, launch_cmd, prompt_file))
 
-        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
 
         monkeypatch.setattr(ttyd_mod, "launch_cli", fake_launch_cli)
 
@@ -515,7 +515,7 @@ class TestEntryActionNotice:
 
 class TestZellijExecutionArgs:
     def test_returns_none_when_no_zellij(self, monkeypatch, tmp_path):
-        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
 
         monkeypatch.setattr(ttyd_mod, "_MPLEX", None)
 
@@ -528,8 +528,8 @@ class TestZellijExecutionArgs:
         if os.name != "nt":
             pytest.skip("Windows-only test")
 
-        import story_lifecycle.terminal.ttyd as ttyd_mod
-        import story_lifecycle.terminal.platform_ops as po_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.platform_ops as po_mod
 
         monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
         monkeypatch.setattr(po_mod, "_find_git_bash", lambda: None)
@@ -541,13 +541,13 @@ class TestZellijExecutionArgs:
         import os
         import pathlib
 
-        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
 
         monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
 
         # On Windows, ensure _find_git_bash returns a path
         if os.name == "nt":
-            import story_lifecycle.terminal.platform_ops as po_mod
+            import story_lifecycle.infra.terminal.platform_ops as po_mod
 
             monkeypatch.setattr(
                 po_mod, "_find_git_bash", lambda: "C:/Program Files/Git/bin/bash.exe"
@@ -591,8 +591,8 @@ class TestZellijExecutionArgs:
 
         import pathlib
 
-        import story_lifecycle.terminal.ttyd as ttyd_mod
-        import story_lifecycle.terminal.platform_ops as po_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.platform_ops as po_mod
 
         monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
         monkeypatch.setattr(
@@ -616,7 +616,7 @@ class TestZellijExecutionArgs:
 class TestResolveSessionState:
     def test_live_session(self, monkeypatch):
         import subprocess
-        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
 
         monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
         monkeypatch.setattr(
@@ -630,7 +630,7 @@ class TestResolveSessionState:
 
     def test_exited_session(self, monkeypatch):
         import subprocess
-        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
 
         monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
         monkeypatch.setattr(
@@ -647,7 +647,7 @@ class TestResolveSessionState:
 
     def test_missing_session(self, monkeypatch):
         import subprocess
-        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
 
         monkeypatch.setattr(ttyd_mod, "_MPLEX", "zellij")
         monkeypatch.setattr(
@@ -660,7 +660,7 @@ class TestResolveSessionState:
         assert resolve_session_state("s-TEST-001") == SessionState.MISSING
 
     def test_unknown_when_no_mplex(self, monkeypatch):
-        import story_lifecycle.terminal.ttyd as ttyd_mod
+        import story_lifecycle.infra.terminal.ttyd as ttyd_mod
 
         monkeypatch.setattr(ttyd_mod, "_MPLEX", None)
         assert resolve_session_state("s-TEST-001") == SessionState.UNKNOWN

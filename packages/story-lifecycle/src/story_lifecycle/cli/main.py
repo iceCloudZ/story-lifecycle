@@ -13,7 +13,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from ..db.models import init_db
+from ..infra.db.models import init_db
 from .setup import is_configured, load_config_to_env, run_setup
 from .doctor import run_doctor, run_doctor_fix, has_missing_tools, run_linkage_health
 
@@ -424,7 +424,7 @@ def _run_web_board(host, port):
     import webbrowser
     import threading
 
-    from ..db import models as db
+    from ..infra.db import models as db
 
     web_dir = Path(__file__).parent.parent / "web"
     if not (web_dir / "index.html").exists():
@@ -463,7 +463,7 @@ def _run_server(host, port):
             console.print("Run 'story setup' to configure, or set STORY_LLM_API_KEY.")
             raise SystemExit(1)
 
-    from ..db import models as db
+    from ..infra.db import models as db
 
     console.print(f"[green]Starting Story Lifecycle orchestrator on {host}:{port}[/]")
     console.print(f"[dim]Data directory: {db.get_db_path().parent}[/]")

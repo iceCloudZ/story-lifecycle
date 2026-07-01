@@ -12,7 +12,7 @@ def generate_release_prompt(story_key: str) -> dict:
     Returns {"content": <markdown>, "story_key": story_key}.
     Raises ValueError if story not found.
     """
-    from ...db import models as db
+    from ...infra.db import models as db
 
     bundle = ContextResolver().resolve(story_key)
     content = _render_release_prompt(story_key, bundle)
@@ -121,7 +121,7 @@ def generate_post_release_prompt(story_key: str) -> dict:
     Returns {"content": <markdown>, "story_key": story_key}.
     Raises ValueError if story not found.
     """
-    from ...db import models as db
+    from ...infra.db import models as db
 
     bundle = ContextResolver().resolve(story_key)
     content = _render_post_release_prompt(story_key, bundle)
@@ -234,7 +234,7 @@ def generate_bugfix_prompt(story_key: str, bug_key: str) -> dict:
     Returns {"content": <markdown>, "story_key": story_key, "bug_key": bug_key}.
     Raises ValueError if story or bug not found.
     """
-    from ...db import models as db
+    from ...infra.db import models as db
 
     bundle = ContextResolver().resolve(story_key)
     bug = db.get_story(bug_key)
@@ -359,7 +359,7 @@ def generate_batch_bugfix_prompt(story_key: str, bug_keys: list[str]) -> dict:
     Shares the story context once, then lists each bug's specifics, avoiding
     redundant project/branch/document sections.
     """
-    from ...db import models as db
+    from ...infra.db import models as db
 
     bundle = ContextResolver().resolve(story_key)
     bugs: list[dict] = []

@@ -828,7 +828,7 @@ def apply_reviewed(proposal: dict) -> dict:
             # Preserve evidence chain in event log
             if evidence_list or p.get("confidence"):
                 try:
-                    from ...db import models as db
+                    from ...infra.db import models as db
 
                     db.log_event(
                         story_key,
@@ -848,7 +848,7 @@ def apply_reviewed(proposal: dict) -> dict:
 
     # Log apply event
     try:
-        from ...db import models as db
+        from ...infra.db import models as db
 
         db.log_event(
             story_key,

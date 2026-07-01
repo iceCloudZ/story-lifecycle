@@ -91,7 +91,7 @@ class TestWorktreeResolver:
 
     def test_two_stories_isolated_worktrees(self, tmp_path, isolated_story_home):
         """Two worktrees for the same project should be isolated."""
-        from story_lifecycle.db import models as db
+        from story_lifecycle.infra.db import models as db
 
         repo = tmp_path / "repo"
         _init_git_repo(repo)

@@ -11,7 +11,7 @@ import click
 import yaml
 from rich.console import Console
 
-from ..db.models import init_db
+from ..infra.db.models import init_db
 from ..orchestrator.engine import planner
 
 console = Console()
@@ -221,7 +221,7 @@ def apply(reviewed_file, yes):
 def preview_packet(story_key, stage, tags):
     """Preview the Quality Packet that would be injected for a story."""
     from ..orchestrator.evaluation.quality import build_quality_packet, build_quality_checklist
-    from ..db import models as db
+    from ..infra.db import models as db
 
     story = db.get_story(story_key)
     if not story:

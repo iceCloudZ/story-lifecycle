@@ -8,7 +8,7 @@ import pytest
 
 from click.testing import CliRunner
 
-from story_lifecycle.benchmarks.swebench import (
+from story_lifecycle.infra.benchmarks.swebench import (
     BudgetConfig,
     RunStore,
     SWEbenchInstance,
@@ -204,7 +204,7 @@ class TestCheckout:
             return r
 
         with patch(
-            "story_lifecycle.benchmarks.swebench.subprocess.run", side_effect=fake_run
+            "story_lifecycle.infra.benchmarks.swebench.subprocess.run", side_effect=fake_run
         ):
             result = checkout_instance(inst, ws, cache_root)
 
@@ -228,7 +228,7 @@ class TestCheckout:
             return r
 
         with patch(
-            "story_lifecycle.benchmarks.swebench.subprocess.run", side_effect=fake_run
+            "story_lifecycle.infra.benchmarks.swebench.subprocess.run", side_effect=fake_run
         ):
             result = checkout_instance(inst, ws, cache_root)
 
@@ -255,7 +255,7 @@ class TestCheckout:
             return r
 
         with patch(
-            "story_lifecycle.benchmarks.swebench.subprocess.run", side_effect=fake_run
+            "story_lifecycle.infra.benchmarks.swebench.subprocess.run", side_effect=fake_run
         ):
             result = checkout_instance(inst, ws, cache_root)
 
@@ -289,7 +289,7 @@ class TestPrepareInstance:
 
     def test_prepare_creates_story_in_db(self, tmp_path, isolated_story_home):
         """prepare_instance 在 DB 中创建 Story。"""
-        from story_lifecycle.db import models as db
+        from story_lifecycle.infra.db import models as db
 
         inst = SWEbenchInstance("inst-1", "a/b", "c1", "fix the bug")
         ws = tmp_path / "ws" / "inst-1"
@@ -306,7 +306,7 @@ class TestPrepareInstance:
 
     def test_prepare_sets_context_json(self, tmp_path, isolated_story_home):
         """prepare_instance 在 context_json 中写入 SWE-bench context。"""
-        from story_lifecycle.db import models as db
+        from story_lifecycle.infra.db import models as db
 
         inst = SWEbenchInstance(
             "inst-2",
@@ -336,7 +336,7 @@ class TestPrepareInstance:
         self, tmp_path, isolated_story_home
     ):
         """title 从 problem_statement 第一行截取。"""
-        from story_lifecycle.db import models as db
+        from story_lifecycle.infra.db import models as db
 
         inst = SWEbenchInstance(
             "inst-3", "a/b", "c1", "This is a long problem\nwith multiple lines"
@@ -502,7 +502,7 @@ class TestCLI:
 class TestE2ESmoke:
     def test_full_run_no_checkout(self, tmp_path, isolated_story_home):
         """完整流程: prepare(--no-checkout) → export → summarize，不启动 solve。"""
-        from story_lifecycle.db import models as db
+        from story_lifecycle.infra.db import models as db
 
         # 创建 test JSONL
         instances = tmp_path / "test.jsonl"
@@ -616,7 +616,7 @@ class TestRegressionValidation:
 
     def test_patch_extractor_consistency(self, tmp_path):
         """extract_model_patch must agree between advance gate and export."""
-        from story_lifecycle.benchmarks.artifacts import extract_model_patch
+        from story_lifecycle.infra.benchmarks.artifacts import extract_model_patch
 
         ws = tmp_path / "workspace"
         ws.mkdir()

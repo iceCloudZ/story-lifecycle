@@ -1,6 +1,6 @@
 """Tests for auto discovery Scanner, Decider, and Handler."""
 
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 from story_lifecycle.orchestrator.context.auto_discovery import (
     Scanner,
     Decider,

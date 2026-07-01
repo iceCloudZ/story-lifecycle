@@ -5,7 +5,7 @@ from __future__ import annotations
 import click
 from rich.console import Console
 
-from ..db.models import init_db
+from ..infra.db.models import init_db
 
 console = Console()
 

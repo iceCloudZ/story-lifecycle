@@ -13,7 +13,7 @@ from pathlib import Path
 from filelock import FileLock, Timeout
 
 from . import planner
-from ...db import models as db
+from ...infra.db import models as db
 
 log = logging.getLogger("story-lifecycle.graph")
 

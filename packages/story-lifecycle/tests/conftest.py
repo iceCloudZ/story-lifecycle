@@ -2,7 +2,7 @@
 
 import pytest
 
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 from story_lifecycle.orchestrator.engine import graph
 import story_lifecycle.orchestrator.nodes as nodes_mod
 import story_lifecycle.orchestrator.engine.profile_loader as _pl

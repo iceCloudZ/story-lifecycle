@@ -5,8 +5,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...db import models as db
-from ...story_paths import story_prd_path
+from ...infra.db import models as db
+from ...infra.story_paths import story_prd_path
 from ..nodes import load_profile, get_stage_config
 
 MAX_CONTEXT_SIZE = 1 * 1024 * 1024  # 1MB
@@ -187,7 +187,7 @@ def skip_stage(story_key: str, stage: str, reason: str = "Manual skip"):
 
 def delete_story(story_key: str):
     """Delete a story and clean up."""
-    from ...terminal import ttyd
+    from ...infra.terminal import ttyd
 
     db.delete_story(story_key)
     ttyd.stop_ttyd(story_key)

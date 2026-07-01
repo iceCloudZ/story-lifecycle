@@ -16,7 +16,7 @@ from story_lifecycle.orchestrator.engine.planner import (
 @pytest.fixture
 def isolated_db(tmp_path, monkeypatch):
     """Set up isolated DB for testing."""
-    from story_lifecycle.db import models as db
+    from story_lifecycle.infra.db import models as db
 
     db_path = tmp_path / "story.db"
     monkeypatch.setattr(db, "get_db_path", lambda: db_path)
@@ -26,7 +26,7 @@ def isolated_db(tmp_path, monkeypatch):
 
 def _make_story(isolated_db, monkeypatch, tmp_path, **overrides):
     """Create a test story in DB."""
-    from story_lifecycle.db import models as db
+    from story_lifecycle.infra.db import models as db
 
     defaults = {
         "story_key": "TEST-001",
@@ -132,7 +132,7 @@ class TestRunOrchestratorAgent:
         assert len(actions_received) == 1
 
     def test_writes_actions_to_db(self, isolated_db, monkeypatch, tmp_path):
-        from story_lifecycle.db import models as db
+        from story_lifecycle.infra.db import models as db
 
         _make_story(isolated_db, monkeypatch, tmp_path)
         mock_llm = MagicMock()
@@ -201,7 +201,7 @@ class TestRunOrchestratorAgent:
 
 class TestContinueOrchestratorAgent:
     def test_skip_action_records_event(self, isolated_db, monkeypatch, tmp_path):
-        from story_lifecycle.db import models as db
+        from story_lifecycle.infra.db import models as db
 
         _make_story(isolated_db, monkeypatch, tmp_path)
         db.update_story(
@@ -216,14 +216,14 @@ class TestContinueOrchestratorAgent:
             ),
         )
 
-        with patch("story_lifecycle.terminal.pty.ensure_agent_pty"):
+        with patch("story_lifecycle.infra.terminal.pty.ensure_agent_pty"):
             continue_orchestrator_agent("TEST-001")
 
         story = db.get_story("TEST-001")
         assert story["status"] == "completed"
 
     def test_no_actions_marks_failed(self, isolated_db, monkeypatch, tmp_path):
-        from story_lifecycle.db import models as db
+        from story_lifecycle.infra.db import models as db
 
         _make_story(isolated_db, monkeypatch, tmp_path)
         db.update_story(

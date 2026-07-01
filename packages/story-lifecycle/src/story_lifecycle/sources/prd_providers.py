@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .base import SourceItem
-from ..story_paths import story_prd_path
+from ..infra.story_paths import story_prd_path
 
 
 @dataclass

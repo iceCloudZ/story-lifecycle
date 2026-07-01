@@ -1,5 +1,5 @@
 from story_lifecycle.orchestrator.engine.profile_loader import resolve_profile
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 
 
 def test_minimal_profile_defaults_to_interactive_pty():

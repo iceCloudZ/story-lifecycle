@@ -6,7 +6,7 @@ Patterns, and boundary conditions.
 
 import pytest
 
-from story_lifecycle.db import models as db
+from story_lifecycle.infra.db import models as db
 
 
 @pytest.fixture
