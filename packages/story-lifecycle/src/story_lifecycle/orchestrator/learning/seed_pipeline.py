@@ -295,7 +295,7 @@ def _summarize_review(content: str) -> str:
     """Summarize review content for seed analyst context."""
     # Try LLM semantic summary first
     try:
-        from .semantic import summarize_review_for_learning
+        from ..evaluation.semantic import summarize_review_for_learning
 
         result = summarize_review_for_learning(content)
         if result["ok"] and result["mode"] == "llm":
@@ -739,7 +739,7 @@ def apply_reviewed(proposal: dict) -> dict:
 
     Patterns are written as 'proposed' — never auto-approved or auto-activated.
     """
-    from . import quality
+    from ..evaluation import quality
 
     story_key = proposal["manifest"]["story_key"]
     findings_approved: list[int] = proposal["review_status"].get(
