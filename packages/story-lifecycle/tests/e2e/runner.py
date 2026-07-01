@@ -8,7 +8,6 @@ from story_lifecycle.db import models as db
 from story_lifecycle.orchestrator.engine import graph as graph_mod
 
 from .scenario import Scenario
-from .fake_tool import FakeStageTool
 
 
 def _profile_without_adversarial() -> dict:
@@ -79,8 +78,6 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
     prd_file = prd_dir / f"{key}.md"
     prd_file.write_text(f"# {scenario.title}\n\nTest PRD content.\n", encoding="utf-8")
 
-    fake_tool = FakeStageTool(scenario)
-
     # Build review mock that returns scenario-defined review results
     def _mock_review_stage(state, cfg, stage_output):
         stage = state["current_stage"]
@@ -89,7 +86,6 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
 
     with (
         patch("story_lifecycle.orchestrator.nodes.graph_nodes.planner") as mock_planner,
-        patch("story_lifecycle.orchestrator.tools.get_tool") as mock_get_tool,
         patch("story_lifecycle.orchestrator.nodes.ttyd") as mock_ttyd,
         patch("story_lifecycle.orchestrator.nodes.notify"),
         patch(
@@ -117,9 +113,6 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
         # If scenario has reviews, use side_effect for dynamic behavior
         if scenario.reviews:
             mock_planner.review_stage.side_effect = _mock_review_stage
-
-        # Fake tool dispatch
-        mock_get_tool.return_value = fake_tool
 
         # Fake ttyd — session always alive
         mock_ttyd.session_name.return_value = f"story-{key}"
