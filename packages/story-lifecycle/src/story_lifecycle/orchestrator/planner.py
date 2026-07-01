@@ -1,10 +1,9 @@
 """Smart Orchestrator — plan and review via LLM.
 
-Two modes:
-1. **Legacy text-based planning** — plan_stage / review_stage / review_plan
-2. **Agent mode (new)** — run_orchestrator_agent / continue_orchestrator_agent
-   Uses Function Calling to generate structured tool calls instead of text JSON.
-
+Agent mode (Function Calling): run_orchestrator_agent plans a structured
+action list via plan_step/skip_stage tool calls; continue_orchestrator_agent
+executes them with verify-gate. The legacy text-JSON planning path
+(plan_stage / build_plan_prompt / /plan/generate) has been removed.
 All LLM calls delegate to LLMClient.
 """
 
@@ -14,7 +13,6 @@ import time
 from pathlib import Path
 
 from ..llm_client import get_llm, with_story_key
-from ..schemas import PlanResult
 from .agent_tools import ORCHESTRATOR_TOOLS
 
 log = logging.getLogger("story-lifecycle.planner")
@@ -40,72 +38,6 @@ def _load_story_knowledge(workspace: str, story_key: str) -> str:
             content = f.read_text(encoding="utf-8")[:800]
             parts.append(f"### {f.stem}\n{content}")
     return "\n\n".join(parts) if parts else "（无 Story 知识）"
-
-
-def build_plan_prompt(
-    state: dict,
-    stage_config: dict,
-    adapters: list[str],
-) -> str:
-    """构建编排 prompt，不调用 LLM。"""
-    prompt = f"""你是任务编排器。你的职责是决定如何执行当前阶段，不是做具体设计。
-
-## Story 信息
-- Key: {state.get("story_key")}
-- 标题: {state.get("title")}
-- 当前阶段: {state.get("current_stage")}
-- 已重试次数: {state.get("execution_count", 0)}
-- 阶段描述: {stage_config.get("description", "")}
-
-## 可用 CLI 工具
-{json.dumps(adapters)}
-
-## 阶段配置
-{json.dumps(stage_config, ensure_ascii=False, indent=2)}
-
-请返回 JSON（不要输出其他内容）：
-{{{{
-  "adapter": "使用哪个 CLI 工具（如 claude/codex）",
-  "provider": "使用哪个 provider（或 null）",
-  "model": "使用哪个 model（或 null）",
-  "skip": false,
-  "summary": "一句话摘要，描述当前阶段要做什么",
-  "focus": "2-3 个关键要点，告诉 CLI 应该关注什么。简洁，不要写详细设计",
-  "reasoning": "决策理由（一句话）",
-  "trajectory_score": 0.85,
-  "done_file": ".story-done/{state.get("story_key")}-{state.get("current_stage")}.json",
-  "done_schema": "CLI 完成后必须写入此 JSON 文件：{{\"stage\": \"{state.get("current_stage")}\", \"status\": \"done\", \"summary\": \"完成摘要\", \"files_changed\": []}}"
-}}}}
-
-注意：
-- focus 要简洁（2-3 个要点），不要写详细的设计方案或任务书
-- summary 和 focus 是给用户看的概要，不是给 CLI 的执行指令
-- done_file 是 CLI 必须写入的完成信号文件路径
-- CLI（如 claude/codex）会自己理解需求并设计方案，你不需要代劳
-- 如果发现当前阶段不必要，可以 skip: true"""
-    return prompt
-
-
-@with_story_key(from_state=True)
-def plan_stage(
-    state: dict,
-    stage_config: dict,
-    adapters: list[str],
-) -> dict:
-    """编排角色：决定如何执行当前阶段。"""
-    retry_hint = ""
-    previous_review = state.get("review_summary", "")
-    if previous_review and state.get("execution_count", 0) > 0:
-        retry_hint = f"## 上次 Review 反馈\n{previous_review}"
-
-    prompt = build_plan_prompt(state, stage_config, adapters)
-    if retry_hint:
-        prompt += f"\n\n{retry_hint}"
-
-    llm = get_llm()
-    result = llm.invoke_structured(prompt, PlanResult, temperature=0.1, timeout=90)
-    return result.model_dump()
-
 
 
 @with_story_key
@@ -398,6 +330,14 @@ def run_orchestrator_agent(
         pass
     ctx["_agent_actions"] = actions
     ctx["_plan_confirmed"] = False
+    # FC 路径补写 plan_summary：把所有 launch action 的 "stage: focus"
+    # 拼成总览，修复下游 verify gate / repair packet 的 Plan 断链
+    # （ISS-004）。同时让 GET /plan 的 plan_summary UI 字段非空。
+    ctx["plan_summary"] = "; ".join(
+        f"{a.get('stage', '')}: {a.get('focus', '')}"
+        for a in actions
+        if a.get("action") == "launch"
+    )
     db.update_story(
         story_key,
         context_json=json.dumps(ctx, ensure_ascii=False),

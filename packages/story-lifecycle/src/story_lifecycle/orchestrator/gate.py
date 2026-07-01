@@ -223,7 +223,19 @@ def run_verify_gate(
         }
 
     ctx = context
-    plan_summary = ctx.get("plan_summary", "")
+    # ISS-004: FC 路径下 plan_summary 是全阶段总览（planner 写），
+    # 但 repair packet 期望的是"触发 gate 的这个阶段"的 plan focus。
+    # 优先从 _agent_actions 按 stage 取精准 focus，回退到 ctx 总览。
+    _stage_actions = [
+        a
+        for a in ctx.get("_agent_actions", [])
+        if a.get("stage") == stage and a.get("action") == "launch"
+    ]
+    plan_summary = (
+        _stage_actions[0].get("focus", "")
+        if _stage_actions
+        else ctx.get("plan_summary", "")
+    )
     stage_output_summary = ctx.get("last_verify_summary", "verify stage completed")
 
     repair_path = build_repair_packet(

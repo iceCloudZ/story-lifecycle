@@ -69,33 +69,6 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
     def _demo_route(state, cfg):
         return {"action": "advance", "reasoning": "Demo mode"}
 
-    _plan_return = {
-        "adapter": "claude",
-        "provider": "deepseek",
-        "model": "sonnet",
-        "skip": False,
-        "summary": "Demo: design the feature",
-        "extra_instructions": "Create a simple hello world feature",
-        "reasoning": "Demo mode",
-        "trajectory_score": 0.9,
-    }
-    _review_return = {
-        "quality": "pass",
-        "summary": "Looks good",
-        "feedback": "",
-        "issues": [],
-        "suggestions": [],
-        "trajectory_score": 0.9,
-        "context_updates": {},
-        "reasoning": "Demo review",
-    }
-    _review_plan_return = {
-        "quality": "pass",
-        "blockers": [],
-        "suggestions": [],
-        "reasoning": "Demo plan review",
-    }
-
     _mock_targets = [
         "story_lifecycle.orchestrator.nodes.graph_nodes.planner",
         "story_lifecycle.orchestrator.nodes.planner",
@@ -118,9 +91,6 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
             mp = patch(target)
             m = mp.start()
             m.compress_context.return_value = None
-            m.plan_stage.return_value = _plan_return
-            m.review_stage.return_value = _review_return
-            m.review_plan.return_value = _review_plan_return
             mock_planners.append(mp)
 
         mock_get_tool.return_value = demo_tool

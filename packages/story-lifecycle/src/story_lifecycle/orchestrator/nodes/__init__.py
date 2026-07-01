@@ -4,7 +4,9 @@ Previously held LangGraph node implementations (plan_stage_node, execute_and_wai
 review_stage_node, router_node, advance_node) and LangGraph-specific routing/state.
 These have been replaced by the Agent-driven execution loop in planner.py.
 
-This module now only re-exports shared utilities used across the codebase.
+ISS-005 removed the last LangGraph leftovers: stage_resolver, subtask_delegate,
+knowledge, errors (NodeError), and state (StoryState TypedDict). This module
+now only re-exports the still-live shared utilities.
 """
 
 from pathlib import Path
@@ -28,28 +30,7 @@ from .json_helpers import (
     _extract_json_object as _extract_json_object,
 )
 
-# ---- Stage resolution helpers ----
-from .stage_resolver import (
-    _is_cancelled as _is_cancelled,
-    _block_for_planner as _block_for_planner,
-    resolve_next_stage as resolve_next_stage,
-)
-
-# ---- Subtask delegation ----
-from .subtask_delegate import (
-    _delegate_subtasks as _delegate_subtasks,
-)
-
-# ---- Error handling ----
-from .errors import NodeError as NodeError
-
-# ---- Knowledge management ----
-from .knowledge import (
-    _check_pattern_recurrence as _check_pattern_recurrence,
-    _update_knowledge as _update_knowledge,
-)
-
-# ---- Prompt rendering ----
+# ---- Prompt rendering (used by cli/main.py) ----
 from .prompt_renderer import (
     _strip_planner_contract_duplicates as _strip_planner_contract_duplicates,
     _build_stage_contract as _build_stage_contract,
