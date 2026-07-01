@@ -221,6 +221,7 @@ export const storyApi = {
   create: (data: { key: string; title?: string; content?: string; profile?: string; workspace?: string; autostart?: boolean }) =>
     fetchJSON<Story>('/api/story', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   workspaces: () => fetchJSON<{ workspaces: WorkspaceOption[] }>('/api/workspaces'),
+  projects: () => fetchJSON<{ projects: Project[] }>('/api/projects'),
   previewIntake: (data: { source_type?: string; source_id: string; files?: File[] }) => {
     const form = new FormData()
     form.append('source_type', data.source_type || 'tapd')

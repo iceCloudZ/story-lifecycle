@@ -545,6 +545,10 @@ def create_story(req: CreateStoryRequest):
     workspace = req.workspace.strip()
     if not workspace:
         raise HTTPException(status_code=400, detail="workspace required")
+    if not Path(workspace).is_absolute():
+        raise HTTPException(
+            status_code=400, detail="workspace must be an absolute path"
+        )
 
     story_key = create_and_start_story(
         story_key=req.key,
@@ -1413,9 +1417,22 @@ def api_sync_tapd(req: SyncRequest):
 
     from .sync_service import sync_tapd
 
+    # Require an explicit absolute workspace. The previous `or "."` fallback
+    # silently stored the server's CWD as the story workspace, which caused
+    # evidence artifacts to land inside the tool's own package directory.
+    workspace = req.workspace.strip()
+    if not workspace:
+        raise HTTPException(
+            status_code=400, detail="workspace required (select a project first)"
+        )
+    if not Path(workspace).is_absolute():
+        raise HTTPException(
+            status_code=400, detail="workspace must be an absolute path"
+        )
+
     result = sync_tapd(
         items,
-        workspace=req.workspace or ".",
+        workspace=workspace,
         dry_run=req.dry_run,
         status_only=req.status_only,
     )

@@ -490,6 +490,25 @@
   color: #4b5563;
 }
 
+.project-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.project-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: #1f2937;
+  cursor: pointer;
+}
+
+.project-checkbox input {
+  margin: 0;
+}
+
 .hint.danger {
   grid-column: 1 / -1;
   margin: -2px 0 0;

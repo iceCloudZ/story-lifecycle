@@ -1,6 +1,7 @@
 """story sync — 拉取 TAPD 需求/缺陷同步为本地 story。"""
 
 import click
+from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
@@ -71,9 +72,20 @@ def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id):
 
     from ..orchestrator.sync_service import sync_tapd
 
+    # An explicit workspace is required: the old `or "."` fallback stored the
+    # server's CWD as the story workspace, scattering evidence artifacts.
+    if not workspace:
+        console.print(
+            "[red]必须指定 --workspace/-w（一个绝对路径的工作区目录）。[/]"
+        )
+        raise SystemExit(1)
+    if not Path(workspace).is_absolute():
+        console.print(f"[red]workspace 必须是绝对路径，得到: {workspace!r}[/]")
+        raise SystemExit(1)
+
     result = sync_tapd(
         items,
-        workspace=workspace or ".",
+        workspace=workspace,
         dry_run=dry_run,
         status_only=status_only,
     )
