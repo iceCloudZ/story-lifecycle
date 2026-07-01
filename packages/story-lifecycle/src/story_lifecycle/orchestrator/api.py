@@ -1130,7 +1130,7 @@ async def get_findings(
 
 @app.get("/api/story/{story_key}/quality")
 async def get_quality_status(story_key: str):
-    from .quality import check_dor, check_dod
+    from .evaluation.quality import check_dor, check_dod
 
     findings = db.get_open_findings(story_key)
     patterns = db.get_active_learned_patterns(limit=10)
@@ -1157,7 +1157,7 @@ async def get_patterns(status: str = "active"):
 async def approve_pattern_endpoint(pattern_id: str):
     from fastapi import HTTPException
 
-    from .quality import approve_pattern, activate_pattern
+    from .evaluation.quality import approve_pattern, activate_pattern
 
     p = db.get_learned_pattern(pattern_id)
     if p is None:
@@ -1177,7 +1177,7 @@ async def approve_pattern_endpoint(pattern_id: str):
 async def reject_pattern_endpoint(pattern_id: str):
     from fastapi import HTTPException
 
-    from .quality import reject_pattern
+    from .evaluation.quality import reject_pattern
 
     p = db.get_learned_pattern(pattern_id)
     if p is None:
@@ -1259,7 +1259,7 @@ def get_dependency_graph(story_key: str):
 @app.post("/api/patterns/{pattern_id}/approve")
 async def approve_pattern_endpoint_post(pattern_id: str):
     """Approve and activate a proposed pattern."""
-    from .quality import approve_pattern, activate_pattern
+    from .evaluation.quality import approve_pattern, activate_pattern
 
     p = db.get_learned_pattern(pattern_id)
     if p is None:
@@ -1278,7 +1278,7 @@ async def approve_pattern_endpoint_post(pattern_id: str):
 @app.post("/api/patterns/{pattern_id}/reject")
 async def reject_pattern_endpoint_post(pattern_id: str):
     """Reject a proposed pattern."""
-    from .quality import reject_pattern
+    from .evaluation.quality import reject_pattern
 
     p = db.get_learned_pattern(pattern_id)
     if p is None:
@@ -1306,7 +1306,7 @@ def api_import_review_feedback(story_key: str, req: ReviewFeedbackRequest):
     if not req.content.strip():
         raise HTTPException(400, "Review content is empty")
 
-    from .review_feedback import import_review
+    from .evaluation.review_feedback import import_review
 
     result = import_review(story_key, req.content)
     return {
@@ -1329,7 +1329,7 @@ def api_list_review_feedback(story_key: str):
 @app.put("/api/finding/{finding_id}/decide")
 def api_decide_finding(finding_id: str, req: DecideFindingRequest):
     """Make a decision on a finding: accept/reject/defer/downgrade/mark_verified."""
-    from .quality import update_finding_status
+    from .evaluation.quality import update_finding_status
 
     finding = db.get_finding(finding_id)
     if not finding:

@@ -428,7 +428,7 @@ def create_story_from_source(
 
     # Record story_intake event for quality flywheel
     try:
-        from .quality import record_story_intake
+        from .evaluation.quality import record_story_intake
 
         record_story_intake(
             story_key=key,

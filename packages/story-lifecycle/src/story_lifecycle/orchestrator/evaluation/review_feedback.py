@@ -14,8 +14,8 @@ from __future__ import annotations
 import json
 import logging
 
-from ..db import models as db
-from ..llm_client import get_llm
+from ...db import models as db
+from ...llm_client import get_llm
 
 log = logging.getLogger("story-lifecycle.review_feedback")
 

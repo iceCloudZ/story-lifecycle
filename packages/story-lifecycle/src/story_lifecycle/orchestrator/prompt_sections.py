@@ -149,7 +149,7 @@ def build_quality_section(story_key: str, stage: str) -> str:
     ``if stage == "verify"``) without one's semantics leaking into the other.
     """
     try:
-        from .quality import build_quality_checklist
+        from .evaluation.quality import build_quality_checklist
 
         return build_quality_checklist(story_key, stage) or ""
     except Exception:  # noqa: BLE001 — never block prompt rendering

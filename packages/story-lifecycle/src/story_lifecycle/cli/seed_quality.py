@@ -220,7 +220,7 @@ def apply(reviewed_file, yes):
 )
 def preview_packet(story_key, stage, tags):
     """Preview the Quality Packet that would be injected for a story."""
-    from ..orchestrator.quality import build_quality_packet, build_quality_checklist
+    from ..orchestrator.evaluation.quality import build_quality_packet, build_quality_checklist
     from ..db import models as db
 
     story = db.get_story(story_key)

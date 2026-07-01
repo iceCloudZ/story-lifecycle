@@ -749,7 +749,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
 
             # Verify-stage quality gate: HIGH findings block and trigger repair round
             if stage == "verify":
-                from ..orchestrator.gate import run_verify_gate
+                from ..orchestrator.evaluation.gate import run_verify_gate
 
                 stage_cfg = profile_stages.get(stage)
                 max_retries = (

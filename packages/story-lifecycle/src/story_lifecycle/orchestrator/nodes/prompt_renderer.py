@@ -283,7 +283,7 @@ Story: {state["story_key"]}
     learned_patterns_count = 0
     relevance_tags: list[str] = []
     try:
-        from ..quality import build_quality_packet
+        from ..evaluation.quality import build_quality_packet
 
         relevance_tags = _derive_relevance_tags(state, stage)
         quality_packet = build_quality_packet(

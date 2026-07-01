@@ -30,7 +30,7 @@ def import_cmd(story_key, review_file):
       story review-feedback import STORY-123 review.json
     """
     from ..db import models as db
-    from ..orchestrator.review_feedback import import_review
+    from ..orchestrator.evaluation.review_feedback import import_review
 
     story = db.get_story(story_key)
     if not story:
@@ -147,7 +147,7 @@ def decide(finding_id, action, reason, verification_event_id):
       story review-feedback decide finding-xxx --verify --reason "test passed"
     """
     from ..db import models as db
-    from ..orchestrator.quality import update_finding_status
+    from ..orchestrator.evaluation.quality import update_finding_status
 
     if not action:
         console.print(
@@ -285,7 +285,7 @@ def decide_approval(finding_id, action, reason, verification_event_id):
       story approvals decide finding-www --verify --reason "tested"
     """
     from ..db import models as db
-    from ..orchestrator.quality import update_finding_status
+    from ..orchestrator.evaluation.quality import update_finding_status
 
     if not action:
         console.print(

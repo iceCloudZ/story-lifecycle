@@ -6,11 +6,11 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from ..db import models as db
+from ...db import models as db
 
 
 _FAILURE_CHECKLIST_PATH = (
-    Path(__file__).parents[4] / "story-miner" / "docs" / "failure-checklist.md"
+    Path(__file__).parents[5] / "story-miner" / "docs" / "failure-checklist.md"
 )
 
 
