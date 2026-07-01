@@ -34,7 +34,7 @@ from ..engine.graph import (
     recover_orphan_stories,
     resume_ready_interactive_stories,
 )
-from ..nodes.profile_loader import resolve_profile
+from ..engine.profile_loader import resolve_profile
 from ..engine import planner
 
 
@@ -2246,7 +2246,7 @@ def api_intake_preview(
     # 让 start 阶段按项目名动态生成。
     branch = ""
     try:
-        from ..nodes.profile_loader import load_profile
+        from ..engine.profile_loader import load_profile
         from ..workspace.branch_naming import generate_branch_for_story
 
         profile_raw = load_profile("minimal")
@@ -2429,7 +2429,7 @@ def _bind_story_projects_for_start(
         if branch:
             per_project_branch = branch
         else:
-            from ..nodes.profile_loader import load_profile
+            from ..engine.profile_loader import load_profile
             from ..workspace.branch_naming import generate_branch_for_story
 
             profile_raw = load_profile(story.get("profile") or "minimal")

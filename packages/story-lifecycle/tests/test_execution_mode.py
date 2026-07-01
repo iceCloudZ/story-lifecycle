@@ -1,4 +1,4 @@
-from story_lifecycle.orchestrator.nodes.profile_loader import resolve_profile
+from story_lifecycle.orchestrator.engine.profile_loader import resolve_profile
 from story_lifecycle.db import models as db
 
 

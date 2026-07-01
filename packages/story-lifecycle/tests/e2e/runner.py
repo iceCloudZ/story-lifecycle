@@ -93,11 +93,11 @@ def run_scenario(scenario: Scenario, workspace: Path) -> E2EResult:
         patch("story_lifecycle.orchestrator.nodes.ttyd") as mock_ttyd,
         patch("story_lifecycle.orchestrator.nodes.notify"),
         patch(
-            "story_lifecycle.orchestrator.nodes.profile_loader.load_profile",
+            "story_lifecycle.orchestrator.engine.profile_loader.load_profile",
             return_value=_profile_without_adversarial(),
         ),
         patch(
-            "story_lifecycle.orchestrator.nodes.profile_loader._load_raw",
+            "story_lifecycle.orchestrator.engine.profile_loader._load_raw",
             return_value=_profile_without_adversarial(),
         ),
     ):

@@ -6,7 +6,7 @@ from typing import TypedDict, Optional
 
 from ...db import models as db
 from ...story_paths import story_evidence_dir
-from ..engine.prompt_sections import (
+from .prompt_sections import (
     build_knowledge_section,
     build_quality_section,
     build_transcript_section,

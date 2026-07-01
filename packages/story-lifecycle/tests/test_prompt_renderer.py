@@ -5,7 +5,7 @@ import story_lifecycle.context_providers as cp
 
 class TestRenderPromptTranscript:
     def test_transcript_context_injected(self, isolated_story_home, monkeypatch):
-        from story_lifecycle.orchestrator.nodes.prompt_renderer import _render_prompt
+        from story_lifecycle.orchestrator.engine.prompt_renderer import _render_prompt
 
         monkeypatch.setattr(
             cp,
@@ -23,7 +23,7 @@ class TestRenderPromptTranscript:
         assert meta["transcript_context"] == "### 历史上下文\n- 既往调研 hc-user"
 
     def test_transcript_context_none_omitted(self, isolated_story_home, monkeypatch):
-        from story_lifecycle.orchestrator.nodes.prompt_renderer import _render_prompt
+        from story_lifecycle.orchestrator.engine.prompt_renderer import _render_prompt
 
         monkeypatch.setattr(cp, "get_transcript_context", lambda *a, **k: None)
         state = {

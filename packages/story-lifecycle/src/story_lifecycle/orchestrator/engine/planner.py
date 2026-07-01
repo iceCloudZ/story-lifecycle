@@ -198,7 +198,7 @@ def run_orchestrator_agent(
     # 解析 profile 获取阶段列表
     profile_stages = None
     try:
-        from ..nodes.profile_loader import resolve_profile
+        from ..engine.profile_loader import resolve_profile
 
         rp = resolve_profile(profile_name)
         profile_stages = {
@@ -434,7 +434,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     """
     from ...db import models as db
     from ...adapters import get_adapter
-    from ..nodes.profile_loader import resolve_profile
+    from ..engine.profile_loader import resolve_profile
     from ...json_helpers import robust_json_parse
     from ...terminal.pty import ensure_agent_pty
 

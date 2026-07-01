@@ -64,7 +64,7 @@ class ContextResolver:
         profile_name = story.get("profile", "")
         if profile_name:
             try:
-                from ..nodes.profile_loader import load_profile
+                from ..engine.profile_loader import load_profile
 
                 profile = load_profile(profile_name)
             except Exception:

@@ -209,7 +209,7 @@ def create(key, title, prd, profile, workspace, no_start, dry_run):
     from ..orchestrator.service.story_service import create_and_start_story
     from ..orchestrator.engine.graph import start_story_async
     from ..orchestrator.nodes import load_profile
-    from ..orchestrator.nodes.prompt_renderer import _render_prompt
+    from ..orchestrator.engine.prompt_renderer import _render_prompt
 
     init_db()
     ws = workspace or str(Path.cwd())
