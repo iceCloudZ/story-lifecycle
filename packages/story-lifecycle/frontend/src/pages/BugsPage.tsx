@@ -86,12 +86,26 @@ export default function BugsPage() {
   async function syncAllBugs() {
     setSyncing(true)
     try {
+      // Backend requires an absolute workspace (rejects empty/relative to avoid
+      // stories landing in the tool's own directory). Bugs bind to their parent
+      // story, so the workspace only matters for orphan bugs; use the first
+      // registered workspace as the default.
+      const wsRes = await fetch('/api/workspaces')
+      const wsData = wsRes.ok ? await wsRes.json() : { workspaces: [] }
+      const defaultWs = wsData.workspaces?.[0]?.path || ''
+      if (!defaultWs) {
+        alert('没有可选工作区，请先在「项目」页注册项目')
+        return
+      }
       const r = await fetch('/api/sync/tapd', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ item_type: 'bug' }),
+        body: JSON.stringify({ item_type: 'bug', workspace: defaultWs }),
       })
-      if (!r.ok) throw new Error('sync bugs failed')
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        throw new Error(err.detail || 'sync bugs failed')
+      }
       await r.json()
       qc.invalidateQueries({ queryKey: ['bugs'] })
     } catch (e) {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { storyApi, apiAction } from '../api/client'
@@ -262,6 +262,8 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
   const [workspaces, setWorkspaces] = useState<WorkspaceOption[]>([])
   const [workspaceLoading, setWorkspaceLoading] = useState(false)
   const [workspaceError, setWorkspaceError] = useState('')
+  const [allProjects, setAllProjects] = useState<Project[]>([])
+  const [selectedProjects, setSelectedProjects] = useState<number[]>([])
   const [paste, setPaste] = useState('')
   const [uploaded, setUploaded] = useState<{ name: string; content: string } | null>(null)
   // 最终发给后端的 PRD 正文：上传文件读出的内容，或粘贴的文本。后端会存成文件、
@@ -295,6 +297,32 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
       })
     return () => { alive = false }
   }, [isNew])
+
+  // Load all registered projects once (for the new-story project picker).
+  useEffect(() => {
+    if (!isNew) return
+    let alive = true
+    storyApi.projects()
+      .then((data) => { if (alive) setAllProjects(data.projects || []) })
+      .catch(() => { /* projects optional; picker just stays empty */ })
+    return () => { alive = false }
+  }, [isNew])
+
+  // Projects under the selected workspace: a registered project belongs to a
+  // workspace when its repo_path lives under the workspace root. Mirrors the
+  // backend's _workspace_root_for_project ancestor-walk semantics.
+  const workspaceProjects = useMemo(() => {
+    if (!workspace) return []
+    const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
+    const ws = norm(workspace)
+    return allProjects.filter((p) => {
+      const rp = p.repo_path ? norm(p.repo_path) : ''
+      return rp === ws || rp.startsWith(ws + '/')
+    })
+  }, [allProjects, workspace])
+
+  // Switching workspace invalidates the previous selection.
+  useEffect(() => { setSelectedProjects([]) }, [workspace])
 
   async function handlePreview() {
     const rawId = story ? (story.sourceId || story.storyKey) : key
@@ -348,13 +376,14 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
 
   function handleConfirm() {
     if (isNew && (!key.trim() || !workspace.trim() || !content.trim())) return
+    if (isNew && selectedProjects.length === 0) return
     setLoading(true)
     Promise.resolve(onConfirm({
       key: key.trim(),
       title: title.trim(),
       profile,
       workspace: workspace.trim(),
-      projectIds: [],
+      projectIds: selectedProjects,
       content,
     })).finally(() => setLoading(false))
   }
@@ -422,6 +451,40 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
               {!workspaceError && workspaces.length === 0 && !workspaceLoading && (
                 <p className="hint danger">没有可选工作区，请先在“项目”页注册 monorepo 下的项目。</p>
               )}
+              {workspace && (
+                <div className="modal-field project-picker">
+                  <span>受影响项目 <span className="req">*</span></span>
+                  {workspaceProjects.length === 0 ? (
+                    <p className="hint danger">该工作区下没有已注册项目，请先在「项目」页注册。</p>
+                  ) : (
+                    <div className="project-checkboxes">
+                      {workspaceProjects.map((p) => {
+                        const pid = Number(p.id)
+                        const checked = selectedProjects.includes(pid)
+                        return (
+                          <label key={p.id} className="project-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                setSelectedProjects((prev) =>
+                                  e.target.checked
+                                    ? prev.includes(pid) ? prev : [...prev, pid]
+                                    : prev.filter((x) => x !== pid)
+                                )
+                              }}
+                            />
+                            <span>{p.name}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {workspaceProjects.length > 0 && selectedProjects.length === 0 && (
+                    <p className="hint danger">请至少选择一个受影响的项目</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
           {!isNew && story?.sourceType === 'tapd' && (
@@ -434,7 +497,7 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
               {previewLoading ? '读取中...' : '读取需求并生成 PRD 草稿'}
             </button>
           )}
-          <p className="hint">先选择 monorepo 工作区并准备 PRD；影响模块由后续 Design 阶段识别。</p>
+          <p className="hint">先选择 monorepo 工作区与受影响项目，再准备 PRD。</p>
           {previewLoading && (
             <div className="intake-loading">
               <div className="intake-spinner" />
@@ -543,7 +606,7 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
           <button className="btn" onClick={onClose}>取消</button>
           <button
             className="btn btn-primary"
-            disabled={(isNew && (!key.trim() || !workspace.trim() || !content.trim())) || loading}
+            disabled={(isNew && (!key.trim() || !workspace.trim() || !content.trim() || selectedProjects.length === 0)) || loading}
             onClick={handleConfirm}
           >
             {loading ? '处理中...' : '准备 PRD 并进入规划'}

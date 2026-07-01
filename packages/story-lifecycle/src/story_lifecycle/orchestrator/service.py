@@ -21,6 +21,15 @@ def _validate_workspace(workspace: str) -> None:
     """Check basic workspace requirements before story creation."""
     ws = Path(workspace)
 
+    # A relative workspace (e.g. ".") resolves against the server's CWD and
+    # historically caused evidence artifacts to land inside the tool's own
+    # package directory. Require an absolute path so the workspace is always
+    # an explicit, user-chosen business directory.
+    if not ws.is_absolute():
+        raise WorkspaceError(
+            f"Workspace must be an absolute path, got: {workspace!r}"
+        )
+
     if not ws.exists():
         raise WorkspaceError(f"Workspace directory does not exist: {ws}")
 

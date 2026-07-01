@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from ..db import models as db
 
@@ -22,7 +21,10 @@ def sync_tapd(
     Returns dict with counts: created, updated, skipped, would_create.
     """
     result = {"created": 0, "updated": 0, "skipped": 0, "would_create": 0}
-    ws = workspace or str(Path.cwd())
+    # Workspace is validated upstream (API rejects empty/relative; CLI requires
+    # an explicit --workspace). We no longer fall back to the server CWD, which
+    # previously stored "." as the story workspace.
+    ws = workspace
 
     for item in items:
         existing = db.find_by_source_id(item.source, item.id)
