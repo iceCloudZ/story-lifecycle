@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .stage_library import get_stage_definition
+from ..stage_library import get_stage_definition
 
 
 @dataclass

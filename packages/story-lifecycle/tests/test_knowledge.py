@@ -393,7 +393,7 @@ class TestCreateStoryKnowledgeHint:
             lambda **kw: kw["story_key"],
         )
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.graph.start_story_async",
+            "story_lifecycle.orchestrator.engine.graph.start_story_async",
             lambda key: None,
         )
 

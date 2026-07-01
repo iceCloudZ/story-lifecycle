@@ -1,7 +1,7 @@
 """Test intake_state boundary — candidate/ready guards."""
 
 from story_lifecycle.db import models as db
-from story_lifecycle.orchestrator.graph import start_story_async, recover_orphan_stories
+from story_lifecycle.orchestrator.engine.graph import start_story_async, recover_orphan_stories
 
 
 class TestCandidateRejection:
@@ -24,9 +24,9 @@ class TestCandidateRejection:
         db.update_story(
             key, intake_state="candidate", source_type="tapd", source_id="99998"
         )
-        monkeypatch.setattr("story_lifecycle.orchestrator.graph._running_stories", {})
+        monkeypatch.setattr("story_lifecycle.orchestrator.engine.graph._running_stories", {})
         start_story_async(key)
-        from story_lifecycle.orchestrator.graph import is_story_running
+        from story_lifecycle.orchestrator.engine.graph import is_story_running
 
         assert not is_story_running(key)
 
@@ -51,7 +51,7 @@ class TestCandidateRejection:
         db.update_story("cand-orphan", intake_state="candidate", status="active")
         resumed = []
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.graph.resume_story_async",
+            "story_lifecycle.orchestrator.engine.graph.resume_story_async",
             lambda k: resumed.append(k),
         )
         recover_orphan_stories()

@@ -5,7 +5,7 @@ The dual-flywheel sub-package (domain/engine/promotion) was removed in ISS-008
 — dead code superseded by the live quality flywheel (db.models/seeds/quality).
 """
 
-from story_lifecycle.orchestrator.shadow_router import (
+from story_lifecycle.orchestrator.engine.shadow_router import (
     ShadowDecision,
     ShadowTrigger,
     detect_triggers,
@@ -15,7 +15,7 @@ from story_lifecycle.orchestrator.shadow_router import (
     update_counterfactual,
     compute_shadow_stats,
 )
-from story_lifecycle.orchestrator.meta_planner import (
+from story_lifecycle.orchestrator.engine.meta_planner import (
     StoryScope,
     ExecutionMode,
     StrategyEnvelope,
@@ -33,13 +33,13 @@ from story_lifecycle.orchestrator.stage_library import (
     is_valid_stage,
     validate_stage_inputs,
 )
-from story_lifecycle.orchestrator.stage_graph import (
+from story_lifecycle.orchestrator.engine.stage_graph import (
     build_default_graph,
     build_simple_graph,
     build_strict_graph,
     validate_graph,
 )
-from story_lifecycle.orchestrator.graph_patch import (
+from story_lifecycle.orchestrator.engine.graph_patch import (
     PatchType,
     PatchStatus,
     GraphPatch,
@@ -50,7 +50,7 @@ from story_lifecycle.orchestrator.graph_patch import (
     apply_patch,
     reject_patch,
 )
-from story_lifecycle.orchestrator.policy_engine import (
+from story_lifecycle.orchestrator.engine.policy_engine import (
     AutonomyLevel,
     GuardedAutonomy,
     ActionCategory,
@@ -152,7 +152,7 @@ class TestShadowProposal:
 class TestShadowPersistence:
     def test_save_and_load(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.shadow_router.SHADOW_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.shadow_router.SHADOW_DIR", tmp_path
         )
         decision = ShadowDecision(
             shadow_id="abc123",
@@ -174,7 +174,7 @@ class TestShadowPersistence:
 
     def test_counterfactual_update(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.shadow_router.SHADOW_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.shadow_router.SHADOW_DIR", tmp_path
         )
         decision = ShadowDecision(
             shadow_id="def456",
@@ -199,7 +199,7 @@ class TestShadowPersistence:
 
     def test_compute_stats(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.shadow_router.SHADOW_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.shadow_router.SHADOW_DIR", tmp_path
         )
         decision = ShadowDecision(
             shadow_id="stat1",
@@ -264,7 +264,7 @@ class TestExecutionMode:
 class TestStrategyEnvelope:
     def test_generate_and_load(self, tmp_path, monkeypatch, isolated_story_home):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.meta_planner.STRATEGY_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.meta_planner.STRATEGY_DIR", tmp_path
         )
 
         envelope = generate_strategy(
@@ -285,7 +285,7 @@ class TestStrategyEnvelope:
 class TestDecomposition:
     def test_should_decompose_epic(self, tmp_path, monkeypatch, isolated_story_home):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.meta_planner.STRATEGY_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.meta_planner.STRATEGY_DIR", tmp_path
         )
         envelope = StrategyEnvelope(
             strategy_id="test",
@@ -308,7 +308,7 @@ class TestDecomposition:
 
     def test_generate_task_packets(self, tmp_path, monkeypatch, isolated_story_home):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.meta_planner.STRATEGY_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.meta_planner.STRATEGY_DIR", tmp_path
         )
         envelope = StrategyEnvelope(
             strategy_id="test",
@@ -415,7 +415,7 @@ class TestStageGraph:
 class TestGraphPatch:
     def test_assess_insert_risk(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.graph_patch.PATCH_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.graph_patch.PATCH_DIR", tmp_path
         )
         patch = GraphPatch(
             patch_id="p1",
@@ -430,7 +430,7 @@ class TestGraphPatch:
 
     def test_assess_deploy_insert_risk(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.graph_patch.PATCH_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.graph_patch.PATCH_DIR", tmp_path
         )
         patch = GraphPatch(
             patch_id="p2",
@@ -445,7 +445,7 @@ class TestGraphPatch:
 
     def test_create_and_approve(self, tmp_path, monkeypatch, isolated_story_home):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.graph_patch.PATCH_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.graph_patch.PATCH_DIR", tmp_path
         )
         patch = create_patch(
             story_key="T1",
@@ -461,7 +461,7 @@ class TestGraphPatch:
 
     def test_apply_patch(self, tmp_path, monkeypatch, isolated_story_home):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.graph_patch.PATCH_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.graph_patch.PATCH_DIR", tmp_path
         )
         patch = create_patch(
             story_key="T1",
@@ -477,7 +477,7 @@ class TestGraphPatch:
 
     def test_reject_patch(self, tmp_path, monkeypatch, isolated_story_home):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.graph_patch.PATCH_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.graph_patch.PATCH_DIR", tmp_path
         )
         patch = create_patch(
             story_key="T1",

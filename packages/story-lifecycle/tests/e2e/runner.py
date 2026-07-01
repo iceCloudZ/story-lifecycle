@@ -5,7 +5,7 @@ import json
 from unittest.mock import patch
 
 from story_lifecycle.db import models as db
-from story_lifecycle.orchestrator import graph as graph_mod
+from story_lifecycle.orchestrator.engine import graph as graph_mod
 
 from .scenario import Scenario
 from .fake_tool import FakeStageTool

@@ -12,7 +12,7 @@ from ...adapters import get_adapter
 from ...db import models as db
 from ...terminal import pty as pty_terminal
 from ...terminal.platform_ops import subprocess_needs_shell
-from ..execution import ExecutionMode, parse_execution_mode
+from ..engine.execution import ExecutionMode, parse_execution_mode
 
 log = logging.getLogger("story-lifecycle.base-tool")
 

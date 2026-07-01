@@ -448,7 +448,7 @@ def run_llm_analysis(
     model: str,
 ) -> dict:
     """Call LLM to analyze story context and generate proposed findings and patterns."""
-    from . import planner
+    from .engine import planner
 
     prompt = _ANALYST_PROMPT.format(
         story_key=manifest["story_key"],

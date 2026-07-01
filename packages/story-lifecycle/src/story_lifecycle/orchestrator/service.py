@@ -404,7 +404,7 @@ def create_story_from_source(
             )
             db.update_story(sub_key, source_type=item.source, source_id=item.id)
             if auto_start:
-                from .graph import start_story_async
+                from .engine.graph import start_story_async
 
                 start_story_async(sub_key)
             return CreateFromSourceResult(status="created", story_key=sub_key)
@@ -440,7 +440,7 @@ def create_story_from_source(
         pass
 
     if auto_start:
-        from .graph import start_story_async
+        from .engine.graph import start_story_async
 
         start_story_async(key)
 

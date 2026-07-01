@@ -164,7 +164,7 @@ def prepare(
 )
 def solve(run_id, workspace_root):
     """启动所有 prepared instances 的 Story 执行。"""
-    from ..orchestrator.graph import run_story
+    from ..orchestrator.engine.graph import run_story
 
     store = RunStore(workspace_root)
     manifest = store.load_manifest(run_id)

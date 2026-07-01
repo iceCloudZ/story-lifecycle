@@ -19,7 +19,7 @@ def test_swebench_profile_explicitly_uses_headless():
 def test_done_watcher_selects_only_ready_interactive_story(
     isolated_story_home, tmp_path
 ):
-    from story_lifecycle.orchestrator.graph import find_ready_interactive_stories
+    from story_lifecycle.orchestrator.engine.graph import find_ready_interactive_stories
 
     ready_workspace = tmp_path / "ready"
     ready_workspace.mkdir()

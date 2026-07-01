@@ -15,8 +15,8 @@ module `story_lifecycle.json_helpers`; callers import it directly from there.
 from pathlib import Path
 
 # ---- Module-level attributes (tests access nodes.planner, nodes.ttyd, etc.) ----
-from .. import planner as planner  # noqa: F401
-from .. import router as llm_router  # noqa: F401
+from ..engine import planner as planner  # noqa: F401
+from ..engine import router as llm_router  # noqa: F401
 from ...terminal import ttyd as ttyd
 from ..notify import send as notify  # noqa: F401
 

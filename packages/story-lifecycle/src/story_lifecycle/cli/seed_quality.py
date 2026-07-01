@@ -12,7 +12,7 @@ import yaml
 from rich.console import Console
 
 from ..db.models import init_db
-from ..orchestrator import planner
+from ..orchestrator.engine import planner
 
 console = Console()
 

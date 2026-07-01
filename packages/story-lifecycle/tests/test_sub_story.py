@@ -283,7 +283,7 @@ def test_workspace_mutex(tmp_path):
     """Only one story per workspace should be able to execute at a time."""
     m, original = _init_fresh_db(tmp_path)
     try:
-        from story_lifecycle.orchestrator.graph import (
+        from story_lifecycle.orchestrator.engine.graph import (
             acquire_workspace,
             release_workspace,
         )

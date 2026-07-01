@@ -13,7 +13,7 @@ from pathlib import Path
 from filelock import FileLock, Timeout
 
 from . import planner
-from ..db import models as db
+from ...db import models as db
 
 log = logging.getLogger("story-lifecycle.graph")
 
@@ -231,7 +231,7 @@ def resume_story_async(story_key: str):
 
 def find_ready_interactive_stories() -> list[str]:
     """Return active interactive stories whose done file is ready."""
-    from .paths import stage_done_file
+    from ..paths import stage_done_file
 
     ready = []
     for story in db.list_active_stories():

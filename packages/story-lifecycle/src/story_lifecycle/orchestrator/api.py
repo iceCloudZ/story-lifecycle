@@ -29,13 +29,13 @@ from ..terminal.pty import (
     list_pty_sessions,
     spawn_pty,
 )
-from .graph import (
+from .engine.graph import (
     start_story_async,
     recover_orphan_stories,
     resume_ready_interactive_stories,
 )
 from .nodes.profile_loader import resolve_profile
-from . import planner
+from .engine import planner
 
 
 log = logging.getLogger("story-lifecycle.api")

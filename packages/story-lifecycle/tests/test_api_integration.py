@@ -303,7 +303,7 @@ class TestBuildCliPromptPrd:
         """Regression: _build_cli_prompt must inject the PRD file PATH (not inline
         the content — that would blow up the CLI's context). LangGraph→Agent FC
         migration dropped PRD injection entirely."""
-        from story_lifecycle.orchestrator.planner import _build_cli_prompt
+        from story_lifecycle.orchestrator.engine.planner import _build_cli_prompt
 
         prd = tmp_path / "prd" / "X.md"
         prd.parent.mkdir()
@@ -322,7 +322,7 @@ class TestBuildCliPromptPrd:
         assert "登录记录查询" not in prompt  # content NOT inlined (no context bloat)
 
     def test_no_prd_section_when_path_empty(self):
-        from story_lifecycle.orchestrator.planner import _build_cli_prompt
+        from story_lifecycle.orchestrator.engine.planner import _build_cli_prompt
 
         prompt = _build_cli_prompt(
             story_key="X",
@@ -338,7 +338,7 @@ class TestBuildCliPromptPrd:
 
 class TestBuildCliPromptTranscript:
     def test_transcript_section_injected(self):
-        from story_lifecycle.orchestrator.planner import _build_cli_prompt
+        from story_lifecycle.orchestrator.engine.planner import _build_cli_prompt
 
         prompt = _build_cli_prompt(
             story_key="X",
@@ -356,7 +356,7 @@ class TestBuildCliPromptTranscript:
         assert "曾调研 hc-user" in prompt
 
     def test_no_transcript_section_when_empty(self):
-        from story_lifecycle.orchestrator.planner import _build_cli_prompt
+        from story_lifecycle.orchestrator.engine.planner import _build_cli_prompt
 
         prompt = _build_cli_prompt(
             story_key="X",
