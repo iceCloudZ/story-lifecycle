@@ -2,6 +2,7 @@
 
 import re
 from pathlib import Path
+from typing import TypedDict, Optional
 
 from ...db import models as db
 from ...story_paths import story_evidence_dir
@@ -10,8 +11,26 @@ from ..prompt_sections import (
     build_quality_section,
     build_transcript_section,
 )
-from .state import StoryState, STORY_HOME
 from .profile_loader import get_stage_config
+
+# Story execution state (TypedDict) + home dir, migrated here when the legacy
+# nodes/state.py was removed (ISS-005). prompt_renderer is the only remaining
+# consumer of StoryState; STORY_HOME mirrors the constant in nodes/__init__.py.
+STORY_HOME = Path.home() / ".story-lifecycle"
+
+
+class StoryState(TypedDict, total=False):
+    story_key: str
+    title: str
+    workspace: str
+    profile: str
+    current_stage: str
+    status: str
+    complexity: str
+    context: dict
+    execution_count: int
+    last_error: Optional[str]
+    stage_start_time: float
 
 
 def _strip_planner_contract_duplicates(plan_content: str) -> str:

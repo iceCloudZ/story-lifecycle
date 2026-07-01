@@ -3,7 +3,9 @@ import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .state import STORY_HOME
+# STORY_HOME migrated here when legacy nodes/state.py was removed (ISS-005).
+# Mirrors the constant defined in nodes/__init__.py and planner.py.
+STORY_HOME = Path.home() / ".story-lifecycle"
 
 
 @dataclass
