@@ -39,7 +39,7 @@ class TapdBodyBugProvider(BugContentProvider):
 
         # Try LLM semantic extraction first
         try:
-            from ..orchestrator.semantic import extract_bug_context
+            from ..orchestrator.evaluation.semantic import extract_bug_context
 
             result = extract_bug_context(md, title=bug.title)
             data = result["data"]

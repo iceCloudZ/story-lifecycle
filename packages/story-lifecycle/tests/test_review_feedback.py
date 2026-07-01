@@ -109,7 +109,7 @@ def _make_fake_llm_response_raw(raw: str) -> MagicMock:
 
 def test_extract_candidates_llm_success():
     """LLM extracts candidate findings from review markdown."""
-    from story_lifecycle.orchestrator.review_feedback import extract_candidate_findings
+    from story_lifecycle.orchestrator.evaluation.review_feedback import extract_candidate_findings
 
     llm_output = {
         "candidate_findings": [
@@ -142,7 +142,7 @@ def test_extract_candidates_llm_success():
     mock_llm.invoke_json.return_value = llm_output
     with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
         with patch(
-            "story_lifecycle.orchestrator.review_feedback.get_llm",
+            "story_lifecycle.orchestrator.evaluation.review_feedback.get_llm",
             return_value=mock_llm,
         ):
             result = extract_candidate_findings(review_md, "S1")
@@ -155,7 +155,7 @@ def test_extract_candidates_llm_success():
 
 def test_extract_candidates_json_input():
     """Direct JSON input bypasses LLM, parses structured review."""
-    from story_lifecycle.orchestrator.review_feedback import extract_candidate_findings
+    from story_lifecycle.orchestrator.evaluation.review_feedback import extract_candidate_findings
 
     json_review = json.dumps(
         {
@@ -181,7 +181,7 @@ def test_extract_candidates_json_input():
 
 def test_extract_candidates_error_on_llm_failure():
     """LLM error returns error mode, no rule fallback."""
-    from story_lifecycle.orchestrator.review_feedback import extract_candidate_findings
+    from story_lifecycle.orchestrator.evaluation.review_feedback import extract_candidate_findings
 
     review_md = "- [HIGH] api.py:42 缺少空指针检查\n- [MEDIUM] 缺少测试"
     with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
@@ -194,7 +194,7 @@ def test_extract_candidates_error_on_llm_failure():
 
 def test_validate_candidates_rejects_invalid():
     """validate_candidates rejects items missing required fields."""
-    from story_lifecycle.orchestrator.review_feedback import validate_candidates
+    from story_lifecycle.orchestrator.evaluation.review_feedback import validate_candidates
 
     raw = [
         {"severity": "high", "category": "routing", "description": "valid finding"},
@@ -214,7 +214,7 @@ def test_validate_candidates_rejects_invalid():
 
 def test_dedupe_candidates_merges_similar():
     """dedupe_candidates merges findings with same category+location."""
-    from story_lifecycle.orchestrator.review_feedback import dedupe_candidates
+    from story_lifecycle.orchestrator.evaluation.review_feedback import dedupe_candidates
 
     candidates = [
         {
@@ -250,7 +250,7 @@ def test_dedupe_candidates_merges_similar():
 def test_dedupe_candidates_against_existing(tmp_path):
     """dedupe_candidates also dedupes against existing DB findings."""
     db = _setup_db(tmp_path)
-    from story_lifecycle.orchestrator.review_feedback import dedupe_candidates
+    from story_lifecycle.orchestrator.evaluation.review_feedback import dedupe_candidates
 
     # Existing finding in DB
     db.create_finding(
@@ -287,7 +287,7 @@ def test_dedupe_candidates_against_existing(tmp_path):
 def test_import_review_creates_candidate_findings(tmp_path):
     """import_review writes candidate findings to DB as status=open."""
     db = _setup_db(tmp_path)
-    from story_lifecycle.orchestrator.review_feedback import import_review
+    from story_lifecycle.orchestrator.evaluation.review_feedback import import_review
 
     llm_output = {
         "candidate_findings": [
@@ -310,7 +310,7 @@ def test_import_review_creates_candidate_findings(tmp_path):
     mock_llm.invoke_json.return_value = llm_output
     with patch.dict("os.environ", {"STORY_LLM_API_KEY": "test-key"}):
         with patch(
-            "story_lifecycle.orchestrator.review_feedback.get_llm",
+            "story_lifecycle.orchestrator.evaluation.review_feedback.get_llm",
             return_value=mock_llm,
         ):
             result = import_review("S1", review_md)
@@ -507,7 +507,7 @@ def _get_api_client(tmp_path):
     from story_lifecycle.db.models import init_db
 
     init_db()
-    from story_lifecycle.orchestrator.api import app
+    from story_lifecycle.orchestrator.service.api import app
 
     return TestClient(app)
 
@@ -736,8 +736,8 @@ def test_approvals_decide_accept_single_event(tmp_path):
 def test_review_feedback_intake_e2e(tmp_path):
     """End-to-end: import review -> list -> decide -> verify in quality flywheel."""
     db = _setup_db(tmp_path)
-    from story_lifecycle.orchestrator.review_feedback import import_review
-    from story_lifecycle.orchestrator.quality import (
+    from story_lifecycle.orchestrator.evaluation.review_feedback import import_review
+    from story_lifecycle.orchestrator.evaluation.quality import (
         update_finding_status,
         build_quality_packet,
         check_dod,

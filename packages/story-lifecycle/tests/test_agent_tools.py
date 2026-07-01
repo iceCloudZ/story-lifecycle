@@ -2,7 +2,7 @@
 
 import json
 
-from story_lifecycle.orchestrator.agent_tools import ORCHESTRATOR_TOOLS
+from story_lifecycle.orchestrator.engine.agent_tools import ORCHESTRATOR_TOOLS
 
 
 class TestToolSchema:

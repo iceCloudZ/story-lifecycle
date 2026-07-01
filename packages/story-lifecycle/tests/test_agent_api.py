@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from story_lifecycle.orchestrator.api import app
+from story_lifecycle.orchestrator.service.api import app
 from story_lifecycle.db import models as db
 
 
@@ -44,7 +44,7 @@ class TestPlanConfirm:
         }
         db.update_story("TEST-001", context_json=json.dumps(ctx))
 
-        with patch("story_lifecycle.orchestrator.graph.start_story_async"):
+        with patch("story_lifecycle.orchestrator.engine.graph.start_story_async"):
             resp = client.post("/api/story/TEST-001/plan/confirm")
 
         assert resp.status_code == 200
@@ -68,7 +68,7 @@ class TestPlanRegenerate:
         }
 
         with patch(
-            "story_lifecycle.orchestrator.planner.get_llm", return_value=mock_llm
+            "story_lifecycle.orchestrator.engine.planner.get_llm", return_value=mock_llm
         ):
             resp = client.post("/api/story/TEST-001/plan/regenerate")
 

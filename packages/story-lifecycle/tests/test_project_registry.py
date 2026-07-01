@@ -2,7 +2,7 @@
 
 import subprocess
 
-from story_lifecycle.orchestrator.project_registry import (
+from story_lifecycle.orchestrator.workspace.project_registry import (
     register_project,
     check_project_availability,
     add_runtime_fact,

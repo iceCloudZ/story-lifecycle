@@ -58,7 +58,7 @@ def test_create_sub_story(tmp_path):
         m.update_context("FEAT-001", "prd_path", "prd/FEAT-001.md")
         m.update_context("FEAT-001", "spec_path", ".story/context/FEAT-001/spec.md")
 
-        from story_lifecycle.orchestrator.service import create_sub_story
+        from story_lifecycle.orchestrator.service.story_service import create_sub_story
 
         sub_key = create_sub_story(
             parent_key="FEAT-001",
@@ -106,7 +106,7 @@ def test_abort_sub_story(tmp_path):
         m.update_story("FEAT-002-sub-1", sub_type="bug-fix")
         m.update_story("FEAT-002", status="waiting_subtasks")
 
-        from story_lifecycle.orchestrator.service import abort_story
+        from story_lifecycle.orchestrator.service.story_service import abort_story
 
         abort_story("FEAT-002-sub-1", "User abort")
 
@@ -132,7 +132,7 @@ def test_resume_parent(tmp_path):
         m.update_story("FEAT-003", status="waiting_subtasks")
         m.update_story("FEAT-003-sub-1", status="active")
 
-        from story_lifecycle.orchestrator.service import resume_parent
+        from story_lifecycle.orchestrator.service.story_service import resume_parent
 
         resume_parent("FEAT-003", strategy="pause_subs")
 
@@ -160,7 +160,7 @@ def test_resume_parent_abort_subs(tmp_path):
         m.update_story("FEAT-004", status="waiting_subtasks")
         m.update_story("FEAT-004-sub-1", status="active")
 
-        from story_lifecycle.orchestrator.service import resume_parent
+        from story_lifecycle.orchestrator.service.story_service import resume_parent
 
         resume_parent("FEAT-004", strategy="abort_subs")
 
@@ -185,7 +185,7 @@ def test_nested_sub_story_rejected(tmp_path):
             subtask_index=0,
         )
 
-        from story_lifecycle.orchestrator.service import create_sub_story
+        from story_lifecycle.orchestrator.service.story_service import create_sub_story
 
         with pytest.raises(ValueError, match="嵌套"):
             create_sub_story(
@@ -204,7 +204,7 @@ def test_api_create_sub_story(tmp_path):
         m.create_story(story_key="API-001", title="Parent", workspace=str(tmp_path))
 
         from fastapi.testclient import TestClient
-        from story_lifecycle.orchestrator.api import app
+        from story_lifecycle.orchestrator.service.api import app
 
         client = TestClient(app)
 
@@ -235,7 +235,7 @@ def test_api_abort_story(tmp_path):
         m.create_story(story_key="API-002", title="To abort", workspace=str(tmp_path))
 
         from fastapi.testclient import TestClient
-        from story_lifecycle.orchestrator.api import app
+        from story_lifecycle.orchestrator.service.api import app
 
         client = TestClient(app)
 
@@ -263,7 +263,7 @@ def test_api_resume_parent(tmp_path):
         m.update_story("API-003", status="waiting_subtasks")
 
         from fastapi.testclient import TestClient
-        from story_lifecycle.orchestrator.api import app
+        from story_lifecycle.orchestrator.service.api import app
 
         client = TestClient(app)
 
@@ -283,7 +283,7 @@ def test_workspace_mutex(tmp_path):
     """Only one story per workspace should be able to execute at a time."""
     m, original = _init_fresh_db(tmp_path)
     try:
-        from story_lifecycle.orchestrator.graph import (
+        from story_lifecycle.orchestrator.engine.graph import (
             acquire_workspace,
             release_workspace,
         )
@@ -307,7 +307,7 @@ def test_context_size_control(tmp_path):
         big_ctx = json.dumps({"huge_field": big_value, "small_field": "keep_me"})
         m.update_story("FEAT-006", context_json=big_ctx)
 
-        from story_lifecycle.orchestrator.service import create_sub_story
+        from story_lifecycle.orchestrator.service.story_service import create_sub_story
 
         sub_key = create_sub_story(
             parent_key="FEAT-006",

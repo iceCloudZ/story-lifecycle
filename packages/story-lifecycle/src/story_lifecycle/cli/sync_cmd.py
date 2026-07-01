@@ -70,7 +70,7 @@ def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id):
         _show_dry_run(items)
         return
 
-    from ..orchestrator.sync_service import sync_tapd
+    from ..orchestrator.service.sync_service import sync_tapd
 
     # An explicit workspace is required: the old `or "."` fallback stored the
     # server's CWD as the story workspace, scattering evidence artifacts.

@@ -1,7 +1,7 @@
 """Unit tests for debug_packet.py -- packet building, stuck reasons, redaction."""
 
 import pytest
-from story_lifecycle.orchestrator.debug_packet import (
+from story_lifecycle.orchestrator.observability.debug_packet import (
     build_debug_packet,
     redact_text,
     redact_mapping,
@@ -49,7 +49,7 @@ class TestBuildDebugPacket:
     def test_missing_config_stuck_reason(self, tmp_path, monkeypatch):
         """If no LLM key configured, stuck_reason should be missing_config."""
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             lambda: False,
         )
         from story_lifecycle.db.models import create_story
@@ -68,7 +68,7 @@ class TestStuckReasons:
     @pytest.fixture(autouse=True)
     def _setup(self, monkeypatch, tmp_path):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             lambda: True,
         )
         monkeypatch.setenv("STORY_HOME", str(tmp_path))

@@ -14,16 +14,40 @@ from rich.table import Table
 
 console = Console()
 
-# miner 复盘钩子路径（硬编码到 monorepo 子包位置；M6 改为 config 驱动）
-# list_cmd.py 位于 packages/story-lifecycle/src/story_lifecycle/cli/
-# 上溯 4 层到 packages/，再进入 story-miner
-_MINER_RETROSPECT_SCRIPT = os.path.normpath(
-    os.path.join(
-        os.path.dirname(__file__),
-        "..", "..", "..", "..",
-        "story-miner", "scripts", "retrospect.py",
+def _resolve_retrospect_script() -> str:
+    """Resolve the miner retrospect-script path without assuming the monorepo layout.
+
+    Priority (mirrors the STORY_MINER_OUT pattern in knowledge_provider.py):
+      1. ``STORY_RETROSPECT_SCRIPT`` env var
+      2. ``retrospect_script`` key in config.yaml (get_config)
+      3. monorepo relative fallback (backward compat for monorepo installs)
+    """
+    env_path = os.environ.get("STORY_RETROSPECT_SCRIPT")
+    if env_path:
+        return os.path.normpath(env_path)
+    try:
+        from ..config import get_config
+
+        cfg_path = get_config().get("retrospect_script")
+        if cfg_path:
+            return os.path.normpath(cfg_path)
+    except Exception:
+        pass
+    # Fallback: monorepo layout. list_cmd.py sits at
+    # packages/story-lifecycle/src/story_lifecycle/cli/, so 4 levels up
+    # reaches packages/, then into story-miner.
+    return os.path.normpath(
+        os.path.join(
+            os.path.dirname(__file__),
+            "..", "..", "..", "..",
+            "story-miner", "scripts", "retrospect.py",
+        )
     )
-)
+
+
+# miner 复盘钩子路径：env/config 驱动，回退 monorepo 相对位置（ISS-007）。
+# 保留模块级常量名作测试 patch 目标（见 test_story_list_cli.py）。
+_MINER_RETROSPECT_SCRIPT = _resolve_retrospect_script()
 
 
 def _run_miner_retrospect(story_key: str) -> None:

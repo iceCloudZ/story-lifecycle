@@ -206,10 +206,10 @@ def create(key, title, prd, profile, workspace, no_start, dry_run):
       story create BUG-042 -p prd/bug-042.md
       story create FEAT-001 --dry-run
     """
-    from ..orchestrator.service import create_and_start_story
-    from ..orchestrator.graph import start_story_async
+    from ..orchestrator.service.story_service import create_and_start_story
+    from ..orchestrator.engine.graph import start_story_async
     from ..orchestrator.nodes import load_profile
-    from ..orchestrator.nodes.prompt_renderer import _render_prompt
+    from ..orchestrator.engine.prompt_renderer import _render_prompt
 
     init_db()
     ws = workspace or str(Path.cwd())
@@ -407,7 +407,7 @@ def doctor(ctx):
 @doctor.command()
 def paths():
     """Scan for legacy .story-done, .story-context, .story-runs directories."""
-    from ..orchestrator.doctor_paths import run_doctor_paths
+    from ..orchestrator.workspace.doctor_paths import run_doctor_paths
 
     run_doctor_paths()
 
@@ -446,7 +446,7 @@ def _run_web_board(host, port):
 
     threading.Thread(target=open_browser, daemon=True).start()
     uvicorn.run(
-        "story_lifecycle.orchestrator.api:app", host=host, port=port, reload=False
+        "story_lifecycle.orchestrator.service.api:app", host=host, port=port, reload=False
     )
 
 
@@ -481,7 +481,7 @@ def _run_server(host, port):
     _sl.setLevel(logging.INFO)
 
     uvicorn.run(
-        "story_lifecycle.orchestrator.api:app", host=host, port=port, reload=False
+        "story_lifecycle.orchestrator.service.api:app", host=host, port=port, reload=False
     )
 
 

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from story_lifecycle.orchestrator.service import _validate_workspace, WorkspaceError
+from story_lifecycle.orchestrator.service.story_service import _validate_workspace, WorkspaceError
 
 
 class TestWorkspaceValidation:

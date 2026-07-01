@@ -1,4 +1,4 @@
-from story_lifecycle.orchestrator import prd_generator
+from story_lifecycle.orchestrator.service import prd_generator
 
 
 class FakeLLM:

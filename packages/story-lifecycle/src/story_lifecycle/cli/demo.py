@@ -9,8 +9,7 @@ from unittest.mock import patch
 from rich.console import Console
 
 from ..db import models as db
-from ..orchestrator import graph as graph_mod
-from ..orchestrator.demo_tool import DemoTool
+from ..orchestrator.engine import graph as graph_mod
 
 console = Console()
 
@@ -61,10 +60,9 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
     console.print("  Mode: [dim]simulated (no real AI)[/]")
     console.print()
 
-    demo_tool = DemoTool()
     start = time.monotonic()
 
-    from ..orchestrator import router as llm_router
+    from ..orchestrator.engine import router as llm_router
 
     def _demo_route(state, cfg):
         return {"action": "advance", "reasoning": "Demo mode"}
@@ -72,11 +70,10 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
     _mock_targets = [
         "story_lifecycle.orchestrator.nodes.graph_nodes.planner",
         "story_lifecycle.orchestrator.nodes.planner",
-        "story_lifecycle.orchestrator.planner",
+        "story_lifecycle.orchestrator.engine.planner",
     ]
 
     with (
-        patch("story_lifecycle.orchestrator.tools.get_tool") as mock_get_tool,
         patch("story_lifecycle.orchestrator.nodes.ttyd") as mock_ttyd,
         patch("story_lifecycle.orchestrator.nodes.notify"),
         patch.object(llm_router, "route", _demo_route),
@@ -93,7 +90,6 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
             m.compress_context.return_value = None
             mock_planners.append(mp)
 
-        mock_get_tool.return_value = demo_tool
         mock_ttyd.session_name.return_value = f"story-{_DEMO_KEY}"
         mock_ttyd.session_alive.return_value = True
         mock_ttyd._MPLEX = None

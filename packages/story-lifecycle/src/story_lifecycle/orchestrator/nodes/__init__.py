@@ -15,20 +15,19 @@ module `story_lifecycle.json_helpers`; callers import it directly from there.
 from pathlib import Path
 
 # ---- Module-level attributes (tests access nodes.planner, nodes.ttyd, etc.) ----
-from .. import planner as planner  # noqa: F401
-from .. import router as llm_router  # noqa: F401
+from ..engine import planner as planner  # noqa: F401
+from ..engine import router as llm_router  # noqa: F401
 from ...terminal import ttyd as ttyd
-from ..notify import send as notify  # noqa: F401
-from ..evaluator_loop import AdversarialConfig as AdversarialConfig
+from ..engine.notify import send as notify  # noqa: F401
 
 # ---- Config loaders (used by 5+ external files) ----
-from .profile_loader import (
+from ..engine.profile_loader import (
     load_profile as load_profile,
     get_stage_config as get_stage_config,
 )
 
 # ---- Prompt rendering (used by cli/main.py) ----
-from .prompt_renderer import (
+from ..engine.prompt_renderer import (
     _strip_planner_contract_duplicates as _strip_planner_contract_duplicates,
     _build_stage_contract as _build_stage_contract,
     _build_plan_executor_prompt as _build_plan_executor_prompt,

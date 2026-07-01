@@ -6,7 +6,7 @@ from story_lifecycle.sources.base import SourceItem
 
 class TestSyncService:
     def test_sync_creates_new_stories(self, isolated_story_home):
-        from story_lifecycle.orchestrator.sync_service import sync_tapd
+        from story_lifecycle.orchestrator.service.sync_service import sync_tapd
 
         items = [
             SourceItem(
@@ -72,7 +72,7 @@ class TestSyncService:
         assert story["source_id"] == "9999"  # source_id now linked
 
     def test_sync_updates_existing_stories(self, isolated_story_home):
-        from story_lifecycle.orchestrator.sync_service import sync_tapd
+        from story_lifecycle.orchestrator.service.sync_service import sync_tapd
 
         db.upsert_story_from_source(
             source_type="tapd",
@@ -105,7 +105,7 @@ class TestSyncService:
         assert s["deadline"] == "2026-06-20"
 
     def test_sync_dry_run_does_not_write(self, isolated_story_home):
-        from story_lifecycle.orchestrator.sync_service import sync_tapd
+        from story_lifecycle.orchestrator.service.sync_service import sync_tapd
 
         items = [
             SourceItem(
@@ -125,7 +125,7 @@ class TestSyncService:
         assert s is None
 
     def test_sync_status_only_skips_new(self, isolated_story_home):
-        from story_lifecycle.orchestrator.sync_service import sync_tapd
+        from story_lifecycle.orchestrator.service.sync_service import sync_tapd
 
         db.upsert_story_from_source(
             source_type="tapd", source_id="1001", title="已存在"
@@ -157,7 +157,7 @@ class TestSyncService:
         assert db.get_story("tapd-9999") is None
 
     def test_sync_empty_items(self, isolated_story_home):
-        from story_lifecycle.orchestrator.sync_service import sync_tapd
+        from story_lifecycle.orchestrator.service.sync_service import sync_tapd
 
         result = sync_tapd([], workspace="/tmp/test-ws")
         assert result["created"] == 0

@@ -11,7 +11,7 @@ def _module_exists(name: str) -> bool:
 
 
 def test_story_lifecycle_does_not_expose_contact_apis(isolated_story_home):
-    from story_lifecycle.orchestrator.api import app
+    from story_lifecycle.orchestrator.service.api import app
 
     contact_routes = [
         route.path for route in app.routes if route.path.startswith("/api/contact")

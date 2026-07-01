@@ -1,4 +1,4 @@
-from story_lifecycle.orchestrator.nodes.profile_loader import resolve_profile
+from story_lifecycle.orchestrator.engine.profile_loader import resolve_profile
 from story_lifecycle.db import models as db
 
 
@@ -19,7 +19,7 @@ def test_swebench_profile_explicitly_uses_headless():
 def test_done_watcher_selects_only_ready_interactive_story(
     isolated_story_home, tmp_path
 ):
-    from story_lifecycle.orchestrator.graph import find_ready_interactive_stories
+    from story_lifecycle.orchestrator.engine.graph import find_ready_interactive_stories
 
     ready_workspace = tmp_path / "ready"
     ready_workspace.mkdir()
@@ -56,7 +56,7 @@ def test_done_watcher_selects_only_ready_interactive_story(
 def test_terminal_spawn_starts_profile_agent_not_shell(
     isolated_story_home, tmp_path, monkeypatch
 ):
-    import story_lifecycle.orchestrator.api as api
+    import story_lifecycle.orchestrator.service.api as api
 
     db.upsert_story("TERM-1", workspace=str(tmp_path), profile="minimal")
     calls = []

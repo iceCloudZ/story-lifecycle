@@ -4,7 +4,7 @@ import json
 import zipfile
 from pathlib import Path
 import pytest
-from story_lifecycle.orchestrator.diagnostics import (
+from story_lifecycle.orchestrator.observability.diagnostics import (
     create_story_diagnostics_bundle,
     create_global_diagnostics_bundle,
 )

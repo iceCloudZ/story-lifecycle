@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from story_lifecycle.db import models as db
-from story_lifecycle.orchestrator.api import app
+from story_lifecycle.orchestrator.service.api import app
 
 
 @pytest.fixture
@@ -154,7 +154,7 @@ class TestContextAPI:
         """Entering a story id should fetch source detail and run PRD generator."""
         from story_lifecycle.sources.base import SourceItem
         from story_lifecycle.sources import tapd_source as tapd_source_mod
-        from story_lifecycle.orchestrator import prd_generator
+        from story_lifecycle.orchestrator.service import prd_generator
 
         class FakeTapdSource:
             def __init__(self, config):
@@ -201,7 +201,7 @@ class TestContextAPI:
         """A TAPD intake should stop when the PRD generator asks for DingTalk download."""
         from story_lifecycle.sources.base import SourceItem
         from story_lifecycle.sources import tapd_source as tapd_source_mod
-        from story_lifecycle.orchestrator import prd_generator
+        from story_lifecycle.orchestrator.service import prd_generator
 
         class FakeTapdSource:
             def __init__(self, config):
@@ -252,7 +252,7 @@ class TestContextAPI:
         """A TAPD intake should save PRD.md when the generator returns markdown."""
         from story_lifecycle.sources.base import SourceItem
         from story_lifecycle.sources import tapd_source as tapd_source_mod
-        from story_lifecycle.orchestrator import prd_generator
+        from story_lifecycle.orchestrator.service import prd_generator
 
         class FakeTapdSource:
             def __init__(self, config):

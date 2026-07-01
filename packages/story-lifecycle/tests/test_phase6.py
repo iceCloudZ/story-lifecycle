@@ -1,9 +1,11 @@
-"""Tests for Phase 6 modules: shadow_router, blackboard, meta_planner,
-stage_library, stage_graph, graph_patch, policy_engine (Guarded Apply),
-and flywheel sub-package.
+"""Tests for Phase 6 modules: shadow_router, meta_planner,
+stage_library, stage_graph, graph_patch, policy_engine (Guarded Apply).
+
+The dual-flywheel sub-package (domain/engine/promotion) was removed in ISS-008
+— dead code superseded by the live quality flywheel (db.models/seeds/quality).
 """
 
-from story_lifecycle.orchestrator.shadow_router import (
+from story_lifecycle.orchestrator.engine.shadow_router import (
     ShadowDecision,
     ShadowTrigger,
     detect_triggers,
@@ -13,11 +15,7 @@ from story_lifecycle.orchestrator.shadow_router import (
     update_counterfactual,
     compute_shadow_stats,
 )
-from story_lifecycle.orchestrator.blackboard import (
-    refresh_snapshot,
-    get_router_evidence,
-)
-from story_lifecycle.orchestrator.meta_planner import (
+from story_lifecycle.orchestrator.engine.meta_planner import (
     StoryScope,
     ExecutionMode,
     StrategyEnvelope,
@@ -28,20 +26,20 @@ from story_lifecycle.orchestrator.meta_planner import (
     should_decompose,
     generate_task_packets,
 )
-from story_lifecycle.orchestrator.stage_library import (
+from story_lifecycle.orchestrator.engine.stage_library import (
     StageCategory,
     BUILTIN_STAGES,
     get_stage_definition,
     is_valid_stage,
     validate_stage_inputs,
 )
-from story_lifecycle.orchestrator.stage_graph import (
+from story_lifecycle.orchestrator.engine.stage_graph import (
     build_default_graph,
     build_simple_graph,
     build_strict_graph,
     validate_graph,
 )
-from story_lifecycle.orchestrator.graph_patch import (
+from story_lifecycle.orchestrator.engine.graph_patch import (
     PatchType,
     PatchStatus,
     GraphPatch,
@@ -52,38 +50,13 @@ from story_lifecycle.orchestrator.graph_patch import (
     apply_patch,
     reject_patch,
 )
-from story_lifecycle.orchestrator.policy_engine import (
+from story_lifecycle.orchestrator.engine.policy_engine import (
     AutonomyLevel,
     GuardedAutonomy,
     ActionCategory,
     GUARDED_RULES,
     DEFAULT_GUARDED_LEVEL,
     evaluate_guarded,
-)
-from story_lifecycle.orchestrator.flywheel import (
-    DomainAsset,
-    TraceMaturity,
-    record_domain_outcome,
-    record_engine_trace,
-    PromotionItem,
-    PromotionStage,
-    propose_item,
-    promote_item,
-    reject_item,
-)
-from story_lifecycle.orchestrator.flywheel.domain import (
-    save_domain_asset,
-    load_domain_asset,
-)
-from story_lifecycle.orchestrator.flywheel.engine import (
-    update_trace_outcome,
-    get_or_create_strategy,
-    update_strategy_performance,
-)
-from story_lifecycle.orchestrator.flywheel.promotion import (
-    ItemSource,
-    load_promotion_queue,
-    arbitrate_priority,
 )
 
 
@@ -179,7 +152,7 @@ class TestShadowProposal:
 class TestShadowPersistence:
     def test_save_and_load(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.shadow_router.SHADOW_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.shadow_router.SHADOW_DIR", tmp_path
         )
         decision = ShadowDecision(
             shadow_id="abc123",
@@ -201,7 +174,7 @@ class TestShadowPersistence:
 
     def test_counterfactual_update(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.shadow_router.SHADOW_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.shadow_router.SHADOW_DIR", tmp_path
         )
         decision = ShadowDecision(
             shadow_id="def456",
@@ -226,7 +199,7 @@ class TestShadowPersistence:
 
     def test_compute_stats(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.shadow_router.SHADOW_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.shadow_router.SHADOW_DIR", tmp_path
         )
         decision = ShadowDecision(
             shadow_id="stat1",
@@ -245,48 +218,6 @@ class TestShadowPersistence:
         stats = compute_shadow_stats()
         assert stats.total == 1
         assert stats.proposed_correct == 1
-
-
-# ── Blackboard tests ──
-
-
-class TestBlackboardSnapshot:
-    def test_refresh_creates_snapshot(self, tmp_path, monkeypatch, isolated_story_home):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.blackboard.SNAPSHOT_DIR", tmp_path
-        )
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.blackboard.SNAPSHOT_FILE",
-            tmp_path / "snapshot.json",
-        )
-        # Reset cached snapshot
-        import story_lifecycle.orchestrator.blackboard as bb_mod
-
-        bb_mod._cached_snapshot = None
-        bb_mod._last_refresh = 0.0
-
-        snapshot = refresh_snapshot(force=True)
-        assert snapshot.updated_at != ""
-        assert isinstance(snapshot.provider_health, list)
-        assert isinstance(snapshot.failure_signatures, list)
-
-    def test_router_evidence_graceful(self, tmp_path, monkeypatch, isolated_story_home):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.blackboard.SNAPSHOT_DIR", tmp_path
-        )
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.blackboard.SNAPSHOT_FILE",
-            tmp_path / "snapshot.json",
-        )
-        import story_lifecycle.orchestrator.blackboard as bb_mod
-
-        bb_mod._cached_snapshot = None
-        bb_mod._last_refresh = 0.0
-
-        evidence = get_router_evidence()
-        assert isinstance(evidence, dict)
-        assert "provider_degraded" in evidence
-        assert "is_stale" in evidence
 
 
 # ── Meta-Planner tests ──
@@ -333,7 +264,7 @@ class TestExecutionMode:
 class TestStrategyEnvelope:
     def test_generate_and_load(self, tmp_path, monkeypatch, isolated_story_home):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.meta_planner.STRATEGY_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.meta_planner.STRATEGY_DIR", tmp_path
         )
 
         envelope = generate_strategy(
@@ -354,7 +285,7 @@ class TestStrategyEnvelope:
 class TestDecomposition:
     def test_should_decompose_epic(self, tmp_path, monkeypatch, isolated_story_home):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.meta_planner.STRATEGY_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.meta_planner.STRATEGY_DIR", tmp_path
         )
         envelope = StrategyEnvelope(
             strategy_id="test",
@@ -377,7 +308,7 @@ class TestDecomposition:
 
     def test_generate_task_packets(self, tmp_path, monkeypatch, isolated_story_home):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.meta_planner.STRATEGY_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.meta_planner.STRATEGY_DIR", tmp_path
         )
         envelope = StrategyEnvelope(
             strategy_id="test",
@@ -484,7 +415,7 @@ class TestStageGraph:
 class TestGraphPatch:
     def test_assess_insert_risk(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.graph_patch.PATCH_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.graph_patch.PATCH_DIR", tmp_path
         )
         patch = GraphPatch(
             patch_id="p1",
@@ -499,7 +430,7 @@ class TestGraphPatch:
 
     def test_assess_deploy_insert_risk(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.graph_patch.PATCH_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.graph_patch.PATCH_DIR", tmp_path
         )
         patch = GraphPatch(
             patch_id="p2",
@@ -514,7 +445,7 @@ class TestGraphPatch:
 
     def test_create_and_approve(self, tmp_path, monkeypatch, isolated_story_home):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.graph_patch.PATCH_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.graph_patch.PATCH_DIR", tmp_path
         )
         patch = create_patch(
             story_key="T1",
@@ -530,7 +461,7 @@ class TestGraphPatch:
 
     def test_apply_patch(self, tmp_path, monkeypatch, isolated_story_home):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.graph_patch.PATCH_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.graph_patch.PATCH_DIR", tmp_path
         )
         patch = create_patch(
             story_key="T1",
@@ -546,7 +477,7 @@ class TestGraphPatch:
 
     def test_reject_patch(self, tmp_path, monkeypatch, isolated_story_home):
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.graph_patch.PATCH_DIR", tmp_path
+            "story_lifecycle.orchestrator.engine.graph_patch.PATCH_DIR", tmp_path
         )
         patch = create_patch(
             story_key="T1",
@@ -681,210 +612,3 @@ class TestGuardedApply:
             for category in ActionCategory:
                 key = (level.value, category.value)
                 assert key in GUARDED_RULES, f"Missing rule for {key}"
-
-
-# ── Flywheel Domain tests ──
-
-
-class TestDomainAsset:
-    def test_save_and_load(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.domain.DOMAIN_DIR", tmp_path
-        )
-        asset = DomainAsset(
-            asset_id="da1",
-            name="Error Handling Pattern",
-            asset_type="pattern",
-            domain="web-frontend",
-            description="Always handle errors in API calls",
-            content="Use try/catch with specific error types",
-            applies_to=["api-calls", "fetch"],
-            maturity=TraceMaturity.RAW,
-            confidence=0.5,
-        )
-        save_domain_asset(asset)
-        loaded = load_domain_asset("da1")
-        assert loaded is not None
-        assert loaded.name == "Error Handling Pattern"
-        assert loaded.domain == "web-frontend"
-
-    def test_record_outcome(self, tmp_path, monkeypatch, isolated_story_home):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.domain.DOMAIN_DIR",
-            tmp_path / "domain",
-        )
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.domain.OUTCOME_DIR",
-            tmp_path / "outcomes",
-        )
-        asset = DomainAsset(
-            asset_id="da2",
-            name="Test Pattern",
-            asset_type="rule",
-            domain="backend",
-            description="Test rule",
-            content="Test content",
-        )
-        save_domain_asset(asset)
-        outcome = record_domain_outcome("da2", "STORY-1", "implement", True, 0.8)
-        assert outcome.was_helpful is True
-        assert outcome.impact_score == 0.8
-
-
-# ── Flywheel Engine tests ──
-
-
-class TestEngineTrace:
-    def test_record_trace(self, tmp_path, monkeypatch, isolated_story_home):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.engine.ENGINE_DIR",
-            tmp_path / "engine",
-        )
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.engine.STRATEGY_DIR",
-            tmp_path / "engine" / "strategies",
-        )
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.engine.EVIDENCE_DIR",
-            tmp_path / "engine" / "evidence",
-        )
-        trace = record_engine_trace("STORY-1", "implement", "route", "retry")
-        assert trace.trace_id != ""
-        assert trace.decision == "retry"
-        assert trace.story_key == "STORY-1"
-
-    def test_update_outcome(self, tmp_path, monkeypatch, isolated_story_home):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.engine.ENGINE_DIR",
-            tmp_path / "engine",
-        )
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.engine.STRATEGY_DIR",
-            tmp_path / "engine" / "strategies",
-        )
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.engine.EVIDENCE_DIR",
-            tmp_path / "engine" / "evidence",
-        )
-        trace = record_engine_trace("STORY-2", "design", "strategy", "advance")
-        result = update_trace_outcome(trace.trace_id, "success")
-        assert result is True
-
-    def test_strategy_performance(self, tmp_path, monkeypatch, isolated_story_home):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.engine.STRATEGY_DIR",
-            tmp_path / "strategies",
-        )
-        strategy = get_or_create_strategy(
-            "retry_with_provider_switch", "Provider degradation"
-        )
-        assert strategy.strategy_name == "retry_with_provider_switch"
-
-        updated = update_strategy_performance("retry_with_provider_switch", True, 0.3)
-        assert updated is not None
-        assert updated.total_applications == 1
-        assert updated.success_count == 1
-
-
-# ── Flywheel Promotion tests ──
-
-
-class TestPromotionPipeline:
-    def test_propose_and_promote(self, tmp_path, monkeypatch, isolated_story_home):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.promotion.PROMOTION_DIR", tmp_path
-        )
-        item = propose_item(
-            source=ItemSource.DOMAIN,
-            source_id="da1",
-            name="Error Handling Pattern",
-            description="Always handle errors",
-            priority=1,
-        )
-        assert item.stage == PromotionStage.PROPOSED
-
-        # Promote to sandbox_validated
-        promoted = promote_item(item.item_id, promoted_by="auto_test")
-        assert promoted is not None
-        assert promoted.stage == PromotionStage.SANDBOX_VALIDATED
-
-        # Promote to active
-        promoted2 = promote_item(item.item_id, promoted_by="human")
-        assert promoted2 is not None
-        assert promoted2.stage == PromotionStage.ACTIVE
-
-    def test_reject_item(self, tmp_path, monkeypatch, isolated_story_home):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.promotion.PROMOTION_DIR", tmp_path
-        )
-        item = propose_item(
-            source=ItemSource.ENGINE,
-            source_id="es1",
-            name="Bad Strategy",
-            description="Does not work",
-        )
-        rejected = reject_item(item.item_id, reason="Failed validation")
-        assert rejected is not None
-        assert rejected.stage == PromotionStage.REJECTED
-        assert rejected.rejection_reason == "Failed validation"
-
-    def test_destructive_cannot_auto_promote(
-        self, tmp_path, monkeypatch, isolated_story_home
-    ):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.promotion.PROMOTION_DIR", tmp_path
-        )
-        item = propose_item(
-            source=ItemSource.DOMAIN,
-            source_id="da3",
-            name="Destructive Action",
-            description="Deletes data",
-            safety_tags=["destructive"],
-        )
-        # Auto-promote should fail for destructive items
-        promoted = promote_item(item.item_id, promoted_by="auto")
-        assert promoted is None  # Cannot auto-promote destructive
-
-    def test_priority_arbitration(self):
-        items = [
-            PromotionItem(
-                item_id="1",
-                source=ItemSource.ENGINE,
-                source_id="e1",
-                name="E",
-                description="",
-            ),
-            PromotionItem(
-                item_id="2",
-                source=ItemSource.DOMAIN,
-                source_id="d1",
-                name="D",
-                description="",
-            ),
-            PromotionItem(
-                item_id="3",
-                source=ItemSource.ENGINE,
-                source_id="e2",
-                name="ES",
-                description="",
-                safety_tags=["critical"],
-            ),
-        ]
-        result = arbitrate_priority(items)
-        # Safety items first, then domain, then engine
-        assert result[0].item_id == "3"
-        assert result[1].item_id == "2"
-        assert result[2].item_id == "1"
-
-    def test_promotion_queue(self, tmp_path, monkeypatch, isolated_story_home):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.flywheel.promotion.PROMOTION_DIR", tmp_path
-        )
-        propose_item(ItemSource.DOMAIN, "d1", "Asset 1", "Desc 1")
-        promote_item(
-            propose_item(ItemSource.DOMAIN, "d2", "Asset 2", "Desc 2").item_id,
-            promoted_by="test",
-        )
-
-        queue = load_promotion_queue()
-        assert queue.pending_count() + queue.sandbox_count() + queue.active_count() == 2

@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from story_lifecycle.orchestrator.planner import (
+from story_lifecycle.orchestrator.engine.planner import (
     run_orchestrator_agent,
     continue_orchestrator_agent,
     _build_agent_system_prompt,
@@ -117,7 +117,7 @@ class TestRunOrchestratorAgent:
         actions_received = []
 
         with patch(
-            "story_lifecycle.orchestrator.planner.get_llm", return_value=mock_llm
+            "story_lifecycle.orchestrator.engine.planner.get_llm", return_value=mock_llm
         ):
             result = run_orchestrator_agent(
                 "TEST-001", on_action=lambda e: actions_received.append(e)
@@ -147,7 +147,7 @@ class TestRunOrchestratorAgent:
         mock_llm.invoke_with_tools = mock_invoke
 
         with patch(
-            "story_lifecycle.orchestrator.planner.get_llm", return_value=mock_llm
+            "story_lifecycle.orchestrator.engine.planner.get_llm", return_value=mock_llm
         ):
             run_orchestrator_agent("TEST-001")
 
@@ -187,7 +187,7 @@ class TestRunOrchestratorAgent:
         mock_llm.invoke_with_tools = mock_invoke
 
         with patch(
-            "story_lifecycle.orchestrator.planner.get_llm", return_value=mock_llm
+            "story_lifecycle.orchestrator.engine.planner.get_llm", return_value=mock_llm
         ):
             result = run_orchestrator_agent("TEST-001")
 

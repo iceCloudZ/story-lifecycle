@@ -109,7 +109,7 @@ def test_packaged_and_root_profiles_consistent():
 
 
 def test_service_imports():
-    from story_lifecycle.orchestrator.service import create_and_start_story
+    from story_lifecycle.orchestrator.service.story_service import create_and_start_story
 
     assert callable(create_and_start_story)
 
