@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..db import models as db
+from ...db import models as db
 
 
 # -------- attempt_id --------
@@ -225,7 +225,7 @@ def build_debug_response(
         recent_limit: Max recent events for the timeline bucket.
         event_type: If set, filter recentEvents to this type at the DB level.
     """
-    from .evaluation.quality import check_dor, check_dod
+    from ..evaluation.quality import check_dor, check_dod
 
     s = db.get_story(story_key)
     if not s:

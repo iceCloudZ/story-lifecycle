@@ -6,7 +6,7 @@ Covers all 10 deterministic stuck_reason codes in debug_packet._explain_stuck_re
 import json
 from unittest.mock import patch
 
-from story_lifecycle.orchestrator.debug_packet import _explain_stuck_reason
+from story_lifecycle.orchestrator.observability.debug_packet import _explain_stuck_reason
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ def _exited_without_done():
 class TestMissingConfig:
     def test_no_llm_config(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=False,
         ):
             result = _explain_stuck_reason(_story(), False, None, _no_exit(), True)
@@ -57,7 +57,7 @@ class TestMissingConfig:
 
     def test_with_config_skips(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(_story(), False, None, _no_exit(), True)
@@ -67,7 +67,7 @@ class TestMissingConfig:
 class TestStoryBlocked:
     def test_blocked_status(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
@@ -80,7 +80,7 @@ class TestStoryBlocked:
 class TestWaitingSubtasks:
     def test_waiting_subtasks_status(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
@@ -94,7 +94,7 @@ class TestGateBlocked:
     def test_paused_with_gate(self):
         ctx = json.dumps({"last_gate_decision_id": "gate-123"})
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
@@ -105,7 +105,7 @@ class TestGateBlocked:
 
     def test_paused_without_gate(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
@@ -121,7 +121,7 @@ class TestGateBlocked:
 class TestDoneMalformed:
     def test_done_exists_but_invalid(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
@@ -136,7 +136,7 @@ class TestDoneMalformed:
 
     def test_done_exists_and_valid(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
@@ -152,7 +152,7 @@ class TestDoneMalformed:
 class TestStageTimeout:
     def test_long_running_stage(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
@@ -163,7 +163,7 @@ class TestStageTimeout:
 
     def test_short_running_stage_not_timeout(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
@@ -173,7 +173,7 @@ class TestStageTimeout:
 
     def test_session_dead_not_timeout(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
@@ -186,7 +186,7 @@ class TestStageTimeout:
 class TestCliExitedWithoutDone:
     def test_exited_without_done(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
@@ -199,7 +199,7 @@ class TestCliExitedWithoutDone:
 class TestDoneWaiting:
     def test_session_alive_no_done(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(_story(), False, None, _no_exit(), True)
@@ -210,11 +210,11 @@ class TestDoneWaiting:
 class TestLoopExhausted:
     def test_loop_exhausted(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             with patch(
-                "story_lifecycle.orchestrator.debug_packet._has_loop_exhausted",
+                "story_lifecycle.orchestrator.observability.debug_packet._has_loop_exhausted",
                 return_value=True,
             ):
                 result = _explain_stuck_reason(_story(), True, True, _no_exit(), False)
@@ -223,11 +223,11 @@ class TestLoopExhausted:
 
     def test_not_exhausted(self):
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             with patch(
-                "story_lifecycle.orchestrator.debug_packet._has_loop_exhausted",
+                "story_lifecycle.orchestrator.observability.debug_packet._has_loop_exhausted",
                 return_value=False,
             ):
                 result = _explain_stuck_reason(_story(), True, True, _no_exit(), False)
@@ -238,11 +238,11 @@ class TestNoneReason:
     def test_happy_path(self):
         """Happy path: done exists, valid, no issues → 'none'."""
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             with patch(
-                "story_lifecycle.orchestrator.debug_packet._has_loop_exhausted",
+                "story_lifecycle.orchestrator.observability.debug_packet._has_loop_exhausted",
                 return_value=False,
             ):
                 result = _explain_stuck_reason(_story(), True, True, _no_exit(), False)
@@ -256,7 +256,7 @@ class TestPriorityOrder:
     def test_blocked_over_gate(self):
         """blocked status takes priority over paused checks."""
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
@@ -267,7 +267,7 @@ class TestPriorityOrder:
     def test_config_over_all(self):
         """missing_config is checked first regardless of other state."""
         with patch(
-            "story_lifecycle.orchestrator.debug_packet._check_llm_configured",
+            "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=False,
         ):
             result = _explain_stuck_reason(

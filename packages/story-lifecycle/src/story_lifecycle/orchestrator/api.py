@@ -1081,7 +1081,7 @@ def debug_story(story_key: str, limit: int = 50, event_type: str = ""):
         limit: Max recentEvents (default 50). Applies at DB level.
         event_type: Filter recentEvents to this type at DB level.
     """
-    from .observability import build_debug_response
+    from .observability.events import build_debug_response
 
     response = build_debug_response(
         story_key, recent_limit=limit, event_type=event_type
