@@ -1,4 +1,4 @@
-"""Tests for Phase 6 modules: shadow_router, blackboard, meta_planner,
+"""Tests for Phase 6 modules: shadow_router, meta_planner,
 stage_library, stage_graph, graph_patch, policy_engine (Guarded Apply).
 
 The dual-flywheel sub-package (domain/engine/promotion) was removed in ISS-008
@@ -14,10 +14,6 @@ from story_lifecycle.orchestrator.shadow_router import (
     load_shadow,
     update_counterfactual,
     compute_shadow_stats,
-)
-from story_lifecycle.orchestrator.blackboard import (
-    refresh_snapshot,
-    get_router_evidence,
 )
 from story_lifecycle.orchestrator.meta_planner import (
     StoryScope,
@@ -222,48 +218,6 @@ class TestShadowPersistence:
         stats = compute_shadow_stats()
         assert stats.total == 1
         assert stats.proposed_correct == 1
-
-
-# ── Blackboard tests ──
-
-
-class TestBlackboardSnapshot:
-    def test_refresh_creates_snapshot(self, tmp_path, monkeypatch, isolated_story_home):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.blackboard.SNAPSHOT_DIR", tmp_path
-        )
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.blackboard.SNAPSHOT_FILE",
-            tmp_path / "snapshot.json",
-        )
-        # Reset cached snapshot
-        import story_lifecycle.orchestrator.blackboard as bb_mod
-
-        bb_mod._cached_snapshot = None
-        bb_mod._last_refresh = 0.0
-
-        snapshot = refresh_snapshot(force=True)
-        assert snapshot.updated_at != ""
-        assert isinstance(snapshot.provider_health, list)
-        assert isinstance(snapshot.failure_signatures, list)
-
-    def test_router_evidence_graceful(self, tmp_path, monkeypatch, isolated_story_home):
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.blackboard.SNAPSHOT_DIR", tmp_path
-        )
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.blackboard.SNAPSHOT_FILE",
-            tmp_path / "snapshot.json",
-        )
-        import story_lifecycle.orchestrator.blackboard as bb_mod
-
-        bb_mod._cached_snapshot = None
-        bb_mod._last_refresh = 0.0
-
-        evidence = get_router_evidence()
-        assert isinstance(evidence, dict)
-        assert "provider_degraded" in evidence
-        assert "is_stale" in evidence
 
 
 # ── Meta-Planner tests ──
