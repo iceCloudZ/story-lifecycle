@@ -44,7 +44,7 @@ def validate_stage_done(story: dict) -> DoneValidationResult:
     if not done.exists():
         return DoneValidationResult(status=DoneStatus.MISSING)
 
-    from .nodes import robust_json_parse
+    from ..json_helpers import robust_json_parse
 
     try:
         data = robust_json_parse(done)

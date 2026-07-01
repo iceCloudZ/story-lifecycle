@@ -1,4 +1,11 @@
-"""First-run setup wizard — guide user to configure LLM API key."""
+"""First-run setup wizard — guide user to configure LLM API key.
+
+Config-file IO primitives (get/save/merge) live in the top-level
+`config.py` infra module (moved there in ISS-006 to break the layering
+inversion where `sources/`/`context_providers/`/`orchestrator/` depended on
+`cli/` just to read config). They are re-imported here for the entry-layer
+helpers and for backward-compatible imports.
+"""
 
 import os
 from pathlib import Path
@@ -7,10 +14,15 @@ import yaml
 from rich.console import Console
 from rich.panel import Panel
 
-console = Console()
+from ..config import (
+    CONFIG_DIR,
+    CONFIG_FILE,
+    _merge_config,
+    get_config,
+    save_config,
+)
 
-CONFIG_DIR = Path.home() / ".story-lifecycle"
-CONFIG_FILE = CONFIG_DIR / "config.yaml"
+console = Console()
 
 PRESET_PROVIDERS = {
     "1": {
@@ -45,13 +57,6 @@ PRESET_PROVIDERS = {
 }
 
 
-def _merge_config(existing: dict, updates: dict) -> dict:
-    """Merge updates into existing config. Preserves keys not in updates."""
-    merged = dict(existing)
-    merged.update(updates)
-    return merged
-
-
 def is_configured() -> bool:
     """Check if the user has completed setup."""
     if not CONFIG_FILE.exists():
@@ -61,16 +66,6 @@ def is_configured() -> bool:
     except yaml.YAMLError:
         return False
     return bool(config.get("api_key"))
-
-
-def get_config() -> dict:
-    """Load current config, or empty dict."""
-    if not CONFIG_FILE.exists():
-        return {}
-    try:
-        return yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError:
-        return {}
 
 
 def run_setup():
@@ -227,16 +222,6 @@ def run_setup():
             f"Re-run [bold]story setup[/] anytime to change settings.",
             border_style="green",
         )
-    )
-
-
-def save_config(config: dict):
-    existing = get_config()
-    merged = _merge_config(existing, config)
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(
-        yaml.dump(merged, default_flow_style=False, allow_unicode=True),
-        encoding="utf-8",
     )
 
 

@@ -7,6 +7,9 @@ These have been replaced by the Agent-driven execution loop in planner.py.
 ISS-005 removed the last LangGraph leftovers: stage_resolver, subtask_delegate,
 knowledge, errors (NodeError), and state (StoryState TypedDict). This module
 now only re-exports the still-live shared utilities.
+
+ISS-006 moved `json_helpers` (robust_json_parse) up to the top-level infra
+module `story_lifecycle.json_helpers`; callers import it directly from there.
 """
 
 from pathlib import Path
@@ -22,12 +25,6 @@ from ..evaluator_loop import AdversarialConfig as AdversarialConfig
 from .profile_loader import (
     load_profile as load_profile,
     get_stage_config as get_stage_config,
-)
-
-# ---- JSON parsing (used by debug_packet.py, entry.py) ----
-from .json_helpers import (
-    robust_json_parse as robust_json_parse,
-    _extract_json_object as _extract_json_object,
 )
 
 # ---- Prompt rendering (used by cli/main.py) ----

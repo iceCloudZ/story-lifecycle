@@ -1,3 +1,14 @@
+"""Tolerant JSON parsing for .done files (⑤ infra).
+
+Moved here from `orchestrator/nodes/json_helpers.py` (ISS-006) so that
+`knowledge/` no longer imports from the orchestration layer — fixing a
+layering inversion where a long-term-memory module reached into the
+orchestration engine for a utility.
+
+Pure functions: only imports `json`/`re`/`pathlib`. Safe to depend on from
+any layer.
+"""
+
 import json
 import re
 from pathlib import Path

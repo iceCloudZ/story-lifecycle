@@ -20,7 +20,7 @@ import importlib
 import logging
 import sys
 
-from ..cli.setup import get_config
+from ..config import get_config
 from .base import BaseStoryContextProvider
 
 log = logging.getLogger("story-lifecycle.context_providers")

@@ -105,7 +105,7 @@ def run_bootstrap(
     # Fallback: try to parse JSON from stdout
     import tempfile
 
-    from ..orchestrator.nodes.json_helpers import robust_json_parse
+    from ..json_helpers import robust_json_parse
 
     if proc.stdout.strip():
         # Write stdout to temp file so robust_json_parse can handle it
@@ -129,7 +129,7 @@ def run_bootstrap(
 
 
 def _parse_done(path: Path) -> dict:
-    from ..orchestrator.nodes.json_helpers import robust_json_parse
+    from ..json_helpers import robust_json_parse
 
     return robust_json_parse(path)
 

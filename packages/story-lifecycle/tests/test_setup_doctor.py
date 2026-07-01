@@ -9,6 +9,8 @@ from click.testing import CliRunner
 from story_lifecycle.cli.main import cli
 from story_lifecycle.cli.setup import (
     is_configured,
+)
+from story_lifecycle.config import (
     get_config,
     save_config,
     _merge_config,
@@ -22,9 +24,17 @@ from story_lifecycle.cli.setup import (
 
 @pytest.fixture(autouse=True)
 def _tmp_config(tmp_path, monkeypatch):
-    """Redirect config dir to a temp directory so tests don't touch ~/.story-lifecycle."""
+    """Redirect config dir to a temp directory so tests don't touch ~/.story-lifecycle.
+
+    Patches BOTH the infra `config` module (where get_config/save_config now
+    live, post-ISS-006) and `cli.setup` (which re-imports CONFIG_FILE for
+    is_configured/`run_setup` display). Without patching `config`, the moved
+    get_config/save_config would read/write the real ~/.story-lifecycle.
+    """
     cfg_dir = tmp_path / ".story-lifecycle"
     cfg_file = cfg_dir / "config.yaml"
+    monkeypatch.setattr("story_lifecycle.config.CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr("story_lifecycle.config.CONFIG_FILE", cfg_file)
     monkeypatch.setattr("story_lifecycle.cli.setup.CONFIG_DIR", cfg_dir)
     monkeypatch.setattr("story_lifecycle.cli.setup.CONFIG_FILE", cfg_file)
     yield cfg_file

@@ -16,7 +16,7 @@ def register_source(name: str, factory: Callable[[dict], StorySource]):
 def get_source(name: str, config: dict | None = None) -> StorySource | None:
     factory = _registry.get(name)
     if config is None:
-        from ..cli.setup import get_config
+        from ..config import get_config
 
         config = get_config().get("story_source", {}).get(name, {})
     return factory(config or {}) if factory else None

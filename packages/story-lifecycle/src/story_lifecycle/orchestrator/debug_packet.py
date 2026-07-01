@@ -33,7 +33,7 @@ def _check_llm_configured() -> bool:
     if os.environ.get("STORY_LLM_API_KEY"):
         return True
     try:
-        from ..cli.setup import get_config
+        from ..config import get_config
 
         cfg = get_config()
         if cfg.get("api_key") or cfg.get("STORY_LLM_API_KEY"):
@@ -187,7 +187,7 @@ def build_debug_packet(story_key: str) -> dict:
     done_exists = done_path.exists()
     done_valid = None
     if done_exists:
-        from .nodes import robust_json_parse
+        from ..json_helpers import robust_json_parse
 
         try:
             data = robust_json_parse(done_path)
