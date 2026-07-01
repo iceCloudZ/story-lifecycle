@@ -186,6 +186,42 @@ class KnowledgeContextProvider:
         lines.append("")
         return "\n".join(lines)
 
+    def _build_knowledge_index_section(
+        self, story_key: str, workspace: str, stage: str, task_type: str
+    ) -> str:
+        """Surface playbook/scenario/failure knowledge via the ``knowledge`` contract
+        package (``KnowledgeIndex.retrieve``). ISS-009 9a: turns the ④ knowledge layer
+        into a runtime contract instead of aspirational. Graceful — if the package is
+        not installed (lifecycle running standalone) or the knowledge dir has no
+        INDEX.json, returns '' (same silent-degrade pattern as the miner soft-seam).
+        """
+        try:
+            from knowledge import KnowledgeIndex
+        except ImportError:
+            return ""
+        try:
+            idx = KnowledgeIndex(str(_KNOWLEDGE_ROOT))
+        except Exception:
+            return ""
+        domain = (TASK_TYPE_DOMAINS.get(task_type) or ("",))[0]
+        entries = idx.retrieve(
+            story_key=story_key,
+            workspace=workspace,
+            stage=stage,
+            domain=domain,
+            top_k=5,
+        )
+        if not entries:
+            return ""
+        out = ["### 知识库（playbook / scenario / failure）\n"]
+        for e in entries:
+            out.append(f"- **{e.title}** (`{e.type}`)")
+            mr = getattr(e, "must_read", None) or []
+            if mr:
+                out.append(f"  - 必读：{', '.join(mr[:3])}")
+        out.append("")
+        return "\n".join(out)
+
     def get_context(self, story_key: str, workspace: str, stage: str) -> str | None:
         """Return markdown knowledge context for this story, or None."""
         task_type = self._task_type_for(story_key)
@@ -244,5 +280,15 @@ class KnowledgeContextProvider:
         elif stage == "verify":
             lines.append("### 验证建议\n")
             lines.append("- 针对上述高风险文件补充回归检查；若出现同类 bug，gate 应 block。\n")
+
+        # 5. playbook/scenario/failure 知识（④ 契约层 — via knowledge.KnowledgeIndex）
+        try:
+            ki_section = self._build_knowledge_index_section(
+                story_key, workspace, stage, task_type
+            )
+            if ki_section:
+                lines.append(ki_section)
+        except Exception:
+            pass
 
         return "\n".join(lines)
