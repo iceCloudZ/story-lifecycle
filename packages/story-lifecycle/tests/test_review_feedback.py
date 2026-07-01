@@ -507,7 +507,7 @@ def _get_api_client(tmp_path):
     from story_lifecycle.db.models import init_db
 
     init_db()
-    from story_lifecycle.orchestrator.api import app
+    from story_lifecycle.orchestrator.service.api import app
 
     return TestClient(app)
 

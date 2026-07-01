@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from story_lifecycle.db import models as db
-from story_lifecycle.orchestrator.api import app
+from story_lifecycle.orchestrator.service.api import app
 
 
 @pytest.fixture

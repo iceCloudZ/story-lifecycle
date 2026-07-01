@@ -21,7 +21,7 @@ def test_source_id_columns(isolated_story_home):
 def test_create_story_from_source(isolated_story_home):
     """create_story_from_source should create a story with source metadata."""
     from story_lifecycle.sources.base import SourceItem
-    from story_lifecycle.orchestrator.service import create_story_from_source
+    from story_lifecycle.orchestrator.service.story_service import create_story_from_source
 
     item = SourceItem(
         id="1144381896001001234",
@@ -47,7 +47,7 @@ def test_create_story_from_source(isolated_story_home):
 
 def test_derive_story_key():
     from story_lifecycle.sources.base import SourceItem
-    from story_lifecycle.orchestrator.service import _derive_story_key
+    from story_lifecycle.orchestrator.service.story_service import _derive_story_key
 
     tapd_item = SourceItem(
         id="1144381896001001234",
@@ -87,7 +87,7 @@ def test_fetch_bug_content_aggregation():
 
 def test_derive_story_key_github():
     from story_lifecycle.sources.base import SourceItem
-    from story_lifecycle.orchestrator.service import _derive_story_key
+    from story_lifecycle.orchestrator.service.story_service import _derive_story_key
 
     gh_item = SourceItem(
         id="42", source="github", item_type="requirement", title="", description=""

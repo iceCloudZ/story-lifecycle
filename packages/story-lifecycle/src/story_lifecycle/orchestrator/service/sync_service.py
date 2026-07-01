@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from ..db import models as db
+from ...db import models as db
 
 log = logging.getLogger(__name__)
 

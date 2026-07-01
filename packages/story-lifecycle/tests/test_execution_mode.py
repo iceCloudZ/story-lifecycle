@@ -56,7 +56,7 @@ def test_done_watcher_selects_only_ready_interactive_story(
 def test_terminal_spawn_starts_profile_agent_not_shell(
     isolated_story_home, tmp_path, monkeypatch
 ):
-    import story_lifecycle.orchestrator.api as api
+    import story_lifecycle.orchestrator.service.api as api
 
     db.upsert_story("TERM-1", workspace=str(tmp_path), profile="minimal")
     calls = []

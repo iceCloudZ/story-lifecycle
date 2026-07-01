@@ -12,7 +12,7 @@ from story_lifecycle.db import models as db
 @pytest.fixture
 def api_client(isolated_story_home):
     """Create a FastAPI TestClient with isolated DB."""
-    from story_lifecycle.orchestrator.api import app
+    from story_lifecycle.orchestrator.service.api import app
     from fastapi.testclient import TestClient
 
     return TestClient(app)
@@ -154,7 +154,7 @@ class TestWSStoryListJSON:
         list (which seeds the Dashboard's store/initialData) must include
         tapdType/intakeState — the Dashboard filters on them. _story_list_json
         previously returned only 7 fields, so the filters matched nothing."""
-        from story_lifecycle.orchestrator.api import _story_list_json
+        from story_lifecycle.orchestrator.service.api import _story_list_json
 
         db.upsert_story(
             "WS-TEST-001",
@@ -173,7 +173,7 @@ class TestWSStoryListJSON:
 
     def test_ws_push_matches_rest_shape(self, api_client, isolated_story_home):
         """The WS list and the REST /api/story list must serialize identically."""
-        from story_lifecycle.orchestrator.api import _story_list_json
+        from story_lifecycle.orchestrator.service.api import _story_list_json
 
         db.upsert_story(
             "WS-TEST-002",

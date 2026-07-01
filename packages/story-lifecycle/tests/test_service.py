@@ -4,13 +4,13 @@ import tempfile
 
 
 def test_import_service():
-    from story_lifecycle.orchestrator.service import create_and_start_story
+    from story_lifecycle.orchestrator.service.story_service import create_and_start_story
 
     assert callable(create_and_start_story)
 
 
 def test_create_and_start_story():
-    from story_lifecycle.orchestrator.service import create_and_start_story
+    from story_lifecycle.orchestrator.service.story_service import create_and_start_story
     from story_lifecycle.db.models import get_story, init_db
 
     init_db()

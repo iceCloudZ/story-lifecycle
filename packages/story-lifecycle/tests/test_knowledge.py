@@ -389,7 +389,7 @@ class TestCreateStoryKnowledgeHint:
         monkeypatch.setattr("story_lifecycle.cli.main.is_configured", lambda: True)
         monkeypatch.setattr("story_lifecycle.cli.main.load_config_to_env", lambda: None)
         monkeypatch.setattr(
-            "story_lifecycle.orchestrator.service.create_and_start_story",
+            "story_lifecycle.orchestrator.service.story_service.create_and_start_story",
             lambda **kw: kw["story_key"],
         )
         monkeypatch.setattr(

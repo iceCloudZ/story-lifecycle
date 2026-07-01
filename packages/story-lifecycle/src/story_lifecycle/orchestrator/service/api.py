@@ -19,23 +19,23 @@ from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from ..adapters import get_adapter
-from ..db import models as db
-from ..db.models import init_db
-from ..terminal.pty import (
+from ...adapters import get_adapter
+from ...db import models as db
+from ...db.models import init_db
+from ...terminal.pty import (
     get_pty,
     ensure_agent_pty,
     kill_pty,
     list_pty_sessions,
     spawn_pty,
 )
-from .engine.graph import (
+from ..engine.graph import (
     start_story_async,
     recover_orphan_stories,
     resume_ready_interactive_stories,
 )
-from .nodes.profile_loader import resolve_profile
-from .engine import planner
+from ..nodes.profile_loader import resolve_profile
+from ..engine import planner
 
 
 log = logging.getLogger("story-lifecycle.api")
@@ -540,7 +540,7 @@ def get_story_diff(story_key: str):
 
 @app.post("/api/story")
 def create_story(req: CreateStoryRequest):
-    from .service import create_and_start_story
+    from .story_service import create_and_start_story
 
     workspace = req.workspace.strip()
     if not workspace:
@@ -645,7 +645,7 @@ def archive_story(story_key: str):
 
 @app.post("/api/story/{parent_key}/sub")
 def api_create_sub_story(parent_key: str, req: CreateSubStoryRequest):
-    from .service import create_sub_story as svc_create_sub
+    from .story_service import create_sub_story as svc_create_sub
 
     try:
         sub_key = svc_create_sub(
@@ -672,7 +672,7 @@ def api_create_sub_story(parent_key: str, req: CreateSubStoryRequest):
 
 @app.post("/api/story/{story_key}/abort")
 def api_abort_story(story_key: str, req: AbortRequest = None):
-    from .service import abort_story as svc_abort
+    from .story_service import abort_story as svc_abort
 
     try:
         svc_abort(story_key, req.reason if req else "User abort")
@@ -683,7 +683,7 @@ def api_abort_story(story_key: str, req: AbortRequest = None):
 
 @app.put("/api/story/{parent_key}/resume")
 def api_resume_parent(parent_key: str, req: ResumeParentRequest = None):
-    from .service import resume_parent as svc_resume
+    from .story_service import resume_parent as svc_resume
 
     strategy = req.strategy if req else "pause_subs"
     try:
@@ -1081,7 +1081,7 @@ def debug_story(story_key: str, limit: int = 50, event_type: str = ""):
         limit: Max recentEvents (default 50). Applies at DB level.
         event_type: Filter recentEvents to this type at DB level.
     """
-    from .observability.events import build_debug_response
+    from ..observability.events import build_debug_response
 
     response = build_debug_response(
         story_key, recent_limit=limit, event_type=event_type
@@ -1130,7 +1130,7 @@ async def get_findings(
 
 @app.get("/api/story/{story_key}/quality")
 async def get_quality_status(story_key: str):
-    from .evaluation.quality import check_dor, check_dod
+    from ..evaluation.quality import check_dor, check_dod
 
     findings = db.get_open_findings(story_key)
     patterns = db.get_active_learned_patterns(limit=10)
@@ -1157,7 +1157,7 @@ async def get_patterns(status: str = "active"):
 async def approve_pattern_endpoint(pattern_id: str):
     from fastapi import HTTPException
 
-    from .evaluation.quality import approve_pattern, activate_pattern
+    from ..evaluation.quality import approve_pattern, activate_pattern
 
     p = db.get_learned_pattern(pattern_id)
     if p is None:
@@ -1177,7 +1177,7 @@ async def approve_pattern_endpoint(pattern_id: str):
 async def reject_pattern_endpoint(pattern_id: str):
     from fastapi import HTTPException
 
-    from .evaluation.quality import reject_pattern
+    from ..evaluation.quality import reject_pattern
 
     p = db.get_learned_pattern(pattern_id)
     if p is None:
@@ -1259,7 +1259,7 @@ def get_dependency_graph(story_key: str):
 @app.post("/api/patterns/{pattern_id}/approve")
 async def approve_pattern_endpoint_post(pattern_id: str):
     """Approve and activate a proposed pattern."""
-    from .evaluation.quality import approve_pattern, activate_pattern
+    from ..evaluation.quality import approve_pattern, activate_pattern
 
     p = db.get_learned_pattern(pattern_id)
     if p is None:
@@ -1278,7 +1278,7 @@ async def approve_pattern_endpoint_post(pattern_id: str):
 @app.post("/api/patterns/{pattern_id}/reject")
 async def reject_pattern_endpoint_post(pattern_id: str):
     """Reject a proposed pattern."""
-    from .evaluation.quality import reject_pattern
+    from ..evaluation.quality import reject_pattern
 
     p = db.get_learned_pattern(pattern_id)
     if p is None:
@@ -1306,7 +1306,7 @@ def api_import_review_feedback(story_key: str, req: ReviewFeedbackRequest):
     if not req.content.strip():
         raise HTTPException(400, "Review content is empty")
 
-    from .evaluation.review_feedback import import_review
+    from ..evaluation.review_feedback import import_review
 
     result = import_review(story_key, req.content)
     return {
@@ -1329,7 +1329,7 @@ def api_list_review_feedback(story_key: str):
 @app.put("/api/finding/{finding_id}/decide")
 def api_decide_finding(finding_id: str, req: DecideFindingRequest):
     """Make a decision on a finding: accept/reject/defer/downgrade/mark_verified."""
-    from .evaluation.quality import update_finding_status
+    from ..evaluation.quality import update_finding_status
 
     finding = db.get_finding(finding_id)
     if not finding:
@@ -1399,7 +1399,7 @@ class SyncRequest(BaseModel):
 @app.post("/api/sync/tapd")
 def api_sync_tapd(req: SyncRequest):
     """Trigger TAPD sync."""
-    from ..sources.tapd_source import TapdSource
+    from ...sources.tapd_source import TapdSource
 
     config = _load_tapd_config()
     if not config:
@@ -1530,7 +1530,7 @@ def _load_tapd_config() -> dict:
 def api_get_context(story_key: str):
     """Get full ContextBundle for a story."""
     try:
-        from .context.resolver import ContextResolver
+        from ..context.resolver import ContextResolver
 
         resolver = ContextResolver()
         bundle = resolver.resolve(story_key)
@@ -1579,7 +1579,7 @@ def api_put_context(story_key: str, req: PutContextRequest):
 @app.post("/api/story/{story_key}/context/refresh")
 def api_refresh_context(story_key: str):
     """Trigger auto-discovery for a single story. Does NOT start AI."""
-    from .context.auto_discovery import Scanner, Decider, Handler
+    from ..context.auto_discovery import Scanner, Decider, Handler
 
     sps = db.get_story_projects(story_key)
     scanner = Scanner()
@@ -1619,7 +1619,7 @@ def api_refresh_context(story_key: str):
 @app.get("/api/story/{story_key}/context/snapshot")
 def api_get_snapshot(story_key: str):
     """Get the latest context snapshot content."""
-    from .context.snapshot import generate_snapshot
+    from ..context.snapshot import generate_snapshot
 
     result = generate_snapshot(story_key)
     snapshot_path = Path(result["snapshot_path"])
@@ -1637,7 +1637,7 @@ def api_get_snapshot(story_key: str):
 def api_get_context_pack(story_key: str, skill: str = ""):
     """Render a neutral mixed-density context pack for AI injection."""
     try:
-        from .context.pack import generate_pack
+        from ..context.pack import generate_pack
 
         return generate_pack(story_key, skill=skill)
     except ValueError as e:
@@ -1650,7 +1650,7 @@ def api_get_release_prompt(story_key: str):
     if not db.get_story(story_key):
         raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
     try:
-        from .context.release_prompt import generate_release_prompt
+        from ..context.release_prompt import generate_release_prompt
 
         return generate_release_prompt(story_key)
     except ValueError as e:
@@ -1663,7 +1663,7 @@ def api_get_post_release_prompt(story_key: str):
     if not db.get_story(story_key):
         raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
     try:
-        from .context.release_prompt import generate_post_release_prompt
+        from ..context.release_prompt import generate_post_release_prompt
 
         return generate_post_release_prompt(story_key)
     except ValueError as e:
@@ -1696,7 +1696,7 @@ def api_sync_related_bugs(story_key: str):
     config = _load_tapd_config()
     if not config.get("workspace_id"):
         raise HTTPException(status_code=503, detail="TAPD not configured")
-    from ..sources.tapd_api import TapdApi
+    from ...sources.tapd_api import TapdApi
 
     api = TapdApi(workspace_id=config["workspace_id"])
     related = api.get_related_bugs(tapd_id) or []
@@ -1756,7 +1756,7 @@ def api_get_bugfix_prompt(story_key: str, bug_key: str):
     if not db.get_story(bug_key):
         raise HTTPException(404, "Bug not found")
     try:
-        from .context.release_prompt import generate_bugfix_prompt
+        from ..context.release_prompt import generate_bugfix_prompt
 
         return generate_bugfix_prompt(story_key, bug_key)
     except ValueError as e:
@@ -1775,7 +1775,7 @@ def api_get_batch_bugfix_prompt(story_key: str, req: BatchFixPromptRequest):
     if not req.bug_keys:
         raise HTTPException(400, "bug_keys is empty")
     try:
-        from .context.release_prompt import generate_batch_bugfix_prompt
+        from ..context.release_prompt import generate_batch_bugfix_prompt
 
         return generate_batch_bugfix_prompt(story_key, req.bug_keys)
     except ValueError as e:
@@ -1795,7 +1795,7 @@ def api_resolve_bug(bug_key: str):
     )
     config = _load_tapd_config()
     if config.get("workspace_id") and story.get("source_id"):
-        from ..sources.tapd_api import TapdApi
+        from ...sources.tapd_api import TapdApi
 
         api = TapdApi(workspace_id=config["workspace_id"])
         bug_id = story["source_id"].removeprefix("bug_")
@@ -1988,7 +1988,7 @@ def api_list_workspaces():
 @app.get("/api/projects")
 def api_list_projects():
     """List all registered projects with fresh availability."""
-    from .workspace.project_registry import check_project_availability
+    from ..workspace.project_registry import check_project_availability
 
     projects = db.list_projects()
     # 刷新每个项目的 availability（轻量 git rev-parse）
@@ -2000,7 +2000,7 @@ def api_list_projects():
 @app.post("/api/projects")
 def api_create_project(req: CreateProjectRequest):
     """Register a new project."""
-    from .workspace.project_registry import register_project
+    from ..workspace.project_registry import register_project
 
     proj = register_project(
         name=req.name,
@@ -2024,7 +2024,7 @@ def api_update_project(project_id: int, req: UpdateProjectRequest):
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="no fields to update")
-    from .workspace.project_registry import update_project
+    from ..workspace.project_registry import update_project
 
     update_project(project_id, **updates)
     return db.get_project(project_id)
@@ -2042,7 +2042,7 @@ def api_prepare_worktrees(
     story_key: str, req: WorktreePrepareRequest = WorktreePrepareRequest()
 ):
     """Prepare worktrees for all project bindings of a story."""
-    from .workspace.worktree.handler import prepare_worktrees
+    from ..workspace.worktree.handler import prepare_worktrees
 
     results = prepare_worktrees(story_key, worktree_root=req.worktree_root)
     return {"results": results}
@@ -2051,8 +2051,8 @@ def api_prepare_worktrees(
 @app.get("/api/story/{story_key}/worktrees/cleanup-preview")
 def api_cleanup_preview(story_key: str):
     """Preview worktree cleanup for a story."""
-    from .workspace.worktree.resolver import resolve_story_worktree
-    from .delivery import can_cleanup_worktree
+    from ..workspace.worktree.resolver import resolve_story_worktree
+    from ..delivery import can_cleanup_worktree
 
     worktree_states = resolve_story_worktree(story_key)
     can_clean, reason = can_cleanup_worktree(story_key)
@@ -2072,7 +2072,7 @@ class CleanupRequest(BaseModel):
 @app.post("/api/story/{story_key}/worktrees/cleanup")
 def api_cleanup_worktree(story_key: str, req: CleanupRequest):
     """Remove a worktree. Requires user confirmation."""
-    from .workspace.worktree.handler import cleanup_worktree
+    from ..workspace.worktree.handler import cleanup_worktree
 
     result = cleanup_worktree(
         story_key,
@@ -2113,7 +2113,7 @@ class CreateDeliveryRequest(BaseModel):
 @app.get("/api/story/{story_key}/delivery-artifacts")
 def api_list_delivery_artifacts(story_key: str):
     """List all delivery artifacts for a story."""
-    from .delivery import list_delivery_artifacts
+    from ..delivery import list_delivery_artifacts
 
     return {"artifacts": list_delivery_artifacts(story_key)}
 
@@ -2121,7 +2121,7 @@ def api_list_delivery_artifacts(story_key: str):
 @app.post("/api/story/{story_key}/delivery-artifacts")
 def api_create_delivery_artifact(story_key: str, req: CreateDeliveryRequest):
     """Register a delivery artifact."""
-    from .delivery import register_delivery
+    from ..delivery import register_delivery
 
     try:
         artifact = register_delivery(
@@ -2152,7 +2152,7 @@ class UpdateDeliveryRequest(BaseModel):
 @app.put("/api/story/{story_key}/delivery-artifacts/{artifact_id}")
 def api_update_delivery(story_key: str, artifact_id: int, req: UpdateDeliveryRequest):
     """Update delivery artifact state."""
-    from .delivery import update_delivery_state
+    from ..delivery import update_delivery_state
 
     if req.delivery_state:
         try:
@@ -2200,8 +2200,8 @@ def api_intake_preview(
         )
 
     source_id = source_id.removeprefix("tapd-")
-    from ..sources import tapd_source
-    from . import prd_generator
+    from ...sources import tapd_source
+    from .. import prd_generator
 
     source = tapd_source.TapdSource(_load_tapd_config())
     item = source.get_detail(source_id)
@@ -2246,8 +2246,8 @@ def api_intake_preview(
     # 让 start 阶段按项目名动态生成。
     branch = ""
     try:
-        from .nodes.profile_loader import load_profile
-        from .workspace.branch_naming import generate_branch_for_story
+        from ..nodes.profile_loader import load_profile
+        from ..workspace.branch_naming import generate_branch_for_story
 
         profile_raw = load_profile("minimal")
         rule = profile_raw.get("branch_rule", "")
@@ -2320,7 +2320,7 @@ def _prepare_intake_prd_content(story_key: str, story: dict, content: str):
             },
         )
 
-    from . import prd_generator
+    from .. import prd_generator
 
     try:
         result = prd_generator.generate_prd_from_source(source_snapshot)
@@ -2370,13 +2370,13 @@ def _prepare_intake_prd_content(story_key: str, story: dict, content: str):
 
 
 def _load_story_source_snapshot(story_key: str, story: dict):
-    from . import prd_generator
+    from .. import prd_generator
 
     source_type = story.get("source_type") or ""
     source_id = story.get("source_id") or ""
 
     if source_type == "tapd":
-        from ..sources import tapd_source
+        from ...sources import tapd_source
 
         source = tapd_source.TapdSource(_load_tapd_config())
         item = source.get_detail(source_id)
@@ -2429,8 +2429,8 @@ def _bind_story_projects_for_start(
         if branch:
             per_project_branch = branch
         else:
-            from .nodes.profile_loader import load_profile
-            from .workspace.branch_naming import generate_branch_for_story
+            from ..nodes.profile_loader import load_profile
+            from ..workspace.branch_naming import generate_branch_for_story
 
             profile_raw = load_profile(story.get("profile") or "minimal")
             per_project_branch = (
@@ -2502,7 +2502,7 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
                 },
             )
 
-        from ..story_paths import story_prd_path
+        from ...story_paths import story_prd_path
 
         prd_file = story_prd_path(workspace, story_key, (story or {}).get("title", ""))
         prd_file.parent.mkdir(parents=True, exist_ok=True)
