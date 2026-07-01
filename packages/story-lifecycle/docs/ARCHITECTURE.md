@@ -39,7 +39,7 @@
 ### ① 入口层（最薄壳）
 - `cli/` — Click 命令（main/setup/list_cmd/plan_cmd...）
 - `web/` — Vue3 Board 静态资源
-- `profiles/` `prompts/` — 配置文件
+- `profiles/` — 流程定义 yaml（用户 `story create --profile` 时选，入口交互性质）
 
 ### ② 源头/创建
 - `sources/` — 数据源（TAPD/GitHub/手动），`__init__.py:19` get_source
@@ -79,6 +79,7 @@ orchestrator/
 ### ⑤ 基础设施（包根叶子模块，零内部 import）
 - `config.py` `json_helpers.py` — ISS-006 迁入（config IO + 容错 JSON 解析）
 - `llm_client.py` `llm_client_kimi_cli.py` `schemas.py` `story_paths.py`
+- `prompts/` — stage 提示词模板（design/build/verify/review...9个.md，被③engine 拼 prompt + ④knowledge/bootstrap 读，跨层共享数据资源，非入口配置）
 - `db/` — SQLite 持久化（story 汇合点）
 - `terminal/` — CLI 进程管理（pty.py）
 - `benchmarks/` — SWE-bench 评测
