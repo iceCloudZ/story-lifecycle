@@ -123,7 +123,11 @@ class TestStoryStatsAPI:
 
         resp = api_client.get(f"/api/story/{seeded_story}/stats")
         assert resp.status_code == 200
-        assert resp.json() == {"code_changes": 1, "loop_rounds": 2, "findings_open": 1}
+        data = resp.json()
+        assert data["code_changes"] == 1
+        assert data["loop_rounds"] == 2
+        assert data["findings_open"] == 1
+        assert "tokens" in data
         # sanity: the open finding is the one we kept open
         assert open_fid != resolved_fid
 
@@ -133,7 +137,11 @@ class TestStoryStatsAPI:
         )
         resp = api_client.get("/api/story/STATS-EMPTY/stats")
         assert resp.status_code == 200
-        assert resp.json() == {"code_changes": 0, "loop_rounds": 0, "findings_open": 0}
+        data = resp.json()
+        assert data["code_changes"] == 0
+        assert data["loop_rounds"] == 0
+        assert data["findings_open"] == 0
+        assert "tokens" in data
 
     def test_stats_nonexistent(self, api_client, isolated_story_home):
         resp = api_client.get("/api/story/NONEXIST/stats")
@@ -183,12 +191,14 @@ class TestWSStoryListJSON:
 
 class TestStartStoryWorkspace:
     def test_start_sets_workspace_to_project_repo(
-        self, api_client, isolated_story_home
+        self, api_client, isolated_story_home, tmp_path
     ):
         """Regression: /start must point the story's workspace at the bound project's
         repo_path, so the AI CLI runs there. Previously workspace stayed the sync-time
         default (e.g. the orchestrator's own repo)."""
-        proj = db.create_project("myproj", "/tmp/myproj-repo", default_branch="main")
+        repo = tmp_path / "myproj-repo"
+        repo.mkdir()
+        proj = db.create_project("myproj", str(repo), default_branch="main")
         db.upsert_story(
             "CAND-001",
             title="Cand",
@@ -206,17 +216,19 @@ class TestStartStoryWorkspace:
         )
         assert resp.status_code == 200
         s = db.get_story("CAND-001")
-        assert s["workspace"] == "/tmp/myproj-repo"
+        assert s["workspace"] == str(repo.resolve())
         assert s["intake_state"] == "ready"
         assert s["status"] == "planning"
 
-    def test_start_requires_content(self, api_client, isolated_story_home):
+    def test_start_requires_content(self, api_client, isolated_story_home, tmp_path):
         """开始开发必须填写 story 内容/PRD。"""
-        proj = db.create_project("p2", "/tmp/p2", default_branch="main")
+        repo = tmp_path / "p2"
+        repo.mkdir()
+        proj = db.create_project("p2", str(repo), default_branch="main")
         db.upsert_story(
             "CAND-002",
             title="x",
-            workspace="/tmp",
+            workspace=str(tmp_path),
             profile="minimal",
             status="idle",
             intake_state="candidate",

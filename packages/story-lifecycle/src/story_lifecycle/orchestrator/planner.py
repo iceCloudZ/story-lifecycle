@@ -40,7 +40,7 @@ def _load_story_knowledge(workspace: str, story_key: str) -> str:
     return "\n\n".join(parts) if parts else "（无 Story 知识）"
 
 
-@with_story_key
+@with_story_key()
 def compress_context(workspace: str, story_key: str, current_stage: str) -> str | None:
     """Condenser：将历史 context 文件压缩为知识库摘要。
 
@@ -166,7 +166,7 @@ def _build_agent_user_message(
     return "\n".join(parts)
 
 
-@with_story_key
+@with_story_key()
 def run_orchestrator_agent(
     story_key: str,
     *,
@@ -422,7 +422,7 @@ def _write_retrospect(workspace: str, story_key: str, actions: list) -> None:
         log.warning("[%s] failed to write retrospect.md: %s", story_key, exc)
 
 
-@with_story_key
+@with_story_key()
 def continue_orchestrator_agent(story_key: str, headless: bool = False):
     """用户确认规划后，执行 action list。
 
@@ -435,7 +435,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     from ..db import models as db
     from ..adapters import get_adapter
     from .nodes.profile_loader import resolve_profile
-    from .nodes.json_helpers import robust_json_parse
+    from ..json_helpers import robust_json_parse
     from ..terminal.pty import ensure_agent_pty
 
     story = db.get_story(story_key)
@@ -906,7 +906,7 @@ def _build_cli_prompt(
 注意：JSON 必须是纯 JSON，不要包裹在 markdown 代码块中。"""
 
 
-@with_story_key
+@with_story_key()
 def run_orchestrator_agent_async(story_key: str, *, on_action=None) -> dict:
     """同步版本的 Agent 规划（直接调用，不进线程池）。
 

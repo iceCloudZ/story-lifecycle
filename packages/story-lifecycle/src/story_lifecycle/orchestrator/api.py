@@ -1906,9 +1906,44 @@ class CreateProjectRequest(BaseModel):
 
 
 def _workspace_root_for_project(repo_path: str) -> Path:
-    """Infer the story workspace root for a registered project path."""
+    """Infer the story workspace root for a registered project path.
+
+    In a monorepo, a sub-project like ``D:/hc-all/frontends/hc-admin`` should
+    resolve to ``D:/hc-all`` when the monorepo root carries ``.story``/``.agents``
+    markers. For standalone projects, the project directory itself is the root.
+    The walk is bounded by the git top-level (when present) and a small max depth
+    so unrelated ancestor directories (e.g. the user's home directory) that happen
+    to have markers are not picked.
+    """
+    import subprocess
+
     path = Path(repo_path).resolve()
-    candidates = [path, *path.parents]
+
+    # Find the git top-level to bound the ancestor walk.
+    git_root: Path | None = None
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            git_root = Path(result.stdout.strip()).resolve()
+    except Exception:
+        pass
+
+    max_depth = 5
+    candidates = [path]
+    for i, parent in enumerate(path.parents):
+        if git_root is not None and parent == git_root:
+            candidates.append(parent)
+            break
+        if i >= max_depth:
+            break
+        candidates.append(parent)
+
     for candidate in candidates:
         if (
             (candidate / ".story").exists()
@@ -1916,7 +1951,9 @@ def _workspace_root_for_project(repo_path: str) -> Path:
             or (candidate / "AGENTS.md").exists()
         ):
             return candidate
-    return path
+    return git_root if git_root is not None else path
+
+
 
 
 def _workspace_options_from_projects(projects: list[dict]) -> list[dict]:
@@ -2133,6 +2170,7 @@ def api_update_delivery(story_key: str, artifact_id: int, req: UpdateDeliveryReq
 class StartStoryRequest(BaseModel):
     project_ids: list[int] = []
     content: str = ""  # PRD / 需求正文，开始开发时必填，design 阶段注入给 CLI
+    branch: str = ""  # 预生成的分支名（由 intake preview 产出），保存时直接复用
 
 
 class IntakePreviewRequest(BaseModel):
@@ -2202,6 +2240,29 @@ def api_intake_preview(
             status_code=502,
             detail=f"PRD 生成失败: {exc}",
         )
+
+    # 预生成分支名，让保存阶段直接复用，避免每次点击保存都调 LLM。
+    # 仅当 profile 的 branch_rule 不含 {project} 时才能前置；含 {project} 时
+    # 让 start 阶段按项目名动态生成。
+    branch = ""
+    try:
+        from .nodes.profile_loader import load_profile
+        from .branch_naming import generate_branch_for_story
+
+        profile_raw = load_profile("minimal")
+        rule = profile_raw.get("branch_rule", "")
+        if rule and "{project}" not in rule:
+            branch = (
+                generate_branch_for_story(
+                    story_key=snapshot.story_key,
+                    title=snapshot.title,
+                    profile_raw=profile_raw,
+                )
+                or ""
+            )
+    except Exception:
+        log.exception("branch pre-generation failed for %s", snapshot.story_key)
+
     return {
         "storyKey": snapshot.story_key,
         "sourceType": snapshot.source_type,
@@ -2213,6 +2274,7 @@ def api_intake_preview(
         "summary": result.summary,
         "dingtalkLinks": result.dingtalk_links,
         "questions": result.questions,
+        "branch": branch,
     }
 
 
@@ -2345,7 +2407,9 @@ def _load_story_source_snapshot(story_key: str, story: dict):
     )
 
 
-def _bind_story_projects_for_start(story_key: str, story: dict, project_ids: list[int]):
+def _bind_story_projects_for_start(
+    story_key: str, story: dict, project_ids: list[int], branch: str = ""
+):
     sps = db.get_story_projects(story_key)
     if not project_ids:
         return
@@ -2359,34 +2423,41 @@ def _bind_story_projects_for_start(story_key: str, story: dict, project_ids: lis
         proj = all_projects.get(pid)
         if not proj:
             continue
-        # 分支名按 profile 的 branch_rule 生成（含 LLM 翻译的英文摘要），
-        # profile 没配 branch_rule 时回退到旧的 codex/{key}-{project} 规则。
-        from .nodes.profile_loader import load_profile
-        from .branch_naming import generate_branch_for_story
 
-        profile_raw = load_profile(story.get("profile") or "minimal")
-        branch = (
-            generate_branch_for_story(
-                story_key=story_key,
-                title=story.get("title", ""),
-                profile_raw=profile_raw,
-                project_name=proj["name"],
+        # 优先复用 preview 阶段预生成的分支名，避免保存时重复调 LLM。
+        # 若未传入或 profile 规则需要按项目区分，则现场生成。
+        if branch:
+            per_project_branch = branch
+        else:
+            from .nodes.profile_loader import load_profile
+            from .branch_naming import generate_branch_for_story
+
+            profile_raw = load_profile(story.get("profile") or "minimal")
+            per_project_branch = (
+                generate_branch_for_story(
+                    story_key=story_key,
+                    title=story.get("title", ""),
+                    profile_raw=profile_raw,
+                    project_name=proj["name"],
+                )
+                or f"codex/{story_key}-{proj['name']}"
             )
-            or f"codex/{story_key}-{proj['name']}"
-        )
+
+        repo_path = proj.get("repo_path", "")
 
         db.bind_story_project(
             story_key=story_key,
             project_id=proj["id"],
-            branch=branch,
+            branch=per_project_branch,
             base_branch=proj.get("default_branch", "main"),
             worktree_state="unprepared",
             source="user",
         )
-        if not bound_repo and proj.get("repo_path"):
-            bound_repo = proj["repo_path"]
+        if not bound_repo and repo_path:
+            bound_repo = repo_path
     if bound_repo:
-        db.update_story(story_key, workspace=bound_repo)
+        workspace_root = _workspace_root_for_project(bound_repo)
+        db.update_story(story_key, workspace=str(workspace_root))
 
 
 @app.post("/api/story/{story_key}/start")
@@ -2407,20 +2478,30 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
     if intake_error:
         return intake_error
 
-    if intake_state == "candidate":
-        # Promote candidate to ready + planning
-        db.update_story(story_key, intake_state="ready", status="planning")
+    try:
+        if intake_state == "candidate":
+            # Promote candidate to ready + planning
+            db.update_story(story_key, intake_state="ready", status="planning")
 
-    # Project binding is optional during Intake. In monorepos, the selected
-    # implementation modules (for example hc-order or hc-limit under hc-all) are
-    # discovered later by Design/Build, not modeled as separate repo projects.
-    _bind_story_projects_for_start(story_key, story, req.project_ids)
+        # Project binding is optional during Intake. In monorepos, the selected
+        # implementation modules (for example hc-order or hc-limit under hc-all) are
+        # discovered later by Design/Build, not modeled as separate repo projects.
+        _bind_story_projects_for_start(story_key, story, req.project_ids, req.branch)
 
-    # 保存 PRD 到 story evidence 目录，供 design 阶段注入。
-    # 不写入被绑定服务仓库的 prd/，避免污染业务代码仓库。
-    story = db.get_story(story_key)
-    workspace = (story or {}).get("workspace", "") or ""
-    if workspace:
+        # 保存 PRD 到 story evidence 目录，供 design 阶段注入。
+        # 不写入被绑定服务仓库的 prd/，避免污染业务代码仓库。
+        story = db.get_story(story_key)
+        workspace = (story or {}).get("workspace", "") or ""
+        if not workspace:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "ok": False,
+                    "reasonCode": "workspace_required",
+                    "message": "无法确定工作区，请先选择工作区或注册项目",
+                },
+            )
+
         from ..story_paths import story_prd_path
 
         prd_file = story_prd_path(workspace, story_key, (story or {}).get("title", ""))
@@ -2449,7 +2530,19 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
             )
         db.bump_context_revision(story_key)
 
-    db.update_story(story_key, intake_state="ready", status="planning")
+        db.update_story(story_key, intake_state="ready", status="planning")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.exception("Failed to start story %s", story_key)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "reasonCode": "start_failed",
+                "message": f"启动 Story 失败: {exc}",
+            },
+        )
 
     return {"ok": True, "story_key": story_key}
 

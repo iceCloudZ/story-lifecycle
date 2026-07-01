@@ -102,38 +102,55 @@ export default function Dashboard() {
   async function handleIntakeConfirm(input: IntakeConfirmInput) {
     let storyKey = intakeModal?.story?.storyKey || input.key
 
-    if (!intakeModal?.story) {
-      const created = await storyApi.create({
-        key: input.key,
-        title: input.title,
-        profile: input.profile,
-        workspace: input.workspace,
-        autostart: false,
-      })
-      storyKey = created.storyKey
-    }
-
-    const r = await fetch(`/api/story/${storyKey}/start`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_ids: input.projectIds, content: input.content }),
-    })
-    if (!r.ok) {
-      const err = await r.json()
-      const notice = normalizeStartNotice(err)
-      setIntakeNotice(notice)
-      if (notice.reasonCode === 'dingtalk_download_required') {
-        for (const link of notice.dingtalkLinks) {
-          window.open(link, '_blank', 'noopener,noreferrer')
-        }
+    try {
+      if (!intakeModal?.story) {
+        const created = await storyApi.create({
+          key: input.key,
+          title: input.title,
+          profile: input.profile,
+          workspace: input.workspace,
+          autostart: false,
+        })
+        storyKey = created.storyKey
       }
-      return
-    }
 
-    setIntakeModal(null)
-    setIntakeNotice(null)
-    qc.invalidateQueries({ queryKey: ['stories'] })
-    navigate(`/story/${storyKey}`)
+      const r = await fetch(`/api/story/${storyKey}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_ids: input.projectIds, content: input.content, branch: input.branch }),
+      })
+      if (!r.ok) {
+        let err: Record<string, unknown>
+        try {
+          err = await r.json()
+        } catch {
+          err = {
+            reasonCode: 'start_failed',
+            message: `请求失败 (${r.status}): 服务器未返回详细错误`,
+          }
+        }
+        const notice = normalizeStartNotice(err)
+        setIntakeNotice(notice)
+        if (notice.reasonCode === 'dingtalk_download_required') {
+          for (const link of notice.dingtalkLinks) {
+            window.open(link, '_blank', 'noopener,noreferrer')
+          }
+        }
+        return
+      }
+
+      setIntakeModal(null)
+      setIntakeNotice(null)
+      qc.invalidateQueries({ queryKey: ['stories'] })
+      navigate(`/story/${storyKey}`)
+    } catch (err) {
+      setIntakeNotice({
+        reasonCode: 'start_failed',
+        message: err instanceof Error ? err.message : '启动失败，请稍后重试',
+        dingtalkLinks: [],
+        questions: [],
+      })
+    }
   }
 
   return (
@@ -237,6 +254,7 @@ type IntakeConfirmInput = {
   workspace: string
   projectIds: number[]
   content: string
+  branch: string
 }
 
 function normalizeStartNotice(err: Record<string, unknown>): StartNotice {
@@ -274,6 +292,7 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewStartedAt, setPreviewStartedAt] = useState<number | null>(null)
   const [localNotice, setLocalNotice] = useState<StartNotice | null>(null)
+  const [branch, setBranch] = useState('')
   const activeNotice = localNotice || notice
 
   useEffect(() => {
@@ -335,6 +354,7 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
       const preview = await storyApi.previewIntake({ source_type: 'tapd', source_id: sourceId, files: intakeImages })
       if (isNew) setKey(preview.storyKey)
       if (preview.title) setTitle(preview.title)
+      if (preview.branch) setBranch(preview.branch)
       if (preview.action === 'generated' && preview.markdown.trim()) {
         setUploaded(null)
         setPaste(preview.markdown)
@@ -385,6 +405,7 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
       workspace: workspace.trim(),
       projectIds: selectedProjects,
       content,
+      branch,
     })).finally(() => setLoading(false))
   }
 

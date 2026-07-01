@@ -4,6 +4,9 @@ Covers the case `fetch_pending` misses: a story that exists in TAPD but is
 filtered out by owner (custom_field_25) / parent_id rules.
 """
 
+import os
+import tempfile
+
 from click.testing import CliRunner
 
 from story_lifecycle.db import models as db
@@ -41,7 +44,9 @@ class TestSyncById:
             lambda: {"workspace_id": "123"},
         )
 
-        result = CliRunner().invoke(sync_cmd, ["--id", "1066988", "-w", "/tmp/ws"])
+        tmpdir = tempfile.mkdtemp()
+        os.makedirs(os.path.join(tmpdir, ".story"), exist_ok=True)
+        result = CliRunner().invoke(sync_cmd, ["--id", "1066988", "-w", tmpdir])
         assert result.exit_code == 0, result.output
         s = db.get_story("tapd-1066988")
         assert s is not None

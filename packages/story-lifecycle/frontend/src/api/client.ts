@@ -171,6 +171,7 @@ export interface IntakePreview {
   summary?: string
   dingtalkLinks?: string[]
   questions?: string[]
+  branch?: string
 }
 
 export interface Project {
