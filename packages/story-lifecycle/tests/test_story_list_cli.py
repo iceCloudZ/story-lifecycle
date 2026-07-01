@@ -127,3 +127,37 @@ class TestDoneCmd:
 
         assert calls, "subprocess.run should have been called"
         assert calls[0][0] == sys.executable, "first arg must be sys.executable"
+
+
+class TestRetrospectScriptResolution:
+    """ISS-007: retrospect-script path is env/config driven, not hardcoded to
+    the monorepo layout. Lifecycle must run (graceful-skip) outside the monorepo."""
+
+    def test_env_override_takes_priority(self, monkeypatch):
+        import os
+        from story_lifecycle.cli.list_cmd import _resolve_retrospect_script
+        import story_lifecycle.config as cfg
+
+        monkeypatch.setenv("STORY_RETROSPECT_SCRIPT", "/custom/retrospect.py")
+        # config must NOT win over env
+        monkeypatch.setattr(cfg, "get_config", lambda: {"retrospect_script": "/from-config.py"})
+        assert _resolve_retrospect_script() == os.path.normpath("/custom/retrospect.py")
+
+    def test_config_used_when_no_env(self, monkeypatch):
+        import os
+        from story_lifecycle.cli.list_cmd import _resolve_retrospect_script
+        import story_lifecycle.config as cfg
+
+        monkeypatch.delenv("STORY_RETROSPECT_SCRIPT", raising=False)
+        monkeypatch.setattr(cfg, "get_config", lambda: {"retrospect_script": "/from-config.py"})
+        assert _resolve_retrospect_script() == os.path.normpath("/from-config.py")
+
+    def test_monorepo_fallback(self, monkeypatch):
+        import os
+        from story_lifecycle.cli.list_cmd import _resolve_retrospect_script
+        import story_lifecycle.config as cfg
+
+        monkeypatch.delenv("STORY_RETROSPECT_SCRIPT", raising=False)
+        monkeypatch.setattr(cfg, "get_config", lambda: {})
+        path = _resolve_retrospect_script()
+        assert path.endswith(os.path.normpath("story-miner/scripts/retrospect.py"))
