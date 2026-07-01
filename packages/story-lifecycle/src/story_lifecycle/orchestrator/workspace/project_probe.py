@@ -211,7 +211,7 @@ def run_probe(workspace: str | Path, question: str) -> dict[str, Any]:
 
     Returns a result dict with facts, hypotheses, open_questions, or error.
     """
-    from ..llm_client import get_llm
+    from ...llm_client import get_llm
 
     prompt = build_probe_prompt(workspace, question)
 

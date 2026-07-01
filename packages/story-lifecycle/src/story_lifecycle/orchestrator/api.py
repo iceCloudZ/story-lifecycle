@@ -1988,7 +1988,7 @@ def api_list_workspaces():
 @app.get("/api/projects")
 def api_list_projects():
     """List all registered projects with fresh availability."""
-    from .project_registry import check_project_availability
+    from .workspace.project_registry import check_project_availability
 
     projects = db.list_projects()
     # 刷新每个项目的 availability（轻量 git rev-parse）
@@ -2000,7 +2000,7 @@ def api_list_projects():
 @app.post("/api/projects")
 def api_create_project(req: CreateProjectRequest):
     """Register a new project."""
-    from .project_registry import register_project
+    from .workspace.project_registry import register_project
 
     proj = register_project(
         name=req.name,
@@ -2024,7 +2024,7 @@ def api_update_project(project_id: int, req: UpdateProjectRequest):
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="no fields to update")
-    from .project_registry import update_project
+    from .workspace.project_registry import update_project
 
     update_project(project_id, **updates)
     return db.get_project(project_id)
@@ -2042,7 +2042,7 @@ def api_prepare_worktrees(
     story_key: str, req: WorktreePrepareRequest = WorktreePrepareRequest()
 ):
     """Prepare worktrees for all project bindings of a story."""
-    from .worktree.handler import prepare_worktrees
+    from .workspace.worktree.handler import prepare_worktrees
 
     results = prepare_worktrees(story_key, worktree_root=req.worktree_root)
     return {"results": results}
@@ -2051,7 +2051,7 @@ def api_prepare_worktrees(
 @app.get("/api/story/{story_key}/worktrees/cleanup-preview")
 def api_cleanup_preview(story_key: str):
     """Preview worktree cleanup for a story."""
-    from .worktree.resolver import resolve_story_worktree
+    from .workspace.worktree.resolver import resolve_story_worktree
     from .delivery import can_cleanup_worktree
 
     worktree_states = resolve_story_worktree(story_key)
@@ -2072,7 +2072,7 @@ class CleanupRequest(BaseModel):
 @app.post("/api/story/{story_key}/worktrees/cleanup")
 def api_cleanup_worktree(story_key: str, req: CleanupRequest):
     """Remove a worktree. Requires user confirmation."""
-    from .worktree.handler import cleanup_worktree
+    from .workspace.worktree.handler import cleanup_worktree
 
     result = cleanup_worktree(
         story_key,
@@ -2247,7 +2247,7 @@ def api_intake_preview(
     branch = ""
     try:
         from .nodes.profile_loader import load_profile
-        from .branch_naming import generate_branch_for_story
+        from .workspace.branch_naming import generate_branch_for_story
 
         profile_raw = load_profile("minimal")
         rule = profile_raw.get("branch_rule", "")
@@ -2430,7 +2430,7 @@ def _bind_story_projects_for_start(
             per_project_branch = branch
         else:
             from .nodes.profile_loader import load_profile
-            from .branch_naming import generate_branch_for_story
+            from .workspace.branch_naming import generate_branch_for_story
 
             profile_raw = load_profile(story.get("profile") or "minimal")
             per_project_branch = (

@@ -407,7 +407,7 @@ def doctor(ctx):
 @doctor.command()
 def paths():
     """Scan for legacy .story-done, .story-context, .story-runs directories."""
-    from ..orchestrator.doctor_paths import run_doctor_paths
+    from ..orchestrator.workspace.doctor_paths import run_doctor_paths
 
     run_doctor_paths()
 

@@ -7,7 +7,7 @@ import pytest
 
 from click.testing import CliRunner
 
-from story_lifecycle.orchestrator.project_profile import (
+from story_lifecycle.orchestrator.workspace.project_profile import (
     ProjectProfile,
     RepoInfo,
     TestSource,
@@ -20,8 +20,8 @@ from story_lifecycle.orchestrator.project_profile import (
     load_profile,
     refresh_profile,
 )
-from story_lifecycle.orchestrator.project_scan import scan_workspace
-from story_lifecycle.orchestrator.project_probe import (
+from story_lifecycle.orchestrator.workspace.project_scan import scan_workspace
+from story_lifecycle.orchestrator.workspace.project_probe import (
     build_probe_prompt,
     validate_probe_output,
     _contains_destructive_pattern,

@@ -133,7 +133,7 @@ def resolve_story_worktree(story_key: str) -> list[dict]:
         worktree: GitWorktree if found, else None
         reason: human-readable explanation
     """
-    from ...db import models as db
+    from ....db import models as db
 
     bindings = db.get_story_projects(story_key)
     results: list[dict] = []

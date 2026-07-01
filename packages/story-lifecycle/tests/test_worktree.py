@@ -4,10 +4,10 @@ import os
 import subprocess
 from pathlib import Path
 
-from story_lifecycle.orchestrator.worktree.resolver import (
+from story_lifecycle.orchestrator.workspace.worktree.resolver import (
     resolve_worktrees,
 )
-from story_lifecycle.orchestrator.worktree.decider import (
+from story_lifecycle.orchestrator.workspace.worktree.decider import (
     decide_prepare,
     decide_cleanup,
     PrepareAction,
@@ -15,7 +15,7 @@ from story_lifecycle.orchestrator.worktree.decider import (
     RejectReason,
     CleanupRejectReason,
 )
-from story_lifecycle.orchestrator.worktree.handler import (
+from story_lifecycle.orchestrator.workspace.worktree.handler import (
     prepare_worktrees,
 )
 
