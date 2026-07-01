@@ -1,5 +1,10 @@
 # 双飞轮：用户项目知识飞轮与 Story Lifecycle 引擎飞轮
 
+> ⚠️ 历史快照（ISS-008, 2026-07）：本文描述的 dual-flywheel 实现
+> (`orchestrator/flywheel/` 的 domain/engine/promotion) 已被删除——它是未接线
+> 的设计，被更简单的活 quality flywheel（`db.models` 的 Finding/LearnedPattern +
+> `seeds`/`seed_pipeline`/`quality`/`service`）取代。本文保留作设计决策记录。
+
 > 状态：Idea 阶段  
 > 日期：2026-05-26  
 > 背景：用户本地拥有真实业务资产（`hc-all` 代码库、PRD、设计文档、TAPD story/bug、生产运行信息、用户反馈等），Story Lifecycle 本身也在通过 SWE-bench、headless、Zellij、router、review gate 等机制持续进化。两类资产、目标和风险不同，应该设计成两个隔离但可互相反哺的飞轮。

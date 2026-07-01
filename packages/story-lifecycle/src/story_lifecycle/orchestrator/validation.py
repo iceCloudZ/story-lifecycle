@@ -1,7 +1,10 @@
-"""Stage output validator — shared completion semantics for all execution modes.
+"""Stage output validator — swebench finalize artifact gate.
 
-Headless and Zellij converge here: both go through the same validation
-after poll_completion_node has consumed the done file.
+Currently scoped to the swebench benchmark profile's finalize stage
+(`require_model_patch`). No production caller in the FC orchestration path
+(stage completion is handled by gate.run_verify_gate); exercised by
+test_swebench.py. Relocate to evaluation/ or benchmarks/ during stage-1
+layer partition (ISS-010).
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ def validate_stage_outputs(
 ) -> ValidationResult:
     """Validate that a stage produced the required outputs.
 
-    Returns a structured result — callers (advance_node) decide what to do
+    Returns a structured result — the caller decides what to do
     with it.  This function never mutates state or writes DB.
     """
     stage = state.get("current_stage", "")

@@ -2,6 +2,12 @@
 Story 路由决策链 — Router / Policy / Gate 三者权责的显式文档
 ============================================================
 
+⚠️ 历史快照（ISS-008 标注）：下方 *_DOC 常量中引用的 LangGraph 节点
+（router_node / review_stage_node / advance_node / wait_confirm_node 及
+nodes.py 行号）已在 cb6f9cd FC 重写 + ISS-001/005 中删除。FC 模式下 Router
+由 planner.py 的 agent 决策内化、Gate 由 gate.run_verify_gate 承担。这些
+DOC 保留作 LangGraph 时代决策权责的决策记录，不反映当前运行时结构。
+
 Java 类比：DecisionManager — 原来 router_node 中 170 行的 if-else 链
 在这里被展开为命名的、有优先级的决策步骤。
 

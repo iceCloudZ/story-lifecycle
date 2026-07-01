@@ -1,7 +1,8 @@
 """Working Memory — persistent context that accumulates across stages.
 
 Persists to `.story/context/{story_key}/working_memory.json`.
-Read at plan_stage start, structured update at review_stage end.
+Accumulated across the lifecycle; read during planning and updated after each
+stage's review (in FC mode the planner agent drives these points).
 """
 
 from __future__ import annotations

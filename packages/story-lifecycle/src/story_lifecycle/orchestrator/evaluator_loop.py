@@ -1,16 +1,15 @@
-"""Evaluator-Optimizer adversarial loop logic.
+"""Repair-packet builder for the verify-gate retry path.
 
-Plan Loop: in-node while loop inside plan_stage_node.
-Code Loop: cross-node iterative retry via review_stage_node -> router retry.
+The adversarial-loop scaffolding (LoopResult, AdversarialConfig, _make_loop_id,
+detect_no_progress, _get_stage_config_from_state) was LangGraph-era code; ISS-008
+removed these dead parts. In FC mode the LLM drives its own retries (planner
+re-inserts a launch action) and gate.run_verify_gate consumes build_repair_packet
+directly.
 """
 
 from __future__ import annotations
 
-import os
 import logging
-import uuid
-from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 
 log = logging.getLogger("story-lifecycle.evaluator_loop")
@@ -20,87 +19,6 @@ CHARS_PER_TOKEN = 4
 TARGET_BUDGET_TOKENS = 4000
 HARD_BUDGET_TOKENS = 20000
 EMERGENCY_COMPACT_TOKENS = 6000
-
-
-@dataclass
-class LoopResult:
-    decision: str  # "pass" | "fail" | "max_rounds" | "no_progress" | "wait_confirm"
-    rounds: int
-    final_plan: dict | None = None
-    final_review: dict | None = None
-    reason: str = ""
-    remaining_findings: list[str] = field(default_factory=list)
-
-
-@dataclass
-class _SubLoopConfig:
-    enabled: bool = False
-    stages: list[str] = field(default_factory=list)
-    max_rounds: int = 3
-    reviewer_model: str = ""
-    pass_condition: str = ""
-    mode: str = "short_lived"
-
-
-@dataclass
-class AdversarialConfig:
-    enabled: bool = False
-    plan_loop: _SubLoopConfig = field(default_factory=_SubLoopConfig)
-    code_loop: _SubLoopConfig = field(default_factory=_SubLoopConfig)
-
-    @classmethod
-    def from_profile(cls, profile: dict) -> AdversarialConfig:
-        adv = profile.get("adversarial", {})
-        if not adv or not adv.get("enabled"):
-            return cls()
-
-        plan_raw = adv.get("plan_loop", {})
-        code_raw = adv.get("code_loop", {})
-
-        plan_cfg = _SubLoopConfig(
-            enabled=plan_raw.get("enabled", False),
-            stages=plan_raw.get("stages", []),
-            max_rounds=plan_raw.get("max_rounds", 3),
-            reviewer_model=plan_raw.get("reviewer_model", ""),
-            pass_condition=plan_raw.get("pass_condition", "no_open_blocker_or_major"),
-        )
-
-        code_cfg = _SubLoopConfig(
-            enabled=code_raw.get("enabled", False),
-            stages=[],
-            max_rounds=code_raw.get("max_rounds", 3),
-            reviewer_model=code_raw.get("reviewer_model", ""),
-            pass_condition=code_raw.get("pass_condition", "no_open_blocker"),
-            mode=code_raw.get("mode", "short_lived"),
-        )
-
-        return cls(enabled=True, plan_loop=plan_cfg, code_loop=code_cfg)
-
-    def plan_loop_enabled(self, stage: str) -> bool:
-        if not self.enabled or not self.plan_loop.enabled:
-            return False
-        stages = self.plan_loop.stages
-        return stage in stages if stages else True
-
-    def code_loop_enabled(self, stage: str) -> bool:
-        if not self.enabled or not self.code_loop.enabled:
-            return False
-        return True
-
-    def resolve_reviewer_model(self, loop_type: str) -> str:
-        if loop_type == "plan":
-            model = self.plan_loop.reviewer_model
-        else:
-            model = self.code_loop.reviewer_model
-        if model:
-            return model
-        return os.environ.get("STORY_LLM_MODEL", "")
-
-
-def _make_loop_id(loop_type: str, stage: str) -> str:
-    ts = datetime.now().strftime("%Y%m%d")
-    short = uuid.uuid4().hex[:6]
-    return f"{loop_type}:{ts}-{short}"
 
 
 # -- Repair Packet --
@@ -247,61 +165,3 @@ def _trim_packet(
     if len(result) > emergency_chars:
         result = result[:emergency_chars]
     return result
-
-
-# -- No-Progress Detection --
-
-
-def _category_of(finding: dict) -> str:
-    """Extract category from a finding or issue dict (handles both schemas)."""
-    return finding.get("category", "") or finding.get("type", "")
-
-
-def detect_no_progress(
-    previous_round_findings: list[dict],
-    current_round_findings: list[dict],
-) -> bool:
-    """Detect if Major/Blocker findings are semantically repeated.
-
-    Only considers high-severity findings. Returns True if current round's
-    high findings have matching category+location in previous round, indicating
-    the implementer did not fix them.
-    """
-    prev_high = {
-        (_category_of(f), f.get("location", ""))
-        for f in previous_round_findings
-        if f.get("severity") == "high"
-    }
-    if not prev_high:
-        return False
-
-    curr_high = [
-        (_category_of(f), f.get("location", ""), f.get("description", ""))
-        for f in current_round_findings
-        if f.get("severity") == "high"
-    ]
-    if not curr_high:
-        return False
-
-    repeated = 0
-    for cat, loc, _desc in curr_high:
-        if (cat, loc) in prev_high:
-            repeated += 1
-
-    # All current high findings are repeats -> no progress
-    return repeated == len(curr_high) and len(curr_high) > 0
-
-
-# -- In-Node Plan Loop --
-
-
-def _get_stage_config_from_state(state: dict) -> dict:
-    """Resolve stage config from state's resolved profile."""
-    rp = state.get("_resolved_profile")
-    stage = state.get("current_stage", "")
-    if rp:
-        return rp.get("stages", {}).get(stage, {})
-    from .nodes import get_stage_config
-
-    return get_stage_config(state.get("profile", "minimal"), stage)
-
