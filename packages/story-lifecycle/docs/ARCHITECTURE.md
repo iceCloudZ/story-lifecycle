@@ -110,7 +110,7 @@ orchestrator/
 
 **层间依赖方向**（ISS-012 P6.2 AST 扫描实测）：
 - 干净方向：`entry → {sourcing, orchestrator, knowledge, infra}`；`sourcing → {infra, orchestrator}`；`orchestrator → {infra, knowledge, sourcing}`；`knowledge → infra`。
-- **曾存的 infra 上探倒置**：`infra/benchmarks/artifacts.py → orchestrator.paths` 已由 **ISS-013 修复**（`paths.py` 下沉 `infra/`，纯路径注册表本属 infra）；`infra/db/models.py → sourcing.integrations`（lazy import 避循环）待 **ISS-014** 修。
+- **曾存的 infra 上探倒置**：`infra/benchmarks/artifacts.py → orchestrator.paths` 已由 **ISS-013 修复**（`paths.py` 下沉 `infra/`，纯路径注册表本属 infra）；`infra/db/models.py → sourcing.integrations` 已由 **ISS-014** 修复（workspace-diff 三函数 `_local_git_diff` / `get_story_workspace_diff` / `_try_gitlab_diff` 提到 `sourcing/workspace_diff.py`，gitlab 由 lazy 上探变为同级 import，models.py 回归纯持久化、零 sourcing 引用）。
 
 ---
 

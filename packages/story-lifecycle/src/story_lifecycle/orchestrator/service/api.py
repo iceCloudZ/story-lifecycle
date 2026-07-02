@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ...knowledge.adapters import get_adapter
+from ...sourcing.workspace_diff import get_story_workspace_diff
 from ...infra.db import models as db
 from ...infra.db.models import init_db
 from ...infra.terminal.pty import (
@@ -528,7 +529,7 @@ def get_story_diff(story_key: str):
         raise HTTPException(404, "Story not found")
 
     try:
-        result = db.get_story_workspace_diff(story_key)
+        result = get_story_workspace_diff(story_key)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
