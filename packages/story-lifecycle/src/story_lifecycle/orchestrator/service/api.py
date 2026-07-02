@@ -2842,7 +2842,7 @@ def _get_story_change_items(story_key: str) -> list[dict]:
 
 # -------- static frontend (must be last) --------
 
-_WEB_DIR = Path(__file__).parent.parent / "web"
+_WEB_DIR = Path(__file__).parent.parent.parent / "entry" / "web"
 if _WEB_DIR.is_dir() and any(_WEB_DIR.iterdir()):
     # Mount static assets directly (JS, CSS, favicon, etc.)
     _assets_dir = _WEB_DIR / "assets"
