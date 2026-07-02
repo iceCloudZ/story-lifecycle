@@ -19,7 +19,7 @@ by a provider or DB error.
 
 from __future__ import annotations
 
-from ... import context_providers
+from ...knowledge import context_providers
 
 # Pure keyword classifier for task_type — mirrors the controlled vocabulary in
 # ``packages/story-miner/scripts/task_type_playbooks.py::TASK_TYPE_KEYWORDS``.

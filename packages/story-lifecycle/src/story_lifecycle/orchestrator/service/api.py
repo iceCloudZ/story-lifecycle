@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from ...adapters import get_adapter
+from ...knowledge.adapters import get_adapter
 from ...infra.db import models as db
 from ...infra.db.models import init_db
 from ...infra.terminal.pty import (

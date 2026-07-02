@@ -2,9 +2,9 @@
 
 import pytest
 
-import story_lifecycle.context_providers as cp
-from story_lifecycle.context_providers import get_transcript_context
-from story_lifecycle.context_providers.base import BaseStoryContextProvider
+import story_lifecycle.knowledge.context_providers as cp
+from story_lifecycle.knowledge.context_providers import get_transcript_context
+from story_lifecycle.knowledge.context_providers.base import BaseStoryContextProvider
 
 
 class _Fake:

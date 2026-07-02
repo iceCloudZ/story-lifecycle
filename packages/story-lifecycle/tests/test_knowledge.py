@@ -5,8 +5,8 @@ import yaml
 from pathlib import Path
 from click.testing import CliRunner
 from story_lifecycle.entry.cli.main import cli
-from story_lifecycle.knowledge.templates import load_template
-from story_lifecycle.knowledge.paths import (
+from story_lifecycle.knowledge.knowledge_store.templates import load_template
+from story_lifecycle.knowledge.knowledge_store.paths import (
     knowledge_dir,
     manifest_path,
     product_path,
@@ -24,11 +24,11 @@ from story_lifecycle.knowledge.paths import (
     knowledge_done_file,
     knowledge_context_dir,
 )
-from story_lifecycle.knowledge.scaffold import scaffold_knowledge_dir
-from story_lifecycle.knowledge.bootstrap import render_bootstrap_prompt
-from story_lifecycle.knowledge.validator import validate_knowledge_pack
-from story_lifecycle.knowledge.stale import check_stale
-from story_lifecycle.knowledge.search import search_knowledge
+from story_lifecycle.knowledge.knowledge_store.scaffold import scaffold_knowledge_dir
+from story_lifecycle.knowledge.knowledge_store.bootstrap import render_bootstrap_prompt
+from story_lifecycle.knowledge.knowledge_store.validator import validate_knowledge_pack
+from story_lifecycle.knowledge.knowledge_store.stale import check_stale
+from story_lifecycle.knowledge.knowledge_store.search import search_knowledge
 
 
 def test_knowledge_dir():
@@ -195,8 +195,8 @@ class TestBootstrapPrompt:
 class TestValidator:
     def _make_pack(self, tmp_path, *, missing=None, empty_graph=False):
         """Helper: create a minimal valid knowledge pack."""
-        from story_lifecycle.knowledge.scaffold import scaffold_knowledge_dir
-        from story_lifecycle.knowledge import paths as kp
+        from story_lifecycle.knowledge.knowledge_store.scaffold import scaffold_knowledge_dir
+        from story_lifecycle.knowledge.knowledge_store import paths as kp
 
         scaffold_knowledge_dir(tmp_path)
 
@@ -269,7 +269,7 @@ class TestValidator:
 
     def test_invalid_graph_json(self, tmp_path):
         self._make_pack(tmp_path)
-        from story_lifecycle.knowledge import paths as kp
+        from story_lifecycle.knowledge.knowledge_store import paths as kp
 
         kp.graph_json_path(tmp_path).write_text("not json{{{", encoding="utf-8")
         errors = validate_knowledge_pack(tmp_path)
@@ -298,7 +298,7 @@ class TestProjectCLI:
 
 class TestStale:
     def _write_manifest(self, tmp_path, commit="abc123", ts="2026-01-01T00:00:00"):
-        from story_lifecycle.knowledge import paths as kp
+        from story_lifecycle.knowledge.knowledge_store import paths as kp
 
         manifest = {
             "version": 1,
@@ -311,7 +311,7 @@ class TestStale:
     def test_fresh_when_commit_matches(self, tmp_path, monkeypatch):
         self._write_manifest(tmp_path, commit="abc123def456")
         monkeypatch.setattr(
-            "story_lifecycle.knowledge.stale._get_git_commit",
+            "story_lifecycle.knowledge.knowledge_store.stale._get_git_commit",
             lambda w: "abc123def456",
         )
         result = check_stale(tmp_path)
@@ -320,7 +320,7 @@ class TestStale:
     def test_stale_when_commit_differs(self, tmp_path, monkeypatch):
         self._write_manifest(tmp_path, commit="old_commit")
         monkeypatch.setattr(
-            "story_lifecycle.knowledge.stale._get_git_commit",
+            "story_lifecycle.knowledge.knowledge_store.stale._get_git_commit",
             lambda w: "new_commit",
         )
         result = check_stale(tmp_path)
@@ -332,7 +332,7 @@ class TestStale:
         assert result["stale"]
 
     def test_stale_when_manifest_status_is_stale(self, tmp_path):
-        from story_lifecycle.knowledge import paths as kp
+        from story_lifecycle.knowledge.knowledge_store import paths as kp
 
         manifest = {
             "version": 1,
@@ -347,8 +347,8 @@ class TestStale:
 
 class TestSearch:
     def _setup_index(self, tmp_path, content):
-        from story_lifecycle.knowledge import paths as kp
-        from story_lifecycle.knowledge.scaffold import scaffold_knowledge_dir
+        from story_lifecycle.knowledge.knowledge_store import paths as kp
+        from story_lifecycle.knowledge.knowledge_store.scaffold import scaffold_knowledge_dir
 
         scaffold_knowledge_dir(tmp_path)
         idx = kp.indexes_dir(tmp_path) / "api-index.md"

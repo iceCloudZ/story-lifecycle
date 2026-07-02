@@ -1,6 +1,6 @@
 """Tests for _render_prompt transcript-context injection (dry-run / template path)."""
 
-import story_lifecycle.context_providers as cp
+import story_lifecycle.knowledge.context_providers as cp
 
 
 class TestRenderPromptTranscript:

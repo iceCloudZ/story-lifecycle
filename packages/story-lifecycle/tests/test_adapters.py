@@ -6,11 +6,11 @@ import os
 import pytest
 from unittest.mock import patch
 
-from story_lifecycle.adapters import get_adapter
-from story_lifecycle.adapters.base import BaseAdapter
-from story_lifecycle.adapters.claude import ClaudeAdapter
-from story_lifecycle.adapters.codex import CodexAdapter
-from story_lifecycle.adapters.shell import ShellAdapter
+from story_lifecycle.knowledge.adapters import get_adapter
+from story_lifecycle.knowledge.adapters.base import BaseAdapter
+from story_lifecycle.knowledge.adapters.claude import ClaudeAdapter
+from story_lifecycle.knowledge.adapters.codex import CodexAdapter
+from story_lifecycle.knowledge.adapters.shell import ShellAdapter
 
 
 class TestShellAdapter:
@@ -66,14 +66,14 @@ class TestGetAdapter:
             "aider:\n  launch_cmd: 'aider --model {model}'\n  inject_method: stdin\n",
             encoding="utf-8",
         )
-        with patch("story_lifecycle.adapters.shell._CONFIG_PATH", config_file):
+        with patch("story_lifecycle.knowledge.adapters.shell._CONFIG_PATH", config_file):
             adapter = get_adapter("aider")
             assert isinstance(adapter, ShellAdapter)
             assert adapter.launch_cmd("gpt-4") == "aider --model gpt-4"
 
     def test_config_not_found_raises(self, tmp_path):
         missing = tmp_path / "nonexistent.yaml"
-        with patch("story_lifecycle.adapters.shell._CONFIG_PATH", missing):
+        with patch("story_lifecycle.knowledge.adapters.shell._CONFIG_PATH", missing):
             with pytest.raises(ValueError, match="Unknown CLI adapter"):
                 get_adapter("aider")
 

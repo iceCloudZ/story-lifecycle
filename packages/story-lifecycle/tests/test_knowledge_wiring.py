@@ -32,7 +32,7 @@ def test_get_context_surfaces_knowledge_index_playbook(monkeypatch, tmp_path):
     except ImportError:
         pytest.skip("knowledge package not available in this monorepo checkout")
 
-    from story_lifecycle.context_providers import knowledge_provider as kp
+    from story_lifecycle.knowledge.context_providers import knowledge_provider as kp
 
     # knowledge dir with one playbook linked to the story
     kdir = tmp_path / "knowledge"
@@ -78,7 +78,7 @@ def test_get_context_degrades_gracefully_without_knowledge_pkg(monkeypatch, tmp_
     """If `knowledge` can't be imported, get_context still returns the rest (no crash)."""
     import builtins
 
-    from story_lifecycle.context_providers import knowledge_provider as kp
+    from story_lifecycle.knowledge.context_providers import knowledge_provider as kp
 
     real_import = builtins.__import__
 

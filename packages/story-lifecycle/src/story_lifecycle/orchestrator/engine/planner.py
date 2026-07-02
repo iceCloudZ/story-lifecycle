@@ -433,7 +433,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     执行在后台线程中运行。
     """
     from ...infra.db import models as db
-    from ...adapters import get_adapter
+    from ...knowledge.adapters import get_adapter
     from ..engine.profile_loader import resolve_profile
     from ...infra.json_helpers import robust_json_parse
     from ...infra.terminal.pty import ensure_agent_pty
@@ -513,7 +513,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             project_section = "\n".join(project_lines)
 
             # 构建 CLI prompt
-            from ...context_providers import get_transcript_context
+            from ...knowledge.context_providers import get_transcript_context
 
             transcript_ctx = get_transcript_context(story_key, workspace, stage)
             cli_prompt = _build_cli_prompt(

@@ -229,7 +229,7 @@ def create(key, title, prd, profile, workspace, no_start, dry_run):
     console.print(f"  Workspace: [dim]{ws}[/]")
 
     # 检查知识包是否存在
-    from ...knowledge.paths import manifest_path as _km
+    from ...knowledge.knowledge_store.paths import manifest_path as _km
 
     if not _km(ws).exists():
         console.print(

@@ -58,7 +58,7 @@ def _load_prompt_template() -> str:
         pass
 
     # Fallback: file path relative to package
-    pkg = Path(__file__).resolve().parent.parent
+    pkg = Path(__file__).resolve().parent.parent.parent
     path = pkg / "infra" / "prompts" / "knowledge-bootstrap.md"
     if path.exists():
         return path.read_text(encoding="utf-8")
@@ -105,7 +105,7 @@ def run_bootstrap(
     # Fallback: try to parse JSON from stdout
     import tempfile
 
-    from ..infra.json_helpers import robust_json_parse
+    from ...infra.json_helpers import robust_json_parse
 
     if proc.stdout.strip():
         # Write stdout to temp file so robust_json_parse can handle it
@@ -129,7 +129,7 @@ def run_bootstrap(
 
 
 def _parse_done(path: Path) -> dict:
-    from ..infra.json_helpers import robust_json_parse
+    from ...infra.json_helpers import robust_json_parse
 
     return robust_json_parse(path)
 
