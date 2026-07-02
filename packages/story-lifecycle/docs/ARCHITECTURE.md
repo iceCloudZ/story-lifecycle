@@ -1,7 +1,7 @@
 # Architecture
 
 > story-lifecycle 当前架构（codemap + 不变量），随架构治理同步更新。
-> **最后更新**：2026-07-01（架构治理阶段 0-4 完成后状态，ISS-006~010 + 文档去腐化）
+> **最后更新**：2026-07-02（ISS-012 物理分层完成：5 层从逻辑分组升级为物理目录 entry/sourcing/orchestrator/knowledge/infra）
 > 历史设计决策见 [`archive/`](archive/)（ADR，正文冻结）。
 
 ---
@@ -32,20 +32,45 @@
 
 ---
 
-## story-lifecycle 包内分层（5 层）
+## story-lifecycle 包内分层（5 层 · 物理目录）
 
-源码在 `src/story_lifecycle/`：
+> **ISS-012（2026-07）**：5 层从"逻辑分组"升级为**物理目录**——依赖方向从目录树即可读出。
+> 源码在 `src/story_lifecycle/`，根级只剩 `__init__.py` + `__main__.py`，业务全在 5 个层目录：
 
-### ① 入口层（最薄壳）
+```
+src/story_lifecycle/
+├── entry/          ① 入口层（最薄壳）
+│   ├── cli/        Click 命令（main/setup/list_cmd/plan_cmd...）
+│   ├── web/        Vue3 Board 静态资源
+│   └── profiles/   流程定义 yaml（story create --profile 选，入口交互性质）
+├── sourcing/       ② 源头层
+│   ├── sources/    数据源（TAPD/GitHub/手动），__init__.py get_source
+│   ├── planner/    项目级规划（GitHub 链路，≠ orchestrator/engine/planner.py）
+│   └── integrations/  上游适配（gitlab 等）
+├── orchestrator/   ③ 编排引擎（核心，ISS-010 已内部分层，物理分层未动其内部）
+├── knowledge/      ④ 知识层
+│   ├── context_providers/  故事上下文注入（SOFT 缝接 miner）
+│   ├── adapters/           AI CLI 适配（claude/codex/shell）
+│   └── knowledge_store/    lifecycle 内 .story/knowledge 读写（原顶层 knowledge/，ISS-012 改名避与层目录撞名）
+└── infra/          ⑤ 基础设施层
+    ├── config.py json_helpers.py schemas.py story_paths.py llm_client.py llm_client_kimi_cli.py
+    ├── prompts/     stage 提示词模板（9 个 .md，跨层共享数据资源）
+    ├── db/          SQLite 持久化（story 汇合点）
+    ├── terminal/    CLI 进程管理（pty.py）
+    └── benchmarks/  SWE-bench 评测
+```
+
+### ① 入口层 `entry/`（最薄壳）
 - `cli/` — Click 命令（main/setup/list_cmd/plan_cmd...）
 - `web/` — Vue3 Board 静态资源
 - `profiles/` — 流程定义 yaml（用户 `story create --profile` 时选，入口交互性质）
 
-### ② 源头/创建
+### ② 源头层 `sourcing/`
 - `sources/` — 数据源（TAPD/GitHub/手动），`__init__.py:19` get_source
 - `planner/` — 项目级规划（GitHub 链路，**≠** `orchestrator/engine/planner.py`）
+- `integrations/` — 上游适配（gitlab 等）
 
-### ③ 编排引擎（核心）— `orchestrator/`（已分层归位，ISS-010）
+### ③ 编排引擎（核心）— `orchestrator/`（已分层归位，ISS-010，物理分层未动其内部）
 
 根级只剩 `entry.py`（TUI 入口决策）+ `paths.py`（路径注册表单一源）+ `__init__.py`。其余在高内聚子包，**依赖单向无环**（stage-4.1 验证）：
 
@@ -70,21 +95,23 @@ orchestrator/
 
 **依赖方向**：`learning → engine → evaluation`；`service → {context, engine, evaluation, nodes, observability, workspace}`；`observability → evaluation`；`evaluation → nodes`；`nodes/context → engine`。无反向边 → **无循环**。
 
-### ④ 知识消费层（横切）— 已接线（ISS-009）
+### ④ 知识层 `knowledge/`（横切）— 已接线（ISS-009）
 - `context_providers/__init__.py` `get_transcript_context` — **SOFT 缝 1**：try/except import miner，没装返回 None
 - `context_providers/knowledge_provider.py` `get_context()` — 通过 `knowledge` 契约包的 `KnowledgeIndex.retrieve()` 获取 playbook/scenario/failure 知识（**已接线，ISS-009 9a**），叠加原有的裸 JSON 读取（result_axis_phase2/bug_story_graph 等结果指标，knowledge 包不建模这些，两者共存）
-- `adapters/` — claude/codex/kimi/shell，写 `anchors.jsonl` 供 miner 回读
-- `knowledge/`（lifecycle 内）— `.story/knowledge` 读写（**≠** packages/knowledge 契约包）
+- `adapters/` — claude/codex/shell，写 `anchors.jsonl` 供 miner 回读
+- `knowledge_store/`（原顶层 `knowledge/`，ISS-012 改名）— `.story/knowledge` 读写（**≠** packages/knowledge 契约包）
 
-### ⑤ 基础设施（包根叶子模块，零内部 import）
-- `config.py` `json_helpers.py` — ISS-006 迁入（config IO + 容错 JSON 解析）
+### ⑤ 基础设施层 `infra/`
+- `config.py` `json_helpers.py` — config IO + 容错 JSON 解析
 - `llm_client.py` `llm_client_kimi_cli.py` `schemas.py` `story_paths.py`
 - `prompts/` — stage 提示词模板（design/build/verify/review...9个.md，被③engine 拼 prompt + ④knowledge/bootstrap 读，跨层共享数据资源，非入口配置）
 - `db/` — SQLite 持久化（story 汇合点）
 - `terminal/` — CLI 进程管理（pty.py）
 - `benchmarks/` — SWE-bench 评测
 
-**依赖方向干净**：cli → 业务（②③④）→ infra（⑤），单向。
+**层间依赖方向**（ISS-012 P6.2 AST 扫描实测）：
+- 干净方向：`entry → {sourcing, orchestrator, knowledge, infra}`；`sourcing → {infra, orchestrator}`；`orchestrator → {infra, knowledge, sourcing}`；`knowledge → infra`。
+- **预存倒置（非本次重构引入，架构债）**：`infra/benchmarks/artifacts.py` lazy import `orchestrator.paths`、`infra/db/models.py` lazy import `sourcing.integrations`（均函数内 lazy import 避循环）。修复需重构这些 lazy 上探依赖，超出"物理分层"范围，留作后续 issue。
 
 ---
 

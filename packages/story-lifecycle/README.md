@@ -205,7 +205,7 @@ my-tool:
 
 ## 架构
 
-story-lifecycle 是 Function-Calling 编排引擎，5 层结构：①入口(cli/web) → ②源头(sources/planner) → ③编排引擎(orchestrator: FC agent 规划+执行+gate 硬闸) → ④知识消费(context_providers/adapters) → ⑤基础设施(config/json_helpers/db/terminal)。
+story-lifecycle 是 Function-Calling 编排引擎，**5 层物理分层（ISS-012，目录 = 逻辑）**：①`entry`(cli/web/profiles) → ②`sourcing`(sources/planner/integrations) → ③`orchestrator`(FC agent 规划+执行+gate 硬闸) → ④`knowledge`(context_providers/adapters/knowledge_store) → ⑤`infra`(config/db/terminal/prompts/...)。依赖方向自上而下，从目录即可读出。
 
 两种工作流并存：**全自动**(FC agent 规划 → 前端确认 HITL → 后台执行 + verify gate) / **半自动**(release_prompt 模板 → 人工拷贝 CLI)。
 
