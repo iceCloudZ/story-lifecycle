@@ -13,6 +13,7 @@ from .resolver import resolve_worktrees, WorktreeState
 from .decider import (
     PrepareAction,
     CleanupAction,
+    RejectReason,
     decide_prepare,
     decide_cleanup,
 )
@@ -80,22 +81,8 @@ def prepare_worktrees(story_key: str, worktree_root: str = "") -> list[dict]:
             base_branch = sp.get("base_branch", "main")
             base_commit = sp.get("base_commit", "")
 
-            # Determine worktree path
-            if sp.get("worktree_path"):
-                wt_path = sp["worktree_path"]
-            elif worktree_root:
-                project_name = project["name"]
-                wt_path = str(Path(worktree_root) / story_key / project_name)
-            else:
-                results.append(
-                    {
-                        "story_project": sp,
-                        "action": "reject",
-                        "worktree_path": None,
-                        "error": "no worktree_path and no worktree_root configured",
-                    }
-                )
-                continue
+            # Determine worktree path (explicit > worktree_root > <repo>/.worktrees/<story>)
+            wt_path = _derive_worktree_path(sp, project, story_key, worktree_root)
 
             # Create branch if it doesn't exist
             try:
@@ -119,6 +106,7 @@ def prepare_worktrees(story_key: str, worktree_root: str = "") -> list[dict]:
                     sp["project_id"],
                     worktree_path=wt_path,
                     worktree_state=WorktreeState.AVAILABLE,
+                    workspace_type="worktree",
                 )
                 results.append(
                     {
@@ -138,15 +126,54 @@ def prepare_worktrees(story_key: str, worktree_root: str = "") -> list[dict]:
                     }
                 )
 
-        else:
-            results.append(
-                {
-                    "story_project": sp,
-                    "action": "reject",
-                    "worktree_path": None,
-                    "error": decision.reason,
-                }
-            )
+        else:  # PrepareAction.REJECT
+            if (
+                decision.reject_reason == RejectReason.PATH_CONFLICT
+                and sp.get("worktree_path")
+            ):
+                # 显式指定的路径被占(非 worktree)→ 改走外部独立 worktree
+                sp_ext = {**sp, "worktree_path": None}
+                wt_path = _derive_worktree_path(sp_ext, project, story_key, worktree_root)
+                branch = sp.get("branch", "")
+                base_branch = sp.get("base_branch", "main")
+                base_commit = sp.get("base_commit", "")
+                try:
+                    _ensure_branch(repo_path, branch, base_branch, base_commit)
+                    _create_worktree(repo_path, wt_path, branch)
+                    db.update_story_project(
+                        story_key,
+                        sp["project_id"],
+                        worktree_path=wt_path,
+                        worktree_state=WorktreeState.AVAILABLE,
+                        workspace_type="worktree",
+                    )
+                    results.append(
+                        {
+                            "story_project": sp,
+                            "action": "create_fallback",
+                            "worktree_path": wt_path,
+                            "error": None,
+                        }
+                    )
+                except Exception as e:
+                    results.append(
+                        {
+                            "story_project": sp,
+                            "action": "reject",
+                            "worktree_path": None,
+                            "error": f"fallback create failed: {e}",
+                        }
+                    )
+            else:
+                # NO_BRANCH_NAME / STALE / BRANCH_CHECKED_OUT_ELSEWHERE / ... → 真 reject
+                results.append(
+                    {
+                        "story_project": sp,
+                        "action": "reject",
+                        "worktree_path": None,
+                        "error": decision.reason,
+                    }
+                )
 
     return results
 
@@ -234,7 +261,7 @@ def cleanup_worktree(
         db.update_story_project(
             story_key,
             project_id,
-            worktree_path="",
+            worktree_path=None,
             worktree_state=WorktreeState.UNPREPARED,
         )
 
@@ -318,3 +345,28 @@ def _is_worktree_clean(worktree_path: str) -> bool:
         return result.stdout.strip() == ""
     except Exception:
         return False
+
+
+def _ensure_local_exclude(repo: Path, pattern: str) -> None:
+    """把 pattern 加到目标仓 .git/info/exclude(纯本地排除,不改 .gitignore、不 commit)。"""
+    exclude = repo / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    if pattern not in existing.splitlines():
+        with exclude.open("a", encoding="utf-8") as f:
+            f.write(f"{pattern}\n")
+
+
+def _derive_worktree_path(
+    sp: dict, project: dict, story_key: str, worktree_root: str
+) -> str:
+    """决定本次 prepare 用哪个 worktree 路径。
+    优先级:绑定显式指定的真实路径 > worktree_root/story_key/project > <repo>/.worktrees/<story_key>。
+    不读占位符(已随 NULL 改动消失)。"""
+    if sp.get("worktree_path"):
+        return sp["worktree_path"]
+    if worktree_root:
+        return str(Path(worktree_root) / story_key / project["name"])
+    repo = Path(project["repo_path"])
+    _ensure_local_exclude(repo, ".worktrees/")
+    return str(repo / ".worktrees" / story_key)

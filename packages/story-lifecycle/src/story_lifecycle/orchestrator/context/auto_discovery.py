@@ -55,22 +55,22 @@ class Scanner:
             project: project DB row
         """
         worktree_path = sp.get("worktree_path", "")
-        repo_path = project.get("repo_path", "")
         project_id = project["id"]
-        fallback = False
 
         if worktree_path and Path(worktree_path).exists():
             scan_root = worktree_path
-        elif repo_path and Path(repo_path).exists():
-            scan_root = repo_path
-            fallback = True
         else:
+            # 不再 fallback 到 repo_path:宁可不扫,也不扫错分支污染上下文。
+            # worktree_path 为 NULL(未准备)或路径不存在(已删除/未创建)都走这里。
             return ScanResult(
                 project_id=project_id,
-                errors=[f"no valid path: worktree={worktree_path}, repo={repo_path}"],
+                errors=[
+                    f"worktree 未就绪 (worktree_path={worktree_path!r});"
+                    f"请先 POST /worktrees/prepare"
+                ],
             )
 
-        result = ScanResult(project_id=project_id, fallback_mode=fallback)
+        result = ScanResult(project_id=project_id, fallback_mode=False)
 
         # Get current branch/HEAD
         try:

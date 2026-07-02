@@ -54,8 +54,9 @@ class TestAutoDiscoveryScanner:
         assert len(result.nacos_refs) >= 1
         assert any("hc-order-service.yaml" in r["data_id"] for r in result.nacos_refs)
 
-    def test_scanner_no_worktree_falls_back_to_repo(self, tmp_path):
-        """When worktree doesn't exist, Scanner should fall back to repo_path."""
+    def test_scanner_no_worktree_returns_missing(self, tmp_path):
+        """When worktree_path doesn't exist on disk, Scanner must NOT fall back to
+        repo_path (would scan the wrong branch). Return errors instead."""
         repo_dir = tmp_path / "repo"
         repo_dir.mkdir()
         (repo_dir / "schema.sql").write_text("CREATE TABLE fallback (id INT);")
@@ -67,8 +68,26 @@ class TestAutoDiscoveryScanner:
             project={"id": 1, "repo_path": str(repo_dir)},
         )
 
-        assert result.fallback_mode
-        assert len(result.sql_files) >= 1
+        assert not result.fallback_mode
+        assert len(result.errors) >= 1
+        assert result.sql_files == []  # did not scan repo_path
+
+    def test_scanner_null_worktree_returns_missing(self, tmp_path):
+        """worktree_path NULL (unprepared binding) → must not scan, return errors."""
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        (repo_dir / "schema.sql").write_text("CREATE TABLE x (id INT);")
+
+        scanner = Scanner()
+        result = scanner.scan(
+            "test-story",
+            sp={"worktree_path": None, "branch": ""},
+            project={"id": 1, "repo_path": str(repo_dir)},
+        )
+
+        assert not result.fallback_mode
+        assert len(result.errors) >= 1
+        assert result.sql_files == []
 
     def test_decider_merge_detects_new_facts(self, tmp_path):
         """Decider should detect new documents and change items not already in DB."""

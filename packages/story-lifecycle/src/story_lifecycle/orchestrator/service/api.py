@@ -1870,29 +1870,48 @@ class SetBranchRequest(BaseModel):
 def api_set_branch(story_key: str, req: SetBranchRequest):
     """Create or update a story-project branch binding — agent backfill.
 
-    Only writes fields that the caller explicitly provides. worktree_path is
-    managed by the worktree preparation flow; sending None leaves it untouched
-    (update) or lets bind_story_project pick a placeholder (create).
+    worktree_path semantics: omitted (None) → untouched; explicit "" → clear
+    the binding's worktree_path to NULL (releases a main checkout); a real
+    path → set it (conflict with an active occupant → 409).
     worktree_state (e.g. 'available') lets agent-driven flows that prepare the
     branch themselves mark the binding ready without the worktree handler."""
     if not db.get_story(story_key):
         raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
-    existing = db.get_story_project(story_key, req.project_id)
-    fields: dict = {"branch": req.branch}
-    # Treat empty string the same as "not provided" to avoid UNIQUE('') collisions.
-    if req.worktree_path:
-        fields["worktree_path"] = req.worktree_path
-    if req.base_branch is not None:
-        fields["base_branch"] = req.base_branch
-    if req.worktree_state:
-        fields["worktree_state"] = req.worktree_state
-    if existing:
-        db.update_story_project(story_key, req.project_id, **fields)
-    else:
-        fields.setdefault("base_branch", "main")
-        db.bind_story_project(story_key, req.project_id, **fields)
-    db.bump_context_revision(story_key)
-    return db.get_story_project(story_key, req.project_id)
+    try:
+        existing = db.get_story_project(story_key, req.project_id)
+        fields: dict = {"branch": req.branch}
+        if req.worktree_path is None:
+            pass  # omitted → don't touch worktree_path
+        elif req.worktree_path == "":
+            fields["worktree_path"] = None  # explicit clear → release the path
+        else:
+            fields["worktree_path"] = req.worktree_path
+        if req.base_branch is not None:
+            fields["base_branch"] = req.base_branch
+        if req.worktree_state:
+            fields["worktree_state"] = req.worktree_state
+        if existing:
+            db.update_story_project(story_key, req.project_id, **fields)
+        else:
+            fields.setdefault("base_branch", "main")
+            db.bind_story_project(story_key, req.project_id, **fields)
+        db.bump_context_revision(story_key)
+        return db.get_story_project(story_key, req.project_id)
+    except db.WorktreePathConflict as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    f"worktree_path {e.worktree_path} 已被 story "
+                    f"{e.occupant.get('story_key')} 占用 "
+                    f"(state={e.occupant.get('worktree_state')})。"
+                    f"用 worktree_path='' 清空旧绑定,或 POST /worktrees/prepare 建独立 worktree。"
+                ),
+                "occupant_story_key": e.occupant.get("story_key"),
+                "occupant_state": e.occupant.get("worktree_state"),
+                "worktree_path": e.worktree_path,
+            },
+        )
 
 
 # -------- Project registry endpoints --------

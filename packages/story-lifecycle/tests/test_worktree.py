@@ -52,6 +52,18 @@ def _init_git_repo(path: Path) -> None:
     )
 
 
+def _default_branch(repo: Path) -> str:
+    """Detect the repo's actual default branch name (main or master)."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
 def _make_story_project_binding(**overrides) -> dict:
     """Create a dict that looks like a story_project DB row."""
     defaults = {
@@ -287,3 +299,95 @@ class TestWorktreeCleanup:
             worktree_exists=True,
         )
         assert result.action == CleanupAction.ALLOW
+
+
+class TestPreparePathDerivation:
+    """prepare_worktrees path derivation: worktree_root, .worktrees/ fallback,
+    and PATH_CONFLICT -> external fallback."""
+
+    def test_derives_external_path_when_worktree_path_null(
+        self, tmp_path, isolated_story_home
+    ):
+        from story_lifecycle.infra.db import models as db
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+        branch = _default_branch(repo)
+        proj = db.create_project(name="svc", repo_path=str(repo), default_branch=branch)
+        db.create_story("S1", "S1", str(repo))
+        db.update_story("S1", intake_state="ready")
+        db.bind_story_project("S1", proj["id"], branch="feat/s1", base_branch=branch)
+        # worktree_path intentionally NOT set (NULL)
+
+        wt_root = tmp_path / "wts"
+        results = prepare_worktrees("S1", worktree_root=str(wt_root))
+
+        assert results[0]["action"] == "create"
+        expected = str(wt_root / "S1" / "svc")
+        assert results[0]["worktree_path"] == expected
+        assert Path(expected).exists()
+        assert db.get_story_project("S1", proj["id"])["worktree_path"] == expected
+
+    def test_falls_back_to_local_dotworktrees_without_root(
+        self, tmp_path, isolated_story_home
+    ):
+        from story_lifecycle.infra.db import models as db
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+        branch = _default_branch(repo)
+        proj = db.create_project(name="svc", repo_path=str(repo), default_branch=branch)
+        db.create_story("S2", "S2", str(repo))
+        db.update_story("S2", intake_state="ready")
+        db.bind_story_project("S2", proj["id"], branch="feat/s2", base_branch=branch)
+
+        results = prepare_worktrees("S2", worktree_root="")
+
+        assert results[0]["action"] == "create"
+        expected = str(repo / ".worktrees" / "S2")
+        assert results[0]["worktree_path"] == expected
+        assert Path(expected).exists()
+        # target repo's local exclude must ignore .worktrees/ (no .gitignore pollution)
+        exclude = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+        assert ".worktrees/" in exclude
+
+    def test_path_conflict_creates_external_fallback(
+        self, tmp_path, isolated_story_home
+    ):
+        from story_lifecycle.infra.db import models as db
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+        branch = _default_branch(repo)
+        proj = db.create_project(name="svc", repo_path=str(repo), default_branch=branch)
+        db.create_story("S3", "S3", str(repo))
+        db.update_story("S3", intake_state="ready")
+        # explicit worktree_path pointing at a plain (non-worktree) dir -> PATH_CONFLICT
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        db.bind_story_project(
+            "S3", proj["id"], branch="feat/s3",
+            base_branch=branch, worktree_path=str(plain),
+        )
+
+        wt_root = tmp_path / "wts"
+        results = prepare_worktrees("S3", worktree_root=str(wt_root))
+
+        assert results[0]["action"] == "create_fallback"
+        fallback = str(wt_root / "S3" / "svc")
+        assert results[0]["worktree_path"] == fallback
+        assert Path(fallback).exists()
+        assert db.get_story_project("S3", proj["id"])["worktree_path"] == fallback
+
+    def test_no_branch_name_still_rejects(self, tmp_path, isolated_story_home):
+        from story_lifecycle.infra.db import models as db
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+        proj = db.create_project(name="svc", repo_path=str(repo), default_branch="main")
+        db.create_story("S4", "S4", str(repo))
+        db.update_story("S4", intake_state="ready")
+        db.bind_story_project("S4", proj["id"], branch="")  # NO_BRANCH_NAME
+
+        results = prepare_worktrees("S4", worktree_root=str(tmp_path / "wts"))
+        assert results[0]["action"] == "reject"

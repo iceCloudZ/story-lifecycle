@@ -430,6 +430,15 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_sda_delivery ON story_delivery_artifact(delivery_state)"
         )
 
+        # Migration: legacy _pending_<story>_<proj> placeholders → NULL.
+        # SQLite UNIQUE 豁免 NULL,未建 worktree 的绑定不再需要占位字符串。
+        # 幂等:首次执行后无匹配行。覆盖诊断文档里手动绕过留下的 _pending_ 行。
+        conn.execute(
+            "UPDATE story_project SET worktree_path = NULL, "
+            "updated_at = strftime('%Y-%m-%d %H:%M:%S', 'now') "
+            "WHERE worktree_path LIKE '_pending_%'"
+        )
+
 
 # -------- CRUD helpers --------
 
@@ -1727,6 +1736,55 @@ def delete_project(project_id: int) -> None:
 # -------- Story-Project binding CRUD --------
 
 
+class WorktreePathConflict(Exception):
+    """worktree_path 已被一个活跃绑定占用,无法登记。"""
+
+    def __init__(self, worktree_path: str, occupant: dict):
+        self.worktree_path = worktree_path
+        self.occupant = occupant
+        super().__init__(
+            f"worktree_path {worktree_path} 已被 story {occupant.get('story_key')} "
+            f"占用 (state={occupant.get('worktree_state')})"
+        )
+
+
+# 可被自动迁移(释放路径)的占用者状态:肯定没有活跃 worktree
+_DISPLACEABLE_STATES = {"unprepared", "missing"}
+
+
+def _find_worktree_occupant(worktree_path: str) -> dict | None:
+    """查 worktree_path 的当前占用者。新开只读连接(调用方写事务已因异常退出)。"""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT story_key, project_id, worktree_state, branch "
+            "FROM story_project WHERE worktree_path = ?",
+            (worktree_path,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _resolve_worktree_conflict(worktree_path: str) -> None:
+    """写操作撞 worktree_path UNIQUE 时调用。
+    占用者陈旧(unprepared/missing)→ 置 NULL 释放路径,调用方重试即成功;
+    占用者活跃 → 抛 WorktreePathConflict;未命中(非 worktree_path 冲突)→ 直接返回。"""
+    occupant = _find_worktree_occupant(worktree_path)
+    if not occupant:
+        return
+    if occupant.get("worktree_state") in _DISPLACEABLE_STATES:
+        with _db() as conn:
+            conn.execute(
+                "UPDATE story_project SET worktree_path = NULL, updated_at = ? "
+                "WHERE story_key = ? AND project_id = ?",
+                (
+                    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                    occupant["story_key"],
+                    occupant["project_id"],
+                ),
+            )
+        return
+    raise WorktreePathConflict(worktree_path, occupant)
+
+
 def bind_story_project(
     story_key: str,
     project_id: int,
@@ -1742,36 +1800,33 @@ def bind_story_project(
 ) -> dict:
     """Bind a story to a project. Returns the created row."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    # worktree_path 有 UNIQUE 约束，未创建 worktree 时用 branch 占位避免空串冲突
+    # worktree_path 列为 TEXT UNIQUE,但 SQLite 的 UNIQUE 对 NULL 豁免(多 NULL 互不冲突)。
+    # 未创建 worktree 时存 NULL,而非占位字符串——避免假路径污染 prepare/scan。
     if not worktree_path:
-        worktree_path = f"_pending_{story_key}_{project_id}"
-    with _db() as conn:
-        conn.execute(
-            """INSERT INTO story_project (story_key, project_id, branch, base_branch,
-               base_commit, worktree_path, workspace_type, worktree_state,
-               summary, source, evidence_ref, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                story_key,
-                project_id,
-                branch,
-                base_branch,
-                base_commit,
-                worktree_path,
-                workspace_type,
-                worktree_state,
-                summary,
-                source,
-                evidence_ref,
-                now,
-                now,
-            ),
-        )
-        row = conn.execute(
-            "SELECT * FROM story_project WHERE story_key = ? AND project_id = ?",
-            (story_key, project_id),
-        ).fetchone()
-    return dict(row) if row else {}
+        worktree_path = None
+    _insert = """INSERT INTO story_project (story_key, project_id, branch, base_branch,
+       base_commit, worktree_path, workspace_type, worktree_state,
+       summary, source, evidence_ref, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+    _select = "SELECT * FROM story_project WHERE story_key = ? AND project_id = ?"
+    _vals = (
+        story_key, project_id, branch, base_branch, base_commit, worktree_path,
+        workspace_type, worktree_state, summary, source, evidence_ref, now, now,
+    )
+    try:
+        with _db() as conn:
+            conn.execute(_insert, _vals)
+            row = conn.execute(_select, (story_key, project_id)).fetchone()
+        return dict(row) if row else {}
+    except sqlite3.IntegrityError:
+        if not worktree_path:
+            raise  # 非 worktree_path 维度冲突(如 (story_key, project_id) 重复),原样抛
+        # 陈旧占用者 → 已置 NULL,重试必成功;活跃占用者 → 抛 WorktreePathConflict
+        _resolve_worktree_conflict(worktree_path)
+        with _db() as conn:
+            conn.execute(_insert, _vals)
+            row = conn.execute(_select, (story_key, project_id)).fetchone()
+        return dict(row) if row else {}
 
 
 def get_story_project(story_key: str, project_id: int) -> dict | None:
@@ -1815,11 +1870,18 @@ def update_story_project(story_key: str, project_id: int, **kwargs) -> None:
     kwargs["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     values = list(kwargs.values()) + [story_key, project_id]
-    with _db() as conn:
-        conn.execute(
-            f"UPDATE story_project SET {sets} WHERE story_key = ? AND project_id = ?",
-            values,
-        )
+    _update_sql = f"UPDATE story_project SET {sets} WHERE story_key = ? AND project_id = ?"
+    try:
+        with _db() as conn:
+            conn.execute(_update_sql, values)
+    except sqlite3.IntegrityError:
+        wp = kwargs.get("worktree_path")
+        if not wp:
+            raise  # 非 worktree_path 维度冲突(worktree_path 设 NULL 不会撞 UNIQUE)
+        # 陈旧占用者 → 已置 NULL,重试必成功;活跃占用者 → 抛 WorktreePathConflict
+        _resolve_worktree_conflict(wp)
+        with _db() as conn:
+            conn.execute(_update_sql, values)
 
 
 def unbind_story_project(story_key: str, project_id: int) -> None:

@@ -399,3 +399,73 @@ class TestContextAPI:
         assert decision["human_message"] == "hc-config CI compile success"
         assert decision["evidence"]["evidence_ref"] == "Skyladder build #33085"
         assert decision["evidence"]["build_no"] == 33085
+
+
+class TestSetBranchWorktreePath:
+    """worktree_path conflict (409) + empty-string clear semantics."""
+
+    def test_409_when_worktree_path_actively_occupied(self, client, isolated_story_home):
+        proj = db.create_project("hc-user", str(isolated_story_home / "hc-user"), "main")
+        db.create_story("A", "A", str(isolated_story_home))
+        db.create_story("B", "B", str(isolated_story_home))
+
+        path = "D:/hc-all/hc-user"
+        r = client.put(
+            "/api/story/A/context/branch",
+            json={"project_id": proj["id"], "branch": "feat/a",
+                  "worktree_path": path, "worktree_state": "available"},
+        )
+        assert r.status_code == 200
+
+        r = client.put(
+            "/api/story/B/context/branch",
+            json={"project_id": proj["id"], "branch": "feat/b", "worktree_path": path},
+        )
+        assert r.status_code == 409
+        detail = r.json()["detail"]
+        assert detail["occupant_story_key"] == "A"
+        assert detail["worktree_path"] == path
+
+    def test_empty_string_clears_worktree_path(self, client, isolated_story_home):
+        proj = db.create_project("p", str(isolated_story_home / "p"), "main")
+        db.create_story("A", "A", str(isolated_story_home))
+
+        client.put(
+            "/api/story/A/context/branch",
+            json={"project_id": proj["id"], "branch": "feat/a",
+                  "worktree_path": "D:/hc-all/hc-user"},
+        )
+        assert db.get_story_project("A", proj["id"])["worktree_path"] == "D:/hc-all/hc-user"
+
+        r = client.put(
+            "/api/story/A/context/branch",
+            json={"project_id": proj["id"], "branch": "feat/a", "worktree_path": ""},
+        )
+        assert r.status_code == 200
+        assert db.get_story_project("A", proj["id"])["worktree_path"] is None
+
+        # idempotent: clearing an already-NULL path stays NULL
+        r2 = client.put(
+            "/api/story/A/context/branch",
+            json={"project_id": proj["id"], "branch": "feat/a", "worktree_path": ""},
+        )
+        assert r2.status_code == 200
+        assert db.get_story_project("A", proj["id"])["worktree_path"] is None
+
+    def test_omitted_worktree_path_is_noop(self, client, isolated_story_home):
+        proj = db.create_project("p", str(isolated_story_home / "p"), "main")
+        db.create_story("A", "A", str(isolated_story_home))
+
+        client.put(
+            "/api/story/A/context/branch",
+            json={"project_id": proj["id"], "branch": "feat/a",
+                  "worktree_path": "D:/hc-all/hc-user"},
+        )
+
+        # omit worktree_path entirely → must NOT clear the existing path
+        r = client.put(
+            "/api/story/A/context/branch",
+            json={"project_id": proj["id"], "branch": "feat/a"},
+        )
+        assert r.status_code == 200
+        assert db.get_story_project("A", proj["id"])["worktree_path"] == "D:/hc-all/hc-user"
