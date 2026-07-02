@@ -46,4 +46,4 @@ See [v0.12.0 release](https://github.com/iceCloudZ/story-lifecycle/releases/tag/
 
 ## License
 
-MIT — see [`packages/story-lifecycle/LICENSE`](packages/story-lifecycle/LICENSE).
+MIT — see [`LICENSE`](LICENSE).
