@@ -53,7 +53,7 @@ src/story_lifecycle/
 │   ├── adapters/           AI CLI 适配（claude/codex/shell）
 │   └── knowledge_store/    lifecycle 内 .story/knowledge 读写（原顶层 knowledge/，ISS-012 改名避与层目录撞名）
 └── infra/          ⑤ 基础设施层
-    ├── config.py json_helpers.py schemas.py story_paths.py llm_client.py llm_client_kimi_cli.py
+    ├── config.py json_helpers.py schemas.py story_paths.py paths.py llm_client.py llm_client_kimi_cli.py
     ├── prompts/     stage 提示词模板（9 个 .md，跨层共享数据资源）
     ├── db/          SQLite 持久化（story 汇合点）
     ├── terminal/    CLI 进程管理（pty.py）
@@ -72,7 +72,7 @@ src/story_lifecycle/
 
 ### ③ 编排引擎（核心）— `orchestrator/`（已分层归位，ISS-010，物理分层未动其内部）
 
-根级只剩 `entry.py`（TUI 入口决策）+ `paths.py`（路径注册表单一源）+ `__init__.py`。其余在高内聚子包，**依赖单向无环**（stage-4.1 验证）：
+根级只剩 `entry.py`（TUI 入口决策）+ `__init__.py`（`paths.py` 已下沉 `infra/`，见 ISS-013）。其余在高内聚子包，**依赖单向无环**（stage-4.1 验证）：
 
 ```
 orchestrator/
@@ -89,8 +89,7 @@ orchestrator/
 ├── learning/      seed_pipeline, seeds（quality-flywheel seeding）
 ├── context/       resolver, snapshot, pack, release_prompt, auto_discovery（③只读 story 解析）
 ├── nodes/         thin facade（__init__ re-export engine 模块 + 常量，保 nodes.xxx 调用兼容）
-├── entry.py       （根级 — service.api + observability.debug_packet 共用）
-└── paths.py       （根级 — 跨层 infra，同 config.py / json_helpers.py）
+└── entry.py       （根级 — service.api + observability.debug_packet 共用；paths.py 已下沉 infra/，见 ISS-013）
 ```
 
 **依赖方向**：`learning → engine → evaluation`；`service → {context, engine, evaluation, nodes, observability, workspace}`；`observability → evaluation`；`evaluation → nodes`；`nodes/context → engine`。无反向边 → **无循环**。
@@ -111,7 +110,7 @@ orchestrator/
 
 **层间依赖方向**（ISS-012 P6.2 AST 扫描实测）：
 - 干净方向：`entry → {sourcing, orchestrator, knowledge, infra}`；`sourcing → {infra, orchestrator}`；`orchestrator → {infra, knowledge, sourcing}`；`knowledge → infra`。
-- **预存倒置（非本次重构引入，架构债）**：`infra/benchmarks/artifacts.py` lazy import `orchestrator.paths`、`infra/db/models.py` lazy import `sourcing.integrations`（均函数内 lazy import 避循环）。修复需重构这些 lazy 上探依赖，超出"物理分层"范围，留作后续 issue。
+- **曾存的 infra 上探倒置**：`infra/benchmarks/artifacts.py → orchestrator.paths` 已由 **ISS-013 修复**（`paths.py` 下沉 `infra/`，纯路径注册表本属 infra）；`infra/db/models.py → sourcing.integrations`（lazy import 避循环）待 **ISS-014** 修。
 
 ---
 

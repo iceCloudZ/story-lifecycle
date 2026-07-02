@@ -14,7 +14,7 @@ from typing import Protocol
 
 
 def stage_done_file(story: dict) -> Path:
-    from .paths import stage_done_file as _stage_done_file
+    from ..infra.paths import stage_done_file as _stage_done_file
 
     ws = story.get("workspace", "")
     key = story.get("story_key", "")

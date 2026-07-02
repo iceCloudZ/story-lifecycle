@@ -352,7 +352,7 @@ def _collect_environment(bundle_dir: Path, manifest: dict) -> None:
 def _collect_done_files(
     bundle_dir: Path, ws_path: Path, story_key: str, packet: dict, manifest: dict
 ) -> None:
-    from ..paths import stage_done_file, malformed_done_file, context_dir
+    from ...infra.paths import stage_done_file, malformed_done_file, context_dir
 
     stage = packet["story"]["current_stage"]
 
@@ -396,7 +396,7 @@ def _collect_done_files(
 def _collect_context_files(
     bundle_dir: Path, ws_path: Path, story_key: str, manifest: dict
 ) -> None:
-    from ..paths import context_dir
+    from ...infra.paths import context_dir
 
     ctx_dir = context_dir(ws_path, story_key)
     if ctx_dir.exists():

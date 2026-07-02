@@ -638,7 +638,7 @@ class TestRegressionValidation:
 
     def test_paths_registry_produces_correct_paths(self, tmp_path):
         """Workspace path registry produces expected .story/ layout."""
-        from story_lifecycle.orchestrator.paths import (
+        from story_lifecycle.infra.paths import (
             stage_done_file,
             context_dir,
             plan_file,

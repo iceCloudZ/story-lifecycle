@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ...infra.db import models as db
-from ..paths import (
+from ...infra.paths import (
     stage_done_file,
     done_snapshot_file,
     malformed_done_file,
