@@ -1,4 +1,4 @@
-from story_lifecycle.sources.tapd_source import TapdSource
+from story_lifecycle.sourcing.sources.tapd_source import TapdSource
 
 
 class FakeTapdApi:

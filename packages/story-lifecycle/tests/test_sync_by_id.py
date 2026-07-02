@@ -10,7 +10,7 @@ import tempfile
 from click.testing import CliRunner
 
 from story_lifecycle.infra.db import models as db
-from story_lifecycle.sources.base import SourceItem
+from story_lifecycle.sourcing.sources.base import SourceItem
 
 
 def _fake_item(item_id="1066988", title="按id拉"):
@@ -34,7 +34,7 @@ class TestSyncById:
     ):
         """--id pulls one story via get_detail, bypassing owner/parent filters."""
         from story_lifecycle.entry.cli.sync_cmd import sync_cmd
-        from story_lifecycle.sources import tapd_source
+        from story_lifecycle.sourcing.sources import tapd_source
 
         monkeypatch.setattr(
             tapd_source.TapdSource, "get_detail", lambda self, i: _fake_item(i)
@@ -56,7 +56,7 @@ class TestSyncById:
         self, isolated_story_home, monkeypatch
     ):
         from story_lifecycle.entry.cli.sync_cmd import sync_cmd
-        from story_lifecycle.sources import tapd_source
+        from story_lifecycle.sourcing.sources import tapd_source
 
         monkeypatch.setattr(
             tapd_source.TapdSource, "get_detail", lambda self, i: None

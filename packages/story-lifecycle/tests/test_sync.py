@@ -1,7 +1,7 @@
 """Tests for TAPD sync service."""
 
 from story_lifecycle.infra.db import models as db
-from story_lifecycle.sources.base import SourceItem
+from story_lifecycle.sourcing.sources.base import SourceItem
 
 
 class TestSyncService:
@@ -168,7 +168,7 @@ class TestTapdSourceFetchAll:
     def test_fetch_all_overrides_status_filter(self):
         from unittest.mock import patch
 
-        from story_lifecycle.sources.tapd_source import TapdSource
+        from story_lifecycle.sourcing.sources.tapd_source import TapdSource
 
         source = TapdSource(
             {

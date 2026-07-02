@@ -1399,7 +1399,7 @@ class SyncRequest(BaseModel):
 @app.post("/api/sync/tapd")
 def api_sync_tapd(req: SyncRequest):
     """Trigger TAPD sync."""
-    from ...sources.tapd_source import TapdSource
+    from ...sourcing.sources.tapd_source import TapdSource
 
     config = _load_tapd_config()
     if not config:
@@ -1696,7 +1696,7 @@ def api_sync_related_bugs(story_key: str):
     config = _load_tapd_config()
     if not config.get("workspace_id"):
         raise HTTPException(status_code=503, detail="TAPD not configured")
-    from ...sources.tapd_api import TapdApi
+    from ...sourcing.sources.tapd_api import TapdApi
 
     api = TapdApi(workspace_id=config["workspace_id"])
     related = api.get_related_bugs(tapd_id) or []
@@ -1795,7 +1795,7 @@ def api_resolve_bug(bug_key: str):
     )
     config = _load_tapd_config()
     if config.get("workspace_id") and story.get("source_id"):
-        from ...sources.tapd_api import TapdApi
+        from ...sourcing.sources.tapd_api import TapdApi
 
         api = TapdApi(workspace_id=config["workspace_id"])
         bug_id = story["source_id"].removeprefix("bug_")
@@ -2200,7 +2200,7 @@ def api_intake_preview(
         )
 
     source_id = source_id.removeprefix("tapd-")
-    from ...sources import tapd_source
+    from ...sourcing.sources import tapd_source
     from . import prd_generator
 
     source = tapd_source.TapdSource(_load_tapd_config())
@@ -2376,7 +2376,7 @@ def _load_story_source_snapshot(story_key: str, story: dict):
     source_id = story.get("source_id") or ""
 
     if source_type == "tapd":
-        from ...sources import tapd_source
+        from ...sourcing.sources import tapd_source
 
         source = tapd_source.TapdSource(_load_tapd_config())
         item = source.get_detail(source_id)

@@ -24,7 +24,7 @@ console = Console()
 def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id):
     """拉取 TAPD 待处理需求/缺陷，同步为本地 story。"""
     from ...infra.db.models import init_db
-    from ...sources.tapd_source import TapdSource
+    from ...sourcing.sources.tapd_source import TapdSource
 
     init_db()
 

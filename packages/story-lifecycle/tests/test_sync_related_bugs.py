@@ -3,10 +3,10 @@
 from fastapi.testclient import TestClient
 
 import story_lifecycle.orchestrator.service.api as api_mod
-import story_lifecycle.sources.tapd_api as tapi_mod
+import story_lifecycle.sourcing.sources.tapd_api as tapi_mod
 from story_lifecycle.infra.db import models as db
 from story_lifecycle.orchestrator.service.api import app
-from story_lifecycle.sources.tapd_api import TapdApi
+from story_lifecycle.sourcing.sources.tapd_api import TapdApi
 
 
 def test_get_related_bugs_calls_cli_with_story_id(monkeypatch):

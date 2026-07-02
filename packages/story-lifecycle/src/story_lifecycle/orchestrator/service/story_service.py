@@ -345,10 +345,10 @@ def create_story_from_source(
     auto_start: bool = True,
     force_standalone: bool = False,
 ) -> CreateFromSourceResult:
-    from ...sources.base import resolve_bug_parent
-    from ...sources import get_source
-    from ...sources.prd_providers import fetch_prd_content, save_prd
-    from ...sources.bug_providers import fetch_bug_content, format_bug_context
+    from ...sourcing.sources.base import resolve_bug_parent
+    from ...sourcing.sources import get_source
+    from ...sourcing.sources.prd_providers import fetch_prd_content, save_prd
+    from ...sourcing.sources.bug_providers import fetch_bug_content, format_bug_context
 
     story_key = _derive_story_key(item)
     prd_path = None

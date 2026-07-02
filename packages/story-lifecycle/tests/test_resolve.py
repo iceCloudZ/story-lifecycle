@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 
 import story_lifecycle.orchestrator.service.api as api_mod
-import story_lifecycle.sources.tapd_api as tapi_mod
+import story_lifecycle.sourcing.sources.tapd_api as tapi_mod
 from story_lifecycle.infra.db import models as db
 from story_lifecycle.orchestrator.service.api import app
 

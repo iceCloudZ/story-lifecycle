@@ -21,7 +21,7 @@ _PROJ = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_PROJ))
 sys.path.insert(0, str(_PROJ.parent / "story-lifecycle" / "src"))
 
-from story_lifecycle.sources.tapd_source import TapdSource  # noqa: E402
+from story_lifecycle.sourcing.sources.tapd_source import TapdSource  # noqa: E402
 
 
 def load_precise_links(path: Path) -> tuple[dict[str, list[str]], dict[str, dict]]:

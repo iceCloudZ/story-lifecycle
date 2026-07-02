@@ -20,7 +20,7 @@ def test_source_id_columns(isolated_story_home):
 
 def test_create_story_from_source(isolated_story_home):
     """create_story_from_source should create a story with source metadata."""
-    from story_lifecycle.sources.base import SourceItem
+    from story_lifecycle.sourcing.sources.base import SourceItem
     from story_lifecycle.orchestrator.service.story_service import create_story_from_source
 
     item = SourceItem(
@@ -46,7 +46,7 @@ def test_create_story_from_source(isolated_story_home):
 
 
 def test_derive_story_key():
-    from story_lifecycle.sources.base import SourceItem
+    from story_lifecycle.sourcing.sources.base import SourceItem
     from story_lifecycle.orchestrator.service.story_service import _derive_story_key
 
     tapd_item = SourceItem(
@@ -68,8 +68,8 @@ def test_derive_story_key():
 
 def test_fetch_bug_content_aggregation():
     """BugContext should aggregate from multiple providers."""
-    from story_lifecycle.sources.base import SourceItem
-    from story_lifecycle.sources.bug_providers import fetch_bug_content
+    from story_lifecycle.sourcing.sources.base import SourceItem
+    from story_lifecycle.sourcing.sources.bug_providers import fetch_bug_content
 
     bug = SourceItem(
         id="bug_123",
@@ -86,7 +86,7 @@ def test_fetch_bug_content_aggregation():
 
 
 def test_derive_story_key_github():
-    from story_lifecycle.sources.base import SourceItem
+    from story_lifecycle.sourcing.sources.base import SourceItem
     from story_lifecycle.orchestrator.service.story_service import _derive_story_key
 
     gh_item = SourceItem(
@@ -97,7 +97,7 @@ def test_derive_story_key_github():
 
 class TestSourceItemDeadline:
     def test_source_item_has_deadline_field(self):
-        from story_lifecycle.sources.base import SourceItem
+        from story_lifecycle.sourcing.sources.base import SourceItem
 
         item = SourceItem(
             id="123",
@@ -110,7 +110,7 @@ class TestSourceItemDeadline:
         assert item.deadline == "2026-06-15"
 
     def test_source_item_deadline_defaults_empty(self):
-        from story_lifecycle.sources.base import SourceItem
+        from story_lifecycle.sourcing.sources.base import SourceItem
 
         item = SourceItem(
             id="123",

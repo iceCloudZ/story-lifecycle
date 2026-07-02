@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from story_lifecycle.sources.github_cli import GithubCli
-from story_lifecycle.sources.github_source import GithubSource
+from story_lifecycle.sourcing.sources.github_cli import GithubCli
+from story_lifecycle.sourcing.sources.github_source import GithubSource
 
 
 @pytest.fixture
@@ -17,7 +17,7 @@ def mock_cli():
 @pytest.fixture
 def source(mock_cli):
     with patch(
-        "story_lifecycle.sources.github_source.GithubCli", return_value=mock_cli
+        "story_lifecycle.sourcing.sources.github_source.GithubCli", return_value=mock_cli
     ):
         src = GithubSource({"repo": "owner/repo", "accept_label": "lifecycle:accepted"})
     src._cli = mock_cli
@@ -65,7 +65,7 @@ class TestFetchPending:
         assert source.fetch_pending() == []
 
     def test_fetch_failure_returns_empty(self, source, mock_cli):
-        from story_lifecycle.sources.github_cli import GithubCliError
+        from story_lifecycle.sourcing.sources.github_cli import GithubCliError
 
         mock_cli.list_issues.side_effect = GithubCliError("network error")
         items = source.fetch_pending()
@@ -89,7 +89,7 @@ class TestGetDetail:
         assert item.description == "Full body"
 
     def test_returns_none_on_failure(self, source, mock_cli):
-        from story_lifecycle.sources.github_cli import GithubCliError
+        from story_lifecycle.sourcing.sources.github_cli import GithubCliError
 
         mock_cli.get_issue.side_effect = GithubCliError("not found")
         assert source.get_detail("42") is None

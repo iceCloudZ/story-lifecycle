@@ -11,7 +11,7 @@
 ## 共享上下文（三个 brief 都要用）
 
 - **TAPD**：workspace `44381896`，owner `赵子豪`。访问经 `~/.claude/scripts/cli_tapd.py`（`TapdApi` 动态加载它的 `TAPDClient`）。config 在 `~/.story-lifecycle/config.yaml`（DeepSeek key 也在）。
-- **参考脚本（已跑通）**：`packages/story-miner/scripts/bug_story_graph.py`——照它的脚手架：`sys.path` 加 miner + `packages/story-lifecycle/src`、`from story_lifecycle.sources.tapd_source import TapdSource`、argparse、输出到 `scripts/out/*.json`、`PYTHONIOENCODING=utf-8` 跑。
+- **参考脚本（已跑通）**：`packages/story-miner/scripts/bug_story_graph.py`——照它的脚手架：`sys.path` 加 miner + `packages/story-lifecycle/src`、`from story_lifecycle.sourcing.sources.tapd_source import TapdSource`、argparse、输出到 `scripts/out/*.json`、`PYTHONIOENCODING=utf-8` 跑。
 - **corpus 口径（关键）**：story = `get_stories({'entity_type':'stories','limit':500,'custom_field_25':'赵子豪'})` ≈ **150**（≈ story.db 的 147）。**不要用 `fetch_pending`（只给 20，漏大部分）。**
 - **最大坑**：TAPD bug 的正向 `story_id` **全空（实测 0/142）**。bug↔story 必须**反向**：`get_related_bugs(story_id)` → `[{workspace_id, story_id, bug_id}]`，约 20% story 挂了 bug。
 - **hc-all 是 multi-repo**：`D:/hc-all` 本身不是 git，17 个子仓在下面（hc-order/hc-user/hc-risk-management/hc-message/hc-config/hc-limit/hc-third-party/hc-coupon/hc-marketing/hc-callback/hc-gateway/hc-job/hc-audit/hc-aiops/hc-pytest/story-board/ys-frame-parent）。commit 在子项目里。

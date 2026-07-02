@@ -23,7 +23,7 @@ _PROJ = Path(__file__).resolve().parents[1]                       # packages/sto
 sys.path.insert(0, str(_PROJ))                                     # miner
 sys.path.insert(0, str(_PROJ.parent / "story-lifecycle" / "src"))  # story_lifecycle
 
-from story_lifecycle.sources.tapd_source import TapdSource  # noqa: E402
+from story_lifecycle.sourcing.sources.tapd_source import TapdSource  # noqa: E402
 
 
 def fetch_stories(src: TapdSource, owner: str, story_status: str, limit: int):

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from story_lifecycle.sources.github_cli import GithubCli, GithubCliError
+from story_lifecycle.sourcing.sources.github_cli import GithubCli, GithubCliError
 
 
 class TestGithubCliInit:
@@ -15,7 +15,7 @@ class TestGithubCliInit:
 
 
 class TestListIssues:
-    @patch("story_lifecycle.sources.github_cli.subprocess.run")
+    @patch("story_lifecycle.sourcing.sources.github_cli.subprocess.run")
     def test_returns_list_of_issues(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -43,7 +43,7 @@ class TestListIssues:
         assert "issue" in cmd
         assert "list" in cmd
 
-    @patch("story_lifecycle.sources.github_cli.subprocess.run")
+    @patch("story_lifecycle.sourcing.sources.github_cli.subprocess.run")
     def test_raises_on_nonzero_exit(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stderr="auth required")
         cli = GithubCli("owner/repo")
@@ -52,7 +52,7 @@ class TestListIssues:
 
 
 class TestGetIssue:
-    @patch("story_lifecycle.sources.github_cli.subprocess.run")
+    @patch("story_lifecycle.sourcing.sources.github_cli.subprocess.run")
     def test_returns_single_issue(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -64,7 +64,7 @@ class TestGetIssue:
 
 
 class TestCreateIssue:
-    @patch("story_lifecycle.sources.github_cli.subprocess.run")
+    @patch("story_lifecycle.sourcing.sources.github_cli.subprocess.run")
     def test_returns_issue_number(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0, stdout="https://github.com/owner/repo/issues/7\n"
@@ -75,7 +75,7 @@ class TestCreateIssue:
 
 
 class TestCloseIssue:
-    @patch("story_lifecycle.sources.github_cli.subprocess.run")
+    @patch("story_lifecycle.sourcing.sources.github_cli.subprocess.run")
     def test_calls_close(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         cli = GithubCli("owner/repo")
@@ -85,7 +85,7 @@ class TestCloseIssue:
 
 
 class TestLabels:
-    @patch("story_lifecycle.sources.github_cli.subprocess.run")
+    @patch("story_lifecycle.sourcing.sources.github_cli.subprocess.run")
     def test_add_label(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         cli = GithubCli("owner/repo")
@@ -93,7 +93,7 @@ class TestLabels:
         cmd = mock_run.call_args[0][0]
         assert "--add-label" in cmd
 
-    @patch("story_lifecycle.sources.github_cli.subprocess.run")
+    @patch("story_lifecycle.sourcing.sources.github_cli.subprocess.run")
     def test_remove_label(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         cli = GithubCli("owner/repo")
@@ -103,7 +103,7 @@ class TestLabels:
 
 
 class TestCommentIssue:
-    @patch("story_lifecycle.sources.github_cli.subprocess.run")
+    @patch("story_lifecycle.sourcing.sources.github_cli.subprocess.run")
     def test_posts_comment(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         cli = GithubCli("owner/repo")
@@ -113,13 +113,13 @@ class TestCommentIssue:
 
 
 class TestTestAuth:
-    @patch("story_lifecycle.sources.github_cli.subprocess.run")
+    @patch("story_lifecycle.sourcing.sources.github_cli.subprocess.run")
     def test_returns_true_on_success(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
         cli = GithubCli("owner/repo")
         assert cli.test_auth() is True
 
-    @patch("story_lifecycle.sources.github_cli.subprocess.run")
+    @patch("story_lifecycle.sourcing.sources.github_cli.subprocess.run")
     def test_returns_false_on_failure(self, mock_run):
         # This test mocks subprocess.run to return a failure
         # In real usage, test_auth() checks the actual gh command

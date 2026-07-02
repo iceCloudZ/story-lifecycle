@@ -152,8 +152,8 @@ class TestContextAPI:
         self, client, isolated_story_home, monkeypatch
     ):
         """Entering a story id should fetch source detail and run PRD generator."""
-        from story_lifecycle.sources.base import SourceItem
-        from story_lifecycle.sources import tapd_source as tapd_source_mod
+        from story_lifecycle.sourcing.sources.base import SourceItem
+        from story_lifecycle.sourcing.sources import tapd_source as tapd_source_mod
         from story_lifecycle.orchestrator.service import prd_generator
 
         class FakeTapdSource:
@@ -199,8 +199,8 @@ class TestContextAPI:
         self, client, isolated_story_home, monkeypatch
     ):
         """A TAPD intake should stop when the PRD generator asks for DingTalk download."""
-        from story_lifecycle.sources.base import SourceItem
-        from story_lifecycle.sources import tapd_source as tapd_source_mod
+        from story_lifecycle.sourcing.sources.base import SourceItem
+        from story_lifecycle.sourcing.sources import tapd_source as tapd_source_mod
         from story_lifecycle.orchestrator.service import prd_generator
 
         class FakeTapdSource:
@@ -250,8 +250,8 @@ class TestContextAPI:
         self, client, isolated_story_home, monkeypatch, tmp_path
     ):
         """A TAPD intake should save PRD.md when the generator returns markdown."""
-        from story_lifecycle.sources.base import SourceItem
-        from story_lifecycle.sources import tapd_source as tapd_source_mod
+        from story_lifecycle.sourcing.sources.base import SourceItem
+        from story_lifecycle.sourcing.sources import tapd_source as tapd_source_mod
         from story_lifecycle.orchestrator.service import prd_generator
 
         class FakeTapdSource:
