@@ -11,7 +11,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../src/story_lifecycle/web',
+    outDir: '../src/story_lifecycle/entry/web',
     emptyOutDir: true,
   },
 })
