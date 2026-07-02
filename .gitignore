@@ -24,6 +24,9 @@ checkpoint.db
 .story-done/
 .story-runs/
 
+# Runtime workspace created when running story commands from the repo root
+ws/
+
 # OS
 .DS_Store
 Thumbs.db
