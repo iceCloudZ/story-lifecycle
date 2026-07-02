@@ -23,15 +23,15 @@ jobs:
           cache: pip
 
       - name: Build package
-        run: pipx run build
+        run: pipx run build packages/story-lifecycle
 
       - name: Twine check
-        run: pipx run twine check dist/*
+        run: pipx run twine check packages/story-lifecycle/dist/*
 
       - uses: actions/upload-artifact@v4
         with:
           name: dist
-          path: dist/
+          path: packages/story-lifecycle/dist/
 
   testpypi-publish:
     name: Publish to TestPyPI
