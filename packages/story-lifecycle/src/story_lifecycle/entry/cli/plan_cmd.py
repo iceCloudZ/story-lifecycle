@@ -26,7 +26,7 @@ def plan(ctx: click.Context, cwd: str):
 
 def _run_full_plan(*, cwd: str) -> None:
     """Auto-detect project state and run through each missing planning step."""
-    from ..planner.probe import probe_project
+    from ...planner.probe import probe_project
 
     result = probe_project(cwd=cwd)
     phase = result["phase"]
@@ -80,8 +80,8 @@ def _run_full_plan(*, cwd: str) -> None:
 @click.option("--cwd", default=".", help="Working directory")
 def init(cwd: str):
     """Probe project state and guide next steps."""
-    from ..planner.probe import probe_project
-    from ..planner.state import get_resume_info
+    from ...planner.probe import probe_project
+    from ...planner.state import get_resume_info
 
     # Check for incomplete planning flow
     resume = get_resume_info(cwd=cwd)
@@ -202,7 +202,7 @@ def _generate_requirements(
     feedback: str | None = None,
 ) -> str | None:
     """Call LLM to generate requirements. Returns content or None on failure."""
-    from ..planner.idea_expander import (
+    from ...planner.idea_expander import (
         analyze_codebase_to_requirements,
         expand_idea_to_requirements,
     )
@@ -265,8 +265,8 @@ def _run_roadmap(
     *, from_file: str | None = None, cwd: str = ".", exit_on_error: bool = False
 ) -> None:
     """Generate roadmap with interactive feedback loop."""
-    from ..planner.roadmap import generate_roadmap
-    from ..planner.state import update_step
+    from ...planner.roadmap import generate_roadmap
+    from ...planner.state import update_step
 
     try:
         content = None
@@ -314,8 +314,8 @@ def _run_decompose(
     *, phase: int | None = None, cwd: str = ".", exit_on_error: bool = False
 ) -> None:
     """Decompose roadmap phase into Issue drafts with interactive feedback loop."""
-    from ..planner.decomposer import decompose_phase
-    from ..planner.state import update_step
+    from ...planner.decomposer import decompose_phase
+    from ...planner.state import update_step
 
     try:
         issues = None
@@ -375,7 +375,7 @@ def _run_publish(
     *, repo: str | None = None, dry_run: bool = False, cwd: str = "."
 ) -> None:
     """Publish issues to GitHub. If repo not given, ask interactively."""
-    from ..planner.publisher import publish_issues
+    from ...planner.publisher import publish_issues
 
     if not repo:
         repo = _detect_github_repo(cwd)

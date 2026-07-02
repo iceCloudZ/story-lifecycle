@@ -35,14 +35,14 @@ def seeded_db(isolated_story_home):
 
 class TestListCmd:
     def test_list_shows_stories(self, runner, seeded_db):
-        from story_lifecycle.cli.list_cmd import list_cmd
+        from story_lifecycle.entry.cli.list_cmd import list_cmd
 
         result = runner.invoke(list_cmd)
         assert result.exit_code == 0
         assert "1001" in result.output or "tapd" in result.output
 
     def test_list_empty(self, runner, isolated_story_home):
-        from story_lifecycle.cli.list_cmd import list_cmd
+        from story_lifecycle.entry.cli.list_cmd import list_cmd
 
         db.init_db()
         result = runner.invoke(list_cmd)
@@ -52,7 +52,7 @@ class TestListCmd:
 
 class TestShowCmd:
     def test_show_existing(self, runner, seeded_db):
-        from story_lifecycle.cli.list_cmd import show_cmd
+        from story_lifecycle.entry.cli.list_cmd import show_cmd
 
         result = runner.invoke(show_cmd, ["tapd-1001"])
         assert result.exit_code == 0
@@ -60,7 +60,7 @@ class TestShowCmd:
         assert "2026-06-15" in result.output
 
     def test_show_nonexistent(self, runner, isolated_story_home):
-        from story_lifecycle.cli.list_cmd import show_cmd
+        from story_lifecycle.entry.cli.list_cmd import show_cmd
 
         db.init_db()
         result = runner.invoke(show_cmd, ["NOPE"])
@@ -69,7 +69,7 @@ class TestShowCmd:
 
 class TestAdvanceCmd:
     def test_advance_moves_stage(self, runner, seeded_db):
-        from story_lifecycle.cli.list_cmd import advance_cmd
+        from story_lifecycle.entry.cli.list_cmd import advance_cmd
 
         s = db.get_story("tapd-1001")
         assert s["current_stage"] == "design"
@@ -81,7 +81,7 @@ class TestAdvanceCmd:
         assert s["current_stage"] == "build"
 
     def test_advance_to_done(self, runner, isolated_story_home):
-        from story_lifecycle.cli.list_cmd import advance_cmd
+        from story_lifecycle.entry.cli.list_cmd import advance_cmd
 
         db.init_db()
         db.create_story("ADV-001", "推进测试", "/tmp", current_stage="verify")
@@ -94,7 +94,7 @@ class TestAdvanceCmd:
 
 class TestDoneCmd:
     def test_done_marks_completed(self, runner, seeded_db):
-        from story_lifecycle.cli.list_cmd import done_cmd
+        from story_lifecycle.entry.cli.list_cmd import done_cmd
 
         result = runner.invoke(done_cmd, ["tapd-1001"])
         assert result.exit_code == 0
@@ -107,7 +107,7 @@ class TestDoneCmd:
         """I4: done_cmd 必须使用当前解释器调用 retrospect，避免 PATH 错乱。"""
         import subprocess
         import sys
-        from story_lifecycle.cli import list_cmd
+        from story_lifecycle.entry.cli import list_cmd
 
         calls = []
 
@@ -135,7 +135,7 @@ class TestRetrospectScriptResolution:
 
     def test_env_override_takes_priority(self, monkeypatch):
         import os
-        from story_lifecycle.cli.list_cmd import _resolve_retrospect_script
+        from story_lifecycle.entry.cli.list_cmd import _resolve_retrospect_script
         import story_lifecycle.infra.config as cfg
 
         monkeypatch.setenv("STORY_RETROSPECT_SCRIPT", "/custom/retrospect.py")
@@ -145,7 +145,7 @@ class TestRetrospectScriptResolution:
 
     def test_config_used_when_no_env(self, monkeypatch):
         import os
-        from story_lifecycle.cli.list_cmd import _resolve_retrospect_script
+        from story_lifecycle.entry.cli.list_cmd import _resolve_retrospect_script
         import story_lifecycle.infra.config as cfg
 
         monkeypatch.delenv("STORY_RETROSPECT_SCRIPT", raising=False)
@@ -154,7 +154,7 @@ class TestRetrospectScriptResolution:
 
     def test_monorepo_fallback(self, monkeypatch):
         import os
-        from story_lifecycle.cli.list_cmd import _resolve_retrospect_script
+        from story_lifecycle.entry.cli.list_cmd import _resolve_retrospect_script
         import story_lifecycle.infra.config as cfg
 
         monkeypatch.delenv("STORY_RETROSPECT_SCRIPT", raising=False)

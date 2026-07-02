@@ -24,7 +24,7 @@ WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "�
 )
 def calendar_cmd(days, story_type, show_completed):
     """日历视图 — 按 deadline 展示近期 story。"""
-    from ..infra.db import models as db
+    from ...infra.db import models as db
 
     db.init_db()
     stories = _load_stories_with_deadlines(story_type, show_completed)
@@ -91,7 +91,7 @@ def calendar_cmd(days, story_type, show_completed):
 def _load_stories_with_deadlines(
     story_type: str = "", show_completed: bool = False
 ) -> list[dict]:
-    from ..infra.db import models as db
+    from ...infra.db import models as db
 
     active = db.list_active_stories()
 

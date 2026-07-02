@@ -49,28 +49,28 @@ def seeded_db(isolated_story_home):
 
 class TestCalendarCmd:
     def test_calendar_shows_overdue(self, runner, seeded_db):
-        from story_lifecycle.cli.calendar_cmd import calendar_cmd
+        from story_lifecycle.entry.cli.calendar_cmd import calendar_cmd
 
         result = runner.invoke(calendar_cmd, [])
         assert result.exit_code == 0
         assert "逾期" in result.output
 
     def test_calendar_shows_near_future(self, runner, seeded_db):
-        from story_lifecycle.cli.calendar_cmd import calendar_cmd
+        from story_lifecycle.entry.cli.calendar_cmd import calendar_cmd
 
         result = runner.invoke(calendar_cmd, [])
         assert result.exit_code == 0
         assert "近期需求" in result.output
 
     def test_calendar_hides_far_future(self, runner, seeded_db):
-        from story_lifecycle.cli.calendar_cmd import calendar_cmd
+        from story_lifecycle.entry.cli.calendar_cmd import calendar_cmd
 
         result = runner.invoke(calendar_cmd, [])
         assert result.exit_code == 0
         assert "远期需求" not in result.output
 
     def test_calendar_empty(self, runner, isolated_story_home):
-        from story_lifecycle.cli.calendar_cmd import calendar_cmd
+        from story_lifecycle.entry.cli.calendar_cmd import calendar_cmd
 
         db.init_db()
         result = runner.invoke(calendar_cmd, [])

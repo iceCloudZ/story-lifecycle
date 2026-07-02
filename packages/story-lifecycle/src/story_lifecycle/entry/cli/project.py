@@ -23,7 +23,7 @@ def _detect_available_adapters() -> list[str]:
             available.append(name)
     # 也检查 adapters.yaml 中配置的 shell adapter
     try:
-        from ..adapters import _load_adapter_configs
+        from ...adapters import _load_adapter_configs
 
         for name in _load_adapter_configs():
             if name not in available:
@@ -94,9 +94,9 @@ def init_knowledge(
         _run_legacy_init(ws, scan_profile, adapter, timeout, dry_run, headless)
         return
 
-    from ..knowledge.detector import detect_project
-    from ..knowledge.scope import recommend_scope
-    from ..knowledge.wizard import (
+    from ...knowledge.detector import detect_project
+    from ...knowledge.scope import recommend_scope
+    from ...knowledge.wizard import (
         show_project_overview,
         show_file_stats,
         show_recommended_scope,
@@ -104,9 +104,9 @@ def init_knowledge(
         interactive_confirm,
         show_next_steps,
     )
-    from ..knowledge.run_writer import create_run_id, write_run_artifacts
-    from ..knowledge.generator import generate_knowledge_files
-    from ..knowledge.paths import manifest_path
+    from ...knowledge.run_writer import create_run_id, write_run_artifacts
+    from ...knowledge.generator import generate_knowledge_files
+    from ...knowledge.paths import manifest_path
 
     console.print("\n[bold cyan]初始化项目知识包[/]")
     console.print(f"  工作区: [dim]{ws}[/]")
@@ -179,7 +179,7 @@ def init_knowledge(
 @click.option("-w", "--workspace", default=None, help="工作区目录（默认当前目录）")
 def sync_knowledge(workspace):
     """检测知识包是否过期，提示增量更新。"""
-    from ..knowledge.paths import manifest_path
+    from ...knowledge.paths import manifest_path
 
     ws = Path(workspace or Path.cwd()).resolve()
     mp = manifest_path(ws)
@@ -192,7 +192,7 @@ def sync_knowledge(workspace):
     console.print(f"  工作区: [dim]{ws}[/]")
 
     try:
-        from ..knowledge.stale import check_stale
+        from ...knowledge.stale import check_stale
 
         result = check_stale(ws)
     except ImportError:
@@ -212,9 +212,9 @@ def sync_knowledge(workspace):
 
 def _run_legacy_init(ws, scan_profile, adapter, timeout, dry_run, headless):
     """Legacy AI CLI scanning mode (pre-08 behavior)."""
-    from ..knowledge.scaffold import scaffold_knowledge_dir
-    from ..knowledge.bootstrap import render_bootstrap_prompt
-    from ..knowledge.validator import validate_knowledge_pack
+    from ...knowledge.scaffold import scaffold_knowledge_dir
+    from ...knowledge.bootstrap import render_bootstrap_prompt
+    from ...knowledge.validator import validate_knowledge_pack
 
     console.print("\n[bold cyan]初始化项目知识包 (legacy mode)[/]")
     console.print(f"  工作区: [dim]{ws}[/]")
@@ -256,7 +256,7 @@ def _run_legacy_init(ws, scan_profile, adapter, timeout, dry_run, headless):
         console.print(f"\n[3/4] 执行 {adapter} CLI (headless)...")
         console.print("[dim]等待 AI 生成知识包（可能需要几分钟）...[/]")
         try:
-            from ..knowledge.bootstrap import run_bootstrap
+            from ...knowledge.bootstrap import run_bootstrap
 
             result = run_bootstrap(
                 ws, scan_profile=scan_profile, adapter_name=adapter, timeout=timeout
@@ -272,7 +272,7 @@ def _run_legacy_init(ws, scan_profile, adapter, timeout, dry_run, headless):
             raise SystemExit(1)
     else:
         console.print(f"\n[3/3] 启动交互式 {adapter} CLI...")
-        from ..knowledge.bootstrap import launch_interactive
+        from ...knowledge.bootstrap import launch_interactive
 
         launch_interactive(ws, scan_profile=scan_profile, adapter_name=adapter)
         console.print("  [green]已启动[/]")
@@ -331,8 +331,8 @@ def _apply_excludes(scope, excludes):
 @click.option("--json", "as_json", is_flag=True, help="输出原始 JSON")
 def inspect(workspace, as_json):
     """Deterministic scan — 输出 observed facts，不写 confirmed profile。"""
-    from ..orchestrator.workspace.project_scan import scan_workspace
-    from ..orchestrator.workspace.project_profile import _to_dict
+    from ...orchestrator.workspace.project_scan import scan_workspace
+    from ...orchestrator.workspace.project_profile import _to_dict
 
     ws = Path(workspace or Path.cwd()).resolve()
 
@@ -376,8 +376,8 @@ def inspect(workspace, as_json):
 @click.option("--yes", "-y", is_flag=True, help="非交互模式，自动接受扫描结果")
 def onboard(workspace, force, yes):
     """执行 scan → 确认流程 → 写 Project Profile。"""
-    from ..orchestrator.workspace.project_scan import scan_workspace
-    from ..orchestrator.workspace.project_profile import (
+    from ...orchestrator.workspace.project_scan import scan_workspace
+    from ...orchestrator.workspace.project_profile import (
         load_profile,
         save_profile,
         profile_path,
@@ -443,7 +443,7 @@ def onboard(workspace, force, yes):
 @click.option("-w", "--workspace", default=None, help="工作区目录（默认当前目录）")
 def confirm_profile(workspace):
     """对已有 observed facts 做确认/编辑。"""
-    from ..orchestrator.workspace.project_profile import load_profile, save_profile
+    from ...orchestrator.workspace.project_profile import load_profile, save_profile
 
     ws = Path(workspace or Path.cwd()).resolve()
     profile = load_profile(ws)
@@ -510,7 +510,7 @@ def probe(workspace, question):
 @click.option("-w", "--workspace", default=None, help="工作区目录（默认当前目录）")
 def refresh(workspace):
     """对现有 Project Profile 做轻量漂移检查。"""
-    from ..orchestrator.workspace.project_profile import refresh_profile
+    from ...orchestrator.workspace.project_profile import refresh_profile
 
     ws = Path(workspace or Path.cwd()).resolve()
     console.print("\n[bold cyan]Story Start Refresh[/]")
@@ -536,8 +536,8 @@ def refresh(workspace):
     choice = click.prompt("  Choose", type=str, default="c").strip().lower()
 
     if choice == "u":
-        from ..orchestrator.workspace.project_scan import scan_workspace
-        from ..orchestrator.workspace.project_profile import save_profile
+        from ...orchestrator.workspace.project_scan import scan_workspace
+        from ...orchestrator.workspace.project_profile import save_profile
 
         profile = scan_workspace(ws)
         saved = save_profile(ws, profile)

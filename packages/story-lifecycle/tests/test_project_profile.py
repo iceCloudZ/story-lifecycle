@@ -26,7 +26,7 @@ from story_lifecycle.orchestrator.workspace.project_probe import (
     validate_probe_output,
     _contains_destructive_pattern,
 )
-from story_lifecycle.cli.project import project
+from story_lifecycle.entry.cli.project import project
 
 
 # ---------------------------------------------------------------------------

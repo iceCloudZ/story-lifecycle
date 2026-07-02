@@ -20,8 +20,8 @@ console = Console()
 @click.option("--json", "as_json", is_flag=True, help="输出原始 JSON")
 def inspect(workspace, as_json):
     """Deterministic scan — 输出 observed facts，不写 confirmed profile。"""
-    from ..orchestrator.workspace.project_scan import scan_workspace
-    from ..orchestrator.workspace.project_profile import _to_dict
+    from ...orchestrator.workspace.project_scan import scan_workspace
+    from ...orchestrator.workspace.project_profile import _to_dict
 
     ws = Path(workspace or Path.cwd()).resolve()
     profile = scan_workspace(ws)
@@ -64,8 +64,8 @@ def inspect(workspace, as_json):
 @click.option("--yes", "-y", is_flag=True, help="非交互模式，自动接受扫描结果")
 def onboard(workspace, force, yes):
     """执行 scan -> 确认流程 -> 写 Project Profile。"""
-    from ..orchestrator.workspace.project_scan import scan_workspace
-    from ..orchestrator.workspace.project_profile import (
+    from ...orchestrator.workspace.project_scan import scan_workspace
+    from ...orchestrator.workspace.project_profile import (
         load_profile,
         save_profile,
         profile_path,
@@ -132,7 +132,7 @@ def onboard(workspace, force, yes):
 @click.option("-w", "--workspace", default=None, help="工作区目录（默认当前目录）")
 def confirm_profile(workspace):
     """对已有 observed facts 做确认/编辑。"""
-    from ..orchestrator.workspace.project_profile import load_profile, save_profile
+    from ...orchestrator.workspace.project_profile import load_profile, save_profile
 
     ws = Path(workspace or Path.cwd()).resolve()
     profile = load_profile(ws)
@@ -177,7 +177,7 @@ def confirm_profile(workspace):
 @click.option("-w", "--workspace", default=None, help="工作区目录（默认当前目录）")
 def refresh(workspace):
     """对现有 Project Profile 做轻量漂移检查。"""
-    from ..orchestrator.workspace.project_profile import refresh_profile
+    from ...orchestrator.workspace.project_profile import refresh_profile
 
     ws = Path(workspace or Path.cwd()).resolve()
     console.print("\n[bold cyan]Story Start Refresh[/]")
@@ -203,8 +203,8 @@ def refresh(workspace):
     choice = click.prompt("  Choose", type=str, default="c").strip().lower()
 
     if choice == "u":
-        from ..orchestrator.workspace.project_scan import scan_workspace
-        from ..orchestrator.workspace.project_profile import save_profile
+        from ...orchestrator.workspace.project_scan import scan_workspace
+        from ...orchestrator.workspace.project_profile import save_profile
 
         profile = scan_workspace(ws)
         saved = save_profile(ws, profile)
@@ -235,7 +235,7 @@ def probe(workspace, question):
     console.print(f"  Workspace: [dim]{ws}[/]")
     console.print(f"  Question: {q}")
 
-    from ..orchestrator.workspace.project_probe import run_probe
+    from ...orchestrator.workspace.project_probe import run_probe
 
     console.print("\n  Running probe (read-only, no file modifications)...")
     result = run_probe(ws, q)

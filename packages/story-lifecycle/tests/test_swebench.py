@@ -18,7 +18,7 @@ from story_lifecycle.infra.benchmarks.swebench import (
     load_instances_jsonl,
     prepare_instance,
 )
-from story_lifecycle.cli.main import cli
+from story_lifecycle.entry.cli.main import cli
 
 
 FIXTURES = Path(__file__).parent / "fixtures"

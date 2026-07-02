@@ -33,14 +33,14 @@ class TestSyncById:
         self, isolated_story_home, monkeypatch
     ):
         """--id pulls one story via get_detail, bypassing owner/parent filters."""
-        from story_lifecycle.cli.sync_cmd import sync_cmd
+        from story_lifecycle.entry.cli.sync_cmd import sync_cmd
         from story_lifecycle.sources import tapd_source
 
         monkeypatch.setattr(
             tapd_source.TapdSource, "get_detail", lambda self, i: _fake_item(i)
         )
         monkeypatch.setattr(
-            "story_lifecycle.cli.sync_cmd._load_tapd_config",
+            "story_lifecycle.entry.cli.sync_cmd._load_tapd_config",
             lambda: {"workspace_id": "123"},
         )
 
@@ -55,14 +55,14 @@ class TestSyncById:
     def test_sync_by_id_not_found_exits_nonzero(
         self, isolated_story_home, monkeypatch
     ):
-        from story_lifecycle.cli.sync_cmd import sync_cmd
+        from story_lifecycle.entry.cli.sync_cmd import sync_cmd
         from story_lifecycle.sources import tapd_source
 
         monkeypatch.setattr(
             tapd_source.TapdSource, "get_detail", lambda self, i: None
         )
         monkeypatch.setattr(
-            "story_lifecycle.cli.sync_cmd._load_tapd_config",
+            "story_lifecycle.entry.cli.sync_cmd._load_tapd_config",
             lambda: {"workspace_id": "123"},
         )
 

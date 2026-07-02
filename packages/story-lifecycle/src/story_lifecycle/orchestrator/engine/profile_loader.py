@@ -204,7 +204,7 @@ def _load_raw(profile_name: str) -> dict:
             return yaml.safe_load(path.read_text(encoding="utf-8"))
     # Package built-in via importlib.resources
     try:
-        ref = _ir.files("story_lifecycle.profiles").joinpath(f"{profile_name}.yaml")
+        ref = _ir.files("story_lifecycle.entry.profiles").joinpath(f"{profile_name}.yaml")
         return yaml.safe_load(ref.read_text(encoding="utf-8"))
     except (FileNotFoundError, TypeError):
         pass

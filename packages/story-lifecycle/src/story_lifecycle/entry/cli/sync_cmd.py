@@ -23,8 +23,8 @@ console = Console()
 )
 def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id):
     """拉取 TAPD 待处理需求/缺陷，同步为本地 story。"""
-    from ..infra.db.models import init_db
-    from ..sources.tapd_source import TapdSource
+    from ...infra.db.models import init_db
+    from ...sources.tapd_source import TapdSource
 
     init_db()
 
@@ -70,7 +70,7 @@ def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id):
         _show_dry_run(items)
         return
 
-    from ..orchestrator.service.sync_service import sync_tapd
+    from ...orchestrator.service.sync_service import sync_tapd
 
     # An explicit workspace is required: the old `or "."` fallback stored the
     # server's CWD as the story workspace, scattering evidence artifacts.
@@ -111,7 +111,7 @@ def _load_tapd_config() -> dict:
 
 
 def _show_dry_run(items):
-    from ..infra.db import models as db
+    from ...infra.db import models as db
 
     table = Table(title="Dry Run 预览")
     table.add_column("ID", style="cyan")

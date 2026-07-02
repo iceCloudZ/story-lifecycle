@@ -26,7 +26,7 @@ def _resolve_retrospect_script() -> str:
     if env_path:
         return os.path.normpath(env_path)
     try:
-        from ..infra.config import get_config
+        from ...infra.config import get_config
 
         cfg_path = get_config().get("retrospect_script")
         if cfg_path:
@@ -87,7 +87,7 @@ def _run_miner_retrospect(story_key: str) -> None:
 )
 def list_cmd(status, overdue, show_all, story_type, show_completed):
     """列出所有 story。"""
-    from ..infra.db import models as db
+    from ...infra.db import models as db
 
     db.init_db()
 
@@ -160,7 +160,7 @@ def list_cmd(status, overdue, show_all, story_type, show_completed):
 @click.argument("key")
 def show_cmd(key):
     """查看 story 详情。"""
-    from ..infra.db import models as db
+    from ...infra.db import models as db
 
     db.init_db()
     s = db.get_story(key)
@@ -222,7 +222,7 @@ def show_cmd(key):
 @click.argument("key")
 def advance_cmd(key):
     """手动推进 story 到下一阶段。"""
-    from ..infra.db import models as db
+    from ...infra.db import models as db
 
     db.init_db()
     s = db.get_story(key)
@@ -258,7 +258,7 @@ def advance_cmd(key):
 @click.argument("key")
 def done_cmd(key):
     """标记 story 完成。"""
-    from ..infra.db import models as db
+    from ...infra.db import models as db
 
     db.init_db()
     s = db.get_story(key)

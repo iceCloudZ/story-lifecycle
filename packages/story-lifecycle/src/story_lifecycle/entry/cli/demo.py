@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 from rich.console import Console
 
-from ..infra.db import models as db
-from ..orchestrator.engine import graph as graph_mod
+from ...infra.db import models as db
+from ...orchestrator.engine import graph as graph_mod
 
 console = Console()
 
@@ -53,7 +53,7 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
     console.rule("[bold cyan]Story Lifecycle Demo[/]")
     console.print()
     console.print(f"  Story: [cyan]{_DEMO_KEY}[/]")
-    from ..orchestrator.nodes import load_profile
+    from ...orchestrator.nodes import load_profile
 
     stages = list(load_profile("minimal").get("stages", {}).keys())
     console.print(f"  Profile: [dim]minimal ({' → '.join(stages)})[/]")
@@ -62,7 +62,7 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
 
     start = time.monotonic()
 
-    from ..orchestrator.engine import router as llm_router
+    from ...orchestrator.engine import router as llm_router
 
     def _demo_route(state, cfg):
         return {"action": "advance", "reasoning": "Demo mode"}

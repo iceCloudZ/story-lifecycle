@@ -78,7 +78,7 @@ def isolated_story_home(_isolated_db, monkeypatch):
         import importlib.resources as _ir
 
         try:
-            ref = _ir.files("story_lifecycle.profiles").joinpath(f"{name}.yaml")
+            ref = _ir.files("story_lifecycle.entry.profiles").joinpath(f"{name}.yaml")
             return __import__("yaml").safe_load(ref.read_text(encoding="utf-8"))
         except (FileNotFoundError, TypeError):
             pass

@@ -6,8 +6,8 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from story_lifecycle.cli.main import cli
-from story_lifecycle.cli.setup import (
+from story_lifecycle.entry.cli.main import cli
+from story_lifecycle.entry.cli.setup import (
     is_configured,
 )
 from story_lifecycle.infra.config import (
@@ -35,8 +35,8 @@ def _tmp_config(tmp_path, monkeypatch):
     cfg_file = cfg_dir / "config.yaml"
     monkeypatch.setattr("story_lifecycle.infra.config.CONFIG_DIR", cfg_dir)
     monkeypatch.setattr("story_lifecycle.infra.config.CONFIG_FILE", cfg_file)
-    monkeypatch.setattr("story_lifecycle.cli.setup.CONFIG_DIR", cfg_dir)
-    monkeypatch.setattr("story_lifecycle.cli.setup.CONFIG_FILE", cfg_file)
+    monkeypatch.setattr("story_lifecycle.entry.cli.setup.CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr("story_lifecycle.entry.cli.setup.CONFIG_FILE", cfg_file)
     yield cfg_file
 
 
@@ -134,7 +134,7 @@ class TestSetupCLI:
 
     def test_setup_bypasses_config_check(self, monkeypatch):
         """`story setup` should run even when not configured."""
-        monkeypatch.setattr("story_lifecycle.cli.setup.is_configured", lambda: False)
+        monkeypatch.setattr("story_lifecycle.entry.cli.setup.is_configured", lambda: False)
         result = CliRunner().invoke(cli, ["setup", "--help"])
         assert result.exit_code == 0
 
@@ -147,7 +147,7 @@ class TestDoctorCLI:
 
     def test_doctor_bypasses_config_check(self, monkeypatch):
         """`story doctor` should run even when not configured."""
-        monkeypatch.setattr("story_lifecycle.cli.setup.is_configured", lambda: False)
+        monkeypatch.setattr("story_lifecycle.entry.cli.setup.is_configured", lambda: False)
         result = CliRunner().invoke(cli, ["doctor", "--help"])
         assert result.exit_code == 0
 
@@ -186,7 +186,7 @@ class TestLoadConfigToEnv:
         monkeypatch.delenv("STORY_LLM_BASE_URL", raising=False)
         monkeypatch.delenv("STORY_LLM_MODEL", raising=False)
 
-        from story_lifecycle.cli.setup import load_config_to_env
+        from story_lifecycle.entry.cli.setup import load_config_to_env
 
         load_config_to_env()
 
@@ -202,7 +202,7 @@ class TestLoadConfigToEnv:
         )
         monkeypatch.setenv("STORY_LLM_API_KEY", "sk-preexisting")
 
-        from story_lifecycle.cli.setup import load_config_to_env
+        from story_lifecycle.entry.cli.setup import load_config_to_env
 
         load_config_to_env()
 

@@ -350,7 +350,7 @@ def test_cli_review_feedback_import(tmp_path):
     )
     review_file = _write_review_file(tmp_path, review_content)
 
-    from story_lifecycle.cli.review_feedback import review_feedback_group
+    from story_lifecycle.entry.cli.review_feedback import review_feedback_group
 
     result = runner.invoke(review_feedback_group, ["import", "S1", review_file])
 
@@ -374,7 +374,7 @@ def test_cli_review_feedback_list(tmp_path):
         location="api.py:42",
     )
 
-    from story_lifecycle.cli.review_feedback import review_feedback_group
+    from story_lifecycle.entry.cli.review_feedback import review_feedback_group
 
     result = runner.invoke(review_feedback_group, ["list", "S1"])
 
@@ -392,7 +392,7 @@ def test_cli_review_feedback_decide_accept(tmp_path):
         "S1", "review", "review_feedback", "high", "error_handling", "空指针检查缺失"
     )
 
-    from story_lifecycle.cli.review_feedback import review_feedback_group
+    from story_lifecycle.entry.cli.review_feedback import review_feedback_group
 
     result = runner.invoke(review_feedback_group, ["decide", fid, "--accept"])
 
@@ -411,7 +411,7 @@ def test_cli_review_feedback_decide_reject(tmp_path):
         "S1", "review", "review_feedback", "high", "error_handling", "空指针检查缺失"
     )
 
-    from story_lifecycle.cli.review_feedback import review_feedback_group
+    from story_lifecycle.entry.cli.review_feedback import review_feedback_group
 
     result = runner.invoke(
         review_feedback_group, ["decide", fid, "--reject", "--reason", "overclaimed"]
@@ -432,7 +432,7 @@ def test_cli_review_feedback_decide_defer(tmp_path):
         "S1", "review", "review_feedback", "low", "style", "格式问题"
     )
 
-    from story_lifecycle.cli.review_feedback import review_feedback_group
+    from story_lifecycle.entry.cli.review_feedback import review_feedback_group
 
     result = runner.invoke(review_feedback_group, ["decide", fid, "--defer"])
 
@@ -451,7 +451,7 @@ def test_cli_review_feedback_decide_downgrade(tmp_path):
         "S1", "review", "review_feedback", "high", "error_handling", "空指针检查缺失"
     )
 
-    from story_lifecycle.cli.review_feedback import review_feedback_group
+    from story_lifecycle.entry.cli.review_feedback import review_feedback_group
 
     result = runner.invoke(review_feedback_group, ["decide", fid, "--downgrade"])
 
@@ -471,7 +471,7 @@ def test_cli_approvals_list(tmp_path):
     )
     db.update_finding(fid, status="accepted")
 
-    from story_lifecycle.cli.review_feedback import approvals_group
+    from story_lifecycle.entry.cli.review_feedback import approvals_group
 
     result = runner.invoke(approvals_group, ["list"])
 
@@ -489,7 +489,7 @@ def test_cli_approvals_decide(tmp_path):
         "S1", "review", "review_feedback", "high", "routing", "test"
     )
 
-    from story_lifecycle.cli.review_feedback import approvals_group
+    from story_lifecycle.entry.cli.review_feedback import approvals_group
 
     result = runner.invoke(approvals_group, ["decide", fid, "--accept"])
 
@@ -712,7 +712,7 @@ def test_approvals_decide_accept_single_event(tmp_path):
     from click.testing import CliRunner
 
     runner = CliRunner()
-    from story_lifecycle.cli.review_feedback import approvals_group
+    from story_lifecycle.entry.cli.review_feedback import approvals_group
 
     result = runner.invoke(approvals_group, ["decide", fid, "--accept"])
     assert result.exit_code == 0

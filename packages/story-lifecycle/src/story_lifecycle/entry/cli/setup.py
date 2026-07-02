@@ -14,7 +14,7 @@ import yaml
 from rich.console import Console
 from rich.panel import Panel
 
-from ..infra.config import (
+from ...infra.config import (
     CONFIG_DIR,
     CONFIG_FILE,
     _merge_config,

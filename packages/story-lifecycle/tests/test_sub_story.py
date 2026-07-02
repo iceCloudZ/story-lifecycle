@@ -325,7 +325,7 @@ def test_context_size_control(tmp_path):
 
 def test_get_sub_types_default():
     """get_sub_types should return built-in defaults when config has none."""
-    from story_lifecycle.cli.setup import get_sub_types
+    from story_lifecycle.entry.cli.setup import get_sub_types
 
     types = get_sub_types()
     assert "bug-fix" in types
@@ -336,7 +336,7 @@ def test_get_sub_types_default():
 def test_get_sub_types_from_config(tmp_path):
     """get_sub_types should merge config.yaml sub_story_types."""
     import yaml
-    from story_lifecycle.cli.setup import CONFIG_FILE, get_sub_types
+    from story_lifecycle.entry.cli.setup import CONFIG_FILE, get_sub_types
 
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(

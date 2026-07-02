@@ -20,7 +20,7 @@ def test_main_module_entry():
 def test_version_option():
     """CLI --version must return a non-empty string."""
     from click.testing import CliRunner
-    from story_lifecycle.cli.main import cli
+    from story_lifecycle.entry.cli.main import cli
 
     runner = CliRunner()
     result = runner.invoke(cli, ["--version"])
@@ -30,7 +30,7 @@ def test_version_option():
 
 
 def test_cli_module_imports():
-    from story_lifecycle.cli.main import cli
+    from story_lifecycle.entry.cli.main import cli
 
     assert cli is not None
     assert cli.name in ("story", "cli")
@@ -91,7 +91,7 @@ def test_packaged_and_root_profiles_consistent():
     from pathlib import Path
 
     root_dir = Path(__file__).parent.parent / "profiles"
-    pkg_dir = Path(__file__).parent.parent / "src" / "story_lifecycle" / "profiles"
+    pkg_dir = Path(__file__).parent.parent / "src" / "story_lifecycle" / "entry" / "profiles"
 
     root_profiles = sorted(p.name for p in root_dir.glob("*.yaml"))
     pkg_profiles = sorted(p.name for p in pkg_dir.glob("*.yaml"))

@@ -1,6 +1,6 @@
 from click.testing import CliRunner
 
-from story_lifecycle.cli.main import cli
+from story_lifecycle.entry.cli.main import cli
 
 
 def test_setup_command_is_registered():
