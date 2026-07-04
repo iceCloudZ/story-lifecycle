@@ -203,7 +203,7 @@ def run_verify_gate(
     On "retry", the caller should re-run the verify stage with the returned
     ``repair_packet_path`` injected into the next prompt.
     """
-    from ..infra.db import models as db
+    from ...infra.db import models as db
     from .evaluator_loop import build_repair_packet
 
     quality_cfg = quality_cfg or {}
