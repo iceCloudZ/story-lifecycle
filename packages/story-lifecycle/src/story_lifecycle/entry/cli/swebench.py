@@ -1,6 +1,7 @@
 """`story swebench` — SWE-bench benchmark runner 命令组。"""
 
 import json
+import re
 import click
 from pathlib import Path
 from rich.console import Console
@@ -13,8 +14,35 @@ from ...infra.benchmarks.swebench import (
     export_predictions,
 )
 from ...infra.db.models import init_db
+from ...infra.story_paths import UnsafePathError
 
 console = Console()
+
+# Allow only safe path characters in run_id / instance_id. Anything outside
+# [A-Za-z0-9._-] could escape workspace_root via ".." or separators.
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _validate_run_id(ctx, param, value):
+    """click callback: refuse run_id that could traverse the workspace."""
+    if not value or not _SAFE_ID_RE.match(value) or value.startswith("."):
+        raise click.BadParameter(
+            f"run_id must match {_SAFE_ID_RE.pattern!r} and not start with '.'; "
+            f"got {value!r}"
+        )
+    return value
+
+
+def _assert_within(root: Path, *parts: str) -> Path:
+    """Build root/parts and refuse anything escaping root (path traversal)."""
+    target = (root.joinpath(*parts)).resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError as exc:
+        raise UnsafePathError(
+            f"refusing path outside workspace_root: {parts!r} → {target}"
+        ) from exc
+    return target
 
 
 @click.group(name="swebench")
@@ -30,7 +58,7 @@ def swebench_group():
     required=True,
     help="本地 JSONL instance 文件路径",
 )
-@click.option("--run-id", required=True, help="Run ID")
+@click.option("--run-id", required=True, help="Run ID", callback=_validate_run_id)
 @click.option(
     "--workspace-root",
     type=click.Path(path_type=Path),
@@ -124,7 +152,14 @@ def prepare(
     prepared = 0
     failed = 0
     for inst in inst_list:
-        ws = workspace_root / run_id / inst.instance_id
+        # instance_id comes from JSONL (semi-external); validate before path concat.
+        if not _SAFE_ID_RE.match(inst.instance_id or "") or inst.instance_id.startswith("."):
+            console.print(
+                f"  [red]✗[/] {inst.instance_id}: unsafe instance_id (path traversal risk), skipped"
+            )
+            failed += 1
+            continue
+        ws = _assert_within(workspace_root, run_id, inst.instance_id)
 
         if not no_checkout:
             result = checkout_instance(
@@ -155,7 +190,7 @@ def prepare(
 
 
 @swebench_group.command()
-@click.option("--run-id", required=True, help="Run ID")
+@click.option("--run-id", required=True, help="Run ID", callback=_validate_run_id)
 @click.option(
     "--workspace-root",
     type=click.Path(path_type=Path),
@@ -213,7 +248,7 @@ def solve(run_id, workspace_root):
 
 
 @swebench_group.command()
-@click.option("--run-id", required=True, help="Run ID")
+@click.option("--run-id", required=True, help="Run ID", callback=_validate_run_id)
 @click.option(
     "--workspace-root",
     type=click.Path(path_type=Path),
@@ -238,7 +273,7 @@ def export(run_id, workspace_root, agent):
 
 
 @swebench_group.command()
-@click.option("--run-id", required=True, help="Run ID")
+@click.option("--run-id", required=True, help="Run ID", callback=_validate_run_id)
 @click.option(
     "--workspace-root",
     type=click.Path(path_type=Path),
@@ -325,7 +360,7 @@ def eval(run_id, workspace_root, extra_args):
 
 
 @swebench_group.command("summarize")
-@click.option("--run-id", required=True, help="Run ID")
+@click.option("--run-id", required=True, help="Run ID", callback=_validate_run_id)
 @click.option(
     "--workspace-root",
     type=click.Path(path_type=Path),
@@ -394,7 +429,7 @@ def summarize_cmd(run_id, workspace_root):
 @click.option(
     "--instances", type=click.Path(exists=True, path_type=Path), required=True
 )
-@click.option("--run-id", required=True, help="Run ID")
+@click.option("--run-id", required=True, help="Run ID", callback=_validate_run_id)
 @click.option(
     "--workspace-root",
     type=click.Path(path_type=Path),

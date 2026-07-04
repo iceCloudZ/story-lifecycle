@@ -1,7 +1,5 @@
 """Claude Code adapter."""
 
-import time
-import subprocess
 from .base import BaseAdapter
 from ...infra.terminal.platform_ops import resolve_executable
 
@@ -12,13 +10,11 @@ class ClaudeAdapter(BaseAdapter):
     name = "claude"
 
     def switch_provider(self, provider: str) -> str | None:
-        try:
-            subprocess.run(
-                ["bash", "-c", f"cc use {provider}"], capture_output=True, timeout=30
-            )
-        except FileNotFoundError:
-            pass
-        time.sleep(2)
+        # No-op: provider switching is not supported for the Claude CLI.
+        # (Previously this shelled out to `cc use <provider>` via bash -c with an
+        # unescaped provider argument — a command-injection vector, and the call
+        # site was dead in production. Kept as a safe no-op to satisfy the
+        # BaseAdapter abstract interface.)
         return None
 
     def launch_cmd(self, model: str) -> str:

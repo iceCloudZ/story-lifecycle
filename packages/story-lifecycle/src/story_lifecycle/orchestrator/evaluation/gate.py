@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ...infra.story_paths import safe_story_path
+
 
 # ---- context_json key helpers ----
 
@@ -133,7 +135,7 @@ class GateDecision:
 
 def write_gate_report(gd: GateDecision, workspace: str) -> Path:
     """Write a markdown gate report. Returns the absolute Path to the report."""
-    report_dir = Path(workspace) / ".story" / "context" / gd.story_key / "gates"
+    report_dir = safe_story_path(workspace, ".story", "context", gd.story_key, "gates")
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"{gd.stage}-review-gate.md"
 

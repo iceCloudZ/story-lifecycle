@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import threading
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from .platform_ops import kill_by_port, port_in_use
+from ..story_paths import safe_segment
 
 STORY_HOME = Path.home() / ".story-lifecycle"
 
@@ -384,14 +386,21 @@ def launch_cli(story_key: str, workspace: str, launch_cmd: str, prompt_file: str
 
     ws = platform_ops.to_posix_path(workspace)
     pf = platform_ops.to_posix_path(prompt_file)
-    script = Path(tempfile.gettempdir()) / f"story-launch-{story_key}.sh"
+    ws_q = shlex.quote(ws)
+    pf_q = shlex.quote(pf)
+    # launch_cmd is the intended multi-token shell command (e.g. "codex
+    # --model gpt-4") and is meant to be word-split by the shell, so it must
+    # NOT be quoted on the execution line. Only quote it for the display
+    # echo so a malicious value can't break out of the echo.
+    launch_cmd_display = shlex.quote(launch_cmd)
+    script = Path(tempfile.gettempdir()) / f"story-launch-{safe_segment(story_key)}.sh"
     script.write_text(
         f"#!/bin/bash\n"
-        f'cd "{ws}" 2>/dev/null || {{ echo "ERROR: cannot cd to {ws}"; exit 1; }}\n'
-        f'echo "Starting: {launch_cmd}"\n'
-        f"{launch_cmd} \"$(cat '{pf}')\"\n"
+        f"cd {ws_q} 2>/dev/null || {{ echo \"ERROR: cannot cd to {ws_q}\"; exit 1; }}\n"
+        f"echo \"Starting: {launch_cmd_display}\"\n"
+        f"{launch_cmd} \"$(cat {pf_q})\"\n"
         f'echo ""\n'
-        f'echo "Story {story_key} done (exit code: $?). Closing in 3s..."\n'
+        f"echo \"Story {safe_segment(story_key)} done (exit code: $?). Closing in 3s...\"\n"
         f"sleep 3\n",
         encoding="utf-8",
     )
@@ -432,17 +441,21 @@ def zellij_execution_args(
 
     ws = platform_ops.to_posix_path(workspace)
     pf = platform_ops.to_posix_path(prompt_file)
+    ws_q = shlex.quote(ws)
+    pf_q = shlex.quote(pf)
+    # launch_cmd is the intended multi-token shell command (see launch_cli).
+    launch_cmd_display = shlex.quote(launch_cmd)
 
     # Generate launch script (reuse the same pattern as launch_cli)
     # Write an exit marker so poll_completion can detect CLI process exit.
-    exit_marker = Path(tempfile.gettempdir()) / f"story-exit-{story_key}"
+    exit_marker = Path(tempfile.gettempdir()) / f"story-exit-{safe_segment(story_key)}"
     exit_marker_posix = platform_ops.to_posix_path(str(exit_marker))
-    script = Path(tempfile.gettempdir()) / f"story-launch-{story_key}.sh"
+    script = Path(tempfile.gettempdir()) / f"story-launch-{safe_segment(story_key)}.sh"
     script.write_text(
         f"#!/bin/bash\n"
-        f'cd "{ws}" 2>/dev/null || {{ echo "ERROR: cannot cd to {ws}"; exit 1; }}\n'
-        f'echo "Starting: {launch_cmd}"\n'
-        f"{launch_cmd} \"$(cat '{pf}')\"\n"
+        f"cd {ws_q} 2>/dev/null || {{ echo \"ERROR: cannot cd to {ws_q}\"; exit 1; }}\n"
+        f"echo \"Starting: {launch_cmd_display}\"\n"
+        f"{launch_cmd} \"$(cat {pf_q})\"\n"
         f"_ec=$?\n"
         f'echo ""\n'
         f'echo $_ec > "{exit_marker_posix}"\n'
@@ -458,7 +471,7 @@ def zellij_execution_args(
 
     # Generate Zellij layout KDL — use resolved bash path, not bare "bash"
     session = session_name(story_key)
-    kdl = Path(tempfile.gettempdir()) / f"story-zellij-{story_key}.kdl"
+    kdl = Path(tempfile.gettempdir()) / f"story-zellij-{safe_segment(story_key)}.kdl"
     kdl.write_text(
         f"layout {{\n"
         f'    pane command="{bash_posix}" {{\n'

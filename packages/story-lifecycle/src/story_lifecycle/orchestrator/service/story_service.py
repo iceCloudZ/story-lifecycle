@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...infra.db import models as db
-from ...infra.story_paths import story_prd_path
+from ...infra.story_paths import assert_within_workspace, safe_segment, story_prd_path
 from ..nodes import load_profile, get_stage_config
 
 MAX_CONTEXT_SIZE = 1 * 1024 * 1024  # 1MB
@@ -97,6 +97,10 @@ def create_and_start_story(
     """
     ws = workspace or str(Path.cwd())
     _validate_workspace(ws)
+    # Sanitize story_key at the trust boundary: it flows from API/CLI and used
+    # to be concatenated into many paths (incl. rmtree). Once sanitized here,
+    # downstream callers receive a clean value.
+    story_key = safe_segment(story_key)
     profile_data = load_profile(profile)
     stages = profile_data.get("stages", {})
     first_stage = next(iter(stages)) if stages else "design"
@@ -104,6 +108,9 @@ def create_and_start_story(
     # Clean stale done files from previous runs
     done_dir = Path(ws) / ".story" / "done" / story_key
     if done_dir.exists():
+        # Blast shield: never rmtree anything that escapes the workspace,
+        # even if a future regression lets a tainted key slip through.
+        assert_within_workspace(done_dir, ws)
         shutil.rmtree(done_dir, ignore_errors=True)
 
     # Handle PRD content

@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ...infra.story_paths import safe_story_path
+
 
 def knowledge_dir(workspace: str | Path) -> Path:
     return Path(workspace) / ".story" / "knowledge"
@@ -90,7 +92,7 @@ def knowledge_done_file(workspace: str | Path) -> Path:
 
 
 def knowledge_context_dir(workspace: str | Path, story_key: str) -> Path:
-    return Path(workspace) / ".story" / "context" / story_key / "knowledge-context"
+    return safe_story_path(workspace, ".story", "context", story_key, "knowledge-context")
 
 
 def runs_dir(workspace: str | Path) -> Path:

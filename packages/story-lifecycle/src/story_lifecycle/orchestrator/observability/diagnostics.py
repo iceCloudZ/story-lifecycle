@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .debug_packet import build_debug_packet, redact_text, redact_mapping
 from ...infra.db import models as db
+from ...infra.story_paths import safe_segment
 
 
 def create_story_diagnostics_bundle(
@@ -37,11 +38,12 @@ def create_story_diagnostics_bundle(
     workspace = packet["story"]["workspace"]
     ws_path = Path(workspace)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    safe_key = safe_segment(story_key)
 
     if output_path:
         out_dir = Path(output_path)
     elif no_zip:
-        out_dir = ws_path / ".story" / "diagnostics" / f"{story_key}-{ts}"
+        out_dir = ws_path / ".story" / "diagnostics" / f"{safe_key}-{ts}"
     else:
         out_dir = ws_path / ".story" / "diagnostics"
 
@@ -60,7 +62,7 @@ def create_story_diagnostics_bundle(
     }
 
     bundle_dir = (
-        out_dir if no_zip else Path(tempfile.mkdtemp(prefix=f"diag-{story_key}-"))
+        out_dir if no_zip else Path(tempfile.mkdtemp(prefix=f"diag-{safe_key}-"))
     )
 
     # 1. debug_packet.json
@@ -135,7 +137,7 @@ def create_story_diagnostics_bundle(
     if no_zip:
         return {"path": str(bundle_dir)}
 
-    zip_path = out_dir / f"{story_key}-{ts}.zip"
+    zip_path = out_dir / f"{safe_key}-{ts}.zip"
     _make_zip(bundle_dir, zip_path)
     return {"path": str(zip_path)}
 

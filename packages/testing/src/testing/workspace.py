@@ -7,6 +7,36 @@
 import shutil
 from pathlib import Path
 
+try:
+    # Best-effort reuse of the canonical sanitize/validate helpers when the
+    # story-lifecycle package is importable (editable install in the monorepo).
+    from story_lifecycle.infra.story_paths import (
+        UnsafePathError,
+        assert_within_workspace,
+        safe_segment,
+    )
+except ImportError:  # pragma: no cover - testing package standalone fallback
+    def safe_segment(value: str) -> str:  # type: ignore[misc]
+        import re
+
+        cleaned = re.sub(r"[^\w.-]+", "-", value or "", flags=re.UNICODE).strip("-._")
+        if "/" in cleaned or "\\" in cleaned or cleaned in {"..", "."}:
+            raise ValueError(f"refusing unsafe path segment: {value!r}")
+        return cleaned or "story"
+
+    class UnsafePathError(ValueError):
+        pass
+
+    def assert_within_workspace(path, workspace) -> None:  # type: ignore[misc]
+        resolved = Path(path).resolve()
+        root = Path(workspace).resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError as exc:
+            raise UnsafePathError(
+                f"refusing operation outside workspace: {path!r}"
+            ) from exc
+
 
 def reset_workspace(workspace, story_key, *, red_files=("calculator.py",)):
     """Reset real E2E workspace to baseline (red).
@@ -20,6 +50,7 @@ def reset_workspace(workspace, story_key, *, red_files=("calculator.py",)):
     Returns the workspace Path.
     """
     ws = Path(workspace)
+    story_key = safe_segment(story_key)  # trust boundary: external string → path
     for f in red_files:
         p = ws / f
         if p.exists():
@@ -30,5 +61,7 @@ def reset_workspace(workspace, story_key, *, red_files=("calculator.py",)):
     for sub in (".story/context", ".story/done", ".story/runs"):
         d = ws / sub / story_key
         if d.exists():
+            # Blast shield: refuse to rmtree anything escaping the workspace.
+            assert_within_workspace(d, ws)
             shutil.rmtree(d, ignore_errors=True)
     return ws

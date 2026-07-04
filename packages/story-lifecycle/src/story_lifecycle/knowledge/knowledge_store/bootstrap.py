@@ -205,14 +205,17 @@ def _launch_with_zellij(workspace: Path, prompt: str, adapter_name: str) -> None
         #   2. Type 'claude' + Enter to launch the AI CLI
         #   3. Wait 10s for CLI to start
         #   4. Ctrl+V to paste instruction (already in clipboard) + Enter
+        # _ps_quote() escapes single quotes to prevent PowerShell injection.
+        ps_full_cmd = _ps_quote(full_cmd)
+        ps_workspace = _ps_quote(str(workspace))
         ps_script = (
             f"Start-Process cmd -ArgumentList '/k \"zellij -s knowledge-bootstrap\"' "
-            f"-WorkingDirectory '{workspace}' | Out-Null; "
+            f"-WorkingDirectory {ps_workspace} | Out-Null; "
             f"Start-Sleep -Seconds 4; "
             f"Add-Type -AssemblyName System.Windows.Forms; "
             f"[System.Windows.Forms.SendKeys]::SendWait('{{ESC}}'); "
             f"Start-Sleep -Milliseconds 300; "
-            f"[System.Windows.Forms.SendKeys]::SendWait('{full_cmd}~'); "
+            f"[System.Windows.Forms.SendKeys]::SendWait({ps_full_cmd} + '~'); "
             f"Start-Sleep -Seconds 10; "
             f"[System.Windows.Forms.SendKeys]::SendWait('^v~')"
         )
@@ -252,9 +255,15 @@ def _launch_windows_terminal(workspace: Path, prompt: str, adapter_name: str) ->
     _copy_to_clipboard(inject_text)
 
     # Launch claude in a new window, then auto-paste from clipboard after delay
+    # full_cmd is embedded inside a doubly-quoted cmd.exe /k string; escape it
+    # for PowerShell and for the inner cmd.exe quotes so it can't break out.
+    ps_full_cmd = _ps_quote(full_cmd)
+    ps_workspace = _ps_quote(str(workspace))
+    # /k "..." needs literal double-quotes around the command; build the cmd.exe
+    # ArgumentList from the escaped PowerShell value so neither layer is injectable.
     ps_script = (
-        f"$proc = Start-Process cmd -ArgumentList '/k \"{full_cmd}\"' "
-        f"-WorkingDirectory '{workspace}' -PassThru; "
+        f"$proc = Start-Process cmd -ArgumentList ('/k \"' + {ps_full_cmd} + '\"') "
+        f"-WorkingDirectory {ps_workspace} -PassThru; "
         f"Start-Sleep -Seconds 8; "
         f"Add-Type -AssemblyName System.Windows.Forms; "
         f"[System.Windows.Forms.SendKeys]::SendWait('^v'); "
@@ -316,6 +325,16 @@ def _attach_zellij_session(name: str, workspace: Path) -> None:
             cwd=str(workspace),
             start_new_session=True,
         )
+
+
+def _ps_quote(s: str) -> str:
+    """Quote a string for safe embedding in a PowerShell single-quoted string.
+
+    PowerShell single-quote escaping: double every embedded single quote and
+    wrap the whole value in single quotes. Returns the fully-quoted literal
+    (including the surrounding quotes).
+    """
+    return "'" + s.replace("'", "''") + "'"
 
 
 def _copy_to_clipboard(text: str) -> None:

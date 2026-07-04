@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from ...infra.story_paths import safe_story_path
+
 log = logging.getLogger("story-lifecycle.evaluator_loop")
 
 # Token budget approximations (1 token ~ 4 chars for English/mixed Chinese)
@@ -128,7 +130,7 @@ def build_repair_packet(
         return packet
 
     # Write to disk
-    repair_dir = Path(workspace) / ".story" / "context" / story_key
+    repair_dir = safe_story_path(workspace, ".story", "context", story_key)
     repair_dir.mkdir(parents=True, exist_ok=True)
     repair_file = repair_dir / f"repair_{stage}_round{round_num}.md"
     repair_file.write_text(packet, encoding="utf-8")

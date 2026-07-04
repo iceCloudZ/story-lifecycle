@@ -363,10 +363,13 @@ def _derive_worktree_path(
     """决定本次 prepare 用哪个 worktree 路径。
     优先级:绑定显式指定的真实路径 > worktree_root/story_key/project > <repo>/.worktrees/<story_key>。
     不读占位符(已随 NULL 改动消失)。"""
+    from ....infra.story_paths import safe_segment
+
+    safe_key = safe_segment(story_key)
     if sp.get("worktree_path"):
         return sp["worktree_path"]
     if worktree_root:
-        return str(Path(worktree_root) / story_key / project["name"])
+        return str(Path(worktree_root) / safe_key / project["name"])
     repo = Path(project["repo_path"])
     _ensure_local_exclude(repo, ".worktrees/")
-    return str(repo / ".worktrees" / story_key)
+    return str(repo / ".worktrees" / safe_key)

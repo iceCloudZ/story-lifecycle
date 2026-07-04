@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ...infra.story_paths import safe_story_path
 from .resolver import ContextResolver, ContextBundle
 
 
@@ -27,9 +28,9 @@ def generate_snapshot(story_key: str) -> dict:
     story = bundle.story
     workspace = story.get("workspace", "") if story else ""
     if workspace:
-        snapshot_dir = Path(workspace) / ".story" / "context" / story_key
+        snapshot_dir = safe_story_path(workspace, ".story", "context", story_key)
     else:
-        snapshot_dir = Path(".story") / "context" / story_key
+        snapshot_dir = safe_story_path(Path.cwd(), ".story", "context", story_key)
 
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 

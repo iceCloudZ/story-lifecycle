@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from ...infra.llm_client import get_llm, with_story_key
+from ...infra.story_paths import safe_segment, safe_story_path
 from .agent_tools import ORCHESTRATOR_TOOLS
 
 log = logging.getLogger("story-lifecycle.planner")
@@ -31,7 +32,7 @@ def _load_team_knowledge() -> str:
 
 
 def _load_story_knowledge(workspace: str, story_key: str) -> str:
-    knowledge_dir = Path(workspace) / ".story-knowledge" / story_key
+    knowledge_dir = safe_story_path(workspace, ".story-knowledge", story_key)
     parts = []
     if knowledge_dir.exists():
         for f in sorted(knowledge_dir.glob("*.md")):
@@ -46,7 +47,7 @@ def compress_context(workspace: str, story_key: str, current_stage: str) -> str 
 
     触发条件：.story/context/ 下超过 4 个文件。
     """
-    context_dir = Path(workspace) / ".story" / "context" / story_key
+    context_dir = safe_story_path(workspace, ".story", "context", story_key)
     if not context_dir.exists():
         return None
 
@@ -77,7 +78,7 @@ def compress_context(workspace: str, story_key: str, current_stage: str) -> str 
 
     compressed = llm.invoke(prompt, temperature=0.2)
 
-    compressed_file = Path(workspace) / ".story-knowledge" / story_key / "compressed.md"
+    compressed_file = safe_story_path(workspace, ".story-knowledge", story_key, "compressed.md")
     compressed_file.parent.mkdir(parents=True, exist_ok=True)
     compressed_file.write_text(compressed, encoding="utf-8")
 
@@ -292,7 +293,7 @@ def run_orchestrator_agent(
                         "focus": args.get("focus", ""),
                         "done_file": args.get(
                             "done_file",
-                            f".story-done/{story_key}-{args.get('stage', '')}.json",
+                            f".story-done/{safe_segment(story_key)}-{args.get('stage', '')}.json",
                         ),
                     }
                     actions.append(action)
@@ -390,7 +391,7 @@ def _write_retrospect(workspace: str, story_key: str, actions: list) -> None:
     """
     from pathlib import Path as _P
 
-    done_dir = _P(workspace) / ".story" / "done" / story_key
+    done_dir = safe_story_path(workspace, ".story", "done", story_key)
     lines = [f"# Retrospect — {story_key}", ""]
     n = 0
     for action in actions or []:
@@ -494,7 +495,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             focus = action.get("focus", "")
             done_file_rel = action.get(
                 "done_file",
-                f".story-done/{story_key}-{stage}.json",
+                f".story-done/{safe_segment(story_key)}-{stage}.json",
             )
 
             # 更新当前阶段
@@ -530,7 +531,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             )
 
             # 写入 prompt 文件
-            prompt_dir = Path(workspace) / ".story" / "context" / story_key
+            prompt_dir = safe_story_path(workspace, ".story", "context", story_key)
             prompt_dir.mkdir(parents=True, exist_ok=True)
             prompt_file = prompt_dir / f"prompt_{stage}.md"
             prompt_file.write_text(cli_prompt, encoding="utf-8")
@@ -768,7 +769,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 )
                 if gate_result["decision"] == "retry":
                     retry_done_file = (
-                        f".story/done/{story_key}/verify"
+                        f".story/done/{safe_segment(story_key)}/verify"
                         f"-round{gate_result['round']}.json"
                     )
                     actions.insert(

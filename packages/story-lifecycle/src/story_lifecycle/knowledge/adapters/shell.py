@@ -1,5 +1,6 @@
 """ShellAdapter — config-driven adapter for any AI CLI tool."""
 
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -60,9 +61,12 @@ class ShellAdapter(BaseAdapter):
         binary = self._config.get("binary", self._name)
 
         if self._config.get("stdin_to_prompt_arg"):
+            # binary is interpolated into a Python string literal inside the
+            # -c source; use its repr() so a quote/apostrophe in binary cannot
+            # break out of the literal and execute arbitrary code.
             wrapper = (
                 f"import sys, subprocess; "
-                f"subprocess.run(['{binary}', '-p', sys.stdin.read()])"
+                f"subprocess.run([{binary!r}, '-p', sys.stdin.read()])"
             )
             return ["python", "-c", wrapper]
 
@@ -80,9 +84,13 @@ class ShellAdapter(BaseAdapter):
             from pathlib import Path
             import tempfile
 
-            tmp = Path(tempfile.gettempdir()) / f"story-prompt-{story_key}-{stage}.txt"
+            from ...infra.story_paths import safe_segment
+
+            tmp = Path(tempfile.gettempdir()) / (
+                f"story-prompt-{safe_segment(story_key)}-{safe_segment(stage)}.txt"
+            )
             tmp.write_text(prompt, encoding="utf-8")
-            return f"cat {tmp}"
+            return f"cat {shlex.quote(str(tmp))}"
         return None
 
     def cleanup(self, story_key: str, stage: str):

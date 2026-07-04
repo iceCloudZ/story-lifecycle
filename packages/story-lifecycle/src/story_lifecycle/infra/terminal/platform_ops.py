@@ -1,6 +1,7 @@
 """Platform abstraction — Windows vs Unix (Linux/macOS)."""
 
 import os
+import shlex
 import shutil
 import subprocess
 
@@ -157,7 +158,9 @@ def open_terminal_window(title: str, bash_args: list[str]):
             creationflags=CREATE_NEW_CONSOLE,
         )
     else:
-        cmd = " ".join(bash_args)
+        # Quote each argv element so a path containing spaces or shell
+        # metacharacters cannot break out of the bash -c command string.
+        cmd = " ".join(shlex.quote(a) for a in bash_args)
         for term in ("gnome-terminal", "konsole", "xfce4-terminal", "xterm"):
             if shutil.which(term):
                 subprocess.Popen(

@@ -9,6 +9,19 @@ from pathlib import Path
 
 from testing.harness import StoryRunResult
 
+try:
+    # Best-effort reuse of the canonical sanitize helper when the
+    # story-lifecycle package is importable (editable install in the monorepo).
+    from story_lifecycle.infra.story_paths import safe_segment
+except ImportError:  # pragma: no cover - testing package standalone fallback
+    import re
+
+    def safe_segment(value: str) -> str:  # type: ignore[misc]
+        cleaned = re.sub(r"[^\w.-]+", "-", value or "", flags=re.UNICODE).strip("-._")
+        if "/" in cleaned or "\\" in cleaned or cleaned in {"..", "."}:
+            raise ValueError(f"refusing unsafe path segment: {value!r}")
+        return cleaned or "story"
+
 
 def _stage_done(result: StoryRunResult, stage: str):
     sr = result.stage(stage)
@@ -20,7 +33,7 @@ def _stage_done(result: StoryRunResult, stage: str):
 def assert_design(result, workspace, story_key):
     """design: done_file + context 下有 spec/research 类 .md 产物。"""
     _stage_done(result, "design")
-    ctx = Path(workspace) / ".story" / "context" / story_key
+    ctx = Path(workspace) / ".story" / "context" / safe_segment(story_key)
     mds = list(ctx.glob("*.md")) if ctx.exists() else []
     assert mds, f"design 产物缺失（{ctx} 下无 .md）"
 
@@ -46,7 +59,7 @@ def assert_verify(result, workspace, story_key):
 
 def assert_done_retrospect(workspace, story_key):
     """done: retrospect.md 生成且非空。"""
-    retro = Path(workspace) / ".story" / "done" / story_key / "retrospect.md"
+    retro = Path(workspace) / ".story" / "done" / safe_segment(story_key) / "retrospect.md"
     assert retro.exists(), f"retrospect.md 缺失: {retro}"
     assert retro.stat().st_size > 0, f"retrospect.md 为空: {retro}"
 

@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from ...infra.db import models as db
+from ...infra.story_paths import safe_story_path
 
 
 # -------- attempt_id --------
@@ -232,8 +233,8 @@ def build_debug_response(
         return {"error": "Story not found"}
 
     workspace = s.get("workspace", "") or str(Path.cwd())
-    story_context = Path(workspace) / ".story" / "context" / story_key
-    done_dir = Path(workspace) / ".story" / "done" / story_key
+    story_context = safe_story_path(workspace, ".story", "context", story_key)
+    done_dir = safe_story_path(workspace, ".story", "done", story_key)
     story_home = Path.home() / ".story-lifecycle"
 
     route_decisions = _load_events_by_type(story_key, ["route_decision"], limit=20)

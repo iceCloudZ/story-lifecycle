@@ -64,7 +64,9 @@ def cli_exit_marker_path(story_key: str) -> Path:
     """Path to the CLI exit marker file for a story."""
     from tempfile import gettempdir
 
-    return Path(gettempdir()) / f"story-exit-{story_key}"
+    from ..infra.story_paths import safe_segment
+
+    return Path(gettempdir()) / f"story-exit-{safe_segment(story_key)}"
 
 
 def resolve_cli_exit_state(story: dict) -> CliExitState:

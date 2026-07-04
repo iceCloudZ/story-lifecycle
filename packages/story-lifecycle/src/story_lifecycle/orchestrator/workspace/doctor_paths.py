@@ -7,6 +7,8 @@ from pathlib import Path
 
 from rich.console import Console
 
+from ...infra.story_paths import assert_within_workspace
+
 console = Console()
 
 LEGACY_DIRS = {
@@ -74,6 +76,8 @@ def run_doctor_paths(root: str | Path | None = None):
                 for item in old_dir.iterdir():
                     dest = target / item.name
                     if dest.exists():
+                        # Blast shield: never rmtree outside the workspace.
+                        assert_within_workspace(dest, story.parent)
                         shutil.rmtree(str(dest), ignore_errors=True)
                     shutil.move(str(item), str(dest))
             else:
@@ -94,6 +98,7 @@ def run_doctor_paths(root: str | Path | None = None):
         for old_name, _, old_dir, _ in found:
             if old_dir.exists():
                 try:
+                    assert_within_workspace(old_dir, story.parent)
                     shutil.rmtree(str(old_dir), ignore_errors=True)
                     console.print(f"  [green]✓[/] Removed {old_name}/")
                 except Exception as e:

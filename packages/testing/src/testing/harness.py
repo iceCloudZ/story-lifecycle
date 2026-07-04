@@ -37,6 +37,19 @@ from typing import Any, Callable
 
 log = logging.getLogger("testing.harness")
 
+try:
+    # Best-effort reuse of the canonical sanitize helper when the
+    # story-lifecycle package is importable (editable install in the monorepo).
+    from story_lifecycle.infra.story_paths import safe_segment
+except ImportError:  # pragma: no cover - testing package standalone fallback
+    import re
+
+    def safe_segment(value: str) -> str:  # type: ignore[misc]
+        cleaned = re.sub(r"[^\w.-]+", "-", value or "", flags=re.UNICODE).strip("-._")
+        if "/" in cleaned or "\\" in cleaned or cleaned in {"..", "."}:
+            raise ValueError(f"refusing unsafe path segment: {value!r}")
+        return cleaned or "story"
+
 
 class HarnessError(RuntimeError):
     """Raised when the real-AI harness cannot run (missing CLI/key, bad contract)."""
@@ -103,7 +116,7 @@ def build_agent_actions(
                 "focus": focus_per_stage.get(stage, f"Real E2E: {stage} step"),
                 # done_file path is relative to the workspace, matching the
                 # convention continue_orchestrator_agent expects.
-                "done_file": f".story/done/{story_key}/{stage}.json",
+                "done_file": f".story/done/{safe_segment(story_key)}/{stage}.json",
             }
         )
     return actions
@@ -274,7 +287,7 @@ def run_real_story(
         result = StoryRunResult(story_key=story_key, workspace=workspace)
         result.final_story = db.get_story(story_key)
         for stage in stages:
-            done = Path(workspace) / ".story" / "done" / story_key / f"{stage}.json"
+            done = Path(workspace) / ".story" / "done" / safe_segment(story_key) / f"{stage}.json"
             result.stages.append(
                 StageResult(
                     stage=stage,
@@ -290,7 +303,7 @@ def run_real_story(
     final = db.get_story(story_key)
     result = StoryRunResult(story_key=story_key, workspace=workspace, final_story=final)
     for stage in stages:
-        done = Path(workspace) / ".story" / "done" / story_key / f"{stage}.json"
+        done = Path(workspace) / ".story" / "done" / safe_segment(story_key) / f"{stage}.json"
         snap = final or {}
         # If the story advanced past this stage, snapshot reflects completion;
         # the per-stage assertion reads the done file + workspace artifacts.

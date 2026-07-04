@@ -2235,7 +2235,17 @@ def api_intake_preview(
         for upload in files:
             if not upload.filename:
                 continue
-            tmp_path = tmp_dir / f"{item.source}-{item.id}_{upload.filename}"
+            # Sanitize upload filename: HTTP multipart filename is fully
+            # attacker-controlled. Take basename only and reject traversal.
+            safe_name = Path(upload.filename).name
+            if not safe_name or safe_name in {".", ".."} or ".." in safe_name:
+                continue  # drop suspicious upload silently
+            tmp_path = tmp_dir / f"{item.source}-{item.id}_{safe_name}"
+            # Blast shield: tmp_path must stay inside tmp_dir.
+            try:
+                tmp_path.resolve().relative_to(tmp_dir.resolve())
+            except ValueError:
+                continue
             with tmp_path.open("wb") as f:
                 f.write(upload.file.read())
             local_image_paths.append(str(tmp_path))
