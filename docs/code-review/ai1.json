@@ -1,0 +1,126 @@
+{
+  "reviewer": "AI-1",
+  "focus": "correctness-and-security",
+  "scan_scope": "packages/story-lifecycle/src/** + packages/story-lifecycle/tests/** + packages/story-miner/miner/** + packages/story-miner/scripts/** + packages/knowledge/src/** + packages/knowledge/tests/** + packages/testing/src/** + tests/** (excl .venv, 258 files)",
+  "stats": {"files_scanned": 258, "findings_count": 13},
+  "findings": [
+    {
+      "severity": "blocking",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/service/story_service.py",
+      "line": 106,
+      "category": "security",
+      "title": "story_key/patch_id 直拼路径且多处配 rmtree — 系统性路径穿越/任意删除",
+      "detail": "story_key/patch_id 来自 API/DB/CLI 的纯字符串，无校验即拼进文件路径，部分点还配 shutil.rmtree/写文件。含 .. 即可逃出 workspace。出现位置：(1) 配递归删除(最严重，不可逆数据丢失)：story_service.py:106-107 `done_dir=Path(ws)/'.story'/'done'/story_key; if done_dir.exists(): shutil.rmtree(done_dir, ignore_errors=True)`；packages/testing/src/testing/workspace.py:30-33 对 .story/{context,done,runs}/story_key 做 rmtree。(2) 写任意路径文件：knowledge/adapters/base.py:80 `os.path.join(ws,'.story','runs',story_key)` 后 makedirs+open('a')；orchestrator/.../meta_planner.py:328/357 写 strategy json；orchestrator/.../graph_patch.py:410 写 patch json；demo_tool.py:42；planner.py:393。(3) 读任意 .json：graph_patch.py:433(patch_id 经 apply_patch/approve_patch 暴露)；snapshot.py:30；paths.py:93 knowledge_context_dir。根因统一：infra/story_paths.py:49 已有正确的 _safe_segment() 做白名单 sanitize，但这些点都没用它。触发条件：API /api/story 传 key='../../..' 或 patch_id 含路径分隔符。影响：越权读写、定向删除任意目录(含仓库根/家目录)。",
+      "suggestion": "(1) 所有 story_key/patch_id 入口统一过 story_paths._safe_segment()，拒绝空/含 .. /含路径分隔符/绝对路径的值。(2) rmtree 前强制断言 `Path(d).resolve().is_relative_to(Path(ws).resolve())`，否则 raise 不删。(3) story_service.py、testing/workspace.py 的 rmtree 路径必须加此断言。这是单点修复收益最高的一条。"
+    },
+    {
+      "severity": "blocking",
+      "file": "packages/story-lifecycle/src/story_lifecycle/infra/terminal/ttyd.py",
+      "line": 388,
+      "category": "security",
+      "title": "多处 shell/PowerShell 命令字符串拼接未转义致命令注入",
+      "detail": "外部/半外部值(workspace、launch_cmd、story_key、tmp、provider、binary、full_cmd、model)用 f-string 拼进 shell 命令串，shell 元字符(;、$()、反引号、'、换行)被解释器求值。出现位置：(1) infra/terminal/ttyd.py:373-478 launch_cli/zellij_execution_args 把 workspace、launch_cmd、prompt_file、story_key 拼进 .sh 脚本(`cd \"{ws}\"`、`{launch_cmd} \"$(cat '{pf}')\"`)。(2) knowledge/adapters/claude.py:16-18 `bash -c f\"cc use {provider}\"`，provider 含元字符即注入。(3) knowledge/adapters/shell.py:62-67 把 binary 拼进 `subprocess.run(['{binary}',...])` python 源串，binary 含单引号即逃逸。(4) knowledge/adapters/shell.py:83-85 stdin 分支返回 `f\"cat {tmp}\"`，tmp 含 story_key/stage，返回串被上层当 shell 执行。(5) knowledge_store/bootstrap.py:208-263 workspace/full_cmd 拼进 powershell -Command，full_cmd 来自 shell adapter 的 {model} 模板渲染，model 含 ; 可注入。触发条件：workspace 路径、配置的 binary/model、或 story_key 含 shell 元字符。影响：以运行用户身份执行任意命令。",
+      "suggestion": "统一原则：绝不 f-string 拼 shell。(1) ttyd 改参数化：ws/pf 作为位置参数传固定脚本(脚本内 `cd -- \"$1\"`)，launch_cmd/story_key 用 shlex.quote。(2) adapters/claude.py 去 bash -c，直接 ['cc','use',provider]。(3) adapters/shell.py binary 用 argv 直传不做 python -c 包装；cat 分支用 shlex.quote(tmp)。(4) bootstrap.py PS 串内单引号转义(参考同文件 line 329 _copy_to_clipboard 已正确处理)或改 -File+参数数组。"
+    },
+    {
+      "severity": "blocking",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/service/api.py",
+      "line": 2238,
+      "category": "security",
+      "title": "上传文件名未 sanitize 直接拼路径，可写任意文件/落 web shell",
+      "detail": "api_intake_preview 把客户端 multipart 的 upload.filename 直接拼 `tmp_path = tmp_dir / f\"{item.source}-{item.id}_{upload.filename}\"`，无任何 sanitize。HTTP multipart filename 完全由攻击者控制，传 `../../packages/story-lifecycle/src/.../__init__.py` 可跳出 tmp_dir(gettempdir()/story-intake-images)覆盖业务代码，或传绝对路径写任意位置。触发条件：POST /api/intake/preview 带任意 files=。影响：任意文件写/覆盖，结合可执行目录可落 web shell。属 security 默认 blocking。",
+      "suggestion": "对 filename 取 basename 并校验：`safe = PurePath(upload.filename).name`，拒绝空/含 .. 的 safe；或直接用 uuid 生成文件名，原 filename 仅存 DB 字段。"
+    },
+    {
+      "severity": "blocking",
+      "file": "packages/story-lifecycle/src/story_lifecycle/entry/cli/swebench.py",
+      "line": 254,
+      "category": "security",
+      "title": "swebench --run-id/instance_id 未做路径清洗，路径穿越/任意写+越权 cwd",
+      "detail": "prepare(L127)/solve/export(L228)/eval(L254) 都做 `workspace_root / run_id` 或 `/ run_id / instance_id` 拼接，run_id 来自 --run-id(click.StringOption 无校验)，instance_id 来自 JSONL，无 .. /绝对路径/分隔符过滤。`--run-id ../../../tmp/evil` 即把 predictions.jsonl/manifest.json/eval_output.log/实例 workspace 写到 workspace_root 外；eval 还 `cwd=str(workspace_root/run_id)` 进入任意目录并 subprocess 调 swebench harness。触发条件：运行 `story swebench eval/prepare/export --run-id ../...`。影响：越权文件读写覆盖 + 潜在目录穿越执行。",
+      "suggestion": "入口校验：`if not re.fullmatch(r'[A-Za-z0-9._-]+', run_id) or run_id.startswith('.'): raise SystemExit`，instance_id 同校验；或 `(workspace_root/run_id).resolve()` 后断言 `.is_relative_to(workspace_root.resolve())`。"
+    },
+    {
+      "severity": "blocking",
+      "file": "packages/story-miner/miner/store.py",
+      "line": 101,
+      "category": "error-handling",
+      "title": "miner 先 DELETE 旧记录再 parse，parse 被吞异常返回空 meta 则整 session 数据静默丢失",
+      "detail": "store.py:101-104 对每个 to_up 文件先 `DELETE FROM events/token_usage/sessions/sources`(按 sid 与 path)，第 105 行才 `ad.parse(path, sid)`，第 106 行 `if meta is None or (meta['turns']==0 and meta['ntools']==0): continue` 直接跳过 INSERT。而三个适配器把 parse 期间的异常吞掉返回截断的空 meta：miner/adapters/claude.py:100-101、codex.py:76-77、kimi.py:86-87 均为 `except Exception: pass`。结果：旧记录已删、新记录未插，该 session 永久丢失且无告警/日志。整轮共享单次 commit(line 131)，单文件 delete 已生效无法靠 continue 撤销。触发条件：转录文件中途某行触发非 JSON 异常(文件截断/编码问题/KeyError)。影响：增量重导时任意坏文件抹掉对应 session 全部历史，审计/分析数据缺口。",
+      "suggestion": "(1) 改 parse-first：先 `meta,evs,tokens=ad.parse(...)` 并校验非空，再执行该 sid 的 delete+insert。(2) 三处适配器 `except Exception: pass` 改 `except Exception as e: log.warning('parse failed %s: %s', f, e)` 并向上传播失败标记，让 store 据此跳过该文件的 delete。(3) 或把单文件 delete+insert 包进 `with conn:` 事务，parse 失败 rollback 该文件。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/sourcing/sources/tapd_api.py",
+      "line": 43,
+      "category": "error-handling",
+      "title": "TAPD _call 过宽捕获吞所有异常返回 None，写回状态失败致外部与 TAPD 静默不一致",
+      "detail": "TapdApi._call(line 43) `except Exception as e: log.warning(...); return None`，所有 TAPD 命令异常被降级为日志+None。下游 update_story/update_bug(line 77,81) 把 None 映射为 return False，但 tapd_source.sync_status(line 127) 不接收该返回值——即写回 TAPD(完成/阻塞/中止→done/reopen/postponed)失败时既不抛错也不上报，外部状态与 TAPD 静默不一致。触发条件：网络异常/认证失败/workspace_id 非法。影响：状态同步静默失败，数据不一致无感知。",
+      "suggestion": "(1) _call 区分可重试网络异常与确定性错误，对 update_* 抛出而非返回 None，让 sync_status 感知；(2) 或让 sync_status 检查返回值，失败时 log.warning 上报。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/sourcing/sources/tapd_source.py",
+      "line": 91,
+      "category": "error-handling",
+      "title": "orchestrator/sourcing 多处裸 except Exception: pass 静默吞异常致降级不可观测",
+      "detail": "多处 `except Exception: pass` 把异常统一吞成静默降级，调用方无法区分「真没检测到」vs「逻辑本身坏了」。出现位置：(1) tapd_source.py:91 拉子任务(child stories) except Exception: pass，单 parent 拉子任务异常即静默丢任务(用户任务+测试任务)，seen_ids/results 不报错继续。(2) shadow_router.py:132-133(_detect_repeated_error)、155-156(_detect_provider_degradation)、178-179(_detect_budget_burn) 三处 try/finally:conn.close() except Exception: pass，DB 查询/JSON 解析失败也统一返回 False。(3) evaluation/quality.py:198 LLM rerank `except Exception: pass # keep candidates as-is`，LLM 不可用或 context_json 损坏时 pattern 注入静默退化为 tag overlap 无诊断。触发条件：网络/认证/JSON 解析/LLM 不可用。影响：完整性受损或降级不可观测。",
+      "suggestion": "各处把 `except Exception: pass` 改 `except Exception as e: log.warning(...)` 至少留诊断痕迹；shadow_router 收窄到 (sqlite3.Error, json.JSONDecodeError)；quality.py rerank 失败 log 退化原因。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/observability/debug_packet.py",
+      "line": 361,
+      "category": "error-handling",
+      "title": "redact_text 正则过度匹配，把正常配置字段误脱敏成 [REDACTED]",
+      "detail": "_REDACT_PATTERNS 里 `(token\\s*[:=]\\s*)...`、`(api_key\\s*[:=]\\s*)...` 等配合 re.IGNORECASE 全文替换，会误伤诊断包正常字段：`tokenizer=BPE`、`max_tokens=4096`、`tokens=100`、`api_key_index=0`(键名引用)等，把合法诊断信息改成 [REDACTED]。触发条件：诊断包文本中出现这些通用词作为配置/字段名。影响：诊断数据被错误篡改，误导排障。",
+      "suggestion": "(1) 收紧匹配，要求值具备 secret 形态(长度≥16 且字母数字混合)再脱敏；(2) 排除 max_tokens/tokenizer 等已知安全字段名；(3) 用词边界 \\b 避免部分匹配 token-。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/sourcing/sources/github_cli.py",
+      "line": 97,
+      "category": "logic",
+      "title": "test_auth 不检查 gh 返回码，未登录也永远返回 True",
+      "detail": "test_auth() 调 `subprocess.run([\"gh\",\"auth\",\"status\"])` 后未检查 returncode/stderr，直接 `return True`。即使 gh 未登录(exit≠0, stderr='not authenticated')仍判定已认证。github_source.GithubSource.test_connection 依赖此返回值，导致连接探活失真：用户在未登录环境被报告连接正常，后续 fetch_pending 才在 GithubCliError 中失败。触发条件：未配置 gh auth。影响：连接性检查完全失真，无法早期发现鉴权问题。",
+      "suggestion": "`return result.returncode == 0 and 'not logged' not in (result.stderr or '').lower()`，检查返回码且 stderr 不含认证失败关键词。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/knowledge/knowledge_store/generator.py",
+      "line": 80,
+      "category": "security",
+      "title": "外部来源值未转义直写 YAML 标量，可破坏 YAML 结构(注入)",
+      "detail": "_write_product_yaml/_write_manifest_yaml/_write_scope_decision 把 detection.product_guess、svc.id、svc.path 用 f-string 直接当 yaml 标量值写入，无引号无转义。product_guess 取自 workspace 目录名(外部来源)，含冒号/换行/前导空格会破坏生成的 yaml 结构(注入新键或改值)。虽是工具自生成文件，但被 stale.py/manifest 消费，可致解析错位/字段被覆盖。出现位置：generator.py:84-99、90-103、112-128。触发条件：workspace 目录名/服务 id/path 含 YAML 元字符。影响：知识库元数据被注入篡改。",
+      "suggestion": "用 yaml.safe_dump 写入；或对每个标量值加双引号并转义；至少 product_guess/path 这类外部来源值必须 quote。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/knowledge/src/knowledge/index.py",
+      "line": 111,
+      "category": "error-handling",
+      "title": "INDEX.json 条目缺 id/title/source 时 KeyError 致整索引不可用",
+      "detail": "_entry_from_dict 对 data['id']/data['title']/data['source'] 用 [] 直取，INDEX.json 任一条目缺这三个键即抛 KeyError，_load() 中断，整个 KnowledgeIndex 不可用。上游 knowledge_provider 用 try/except 兜底(line 204)，但 index.py 自身 refresh()/all()/get() 在 _load 失败后 _entries 为空，行为静默错误(空检索而非报错)。触发条件：INDEX.json 被手编/部分写入/缺字段。影响：知识检索静默返回空。",
+      "suggestion": "改用 data.get('id')/data.get('title')/data.get('source')，缺关键字段时跳过该条目(continue)并 log.warning 记录，而非整索引崩或静默空。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/infra/benchmarks/swebench.py",
+      "line": 263,
+      "category": "irreversible",
+      "title": "git clean -fdx 在用户 workspace 上无确认，删未跟踪+忽略文件不可逆",
+      "detail": "checkout_instance(L250-263) 当 workspace 已存在 .git 时直接 `_run_git('clean','-fdx',cwd=workspace)`。-fdx 会删所有未跟踪文件及全部 .gitignore 忽略项(含 node_modules/.venv/构建产物/本地敏感文件)，无 dry-run、无确认、无备份、无日志记录被删内容。workspace 由调用方/DB 提供，若误指向含本地改动的工作库则数据丢失且不可逆。触发条件：对已 checkout 的实例 workspace 再次 prepare/checkout。影响：静默丢失工作区文件。",
+      "suggestion": "(1) 删前 log.warning 记录将 clean 的目录；(2) 改用 -fd(不含 -x)保留 .gitignore 项，或先 `git stash -u` 备份；(3) 对 workspace 做边界断言(必须位于 cache_root/runs_root 之下)。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-miner/miner/link.py",
+      "line": 220,
+      "category": "irreversible",
+      "title": "link() 开头全表 UPDATE story_id=NULL，中途崩溃则全部绑定丢失需完整重跑",
+      "detail": "link.py:220 `conn.execute('UPDATE sessions SET story_id = NULL')` 在 commit(line 264)之前清空所有 session 的 story_id 绑定，之后两阶段重算。进程在 line 220 与 264 之间被杀/OOM/KeyboardInterrupt 时，sqlite3 默认连接析构会 rollback，但若已部分 commit 或网络文件系统行为异常，绑定可能停留全 NULL 态，需完整重跑 link() 才能恢复。属无确认的全量覆写。触发条件：link 中断。影响：story↔session 关联全丢，下游 story_ingest/recommend 取不到 story_id。",
+      "suggestion": "改用临时列或先算出全部新绑定再一次性 UPDATE 差异；或把 NULL 重置放最后(先算 linked 映射再单条 UPDATE)。最低限度：文档/CLI 明确 link 必须跑到 commit 才有效，中断后必须重跑。"
+    }
+  ],
+  "summary": "5 blocking, 8 warning, 0 nit"
+}

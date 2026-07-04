@@ -1,0 +1,147 @@
+{
+  "reviewer": "AI-4",
+  "focus": "testing-and-performance",
+  "scan_scope": "packages/*/src/**/*.py (249 src) + packages/*/miner + packages/*/tests/**/*.py + tests/**/*.py (67 test files) + 4 pyproject.toml. Excludes node_modules/__pycache__/dist/.venv/frontend/.worktrees.",
+  "stats": {
+    "files_scanned": 316,
+    "findings_count": 15
+  },
+  "findings": [
+    {
+      "severity": "blocking",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/evaluation/gate.py",
+      "line": 229,
+      "category": "missing-regression",
+      "title": "ISS-004 plan_summary/repair-packet 修复无回归测试",
+      "detail": "Commit c71ad221 修复 FC 路径 verify gate 的 plan_summary 断链:原 bug 是 FC 规划只写 _agent_actions 却从不写 plan_summary,导致 repair packet 的 Plan 段恒空;修复在 run_verify_gate 按 stage 过滤 _agent_actions 取精准 focus,并在 run_orchestrator_agent 补写 plan_summary 总览。全仓 grep(packages/*/tests、tests/)无任何测试覆盖 build_repair_packet/run_verify_gate/_agent_actions stage 过滤这条链路。违反 AGENTS.md 硬规则:Every historical bug fixed in TUI/CLI/workflow/background orchestration areas must have a regression test(verify gate 属 workflow 编排)。",
+      "suggestion": "新建 packages/story-lifecycle/tests/test_verify_gate_plan_summary.py,加 test_fc_repair_packet_uses_stage_focus_not_empty():构造 ctx 带 _agent_actions=[{'stage':'implement','action':'launch','focus':'落地用户服务'}] 和顶层 plan_summary='全阶段总览',调 run_verify_gate(stage='implement'),断言 build_repair_packet 收到的 plan_summary=='落地用户服务'(非空、非全阶段总览)。该测试在 c71ad221 之前会拿到空字符串而失败。"
+    },
+    {
+      "severity": "blocking",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/service/story_service.py",
+      "line": 28,
+      "category": "missing-regression",
+      "title": "ISS-006 绝对工作区校验拒绝逻辑无回归测试",
+      "detail": "Commit c4f970dc 修复相对 workspace='.' 解析到服务器 CWD、把 evidence 落进工具自身 package 目录的 bug。修复在 _validate_workspace 新增 if not ws.is_absolute(): raise WorkspaceError(...),并在 api.py create_story/api_sync_tapd 各加 is_absolute() 校验、CLI sync_cmd 去掉 'or .兜底'。现有 test_workspace_validation.py 只测目录存在性/可写性/legacy .story-done 警告,从不传相对路径触发新校验。违反 AGENTS.md 硬规则(CLI/workflow 编排域 bugfix 必须有回归测试)。",
+      "suggestion": "在 packages/story-lifecycle/tests/test_workspace_validation.py 新增 test_rejects_relative_path 和 test_rejects_empty:前者传 '.' 和 'rel/path' 期望 pytest.raises(WorkspaceError, match='absolute');后者传 '' 同样期望拒绝。另在 test_api_integration.py 加 test_create_story_400_on_relative_workspace:POST /api/story 带 workspace='.' 期望 400。这些测试在 c4f970dc 之前会通过(旧代码静默接受相对路径),修复后失败被堵住——证明复现原 bug。"
+    },
+    {
+      "severity": "blocking",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/service/api.py",
+      "line": 2267,
+      "category": "missing-regression",
+      "title": "Intake preview 预生成分支复用无回归测试",
+      "detail": "Commit c466dbbd 修复保存阶段每次点保存都调 LLM 生成分支造成 20-30s 卡顿——改为在 intake preview 阶段预生成 branch 并在 IntakeStartRequest 复用;以及 monorepo 子项目路径覆盖 workspace 根的 _workspace_root_for_project 行为。该 commit 改了 test_api_integration.py/test_sync_by_id.py,但 diff 仅是把 '/tmp/xxx' 换成 tmp_path、给 stats 加 'tokens' 键——纯基础设施清理,无任何测试断言 preview 返回 branch 字段或 start 复用同一 branch(即原卡顿 bug 的复现场景)。违反 AGENTS.md 硬规则(workflow 编排域)。",
+      "suggestion": "在 packages/story-lifecycle/tests/test_api_integration.py 加 test_intake_preview_pregenerates_branch_reused_by_start:调 POST /api/story/<key>/intake/preview 断言响应含非空 branch;再调 POST /api/story/<key>/start 传回同一 branch,断言 start 不再触发 LLM 分支生成(mock generate_branch_for_story 计数,start 阶段调用次数应为 0)。该测试在 c466dbbd 之前会因 preview 无 branch 字段而失败。"
+    },
+    {
+      "severity": "blocking",
+      "file": "packages/story-lifecycle/src/story_lifecycle/infra/db/models.py",
+      "line": 1359,
+      "category": "missing-regression",
+      "title": "create_project get-or-create(by repo_path) 无回归测试",
+      "detail": "Commit dcd1b49d 修复 POST /api/projects 撞 project.repo_path UNIQUE 约束抛 IntegrityError 500 的 bug,改为先 SELECT repo_path,已存在则 UPDATE name/default_branch/remote_url,否则 INSERT。全仓 18 处 db.create_project 调用无一用相同 repo_path 调两次来复现原 UNIQUE 冲突——所有调用方都给唯一路径。违反 AGENTS.md 硬规则(db 域 bugfix 必须有回归测试)。",
+      "suggestion": "在 packages/story-lifecycle/tests/test_api_integration.py(或新建 test_project_get_or_create.py)加 test_create_project_idempotent_on_dup_repo_path:先用 repo_path='/repo/x' 调 create_project(name='A'),再用同 repo_path 调 create_project(name='B', default_branch='dev'),断言 (a) 不抛 IntegrityError;(b) 返回行 name=='B'、default_branch=='dev'、id 与第一次相同。该测试在 dcd1b49d 之前会撞 UNIQUE 抛 500。"
+    },
+    {
+      "severity": "blocking",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/service/api.py",
+      "line": 2846,
+      "category": "missing-regression",
+      "title": "SPA 静态 web 目录路径修复无回归测试",
+      "detail": "Commit 6e48d445 修复 _WEB_DIR 指向已不存在的 orchestrator/web(entry 层抽离后 web 目录搬到 entry/web),导致根路由 /、SPA fallback、favicon、/assets mount 全 404。修复只是把 Path(__file__).parent.parent/'web' 改成 .parent.parent.parent/'entry'/'web'。全仓 tests/ 无任何测试覆盖 _WEB_DIR、StaticFiles mount、SPA fallback、favicon 或 /assets 路由——所有 API 测试只打 /api/*。违反 AGENTS.md 硬规则(workflow/web 服务域 bugfix 必须有回归测试)。",
+      "suggestion": "在 packages/story-lifecycle/tests/test_api_integration.py 加 test_spa_root_serves_index 和 test_assets_mounted:前者 GET / 期望 200 + text/html(含 SPA 挂载点);后者 GET /assets/<bundled-js> 期望 200。两个测试在 6e48d445 之前会因 _WEB_DIR 解析到不存在目录、mount 被跳过而返回 404。"
+    },
+    {
+      "severity": "blocking",
+      "file": "packages/story-miner/scripts/kb.py",
+      "line": 23,
+      "category": "missing-regression",
+      "title": "kb.py 强制 UTF-8 stdout 修复无回归测试",
+      "detail": "Commit f6ed0e29 修复 kb.py 被 hc-all 调用时控制台默认 GBK 编码、中文/箭头字符乱码的 bug,加 sys.stdout.reconfigure(encoding='utf-8', errors='replace')。全仓 packages/story-miner/tests/ 与 packages/story-lifecycle/tests/ 无任何 kb.py 相关测试(grep kb_main/PYTHONIOENCODING/reconfigure/stdout 0 命中)。违反 AGENTS.md 硬规则(CLI 域 bugfix 必须有回归测试——kb.py 是 agentic-RAG CLI 入口)。",
+      "suggestion": "新建 packages/story-miner/tests/test_kb_cli.py,加 test_kb_stdout_forces_utf8_outputs_cjk:用 subprocess 在 GBK 默认 locale(env 删 PYTHONIOENCODING)下跑 python -m scripts.kb <query>,断言 stdout 编码可解码出期望中文/箭头子串(如 '知识' 不抛 UnicodeDecodeError)。该测试在 f6ed0e29 之前会在 hc-all 调用链下输出 GBK 乱码字节、断言解码失败。"
+    },
+    {
+      "severity": "blocking",
+      "file": "packages/story-miner/scripts/classify_story_task_type.py",
+      "line": 199,
+      "category": "missing-regression",
+      "title": "LLM classify 失败兜底改 unknown+retry 无回归测试",
+      "detail": "Commit 38258d6b 修复两个 bug:(1) normalize_type 默认 fallback 原为 'debug',API 失败时整批 story 静默塌缩成单一 debug 类型;改为 'unknown' 让失败可见(line 199 return 'unknown',batch 路径 line 236/249 标 unknown);(2) batch 分类失败加 retry。全仓 grep classify_story_task_type/normalize_type/task_type.*unknown 在测试目录 0 命中——packages/story-miner/tests/ 只覆盖 adapters/link_anchors/knowledge_outputs/story_context_provider,无任何分类脚本测试。违反 AGENTS.md 硬规则(CLI/数据加工 pipeline 域 bugfix 必须有回归测试)。",
+      "suggestion": "新建 packages/story-miner/tests/test_classify_failure.py,加 (a) test_normalize_type_unclassifiable_returns_unknown_not_debug:传无法归类的 raw type(如 '随便编的')断言 == 'unknown' 而非 'debug';(b) test_batch_classify_api_failure_marks_unknown_and_retries:mock LLM 客户端连续抛异常,断言 batch 输出每条 task_type=='unknown' 且 client.call 被重试(>=2 次)。两个测试在 38258d6b 之前会拿到 'debug' 且无重试。"
+    },
+    {
+      "severity": "blocking",
+      "file": "packages/story-lifecycle/src/story_lifecycle/sourcing/planner/__init__.py",
+      "line": 1,
+      "category": "missing-test",
+      "title": "sourcing.planner 整包(6 模块 804 行)零测试",
+      "detail": "idea-spark → roadmap → issue 全链路编排包无任何测试。涉及核心功能:roadmap 生成/解析(generate_roadmap/load_roadmap/parse_phases)、idea→需求展开(expand_idea_to_requirements/analyze_codebase_to_requirements)、phase 分解(decompose_phase)、GitHub issue 发布(publish_issues)、状态机 load/save/update_step/get_resume_info(state.py)、LLM 调用(call_llm/call_llm_json)。grep 'sourcing.planner|decomposer|idea_expander|publisher|roadmap' 在 packages/story-lifecycle/tests 与 tests/ 下 0 命中。这是 sourcing 入口编排核心,无测试意味着 idea→roadmap→issue 任何改动都会静默破坏。",
+      "suggestion": "新建 packages/story-lifecycle/tests/test_planner.py:(1) parse_phases 喂样例 roadmap 字符串断言阶段数与字段;(2) state.py round-trip save_state→load_state→clear_state;(3) decompose_phase/publish_issues 用 fake LLM(monkeypatch call_llm_json)断言产出的 issue 结构;(4) get_resume_info 在已有 state 下返回正确 step。LLM 全程打桩,不依赖网络。"
+    },
+    {
+      "severity": "blocking",
+      "file": "packages/story-miner/miner/store.py",
+      "line": 33,
+      "category": "missing-test",
+      "title": "miner.store / story_ingest 数据落地核心无单测",
+      "detail": "story-miner 的两个数据持久化与摄取核心模块无单元测试。store.py(140 行)提供 discover/init_db/_since_threshold/main(runs 索引库初始化与查询);story_ingest.py(367 行)提供 _extract_title/_extract_branch/_scan_stages/_iso 等纯解析函数。grep 'from miner.store|from miner.story_ingest' 在 packages/story-miner/tests/ 下 0 命中。test_link_anchors.py 只读 anchors.jsonl 文件不触达 store/story_ingest 函数。这两个模块是 mining 管线写入侧与读取侧核心,无测试则 anchors/runs 落盘格式变更无回归保护。",
+      "suggestion": "新建 packages/story-miner/tests/test_store_ingest.py:(1) init_db+discover 在 tmp 目录 round-trip;(2) story_ingest._extract_title/_extract_branch/_scan_stages 喂 fixture 故事文本断言解析;(3) _iso 对已知 mtime 返回稳定 ISO 串。纯函数 + tmp 路径,无需 DB/网络。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/infra/llm_client_kimi_cli.py",
+      "line": 61,
+      "category": "missing-test",
+      "title": "Kimi CLI 客户端(175 行)无测试",
+      "detail": "infra/llm_client_kimi_cli.py 提供 KimiCliClient、_find_kimi_bin、_download_image、_data_url_to_temp_file。grep 'llm_client_kimi_cli|KimiCLI|kimi_cli' 在 packages/story-lifecycle/tests 与 tests/ 下 0 命中。这是 story-lifecycle 主包三条 LLM 适配之一(另两条 claude/codex 由 test_adapters.py 覆盖),且涉及图片下载/data-url→临时文件,IO/边界行为应有回归保护。",
+      "suggestion": "新建 packages/story-lifecycle/tests/test_kimi_cli.py:monkeypatch subprocess 覆盖 _find_kimi_bin;_data_url_to_temp_file 喂 data URL 断言落盘文件可读;_download_image mock httpx 覆盖超时/4xx 路径。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/workspace/resource_lock.py",
+      "line": 1,
+      "category": "missing-test",
+      "title": "workspace resource_lock(130 行)无测试",
+      "detail": "resource_lock.py 实现并发 workspace 资源锁。grep 'resource_lock' 在 packages/story-lifecycle/tests 与 tests/ 下 0 命中。锁是并发安全的核心原语,acquire/release/超时/重入等行为必须有回归测试,否则多 agent 并发跑同一 worktree 时静默死锁或竞态。",
+      "suggestion": "新建 packages/story-lifecycle/tests/test_resource_lock.py:两线程并发 acquire 同一 workspace 断言一方阻塞/超时;release 后另一方获得;重入同 story 断言不自死锁。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/sourcing/workspace_diff.py",
+      "line": 1,
+      "category": "missing-test",
+      "title": "sourcing/workspace_diff(312 行)无测试",
+      "detail": "workspace_diff.py 提供 sourcing 侧 workspace diff 计算。grep 'workspace_diff' 在 packages/story-lifecycle/tests 与 tests/ 下 0 命中。diff 解析属纯逻辑且 312 行体量可观,边界(空 diff/二进制/超大文件/嵌套路径)应有单测保护。",
+      "suggestion": "新建 packages/story-lifecycle/tests/test_workspace_diff.py:空 diff 断言空结果;二进制文件跳过;嵌套路径不穿越;fixture git diff 输出断言解析结构。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/engine/notify.py",
+      "line": 1,
+      "category": "missing-test",
+      "title": "engine/notify 模块无单测",
+      "detail": "engine/notify.py 仅被 tests/e2e/runner.py 间接引用,无对应 test_notify.py。通知(Webhook/邮件等)属编排副链,失败模式(超时/4xx/重试)应有单测覆盖,避免在 e2e 才暴露。",
+      "suggestion": "新建 packages/story-lifecycle/tests/test_notify.py:mock httpx 覆盖 200/4xx/超时/重试路径,断言失败不抛到调用方且记日志。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/engine/planner.py",
+      "line": 505,
+      "category": "n-plus-1",
+      "title": "continue_orchestrator_agent 循环内逐个 db.get_project(N+1)",
+      "detail": "planner.py:505-512 launch action 前拼分支隔离提示时,对每个 story_project 单独查询:for sp in db.get_story_projects(story_key): proj = db.get_project(sp['project_id'])。这是典型 N+1——绑定 N 个 project 就发 N 次 SELECT。量级评估:每个 story 绑定的 project 通常 1-3 个,且仅在 launch action(stage 级)执行一次,非高频热路径,故定 warning 而非 blocking。但 db/models.py 未提供 batch 查询函数,模式可复现到其他多 project 场景。",
+      "suggestion": "在 infra/db/models.py 加 def get_projects_for_story(story_key) -> dict[int, dict](一次 SQL JOIN story_projects + projects),planner.py:505 改为 proj = projects_map.get(sp['project_id']),消除循环内单条查询。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-miner/pyproject.toml",
+      "line": 26,
+      "category": "dependency",
+      "title": "story-miner dependencies=[] 却顶层 import yaml/openai(未声明重依赖)",
+      "detail": "story-miner/pyproject.toml dependencies = [](空),但 scripts/classify_story_task_type.py:21-22 顶层 import yaml + from openai import OpenAI,scripts/infer_bug_magnet_commits.py:26 import yaml。openai 是重依赖(~数十 MB + transitive)却完全未声明。若用户单独 pip install story-miner(不装全 dev env),跑 classify/infer 脚本会直接 ImportError。editable install 约束下虽然本机能跑(靠全局环境),但破坏了'包依赖自包含'的契约。",
+      "suggestion": "packages/story-miner/pyproject.toml:dependencies = ['pyyaml>=6.0'];把 openai 放 optional-dependencies: scripts = ['openai>=1.0'](脚本类可选依赖),或让 scripts/ 的 LLM 调用改用 story-lifecycle 的 llm_client 复用已有 httpx 通道,避免引入 openai 重依赖。"
+    }
+  ],
+  "summary": "9 blocking, 6 warning, 0 nit"
+}

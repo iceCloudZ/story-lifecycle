@@ -1,0 +1,63 @@
+{
+  "reviewer": "AI-3",
+  "focus": "readability-and-style",
+  "scan_scope": "packages/*/src/**/*.py + packages/*/miner/**/*.py + packages/*/scripts/**/*.py + packages/*/tests/**/*.py + packages/*/examples/**/*.py",
+  "stats": {"files_scanned": 248, "findings_count": 6},
+  "findings": [
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/engine/planner.py",
+      "line": 426,
+      "category": "length",
+      "title": "多个核心函数远超 200 行，必须拆分",
+      "detail": "按 def 间隔测算，以下函数体 >200 行（AGENTS.md/§3.6 阈值：>200 必须拆）：planner.py:426 continue_orchestrator_agent（389 行）、infra/db/models.py:93 init_db（352 行，整段建表 DDL 堆在一个函数里）、orchestrator/engine/prompt_renderer.py:185 _render_prompt（227 行）、orchestrator/observability/debug_packet.py:170 build_debug_packet（208 行）。脚本里 bug_iteration_links.py:58 main（260）、tri_efficiency.py:66 main（253）同样超标。这些函数承担 agent 编排/DB schema 构建/prompt 渲染等核心逻辑，单函数过长使控制流难以一眼读懂。周边（如 planner.py 里 continue_orchestrator_agent 之上的若干小函数）都是几十行的小函数，风格不一致。",
+      "suggestion": "init_db 按 table 分组抽成 _create_stories_table() / _create_events_table() 等子函数；continue_orchestrator_agent 按 阶段（plan/build/verify）拆成 _continue_plan / _continue_build / _continue_verify；_render_prompt 按 stage 分支抽 _render_build / _render_verify 等独立渲染函数。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/service/api.py",
+      "line": 1,
+      "category": "length",
+      "title": "单文件 2877 行 / 99 个路由处理器，应按域拆分",
+      "detail": "orchestrator/service/api.py 共 2877 行、99 个顶层 (async) def（约 99 个路由），远超 §3.6 的 500 行拆分阈值（5.7×）。infra/db/models.py 1978 行同理（虽是多个小函数聚合，但单文件已难导航）。api.py 把 story / sub-story / source / sync / debug / diagnostics / context 等多个域的路由全塞在一个模块里，找具体端点要靠搜索。周边包（如 orchestrator/service/）已经有 story_service.py / sync_service.py / delivery.py 等按域拆分的先例，api.py 没有跟随。",
+      "suggestion": "把 api.py 按域拆成 routers/story.py / routers/source.py / routers/sync.py / routers/debug.py 等，各自带 APIRouter，在 service/__init__.py 聚合 include_router。models.py 可按 stories / events / bugs 拆成独立模块。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/engine/planner.py",
+      "line": 830,
+      "category": "dead-code",
+      "title": "21 处 stale unused import（ruff F401），重构后未清理",
+      "detail": "ruff --select F401 命中 21 处未使用导入，呈「重构后忘删」的散点模式。src 侧影响最大的：planner.py:830 导入 build_knowledge_section 未用（915 行核心文件里残留）、entry/cli/setup.py:11/18/20 三处（Path / CONFIG_DIR / _merge_config）、entry/cli/doctor.py:3 (os)、knowledge/src/knowledge/index.py:8 (generate_index)、story-miner/miner/anchors.py:9 (datetime)、miner/link.py:15 (story_ingest)。scripts 侧：constraint.py:5 / explore.py:2 / infer_bug_magnet_commits.py:18 / install_commit_msg_hooks.py:13 / story_commits.py:18 / task_type_playbooks.py:15 / classify_story_task_type.py:14 各有一个 os/sys/collections/statistics 未用。tests 侧 5 处（test_knowledge.py、test_entry_decisions.py:4、test_link_anchors.py:7）。注：miner/__init__.py:3 的 `from . import adapters` 和 adapters/__init__.py 的 claude/codex/kimi 是「为触发 @register_adapter 副效」的有意导入，不算 dead-code，但 ruff 会误报，建议加冗余别名 `from . import adapters as adapters` 或补 __all__ 消噪。",
+      "suggestion": "跑 `ruff check --select F401 --fix packages/` 自动删除全部 21 处真未用导入；对 4 处副效导入改写为 `from . import adapters as adapters` 形式让 ruff 闭嘴。"
+    },
+    {
+      "severity": "warning",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/engine/planner.py",
+      "line": 170,
+      "category": "comment-density",
+      "title": "planner.py 核心 agent 函数缺 docstring，与周边不一致",
+      "detail": "planner.py 共 11 个顶层 def，其中 6 个无 docstring：line 170 run_orchestrator_agent（185 行，agent 编排公共入口，零 docstring）、23 _load_team_knowledge、33 _load_story_knowledge、102 _build_agent_system_prompt、143 _build_agent_user_message、815 _build_cli_prompt。其中 run_orchestrator_agent 是核心业务逻辑且无任何 docstring/注释（§6：核心业务逻辑零注释 = warning）。同一文件里 continue_orchestrator_agent（426）和 _load_*_knowledge 的部分兄弟是有 docstring 的，密度不一致（§3.2「注释密度是否匹配周边代码」）。_build_agent_system_prompt / _build_agent_user_message 这种「构造给 LLM 的 prompt」的函数尤其值得一行说明它在 prompt 里塞了哪些 context。llm_client.py（7 def，6 有 docstring）是周边正面参照。",
+      "suggestion": "至少给 run_orchestrator_agent 补一行 docstring，如「\"\"Run the orchestrator agent for one story stage; returns the agent's final result dict.\"\"」；给 _build_agent_system_prompt / _build_agent_user_message 各补一行说明输入 state 与输出 prompt 结构。"
+    },
+    {
+      "severity": "nit",
+      "file": "packages/story-miner/scripts/generate_playbooks.py",
+      "line": 264,
+      "category": "naming",
+      "title": "私有 helper 用单字母参数，需读实现才能理解",
+      "detail": "多处私有 helper 用单字母参数，局部不透明：generate_playbooks.py:264 _write_playbooks_for_workspace(c, ...) 里的 c 是 sqlite3 cursor（无类型标注，必须读到 c.execute 才知道）；calendar_cmd.py:108 _print_story_row(s: dict) 的 s=story；events.py:201 _serialize_event(e: dict) 的 e=event；api.py:168 _serialize_story_summary(s: dict) 的 s=story；doctor_paths.py:19 _dir_size(p) / :31 _fmt_size(n)；worktree/decider.py:14 与 resolver.py:16 各有一个 _normpath(p)；miner/common.py:36 real_user(s) / hooks/emit.py:18 mask(s)。大多有类型标注所以影响有限，但 c（cursor）这一处无标注最误导。",
+      "suggestion": "c → cursor（并补 : sqlite3.Cursor 标注）；s → story（_serialize_*）/ str（mask/real_user）；p → path；e → event；n → bytes。私有 helper 参数名短可以，但应保留类型标注。"
+    },
+    {
+      "severity": "nit",
+      "file": "packages/story-lifecycle/src/story_lifecycle/orchestrator/evaluation/quality.py",
+      "line": 43,
+      "category": "comment-density",
+      "title": "裸 TODO 无 issue 链接",
+      "detail": "quality.py:43 `# TODO: load task_type-specific failure checklists from knowledge/playbooks` 是一条光秃秃的 TODO，没有关联 issue/工单（§3.2：无 issue 链接的 TODO 是噪音，无人跟踪容易腐烂）。周边（story-miner/hooks/emit.py）的 TODO 都带 (P2) 标签和上下文说明，这条没有。注：constraint.py / debt.py 里出现的 TODO/FIXME 字样是这两个脚本自身的检测目标字符串（数据，非真 TODO），不算。emit.py 的 TODO(P2) 因有上下文也不算。",
+      "suggestion": "要么补 issue 链接 `# TODO(#123): load task_type-specific ...`，要么现在就落地实现；若短期不做，至少标注 owner/优先级。"
+    }
+  ],
+  "summary": "0 blocking, 4 warning, 2 nit"
+}
