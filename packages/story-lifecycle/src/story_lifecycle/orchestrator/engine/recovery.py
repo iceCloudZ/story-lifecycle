@@ -101,6 +101,7 @@ def decide_recovery(
     new_adapter = _next_adapter(adapter, order)
     return {
         "action": "retry_new_adapter",
+        "failed_adapter": adapter,
         "new_adapter": new_adapter,
         "reason": f"瞬时错误({exc_name});换 adapter {adapter}→{new_adapter} 重试"
         f"(attempt {attempt_count}/{max_attempts})",

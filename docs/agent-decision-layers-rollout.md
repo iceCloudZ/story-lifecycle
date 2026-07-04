@@ -264,11 +264,21 @@ def _distribute(self, data: bytes) -> None  # put 到 _queue + 所有 taps,Queue
 - **checkpoint(Decider 级)**:gate fail 后的转移**决策**非硬编码(历史驱动 swap / 缺依赖 rescue / 反复 escalate);
   planner 真接入后即满足"智能转移"端到端。
 
-### 阶段 4 · 反思 + 调度(层 5)
-- 新 `learning/reflection.py`:读 `events` 表(supervisor_decision/recovery/judge 决策 log)→ 调整决策规则 / 沉淀 playbook(打通飞轮 miner→knowledge→context_providers 回注)。用 verifier subagent 形态(查 ground truth),非 verbal reflection。
-- 新 `engine/scheduler.py`:多 story 优先级/并发(替 `graph.py max_workers=4` FIFO)。
-- **TDD**:喂历史决策 log 断言沉淀的 playbook;喂多 story 状态断言调度顺序。
-- **checkpoint**:跑 N story 后 reflection 产出可复用知识,新 story 受益(飞轮转起来)。
+### 阶段 4 · 反思 + 调度(层 5)  ✅ Decider DONE;回注/并发接线待做
+- 新 `learning/reflection.py` ✅:`reflect(*, events) -> {playbook, stats}`。读决策事件流
+  (supervisor_decision/recovery_action/judge_verdict/transition_decision)→ 沉淀 playbook。
+  **verifier 形态(§2.2 #6)**:基于事件 ground truth(同 story recovery 后是否真 pass)判成功,
+  非 verbal reflection。规则:``recovery(retry_new_adapter X→Y) + 后续 pass`` → "X 失败换 Y 成功" 规则,
+  support 累加、降序;无 pass 兜底不沉淀(避免学错)。recovery 输出补 ``failed_adapter`` 供反思读。
+- 新 `engine/scheduler.py` ✅:`decide_schedule(*, stories) -> [story_key]`。替 ``graph.py max_workers=4``
+  纯 FIFO。排序键 ``(ready, priority_rank, created_at)``:就绪先跑、P0>P1>…、同优先级 FIFO。缺字段兜底。
+- **TDD**:reflection 6 测(playbook 形成 / support 累加 / 无 pass 不沉淀 / stats)+ scheduler 6 测
+  (优先级 / 就绪优先 / FIFO / 缺字段兜底),全 GREEN。
+- **§5.0 自验证(真 DB)**:reflect 跑在真实 ``event_log`` 上 —— 读到真实 ``supervisor_decision`` 事件、
+  stats 正确、playbook 当前为空(真 DB 暂无 recovery→pass 链,该链在隔离测试 DB 验);逻辑由 6 单测保证
+  (含 recovery+pass→rule、support 累加、无 pass 不沉淀)。随真 story 积累,playbook 自填充。
+- **回注接线 ⏳ 待做**:playbook → 层2 transition 的 ``history_facts`` / context_providers(让新 story 受益,
+  飞轮转起来);scheduler → 替 graph.py 的 FIFO 提交。Decider 已就绪。
 
 ---
 
