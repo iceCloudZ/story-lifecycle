@@ -192,6 +192,27 @@ def run_story(story_key: str, epoch: int = 0):
             db.update_story(story_key, status="failed", last_error=str(exc)[:500])
         except Exception:
             log.exception("failed to mark story %s as failed", story_key)
+        # 层3 recovery(阶段1):决策救法 + 落 recovery_action 事件(审计 + 层5 反思数据源)。
+        # 实际执行救法(retry 重启 / skip / downgrade)是后续 Handler;此处先决策 + 记录,不卡 active。
+        try:
+            from .recovery import decide_recovery
+
+            story_rec = db.get_story(story_key) or {}
+            stage_rec = story_rec.get("current_stage") or ""
+            recovery = decide_recovery(
+                exc=exc,
+                story_facts={
+                    "story_key": story_key,
+                    "stage": stage_rec,
+                    "priority": story_rec.get("priority") or "P2",
+                    "workspace": story_rec.get("workspace") or "",
+                },
+                adapter="claude",  # 兜底;真重试 Handler 应传实际失败的 adapter
+                attempt_count=1,
+            )
+            db.log_event(story_key, stage_rec, "recovery_action", recovery)
+        except Exception:
+            log.exception("recovery decide/log failed for %s", story_key)
         err_file = STORY_HOME / "graph_error.log"
         err_file.write_text(
             f"run_story failed for {story_key}:\n{traceback.format_exc()}",

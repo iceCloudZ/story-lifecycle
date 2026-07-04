@@ -214,12 +214,21 @@ def _distribute(self, data: bytes) -> None  # put 到 _queue + 所有 taps,Queue
 
 ---
 
-### 阶段 1 · 失败恢复(层 3)
-- 新 `engine/recovery.py` 纯 Decider:`decide_recovery(*, exc, story_facts, adapter, attempt_count, recovery_facts) -> {"action": "retry_new_adapter"|"skip_stage"|"downgrade_to_manual"|"escalate_human"|"abort", "reason": str, "new_adapter": str?}`。
-- `graph.py run_story` except 接 `decide_recovery`(替当前吞异常),Handler 执行救法。
-- 终止判断接 `policy_engine`(投入产出,扩展 L0–L5 矩阵)。
-- **TDD**:喂异常类型断言救法;mock planner 抛错断言 story 状态 + adapter 切换。
-- **checkpoint**:故意制造失败(adapter 崩/done 永不现)→ recovery 自动救,不卡 active。
+### 阶段 1 · 失败恢复(层 3)  ✅ Decider+wiring DONE;rescue Handler 待接
+- 新 `engine/recovery.py` 纯 Decider ✅:`decide_recovery(*, exc, story_facts, adapter, attempt_count, recovery_facts) ->
+  {action, reason, new_adapter?}`。规则驱动(无需 LLM,recovery 频次低 + 规则更稳,守 §2.2 #7):
+  - auth/config 错 → ``escalate_human``(重试无价值)。
+  - 达 max_attempts(默认 3):P0/P1 → escalate_human、P2 → downgrade_to_manual、P3+ → skip_stage。
+  - 瞬时错未达上限 → ``retry_new_adapter``,按 ``adapter_order`` 轮转(codex→claude→kimi,回绕)。
+  - ``abort`` 留 policy_engine 接入(基础版不主动触发)。
+- `graph.py run_story` except 接 `decide_recovery` ✅:落 `recovery_action` 事件(审计 + 层5 反思数据源)+
+  story 标 failed(不卡 active,断点 D 同步修)。
+- **TDD**:8 个 Decider 单测(全 action 矩阵 + adapter 轮转 + 兜底)+ 1 wiring 测,全 GREEN。
+- **§5.0 自验证**:wiring 测真跑 —— mock planner 抛 `TimeoutError("done file never appeared")`(模拟 done 永不现)→
+  真调 decide_recovery → 真 `recovery_action` 事件入 event_log(payload action=retry_new_adapter + new_adapter + reason)→
+  story 标 failed(不卡 active)。
+- **rescue Handler 待接**(诚实记录):decide_recovery 只决策 + 记录;**实际执行**救法(retry 换 adapter 重启 planner /
+  skip / downgrade)是后续 Handler,需 planner 暴露 adapter-override 入口。决策侧已就绪可审计。
 
 ### 阶段 2 · 质量 judge(层 4)
 - 新 `evaluation/judge.py` 纯 Decider:`judge_quality(*, done_data, test_result, story_facts, llm_invoke) -> {"pass": bool, "rework_point": str?, "reason": str}`。读 done 的 `build_passed`/`tests_passed` + 真跑 profile `verification_commands` + LLM judge(结构化输出 + 固定选项)。
