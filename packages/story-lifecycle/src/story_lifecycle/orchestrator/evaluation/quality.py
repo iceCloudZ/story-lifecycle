@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
 
 from ...infra.db import models as db
+
+log = logging.getLogger(__name__)
 
 
 _FAILURE_CHECKLIST_PATH = (
@@ -195,8 +198,10 @@ def build_quality_packet(
                     patterns = reranked
                     pattern_mode = "llm_rerank"
             # else: keep tag overlap order
-        except Exception:
-            pass  # keep candidates as-is
+        except Exception as e:
+            # LLM rerank unavailable/failed → fall back to tag overlap order,
+            # but log the degradation reason so it's not invisible.
+            log.warning(f"quality: LLM rerank failed, falling back to tag overlap: {e}")
 
     if patterns:
         lines.append(f"Relevant Learned Patterns (mode: {pattern_mode}):")

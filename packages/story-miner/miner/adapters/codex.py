@@ -1,9 +1,11 @@
 """Codex CLI adapter。
 源: ~/.codex/sessions/YYYY/**/*.jsonl + ~/.codex/archived_sessions/rollout-*.jsonl
 每行 {payload, timestamp, type}。sid = 'codex:<filename-without-ext>'（稳定）。"""
-import os, glob, json
+import os, glob, json, logging
 from .. import common
 from ..base import SourceAdapter, register_adapter
+
+log = logging.getLogger(__name__)
 
 @register_adapter
 class CodexAdapter(SourceAdapter):
@@ -73,6 +75,7 @@ class CodexAdapter(SourceAdapter):
                             cache_read_tokens=u.get('cached_input_tokens') or 0,
                             cache_creation_tokens=u.get('cache_creation_input_tokens') or 0,
                             reasoning_tokens=u.get('reasoning_output_tokens') or 0))
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("codex parse failed for %s: %s", f, e)
+            return None, [], []
         return meta, evs, tokens
