@@ -180,12 +180,22 @@ def _distribute(self, data: bytes) -> None  # put 到 _queue + 所有 taps,Queue
 - **E2E 副产出**:发现并修了 detector 没剥 ANSI 转义 → 真 PTY 输出污染 question 字段(已修 + 加单测)。
 
 #### 0b · Claude 轨(stream-json + hooks,**官方最稳**)
-- **0b-1 stream-json 解析**:新 `engine/claude_stream.py`,解析 `claude -p --output-format stream-json` 的事件流,识别 `permission_request`/`idle_prompt`/`elicitation_dialog` → 抽 (question, options)。TDD:喂样例 stream-json 断言。
+- **0b-1 stream-json 解析** ✅ DONE:新 `engine/claude_stream.py`,`parse_line` / `extract_awaiting` /
+  `decide_permission`。识别三种"在等人"信号:permission MCP 工具调用(`assistant.tool_use.name == permission_tool`)、
+  裸 `permission_request` 事件、`elicitation`/`idle_prompt`(options 非空)。非信号(system/init、thinking、
+  正常 tool_use、result)→ None。fixtures 取自真跑 stream-json(本仓库 Write 全程被 allow,无真 permission_request
+  可抓,故 permission/elicitation 用构造样例 + 真实非 awaiting 行)。12 测试 GREEN。
+- **0b-2 决策侧** ✅ DONE(决策半):`decide_permission(tool_name, tool_input, story_facts, llm_invoke) -> {behavior, reason}`,
+  复用 `supervisor.decide_response`(选项固定 [allow, deny],守 §2.2 #5)。真 deepseek 实测:
+  `rm -rf /` → **deny**、`Read README.md` → **allow**、`Write import os` → **allow**(决策正确)。
+- **0b-2 MCP server 暴露** ⏳ 未做(plumbing):lifecycle 需跑 MCP server(stdio JSON-RPC)暴露 `permission` 工具,
+  Handler 调 `decide_permission`。决策侧已就绪;MCP server 暴露 + `--permission-prompt-tool` 接入是剩余步骤。
+- **0b-3 端到端** ⏳ 受环境限:本机 Claude 全程 allow(无 permission_request 可触发),无法自然驱动 MCP 闭环;
+  codex/kimi PTY 轨(0c-4)已用受控 agent 证明了同一决策大脑的全链路闭环(capture→detect→decide→write→log)。
 - **0b-2 应答机制(design 探索)**:选一:
   - (a) `--permission-prompt-tool mcp__lifecycle__permission`:lifecycle 跑 MCP server 暴露 `permission_prompt`,Claude 调时 → `decide_response` → 返回 allow/deny。**支持 Claude.ai 订阅认证**(Agent SDK 要 API key 付费)。
   - (b) `defer` + `claude -p --resume`:Claude 提问 → hook defer → lifecycle 决策 → resume 回填。
   - 推荐 (a)(更直接,官方背书)。
-- **0b-3 端到端**:起 `claude -p --output-format stream-json --permission-prompt-tool ...`,supervisor 通过 MCP 决策,验证 implement stage 跑通。
 
 #### 0d · 链路闭合配套
 - **B done 路径收敛**:`planner.py:495-498` + `planner.py:295` 默认值改用 `stage_done_file()`(`infra/paths.py`,单一真相 `.story/done/{key}/{stage}.json`)。
