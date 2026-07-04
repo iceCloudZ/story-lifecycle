@@ -30,6 +30,17 @@ def stage_done_file(workspace: str | Path, story_key: str, stage: str) -> Path:
     return done_dir(workspace) / story_key / f"{stage}.json"
 
 
+def stage_done_file_rel(story_key: str, stage: str) -> str:
+    """Workspace-relative path of ``stage_done_file`` (single source of truth string).
+
+    planner 把这个相对路径嵌进 CLI prompt(done 写位置)+ 自己在
+    ``Path(workspace)/stage_done_file_rel`` 轮询;graph.py 用绝对 ``stage_done_file``
+    检查。两者必须同布局 —— 本函数保证字符串与 ``stage_done_file`` 一致(写读对齐)。
+    用原始 story_key(与读侧 graph.py 一致,不做 safe_segment)。
+    """
+    return f".story/done/{story_key}/{stage}.json"
+
+
 # ---- context ----
 
 

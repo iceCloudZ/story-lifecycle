@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ...infra.llm_client import get_llm, with_story_key
 from ...infra.story_paths import safe_segment, safe_story_path
+from ...infra.paths import stage_done_file_rel
 from .agent_tools import ORCHESTRATOR_TOOLS
 
 log = logging.getLogger("story-lifecycle.planner")
@@ -293,7 +294,7 @@ def run_orchestrator_agent(
                         "focus": args.get("focus", ""),
                         "done_file": args.get(
                             "done_file",
-                            f".story-done/{safe_segment(story_key)}-{args.get('stage', '')}.json",
+                            stage_done_file_rel(story_key, args.get("stage", "")),
                         ),
                     }
                     actions.append(action)
@@ -495,7 +496,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             focus = action.get("focus", "")
             done_file_rel = action.get(
                 "done_file",
-                f".story-done/{safe_segment(story_key)}-{stage}.json",
+                stage_done_file_rel(story_key, stage),
             )
 
             # 更新当前阶段

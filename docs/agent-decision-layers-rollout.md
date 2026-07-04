@@ -198,10 +198,17 @@ def _distribute(self, data: bytes) -> None  # put 到 _queue + 所有 taps,Queue
   - 推荐 (a)(更直接,官方背书)。
 
 #### 0d · 链路闭合配套
-- **B done 路径收敛**:`planner.py:495-498` + `planner.py:295` 默认值改用 `stage_done_file()`(`infra/paths.py`,单一真相 `.story/done/{key}/{stage}.json`)。
-- **D 异常回写**:`graph.py:188-200` `run_story` except 加 `db.update_story(story_key, status="failed", last_error=str(e)[:500])`。
-- **权限源头堵**:`knowledge/adapters/{codex,shell}.py` launch 加 bypass flag;Claude 用 `--permission-prompt-tool`(不弹)。
-- **TDD**:每个改都先写测试(B:`test_default_done_file_matches_stage_done_file`;D:`test_run_story_marks_failed_on_raise` mock planner 抛错)。
+- **B done 路径收敛** ✅ DONE:planner 默认 done_file 改用 `stage_done_file_rel(story_key, stage)`(新 `infra/paths.py`
+  单一真相,workspace 相对的 `.story/done/{key}/{stage}.json`)。**根因**:planner 旧默认写 `.story-done/{key}-{stage}.json`、
+  自己在 `Path(workspace)/done_file_rel` 轮询,但 `graph.py:259` 用绝对 `stage_done_file()` 读新布局 → 写读不对齐,
+  done 永远收不到(断点 B)。新增 `stage_done_file_rel` 与绝对版同布局(对齐不变式测试守护),planner 两处默认(295/496)切换。
+- **D 异常回写** ✅ DONE:`graph.py run_story` except 加 `db.update_story(story_key, status="failed", last_error=str(exc)[:500])`
+  (包 try 防二次异常)。**根因**:旧 except 只写 graph_error.log,story 仍标 `active` 永远卡住(断点 D)。
+  TDD:`test_run_story_marks_failed_on_raise`(mock planner 抛错 → status=failed + last_error 含异常文本)+ 不误伤正常完成。
+- **权限源头堵** ⏳ 设计就绪,未接:`knowledge/adapters/{codex,shell}.py` launch 加 bypass flag(codex `--full-auto` / kimi `--auto`)、
+  Claude 用 `--permission-prompt-tool`(不弹)。CLI flag 各异 + 改 launch 行为,未在本机逐 CLI 验证(codex 受环境阻断),
+  故先留设计;supervisor 已能在确实提问时兜底应答。`BaseAdapter` 可加 `bypass_flags()` 钩子默认空,子类按 CLI 填。
+- **TDD**:B `test_paths_done`(写读对齐不变式 3 测)+ D `test_run_story_error`(2 测),全 GREEN。
 
 **阶段 0 checkpoint**:Claude 轨 + codex/kimi 轨各跑通一个 implement stage,决策全落 log 可审计。
 

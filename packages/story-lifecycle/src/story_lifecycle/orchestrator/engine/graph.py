@@ -185,8 +185,13 @@ def run_story(story_key: str, epoch: int = 0):
             acquired = acquire_workspace(workspace, story_key)
 
         planner.continue_orchestrator_agent(story_key)
-    except Exception:
+    except Exception as exc:
         log.error(f"run_story failed for {story_key}:\n{traceback.format_exc()}")
+        # 异常回写(0d-D):不标 failed 则崩溃 story 永远卡 active(全自动流水线断点 D)。
+        try:
+            db.update_story(story_key, status="failed", last_error=str(exc)[:500])
+        except Exception:
+            log.exception("failed to mark story %s as failed", story_key)
         err_file = STORY_HOME / "graph_error.log"
         err_file.write_text(
             f"run_story failed for {story_key}:\n{traceback.format_exc()}",
