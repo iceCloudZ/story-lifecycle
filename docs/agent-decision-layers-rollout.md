@@ -71,6 +71,22 @@ pytest packages/story-lifecycle/tests/                            # 全包
 
 ## 4. 当前进度(已完成 · 2026-07-05)
 
+### 4.0 五层落地总览(2026-07-05 续作完成)
+
+| 层 | 阶段 | Decider | 状态 | 自验证 |
+|---|---|---|---|---|
+| 层1 执行内 | 0 | `decide_response`/`handle_pty_output`/`supervise_pty_session`/`awaiting_detector`/`claude_stream` | ✅ | 受控 agent 真 PTY 闭环(capture→detect→deepseek→write→log,event id=330)+ 真 deepseek judge_permission(rm -rf →deny) |
+| 层3 异常 | 1 | `decide_recovery`(+wired into run_story) | ✅ Decider+wiring | mock planner 抛错 → 真 recovery_action 事件入 DB → 不卡 active |
+| 层4 评判 | 2 | `judge_quality` | ✅ Decider | 真 deepseek:tests fail→rework(0 LLM)、空 stub→rework=quality(抓硬指标漏判) |
+| 层2 边界 | 3 | `decide_transition` | ✅ Decider | 8 测全 action 矩阵 + 历史 swap 优先;planner.py:776 接入待做 |
+| 层5 元 | 4 | `reflect` / `decide_schedule` | ✅ Decider | reflect 跑真 event_log(stats 正确);6+6 测 |
+
+**全量回归**:`723 passed, 1 failed(预存在 profile 一致性,无关), 4 skipped`。
+**诚实的待办**(非阻塞,各层 Decider 已就绪):
+- 0b-2/0b-3 Claude MCP server 暴露 + `--permission-prompt-tool` 真闭环(本机 Claude 全程 allow,无真 permission_request 可触发;codex/kimi PTY 轨已证明同一决策大脑闭环)。
+- 0d perms bypass-flags 接入(CLI flag 各异 + codex 环境阻断)。
+- 层3 rescue Handler(retry 换 adapter 重启 planner)、层2 planner.py:776 硬编码 insert 替换 + replanner、层5 playbook→history_facts 回注 + scheduler→graph FIFO 替换。
+
 ### 4.1 新增/修改文件
 
 | 文件 | 状态 | 内容 |
