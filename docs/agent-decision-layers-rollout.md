@@ -230,12 +230,22 @@ def _distribute(self, data: bytes) -> None  # put 到 _queue + 所有 taps,Queue
 - **rescue Handler 待接**(诚实记录):decide_recovery 只决策 + 记录;**实际执行**救法(retry 换 adapter 重启 planner /
   skip / downgrade)是后续 Handler,需 planner 暴露 adapter-override 入口。决策侧已就绪可审计。
 
-### 阶段 2 · 质量 judge(层 4)
-- 新 `evaluation/judge.py` 纯 Decider:`judge_quality(*, done_data, test_result, story_facts, llm_invoke) -> {"pass": bool, "rework_point": str?, "reason": str}`。读 done 的 `build_passed`/`tests_passed` + 真跑 profile `verification_commands` + LLM judge(结构化输出 + 固定选项)。
-- gate 接 judge(**协调 AI-2 窗口** gate decide+apply 拆分——它的 `gate.py:190` 拆完后接 judge;或本阶段先加最小判据 done 字段空/false → retry)。
-- 发布风险:`service/delivery.py` 扩展(预判发布影响面辅助人)。
-- **TDD**:done `build_passed=false` → judge 返回 rework;LLM judge 结构化输出。
-- **checkpoint**:故意提交失败测试 → judge 拦下 retry,不靠人判质量。
+### 阶段 2 · 质量 judge(层 4)  ✅ Decider DONE;gate 接入待 AI-2 协调
+- 新 `evaluation/judge.py` 纯 Decider ✅:`judge_quality(*, done_data, test_result, story_facts, llm_invoke) ->
+  {pass, reason, rework_point?}`。两段决策:
+  - **硬指标(规则,无 LLM)**:done `build_passed=False` → rework "build";`tests_passed=False` 或
+    test_result 有 failures → rework "tests"(省 token,§2.2 #7)。
+  - **LLM judge(结构化)**:硬指标过 → 喂结构化 facts,固定选项 [pass, rework](§2.2 #5),
+    复用 `supervisor.decide_response`。choice=rework → rework_point="quality"。
+- gate 接入 ⏳ 待 AI-2 协调:gate decide+apply 拆分完成后接 judge(fail 则不 apply / 触发 retry)。
+  本阶段 Decider 已就绪;最小判据(done 字空/false → rework)已在硬指标段覆盖。
+- 发布风险 ⏳ 未做:`service/delivery.py` 扩展(预判发布影响面辅助人)。
+- **TDD**:6 测(硬指标 build/tests/test_result fail 不调 LLM + LLM pass/rework + 缺字段兜底),全 GREEN。
+- **§5.0 自验证(真 deepseek)**:
+  - clean(build+tests 过)→ **pass=True**。
+  - tests_failed → **pass=False rework=tests,0 次 LLM 调用**(硬指标短路)。
+  - done 全过但实现是**空 stub** → LLM 判 **pass=False rework=quality**(reason:"All functions are empty stubs,
+    no actual impl")—— 抓到硬指标漏判的微妙质量问题,正是层4 价值。
 
 ### 阶段 3 · stage 转移(层 2)
 - 新 `engine/transition.py` 纯 Decider:`decide_transition(*, gate_decision, failure_mode, history_facts) -> {"action": "retry"|"skip"|"swap_approach"|"insert_rescue_stage"|"escalate", ...}`。
