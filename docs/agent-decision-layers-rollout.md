@@ -247,12 +247,22 @@ def _distribute(self, data: bytes) -> None  # put 到 _queue + 所有 taps,Queue
   - done 全过但实现是**空 stub** → LLM 判 **pass=False rework=quality**(reason:"All functions are empty stubs,
     no actual impl")—— 抓到硬指标漏判的微妙质量问题,正是层4 价值。
 
-### 阶段 3 · stage 转移(层 2)
-- 新 `engine/transition.py` 纯 Decider:`decide_transition(*, gate_decision, failure_mode, history_facts) -> {"action": "retry"|"skip"|"swap_approach"|"insert_rescue_stage"|"escalate", ...}`。
-- 新 `engine/replanner.py`:执行反馈 → 重规划(复用 `planner.run_orchestrator_agent` 的 `invoke_with_tools`)。
-- 替 `planner.py:769-797` 硬编码 `actions.insert()`。
-- **TDD**:gate fail + 历史"同类失败换 adapter 成功" → decide_transition 返回 swap_approach。
-- **checkpoint**:gate fail 后智能转移,非硬编码 insert。
+### 阶段 3 · stage 转移(层 2)  ✅ Decider DONE;planner 接入待做
+- 新 `engine/transition.py` 纯 Decider ✅:`decide_transition(*, gate_decision, failure_mode, history_facts) ->
+  {action, reason, rescue_stage?}`。action:``proceed`` / ``retry`` / ``swap_approach`` /
+  ``insert_rescue_stage`` / ``escalate``。规则驱动 + history_facts:
+  - gate 过 → ``proceed``。
+  - 缺依赖 → ``insert_rescue_stage``(+ rescue_stage 名)。
+  - **历史"同类失败换法成功"→ ``swap_approach``(优先于无脑 retry,避免反复重试同一失败法)**。
+  - 同 stage 反复失败 ≥ max_retries → ``escalate``。
+  - 其余可恢复首次 → ``retry``。
+- 替 `planner.py:776` 硬编码 `actions.insert()` ⏳ 待做:把 verify-gate retry 路径换成
+  decide_transition 映射(retry→insert verify-retry、swap→换 adapter、rescue→插救援 stage、escalate→停)。
+  现有 verify-gate 流程在用,替换有回归风险,留作专门接入 + 回归。
+- 新 `engine/replanner.py` ⏳ 待做:执行反馈 → 重规划(复用 `planner.run_orchestrator_agent.invoke_with_tools`)。
+- **TDD**:8 测覆盖全 action 矩阵 + 历史 swap 优先 + 缺依赖插救援 + 反复失败 escalate,GREEN。
+- **checkpoint(Decider 级)**:gate fail 后的转移**决策**非硬编码(历史驱动 swap / 缺依赖 rescue / 反复 escalate);
+  planner 真接入后即满足"智能转移"端到端。
 
 ### 阶段 4 · 反思 + 调度(层 5)
 - 新 `learning/reflection.py`:读 `events` 表(supervisor_decision/recovery/judge 决策 log)→ 调整决策规则 / 沉淀 playbook(打通飞轮 miner→knowledge→context_providers 回注)。用 verifier subagent 形态(查 ground truth),非 verbal reflection。
