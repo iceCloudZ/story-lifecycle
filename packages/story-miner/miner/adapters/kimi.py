@@ -3,9 +3,11 @@
 事件类型: turn.prompt(用户回合, input[]) | context.append_message(助手文本)
         | context.append_loop_event(工具循环) | usage.record(token)
 time 为 epoch 毫秒。sid='kimi:<session_uuid>:<agent>'（多 agent 会话各自独立）。"""
-import os, glob, json
+import os, glob, json, logging
 from .. import common
 from ..base import SourceAdapter, register_adapter
+
+log = logging.getLogger(__name__)
 
 @register_adapter
 class KimiAdapter(SourceAdapter):
@@ -83,6 +85,7 @@ class KimiAdapter(SourceAdapter):
                             cache_creation_tokens=u.get('inputCacheCreation') or 0,
                             reasoning_tokens=0))
                 if o.get('summary') and not meta['title']: meta['title'] = str(o['summary'])[:80]
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("kimi parse failed for %s: %s", f, e)
+            return None, [], []
         return meta, evs, tokens

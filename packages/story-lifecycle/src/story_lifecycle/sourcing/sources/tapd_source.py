@@ -88,8 +88,13 @@ class TapdSource(StorySource):
                         if child.id not in seen_ids:
                             seen_ids.add(child.id)
                             results.append(child)
-            except Exception:
-                pass
+            except Exception as e:
+                # Don't silently drop a parent's children — log so the operator
+                # can tell a transient fetch failure from a genuine no-children
+                # result. Other parents are still processed.
+                log.warning(
+                    f"tapd: failed to fetch child stories for {item.id}: {e}"
+                )
 
         return results
 

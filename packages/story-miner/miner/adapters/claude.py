@@ -1,9 +1,11 @@
 """Claude Code adapter。
 源: ~/.claude/projects/<encoded-cwd>/<session-uuid>.jsonl，每行一个事件。
 sid = 'claude:<session-uuid>'（文件名，稳定）。"""
-import os, glob, json
+import os, glob, json, logging
 from .. import common, config
 from ..base import SourceAdapter, register_adapter
+
+log = logging.getLogger(__name__)
 
 ENCODINGS = config.CLAUDE_ENCODINGS
 
@@ -97,6 +99,10 @@ class ClaudeAdapter(SourceAdapter):
                                 cache_read_tokens=u.get('cache_read_input_tokens') or 0,
                                 cache_creation_tokens=u.get('cache_creation_input_tokens') or 0,
                                 reasoning_tokens=u.get('reasoning_tokens') or 0))
-        except Exception:
-            pass
+        except Exception as e:
+            # Don't swallow silently: log so the operator knows this file
+            # failed. Return (None, [], []) per base.py contract so store.py
+            # skips the DELETE (parse-first order) and existing rows survive.
+            log.warning("claude parse failed for %s: %s", f, e)
+            return None, [], []
         return meta, evs, tokens

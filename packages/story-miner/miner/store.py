@@ -98,12 +98,19 @@ def main(argv=None):
             continue
         if path not in to_up:
             continue
+        # PARSE FIRST, then delete. The previous order (DELETE → parse → maybe
+        # continue) silently lost data: if parse raised and the adapter's
+        # `except Exception: pass` swallowed it (returning an empty meta), the
+        # old rows were already deleted and the new ones never inserted, so the
+        # session was permanently gone with no warning. Now a parse failure
+        # skips this file entirely, leaving existing rows intact.
+        meta, evs, tokens = ad.parse(path, sid)
+        if meta is None or (meta['turns'] == 0 and meta['ntools'] == 0):
+            continue
         conn.execute('DELETE FROM events WHERE sid=?', (sid,))
         conn.execute('DELETE FROM token_usage WHERE sid=?', (sid,))
         conn.execute('DELETE FROM sessions WHERE sid=?', (sid,))
         conn.execute('DELETE FROM sources WHERE path=?', (path,))
-        meta, evs, tokens = ad.parse(path, sid)
-        if meta is None or (meta['turns'] == 0 and meta['ntools'] == 0): continue
         conn.execute('INSERT INTO sessions(sid,src,ws,ts,title,turns,ntools,nerrs,cwd,branch,first_ucmd,path) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
             (meta['sid'], meta['src'], meta['ws'], meta['ts'], meta['title'], meta['turns'],
              meta['ntools'], meta['nerrs'], meta['cwd'], meta['branch'], meta['first_ucmd'], path))
