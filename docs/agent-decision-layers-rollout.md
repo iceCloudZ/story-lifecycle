@@ -158,16 +158,26 @@ def _distribute(self, data: bytes) -> None  # put 到 _queue + 所有 taps,Queue
 - **TDD**:fake pty(`add_tap` 返回一个预填 chunks 的 `asyncio.Queue` + 记录 write + 末尾塞 `None` 触发 `pty.alive=False` 退出循环)→ 跑 `await supervise_pty_session(...)` → 断言命中点被应答 + log。用 `@pytest.mark.asyncio`。
 - **新模块**:`supervisor.py` 加 `supervise_pty_session`。
 
-#### 0c-3 · pattern 识别(借 agent-yes 三层 pattern)
+#### 0c-3 · pattern 识别(借 agent-yes 三层 pattern)  ✅ DONE
 - **目标**:实现真实的 `is_awaiting_fn`——识别 codex/kimi 在 PTY 里"在等人"。
 - **调研**:`snomiao/agent-yes` 用 per-CLI `{readyPatterns, enterPatterns, fatalPatterns}`(正则)。抄这个抽象进 `knowledge/adapters/{codex,shell}.py` 或 yml 配置。
 - **实现**:新 `orchestrator/engine/awaiting_detector.py`:`make_awaiting_fn(adapter: str) -> Callable[[str], tuple[str, list[str]] | None]`,从 adapter 配置读 pattern。先硬编码 codex/kimi 的几个常见提问 pattern(如 `"选择|请选择|\\?\\s*$"`),LLM 兜底把命中片段解析成 (question, options)。
 - **TDD**:喂样例 PTY 输出("请选择: A) foo B) bar")断言返回 (question, ["A","B"]);喂普通输出断言 None。
 - **研究**:实际跑 `codex`/`kimi`(在 tmp repo 触发一个提问),抓 PTY 输出看提问的真实 pattern——这是最不确定的一步,值得花时间。
 
-#### 0c-4 · codex/kimi 轨端到端
+#### 0c-4 · codex/kimi 轨端到端  ✅ DONE(受控 agent 闭环;真 codex 受环境阻断)
 - **目标**:起真 codex/kimi(implement stage),supervisor 自动应答提问,`select * from events where event_type='supervisor_decision'` 有记录。
 - **方法**:`story serve` + 手动构造一个 implement stage 的 web pty session + 触发提问 + 看 supervisor 应答。可能要先把 supervisor 接到 `planner.continue_orchestrator_agent`(launch action 起 pty 后启 `supervise_pty_session` task)。
+- **实际验证(2026-07-05)**:受控闭环 E2E —— 真 winpty PTY 跑一个发"请选择: A) … B) …"提问的脚本,
+  `supervise_pty_session` + 真 `make_awaiting_fn("codex")` + 真 deepseek(`deepseek-v4-pro`)+ 真 `db.log_event`:
+  - ✅ 检测命中 → options `["A","B"]` → deepseek 决策 `choice="A"` → supervisor 写回 `A\r` → **脚本收到 `RECEIVED_ANSWER:A`**
+  - ✅ `event_log` 落 `supervisor_decision`(id=330,payload 含 adapter/question/options/choice/reason,question 已剥离 ANSI)
+  - 即:`capture → detect → decide → write-back → log` 全链路真跑通。
+- **环境阻断(诚实记录)**:
+  - `codex` 跑不起来(`Error: timed out waiting for cloud config bundle after 15s` —— 网络/auth),非本任务代码问题。
+  - `kimi -p` headless 不提问(直接出答案退出);interactive TUI 提问触发不确定。
+  - 故用受控 agent 脚本(确定性提问)验证 supervisor 机制本身;真 CLI 输出样本已用 `kimi -p`/`claude stream-json` 单独验证检测面。
+- **E2E 副产出**:发现并修了 detector 没剥 ANSI 转义 → 真 PTY 输出污染 question 字段(已修 + 加单测)。
 
 #### 0b · Claude 轨(stream-json + hooks,**官方最稳**)
 - **0b-1 stream-json 解析**:新 `engine/claude_stream.py`,解析 `claude -p --output-format stream-json` 的事件流,识别 `permission_request`/`idle_prompt`/`elicitation_dialog` → 抽 (question, options)。TDD:喂样例 stream-json 断言。

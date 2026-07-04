@@ -47,6 +47,14 @@ _YN_RE = re.compile(r"\(\s*([Yy])\s*/\s*([Nn])\s*\)")
 # 默认二元 options(行尾问号等无显式选项的提问)
 _BINARY_ZH = ["是", "否"]
 
+# ANSI 转义序列(真实 PTY/winpty 输出里大量出现:CSI 颜色/光标、OSC 标题、字符集)
+# E2E 实跑发现不剥离会污染 question 字段 + 干扰 pattern 匹配。
+_ANSI_RE = re.compile(
+    r"\x1b\[[0-9;?]*[a-zA-Z]"   # CSI: \x1b[...m / [?25h / [H 等
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC: \x1b]0;title\x07
+    r"|\x1b[()][AB012]"         # 字符集切换 \x1b(B
+)
+
 
 def make_awaiting_fn(
     adapter: str,
@@ -68,6 +76,7 @@ def make_awaiting_fn(
     compiled = [re.compile(p) for p in patterns]
 
     def detect(buffer: str) -> tuple[str, list[str]] | None:
+        buffer = _ANSI_RE.sub("", buffer)  # 剥离 winpty/终端 ANSI 转义
         match = None
         for rx in compiled:
             match = rx.search(buffer)

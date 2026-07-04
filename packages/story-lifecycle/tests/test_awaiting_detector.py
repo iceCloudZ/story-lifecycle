@@ -59,3 +59,19 @@ class TestMakeAwaitingFn:
         assert result is not None
         _question, options = result
         assert len(options) >= 2  # 至少 是/否 二元
+
+    def test_strips_ansi_escape_sequences_from_question(self):
+        """真实 PTY(winpty)输出含 ANSI 转义(标题/光标/颜色),detector 要先剥离。
+
+        E2E 实跑发现:question 字段带了 ``\x1b]0;title\x07\x1b[?25h`` 前缀,
+        污染日志 + 可能干扰 LLM。剥离后 question 应干净。
+        """
+        detect = make_awaiting_fn("codex")
+        # 真实 winpty 输出样例:设标题 + 显隐光标 + 实际问题
+        buf = "\x1b]0;C:\\python.exe\x07\x1b[?25h请选择: A) foo B) bar\r\n"
+        result = detect(buf)
+        assert result is not None
+        question, options = result
+        assert "\x1b" not in question  # 无 ANSI 残留
+        assert "请选择" in question
+        assert options == ["A", "B"]
