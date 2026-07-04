@@ -152,7 +152,7 @@ def _distribute(self, data: bytes) -> None  # put 到 _queue + 所有 taps,Queue
 - **TDD**:在 `test_supervisor.py::TestHandlePtyOutput` 加 `test_no_answer_no_llm_no_log_on_miss`:fake_awaiting 返回 None,断言 `answered is False`、`writes == []`、`logs == []`,且 `fake_llm` 调用计数为 0(用计数器断言)。
 - **预期**:当前实现已短路(`if not hit: return False`),测试应直接 GREEN(验证现有行为)。若 GREEN 则继续;若意外 RED,说明实现有 bug,修实现。
 
-#### 0c-2 · `supervise_pty_session`(async 消费 tap 循环)
+#### 0c-2 · `supervise_pty_session`(async 消费 tap 循环)  ✅ DONE
 - **目标**:把 `handle_pty_output` 接到 `ManagedPty.add_tap()` 的 async 队列,持续监督一个 PTY session。
 - **签名**:`async def supervise_pty_session(*, pty, adapter, story_facts, is_awaiting_fn, llm_invoke, log_event_fn, buffer_bytes=2000) -> None`。循环:`data = await tap.get()` → 解码追加到滑窗 buffer(保留末尾 buffer_bytes 字节)→ `handle_pty_output(...)` → 命中则清 buffer。`finally: pty.remove_tap(tap)`。
 - **TDD**:fake pty(`add_tap` 返回一个预填 chunks 的 `asyncio.Queue` + 记录 write + 末尾塞 `None` 触发 `pty.alive=False` 退出循环)→ 跑 `await supervise_pty_session(...)` → 断言命中点被应答 + log。用 `@pytest.mark.asyncio`。
