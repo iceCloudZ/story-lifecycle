@@ -159,6 +159,7 @@ class ManagedPty:
         self.cwd = cwd
         self.purpose = purpose
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=512)
+        self._taps: list[asyncio.Queue] = []  # 旁路 taps(supervisor 等),每条输出复制一份
         self._alive = True
         self._process: object | None = None
         self._read_thread: threading.Thread | None = None
@@ -237,16 +238,45 @@ class ManagedPty:
                 if not data:
                     self._alive = False
                     break
-                try:
-                    self._queue.put_nowait(data)
-                except asyncio.QueueFull:
-                    try:
-                        self._queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        pass
-                    self._queue.put_nowait(data)
+                self._distribute(data)
         except Exception:
             self._alive = False
+
+    def _distribute(self, data: bytes) -> None:
+        """Put data to main queue (Web Board) + all taps (supervisor).
+
+        Drop oldest on full to avoid blocking the read thread.
+        """
+        for q in [self._queue, *self._taps]:
+            try:
+                q.put_nowait(data)
+            except asyncio.QueueFull:
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    q.put_nowait(data)
+                except asyncio.QueueFull:
+                    pass
+
+    def add_tap(self, maxsize: int = 512) -> asyncio.Queue:
+        """Register a tap queue that receives a copy of every output chunk.
+
+        Used by supervisor (codex/kimi 轨) to consume PTY output without
+        stealing from the Web Board's main ``_queue``. Returns the tap queue;
+        consumer reads via ``await tap.get()``. Remove with ``remove_tap``.
+        """
+        tap = asyncio.Queue(maxsize=maxsize)
+        self._taps.append(tap)
+        return tap
+
+    def remove_tap(self, tap: asyncio.Queue) -> None:
+        """Unregister a tap queue (stops receiving new output)."""
+        try:
+            self._taps.remove(tap)
+        except ValueError:
+            pass
 
     def _blocking_read(self, size: int) -> bytes:
         if self._mode == "winpty":
