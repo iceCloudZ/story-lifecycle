@@ -130,3 +130,41 @@ class TestHandlePtyOutput:
         assert len(logs) == 1
         assert logs[0]["event_type"] == "supervisor_decision"
         assert logs[0]["payload"]["choice"] == "option_a"
+
+    def test_no_answer_no_llm_no_log_on_miss(self):
+        """is_awaiting 未命中 → 短路:不调 LLM、不写 PTY、不 log(省 token)。
+
+        回归守护:miss 路径必须保持零 LLM 调用(每次决策最多 1 次 LLM,§2.2 原则 7),
+        否则 supervisor 会因每条 PTY 输出都打 LLM 而烧 token。
+        """
+        from types import SimpleNamespace
+
+        writes: list[bytes] = []
+        fake_pty = SimpleNamespace(write=lambda d: writes.append(d))
+        logs: list[dict] = []
+        llm_calls = {"n": 0}
+
+        def fake_log(story_key, *, stage, event_type, payload):
+            logs.append({"event_type": event_type})
+
+        def fake_awaiting(buffer):
+            return None  # 普通输出,未在等人
+
+        def fake_llm(prompt):
+            llm_calls["n"] += 1
+            return '{"choice": "x", "reason": "must not be called on miss"}'
+
+        answered = handle_pty_output(
+            buffer="正在编辑 src/app.py ... 文件已保存",
+            pty=fake_pty,
+            adapter="codex",
+            story_facts={"story_key": "S-1", "stage": "implement"},
+            is_awaiting_fn=fake_awaiting,
+            llm_invoke=fake_llm,
+            log_event_fn=fake_log,
+        )
+
+        assert answered is False
+        assert writes == []
+        assert logs == []
+        assert llm_calls["n"] == 0

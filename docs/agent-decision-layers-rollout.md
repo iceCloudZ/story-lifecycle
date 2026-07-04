@@ -147,7 +147,7 @@ def _distribute(self, data: bytes) -> None  # put 到 _queue + 所有 taps,Queue
 
 ### 阶段 0 剩余(codex/kimi 轨收尾 + Claude 轨 + 配套)
 
-#### 0c-1 · `handle_pty_output` 未命中测试
+#### 0c-1 · `handle_pty_output` 未命中测试  ✅ DONE
 - **目标**:验证 is_awaiting 未命中时**不调 LLM、不写 PTY、不 log**(短路,省 token)。
 - **TDD**:在 `test_supervisor.py::TestHandlePtyOutput` 加 `test_no_answer_no_llm_no_log_on_miss`:fake_awaiting 返回 None,断言 `answered is False`、`writes == []`、`logs == []`,且 `fake_llm` 调用计数为 0(用计数器断言)。
 - **预期**:当前实现已短路(`if not hit: return False`),测试应直接 GREEN(验证现有行为)。若 GREEN 则继续;若意外 RED,说明实现有 bug,修实现。
