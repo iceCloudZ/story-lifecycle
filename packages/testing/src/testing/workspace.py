@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover - testing package standalone fallback
     def safe_segment(value: str) -> str:  # type: ignore[misc]
         import re
 
-        cleaned = re.sub(r"[^\w.-]+", "-", value or "", flags=re.UNICODE).strip("-._")
+        cleaned = re.sub(r"[^\w.-]+", "-", value or "", flags=re.UNICODE).strip("-_").rstrip(".")
         if "/" in cleaned or "\\" in cleaned or cleaned in {"..", "."}:
             raise ValueError(f"refusing unsafe path segment: {value!r}")
         return cleaned or "story"
