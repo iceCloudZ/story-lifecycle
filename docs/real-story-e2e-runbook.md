@@ -15,6 +15,7 @@
 4. 任何消耗(agent token、wall-clock)都 OK。
 5. **这就是要真跑的目的** —— 暴露真问题、验证五层真触发(不只 unit test)。
 6. **一次跑通**(长程任务,别中途停问)。
+7. **stage→agent 映射(已确认能跑通)**:**plan/design 用 `claude`、编码/implement 用 `kimi`**;`codex` 阻断别用。
 
 ---
 
@@ -71,7 +72,13 @@
   - (b) 推荐:用一个独立 daemon 线程跑新 loop 跑 `supervise_pty_session`,与主轮询并行;pty 死时 loop 退出。
 - **TDD**:先写测试(fake pty 预填提问 chunk + 真 deepseek mock + 计数 log_event),断言 supervisor 在 agent 提问时答进去 + `supervisor_decision` 入库。再实现。
 - **守铁律**:`supervise_pty_session` 已单测过(见 `test_supervisor.py::TestSupervisePtySession`);本步只接管线,别改 Decider。
-- **agent 选择**:codex 阻断 → story 跑 claude 轨(headless `claude -p`)走 `supervise_claude_stream`(已建好,`claude_stream.py`);PTY 轨(codex/kimi)走 `supervise_pty_session`。**065458 用 claude → 接 `supervise_claude_stream` 到 headless stdout**(planner 里 `headless_launch_cmd` 那条分支,~line 589)。
+- **agent 选择 / stage→CLI 映射(用户已确认能跑通的组合)**:
+  - **plan/design 阶段 → `claude`**(`claude -p --output-format stream-json --verbose`,headless)。监督走 **`supervise_claude_stream`**(已建好,`claude_stream.py`)—— 解析 stream-json,命中 permission_request/elicitation → `decide_response`。
+  - **编码/implement 阶段 → `kimi`**(`kimi -p`,headless,确定可跑通)。监督走 **`supervise_pty_session`**(若 interactive PTY)或对 headless stdout 做提问检测(见下)。
+  - **`codex` 阻断(cloud-config),别用。**
+  - **065458 按 `design=claude / implement=kimi` 配 profile**(查 `story.profile`,改 stage 的 `cli` 字段;或起 story 时在 ctx/profile 里覆盖)。
+  - **kimi `-p` headless 不提问**(直接出答案退出)→ implement 阶段 supervisor 可能不触发(正常,记原因);要触发 supervisor,让 design 阶段 claude 遇到模糊任务提澄清问题。
+  - 接 supervisor 时:claude 轨接 `supervise_claude_stream`(到 `headless_launch_cmd` 那条分支的 stdout,planner ~line 589);kimi 轨若走 PTY 接 `supervise_pty_session`(到 `ensure_agent_pty` 后,planner ~line 660)。
 
 ### 4.2 · 接 judge 到 gate(层4 真触发前置)**[代码改动·TDD]**
 
