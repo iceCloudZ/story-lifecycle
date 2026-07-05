@@ -81,14 +81,19 @@ pytest packages/story-lifecycle/tests/                            # 全包
 | 层2 边界 | 3 | `decide_transition` | ✅ Decider | 8 测全 action 矩阵 + 历史 swap 优先;planner.py:776 接入待做 |
 | 层5 元 | 4 | `reflect` / `decide_schedule` | ✅ Decider | reflect 跑真 event_log(stats 正确);6+6 测 |
 
-**全量回归**:`742 passed, 1 failed(预存在 profile 一致性,无关), 4 skipped`。
-**Plumbing 接入进度**(2026-07-05 续):
-- ✅ **层2** `decide_transition` 接入 planner verify-gate(替 `planner.py:776` 硬编码 insert;retry/swap/rescue/escalate)。
-- ✅ **层3** rescue Handler(`run_story` 有界重试循环:失败→换 adapter 重跑,上限 `_MAX_RECOVERY=3`)。
+**全量回归**:`765 passed, 1 failed(预存在 profile 一致性,无关), 4 skipped`。
+**Plumbing 接入进度**(2026-07-05 续,全部接完):
+- ✅ **层2** `decide_transition` 接入 planner verify-gate(替 `planner.py:776` 硬编码 insert;retry/swap/rescue/escalate)+ `build_repair_action` 映射。
+- ✅ **层2** `replanner.replan`(执行反馈→重规划,复用 `invoke_with_tools` + plan_step/skip_stage)。
+- ✅ **层3** rescue Handler(`run_story` 有界重试循环:失败→换 adapter 重跑,上限 `_MAX_RECOVERY=3`,真测验证)。
+- ✅ **层5** playbook→`history_facts` 回注(`build_transition_history_facts`,飞轮闭合:recovery swap→reflect→transition swap_approach 真触发)。
+- ✅ **层5** scheduler→graph FIFO 替换(`order_ready_stories` + `decide_schedule`,按优先级提交)。
 - ✅ **0b-2(b)** Claude 轨 defer/resume(`supervise_claude_stream`,不走 MCP,复用 `claude_stream.py`)。
-**仍待接**(非阻塞,Decider 已就绪):
-- 0b-3 `claude -p --resume` 真回填(本机 Claude 全 allow,无 permission_request 可触发)+ 0d perms bypass-flags(codex 环境阻断)。
-- 层2 replanner(执行反馈→重规划 `invoke_with_tools`)、层5 playbook→`history_facts` 回注(让 transition swap_approach 真触发)+ scheduler→graph FIFO 替换。
+- ✅ **0b-3** `build_resume_command`(claude -p --resume argv 构造;真回填环境阻断,本机全 allow)。
+- ✅ **0d** `bypass_flags`(codex `--full-auto` / shell(kimi) 配置;claude 不 bypass 走 supervisor;launch 接线环境阻断)。
+**环境阻断(非代码问题,无法在本机 E2E)**:
+- `codex` cloud-config 超时跑不起;本机 Claude 全 allow(无 permission_request 可触发 0b-3 真回填);kimi `-p` headless 不提问。
+- codex/kimi PTY 轨已用受控 agent 证明同一决策大脑全链路闭环(event id=330);Claude 决策侧真 deepseek 验过(`rm -rf /`→deny)。
 
 ### 4.1 新增/修改文件
 

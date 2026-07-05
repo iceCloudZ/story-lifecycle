@@ -103,6 +103,15 @@ class BaseAdapter(ABC):
         """Return argv for an interactive PTY process."""
         return shlex.split(self.launch_cmd(model), posix=os.name != "nt")
 
+    def bypass_flags(self) -> list[str]:
+        """Permission-bypass CLI flags(0d 权限源头堵)。
+
+        codex/kimi 等在源头用 flag 自动批准权限提问(supervisor 专注答澄清/选择问题)。
+        claude **不 bypass**(走 ``--permission-prompt-tool`` 由 supervisor 决策)。
+        默认空 = 不 bypass(supervisor 兜底应答)。子类按 CLI 覆写。
+        """
+        return []
+
     def cleanup(self, story_key: str, stage: str):
         """Clean up temp files after stage completion. Override if needed."""
         pass

@@ -14,6 +14,7 @@ from pathlib import Path
 from story_lifecycle.orchestrator.engine.claude_stream import (
     ALLOW,
     DENY,
+    build_resume_command,
     decide_permission,
     extract_awaiting,
     parse_line,
@@ -311,5 +312,36 @@ class TestSuperviseClaudeStream:
         )
         assert len(decisions) == 2  # 中间 result 行不算
         assert n["c"] == 2
+
+
+class TestBuildResumeCommand:
+    """build_resume_command:把 supervisor 决策包成 claude -p --resume argv(0b-3 回填半)。
+
+    注:真回填(答案怎么注入 Claude)是 Claude 版本相关 + 本机全 allow 无法触发验证;
+    本函数只构造文档化的 resume 基命令,决策本身已由 supervise_claude_stream 落日志。
+    """
+
+    def test_returns_resume_argv_with_stream_json(self):
+        cmd = build_resume_command(
+            session_id="sess-123", decision={"choice": "deny", "reason": "x"}
+        )
+        assert cmd[0] == "claude"
+        assert "-p" in cmd
+        assert "--resume" in cmd
+        assert "sess-123" in cmd
+        assert "--output-format" in cmd  # 继续接 stream-json(supervisor 持续监督)
+
+    def test_custom_claude_binary(self):
+        cmd = build_resume_command(
+            session_id="s1", decision={"behavior": "allow"}, claude_bin="/usr/local/bin/claude"
+        )
+        assert cmd[0] == "/usr/local/bin/claude"
+
+    def test_empty_session_id_raises(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            build_resume_command(session_id="", decision={"choice": "allow"})
+
 
 

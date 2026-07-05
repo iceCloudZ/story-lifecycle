@@ -233,3 +233,40 @@ def supervise_claude_stream(
             }
         )
     return decisions
+
+
+def build_resume_command(
+    *,
+    session_id: str,
+    decision: dict,
+    claude_bin: str = "claude",
+) -> list[str]:
+    """构造 ``claude -p --resume`` argv(0b-3 回填半)。
+
+    ``supervise_claude_stream`` 命中 awaiting + 决策后,Handler 用本命令 resume Claude
+    继续(决策本身已落 ``supervisor_decision`` 事件)。继续接 stream-json,supervisor
+    持续监督 resume 后的流。
+
+    **注**:真回填(答案怎么注入 Claude 的下一个 turn)是 Claude 版本相关机制;本机 Claude
+    全 allow(无真 permission_request),该 round-trip 无法触发验证。本函数只构造文档化的
+    resume 基命令,decision 通过日志可审计。
+
+    Args:
+        session_id: Claude 会话 id(stream-json 的 ``session_id``)。
+        decision: supervisor 决策(留作 Handler 拼注入参数的依据;本函数暂只用其存在性)。
+
+    Returns:
+        ``[claude_bin, "-p", "--resume", session_id, "--output-format", "stream-json", "--verbose"]``。
+    """
+    if not session_id:
+        raise ValueError("session_id 不能为空")
+    _ = decision  # 决策已落日志;真注入参数按 Claude 版本在 Handler 拼装
+    return [
+        claude_bin,
+        "-p",
+        "--resume",
+        session_id,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    ]
