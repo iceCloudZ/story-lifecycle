@@ -54,6 +54,17 @@ class TestDecideSchedule:
         assert order[0] == "P0STORY"
         assert order[1] == "X"
 
+    def test_high_medium_low_priority_words_ranked(self):
+        """真 DB 用 high/medium/low(非 P0-P5)→ 也要能排序(否则全当 P2 退化 FIFO)。"""
+        order = decide_schedule(stories=[
+            st("LO", "low", created_at="t1"),
+            st("HI", "high", created_at="t2"),
+            st("MD", "medium", created_at="t3"),
+        ])
+        assert order[0] == "HI"
+        assert order[1] == "MD"
+        assert order[2] == "LO"
+
     def test_returns_only_story_keys(self):
         order = decide_schedule(stories=[st("A", "P1"), st("B", "P3")])
         assert all(isinstance(k, str) for k in order)
