@@ -344,4 +344,85 @@ class TestBuildResumeCommand:
             build_resume_command(session_id="", decision={"choice": "allow"})
 
 
+from story_lifecycle.orchestrator.engine.claude_stream import supervise_headless_stdout
+
+
+class TestSuperviseHeadlessStdout:
+    """supervise_headless_stdout:同步消费 headless proc stdout(drain + 检测提问 + 决策/日志)。
+
+    双重价值:(a) 观察层1 提问(permission_request/elicitation)→ decide_response + 落 supervisor_decision;
+    (b) drain stdout 防 PIPE 缓冲满致 headless proc 阻塞(主循环只轮询 done file,从不读 stdout)。
+    headless stdin 已关 → observe-only(检测+决策+日志,不回写 agent)。
+    """
+
+    def test_drains_stdout_and_detects_permission_request(self):
+        import io
+
+        sample_lines = [
+            b'{"type":"system","subtype":"init","session_id":"x"}\n',
+            b'{"type":"permission_request","tool_name":"Bash","input":{"command":"rm -rf /"}}\n',
+            b'{"type":"result","subtype":"success"}\n',
+        ]
+        fake_proc = type("P", (), {"stdout": io.BytesIO(b"".join(sample_lines))})()
+
+        def fake_llm(p):
+            return '{"choice":"deny","reason":"destructive"}'
+
+        logged = []
+
+        def fake_log(story_key, stage, event_type, payload):
+            logged.append(event_type)
+
+        decisions = supervise_headless_stdout(
+            proc=fake_proc,
+            adapter="claude",
+            story_facts={"story_key": "H-1", "stage": "design"},
+            llm_invoke=fake_llm,
+            log_event_fn=fake_log,
+        )
+        assert len(decisions) == 1
+        assert decisions[0]["choice"] == "deny"
+        assert "supervisor_decision" in logged
+
+    def test_kimi_text_path_uses_awaiting_detector(self):
+        import io
+
+        # kimi 输出是文本(非 stream-json),含中文选择提问
+        fake_proc = type("P", (), {"stdout": io.BytesIO("请选择: A) 重试 B) 跳过\n".encode("utf-8"))})()
+
+        def fake_llm(p):
+            return '{"choice":"A","reason":"retry"}'
+
+        decisions = supervise_headless_stdout(
+            proc=fake_proc,
+            adapter="kimi",
+            story_facts={"story_key": "H-2", "stage": "implement"},
+            llm_invoke=fake_llm,
+            log_event_fn=lambda *a, **k: None,
+        )
+        assert len(decisions) == 1
+        assert decisions[0]["choice"] in ("A", "B")
+
+    def test_no_question_no_decision(self):
+        import io
+
+        fake_proc = type("P", (), {"stdout": io.BytesIO(b'{"type":"system","subtype":"init"}\n')})()
+        calls = {"n": 0}
+
+        def fake_llm(p):
+            calls["n"] += 1
+            return '{"choice":"allow","reason":"x"}'
+
+        decisions = supervise_headless_stdout(
+            proc=fake_proc,
+            adapter="claude",
+            story_facts={"story_key": "H-3", "stage": "design"},
+            llm_invoke=fake_llm,
+            log_event_fn=lambda *a, **k: None,
+        )
+        assert decisions == []
+        assert calls["n"] == 0  # 没提问不调 LLM
+
+
+
 

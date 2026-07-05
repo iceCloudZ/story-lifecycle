@@ -77,6 +77,56 @@ def judge_quality(
     return {"pass": True, "reason": decision["reason"], "rework_point": None}
 
 
+def judge_verify_stage(
+    *,
+    story_key: str,
+    stage: str,
+    context: dict,
+    llm_invoke,
+    log_event_fn=None,
+) -> dict:
+    """层4 judge @ gate(§4.2):从 verify 的 context 取 done/test_result → judge_quality + 落 judge_verdict。
+
+    在 ``run_verify_gate`` 里调:quality_cfg 开启时,先 LLM/硬指标判 verify 产出质量,
+    rework → 让 gate 返 retry(替纯规则 HIGH-findings 门禁的补充)。
+
+    Args:
+        context: verify stage 的 ctx。读 ``last_done_data``(done 握手)、``last_test_result``、
+            ``last_verify_summary``。缺则兜底。
+        log_event_fn: 注入则落 ``judge_verdict`` 事件({pass, rework_point, reason})。
+
+    Returns:
+        judge_quality 的 verdict dict(``{pass, reason, rework_point?}``)。
+    """
+    ctx = context or {}
+    done_data = ctx.get("last_done_data") or {
+        "summary": ctx.get("last_verify_summary", "")
+    }
+    test_result = ctx.get("last_test_result") or {}
+    summary = ctx.get("last_verify_summary", "")
+    verdict = judge_quality(
+        done_data=done_data,
+        test_result=test_result,
+        story_facts={"story_key": story_key, "stage": stage, "summary": summary},
+        llm_invoke=llm_invoke,
+    )
+    if log_event_fn is not None:
+        try:
+            log_event_fn(
+                story_key,
+                stage,
+                "judge_verdict",
+                {
+                    "pass": verdict["pass"],
+                    "rework_point": verdict.get("rework_point"),
+                    "reason": verdict["reason"],
+                },
+            )
+        except Exception:
+            pass
+    return verdict
+
+
 def _build_judge_prompt(done_data: dict, test_result: dict, story_facts: dict) -> str:
     """结构化 facts(LangGraph 范式),不喂原始日志(降噪,§2.2 #4)。"""
     import json

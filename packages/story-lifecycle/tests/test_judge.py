@@ -113,3 +113,46 @@ class TestJudgeQuality:
         )
         assert r["pass"] is True
         assert calls["n"] == 1  # 交 LLM 判
+
+
+from story_lifecycle.orchestrator.evaluation.judge import judge_verify_stage
+
+
+class TestJudgeVerifyStage:
+    """judge_verify_stage(层4 @ gate):从 verify context 取 done/test → judge_quality + 落 judge_verdict。"""
+
+    def test_hard_fail_from_context_done_logs_judge_verdict(self):
+        logged = []
+
+        def fake_log(story_key, stage, event_type, payload):
+            logged.append((event_type, payload))
+
+        def fake_llm(p):
+            return '{"choice":"pass","reason":"x"}'
+
+        v = judge_verify_stage(
+            story_key="V-1", stage="verify",
+            context={"last_done_data": {"build_passed": False, "tests_passed": True}},
+            llm_invoke=fake_llm, log_event_fn=fake_log,
+        )
+        assert v["pass"] is False
+        assert v["rework_point"] == "build"
+        assert any(et == "judge_verdict" for et, _ in logged)
+        # payload 记录了 pass/rework_point/reason
+        payload = [p for et, p in logged if et == "judge_verdict"][0]
+        assert payload["pass"] is False and payload["rework_point"] == "build"
+
+    def test_empty_context_falls_through_to_llm(self):
+        calls = {"n": 0}
+
+        def fake_llm(p):
+            calls["n"] += 1
+            return '{"choice":"pass","reason":"ok"}'
+
+        v = judge_verify_stage(
+            story_key="V-2", stage="verify", context={},
+            llm_invoke=fake_llm, log_event_fn=lambda *a, **k: None,
+        )
+        assert v["pass"] is True
+        assert calls["n"] == 1
+

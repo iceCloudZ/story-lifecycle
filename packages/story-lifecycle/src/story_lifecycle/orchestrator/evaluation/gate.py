@@ -212,6 +212,33 @@ def run_verify_gate(
     if not quality_cfg.get("block_on_open_high_findings"):
         return {"decision": "advance", "reason": "block_on_open_high_findings disabled"}
 
+    # 层4 judge @ gate(§4.2):LLM/硬指标判 verify 产出质量,rework → retry(规则门禁的补充)。
+    # 先于 HIGH-findings 规则:judge 是更广的质量判,rework 直接挡下重做。
+    try:
+        from ...infra.llm_client import get_llm
+
+        from .judge import judge_verify_stage
+
+        verdict = judge_verify_stage(
+            story_key=story_key,
+            stage=stage,
+            context=context,
+            llm_invoke=get_llm().invoke,
+            log_event_fn=db.log_event,
+        )
+        if not verdict["pass"]:
+            round_count = increment_review_round_count(context, stage)
+            return {
+                "decision": "retry",
+                "reason": f"judge rework({verdict.get('rework_point')}): {verdict['reason']}",
+                "round": round_count,
+                "retry_limit": max_retries,
+                "rework_point": verdict.get("rework_point"),
+                "judge_verdict": verdict,
+            }
+    except Exception:
+        pass
+
     high_findings = db.get_open_findings(story_key, min_severity="high")
     if not high_findings:
         return {"decision": "advance", "reason": "no open HIGH findings"}

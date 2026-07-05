@@ -270,3 +270,88 @@ def build_resume_command(
         "stream-json",
         "--verbose",
     ]
+
+
+def supervise_headless_stdout(
+    *,
+    proc,
+    adapter: str,
+    story_facts: dict,
+    llm_invoke: Callable[[str], str],
+    log_event_fn: Callable,
+    permission_tool: str = DEFAULT_PERM_TOOL,
+) -> list[dict]:
+    """同步消费 headless proc 的 stdout(drain + 检测提问 + 决策/日志)。
+
+    双重价值:
+    - **drain stdout**:headless 路径(claude -p / kimi -p)stdout 是 PIPE,但主循环只轮询
+      done file 从不读 stdout → 输出超 ~64KB pipe 缓冲会阻塞 proc、永不写 done(潜在死锁)。
+      本函数持续读 stdout 防阻塞。
+    - **层1 观察**:命中"在等人"(claude 的 permission_request/elicitation;kimi 的选择提问)
+      → ``decide_response`` + 落 ``supervisor_decision`` 事件。
+
+    **observe-only**:headless stdin 在 prompt 注入后已关,**不能写回答案**。所以本函数检测+
+    决策+日志,但不回写 agent(headless agent 也一般不提问;真要答需走 interactive PTY 轨的
+    ``supervise_pty_session``)。
+
+    Args:
+        proc: subprocess.Popen(有 ``.stdout``)。
+        adapter: claude → 解 stream-json;其它 → 用 ``make_awaiting_fn`` 文本检测。
+
+    Returns:
+        ``[{question, options, choice, reason}]`` —— 命中并决策过的点。
+    """
+    from .supervisor import decide_response, log_decision
+
+    decisions: list[dict] = []
+    # kimi 等(非 claude)用文本 awaiting detector;claude 用 stream-json extract_awaiting
+    text_detect = None if adapter == "claude" else None
+    if adapter != "claude":
+        try:
+            from .awaiting_detector import make_awaiting_fn
+
+            text_detect = make_awaiting_fn(adapter)
+        except Exception:
+            text_detect = None
+
+    try:
+        for raw in iter(proc.stdout.readline, b""):
+            if not raw:
+                break
+            line = raw.decode("utf-8", "replace").strip()
+            if not line:
+                continue
+            # claude: stream-json;其它: 文本 detector
+            awaiting = extract_awaiting(line, permission_tool=permission_tool)
+            if not awaiting and text_detect is not None:
+                awaiting = text_detect(line)
+            if not awaiting:
+                continue
+            question, options = awaiting
+            decision = decide_response(
+                question=question,
+                options=options,
+                story_facts=story_facts,
+                llm_invoke=llm_invoke,
+            )
+            log_decision(
+                story_key=story_facts.get("story_key", ""),
+                stage=story_facts.get("stage", ""),
+                adapter=adapter,
+                question=question,
+                options=options,
+                decision=decision,
+                log_event_fn=log_event_fn,
+            )
+            decisions.append(
+                {
+                    "question": question,
+                    "options": options,
+                    "choice": decision["choice"],
+                    "reason": decision["reason"],
+                }
+            )
+    except Exception:
+        pass
+    return decisions
+

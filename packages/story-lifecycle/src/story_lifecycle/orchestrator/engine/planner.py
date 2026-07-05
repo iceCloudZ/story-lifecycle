@@ -648,22 +648,93 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         headless_proc.stdin.close()
                     except Exception as exc:
                         db.update_story(
-                            story_key, status="failed",
+                            story_key,
+                            status="failed",
                             last_error=f"Stage {stage} headless spawn failed: {exc}",
                         )
                         return
+                    # §4.1 层1 supervisor(headless):daemon 线程消费 stdout —— 双重价值:
+                    # (a) drain stdout 防 PIPE 缓冲满致 proc 阻塞(主循环只轮询 done,从不读 stdout);
+                    # (b) 命中提问(claude permission/elicitation、kimi 选择)→ decide_response + 落 supervisor_decision。
+                    # observe-only:headless stdin 已关,不回写答案。
+                    try:
+                        import threading as _th
+                        from .claude_stream import supervise_headless_stdout
+
+                        _sup_llm = get_llm().invoke
+                        _sup_sf = {"story_key": story_key, "stage": stage, "summary": focus}
+                        _sup_proc = headless_proc
+
+                        def _drain_headless():
+                            try:
+                                supervise_headless_stdout(
+                                    proc=_sup_proc,
+                                    adapter=adapter_name,
+                                    story_facts=_sup_sf,
+                                    llm_invoke=_sup_llm,
+                                    log_event_fn=db.log_event,
+                                )
+                            except Exception:
+                                pass
+
+                        _th.Thread(
+                            target=_drain_headless,
+                            daemon=True,
+                            name=f"supervise-h-{story_key}",
+                        ).start()
+                    except Exception:
+                        pass
                     log.info(
                         "[%s] HEADLESS pid=%s stage=%s (polling done file, not exit)",
                         story_key, headless_proc.pid, stage,
                     )
                 else:
-                    ensure_agent_pty(
+                    _pty_session, _agent_pty = ensure_agent_pty(
                         story_key,
                         launch_cmd,
                         workspace,
                         cli_prompt,  # prompt 作为第 4 个参数注入到 PTY
                     )
                     log.info("[%s] PTY session started for stage=%s", story_key, stage)
+                    # §4.1 层1 supervisor(interactive PTY):daemon 线程跑 supervise_pty_session。
+                    # run_story 在 ThreadPoolExecutor 线程里(无 asyncio loop)→ 独立 daemon 线程 + new_event_loop。
+                    # pty 死时 supervise_pty_session 退出(轮询 pty.alive)。
+                    try:
+                        import asyncio as _aio
+                        import threading as _th
+
+                        from .awaiting_detector import make_awaiting_fn
+                        from .supervisor import supervise_pty_session
+
+                        _sup_llm = get_llm().invoke
+                        _sup_sf = {"story_key": story_key, "stage": stage, "summary": focus}
+                        _sup_pty = _agent_pty
+                        _sup_det = make_awaiting_fn(adapter_name)
+
+                        def _supervise_pty():
+                            try:
+                                loop = _aio.new_event_loop()
+                                _aio.set_event_loop(loop)
+                                loop.run_until_complete(
+                                    supervise_pty_session(
+                                        pty=_sup_pty,
+                                        adapter=adapter_name,
+                                        story_facts=_sup_sf,
+                                        is_awaiting_fn=_sup_det,
+                                        llm_invoke=_sup_llm,
+                                        log_event_fn=db.log_event,
+                                    )
+                                )
+                            except Exception:
+                                pass
+
+                        _th.Thread(
+                            target=_supervise_pty,
+                            daemon=True,
+                            name=f"supervise-p-{story_key}",
+                        ).start()
+                    except Exception:
+                        pass
             except Exception as exc:
                 log.error(
                     f"[{story_key}] Failed to launch {adapter_name} for {stage}: {exc}"
@@ -800,6 +871,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     else 2
                 )
                 ctx["last_verify_summary"] = done_data.get("summary", "")
+                ctx["last_done_data"] = done_data  # §4.2:喂给 judge_verify_stage(层4 @ gate)
                 gate_result = run_verify_gate(
                     story_key=story_key,
                     stage=stage,
