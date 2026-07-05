@@ -85,3 +85,71 @@ class TestDecideTransition:
             gate_decision={"pass": False}, failure_mode="tests", history_facts={}
         )
         assert isinstance(r["reason"], str) and r["reason"]
+
+
+from story_lifecycle.orchestrator.engine.transition import build_repair_action
+
+
+class TestBuildRepairAction:
+    """decide_transition 决策 → planner 可插入的 action dict(替硬编码 insert)。"""
+
+    def test_retry_yields_verify_repair_with_same_adapter(self):
+        r = build_repair_action(
+            transition_decision={"action": "retry", "reason": "fix it"},
+            story_key="S-1",
+            gate_result={"round": 2},
+            adapter_name="codex",
+        )
+        assert r["action"] == "launch"
+        assert r["stage"] == "verify"
+        assert r["adapter"] == "codex"  # retry 不换 adapter
+        assert "round 2" in r["focus"]
+
+    def test_swap_approach_yields_verify_repair_with_different_adapter(self):
+        r = build_repair_action(
+            transition_decision={"action": "swap_approach", "reason": "history"},
+            story_key="S-2",
+            gate_result={"round": 1},
+            adapter_name="codex",
+        )
+        assert r["stage"] == "verify"
+        assert r["adapter"] != "codex"  # 换 adapter
+
+    def test_insert_rescue_stage_yields_rescue_action(self):
+        r = build_repair_action(
+            transition_decision={
+                "action": "insert_rescue_stage",
+                "rescue_stage": "setup_dependency",
+                "reason": "缺 dotenv",
+            },
+            story_key="S-3",
+            gate_result={"round": 1},
+            adapter_name="claude",
+        )
+        assert r["stage"] == "setup_dependency"
+        assert r["adapter"] == "claude"
+        assert "done_file" in r
+
+    def test_escalate_yields_none(self):
+        """escalate → 不插 action(caller 标 failed)。"""
+        assert (
+            build_repair_action(
+                transition_decision={"action": "escalate", "reason": "x"},
+                story_key="S-4",
+                gate_result={"round": 5},
+                adapter_name="codex",
+            )
+            is None
+        )
+
+    def test_proceed_yields_none(self):
+        assert (
+            build_repair_action(
+                transition_decision={"action": "proceed", "reason": "ok"},
+                story_key="S-5",
+                gate_result={},
+                adapter_name="codex",
+            )
+            is None
+        )
+

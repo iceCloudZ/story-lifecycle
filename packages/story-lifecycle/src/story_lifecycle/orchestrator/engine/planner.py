@@ -769,33 +769,57 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     max_retries=max_retries,
                 )
                 if gate_result["decision"] == "retry":
-                    retry_done_file = (
-                        f".story/done/{safe_segment(story_key)}/verify"
-                        f"-round{gate_result['round']}.json"
+                    # 层2 transition(阶段3 接入):decide_transition 决定怎么转,替硬编码 insert。
+                    from .transition import build_repair_action, decide_transition
+
+                    reason_text = str(gate_result.get("reason", "")).lower()
+                    failure_mode = (
+                        "missing_dependency"
+                        if any(
+                            k in reason_text
+                            for k in ("depend", "import", "no module", "no such file")
+                        )
+                        else "quality"
                     )
-                    actions.insert(
-                        idx + 1,
-                        {
-                            "action": "launch",
-                            "stage": "verify",
-                            "adapter": adapter_name,
-                            "focus": (
-                                f"repair round {gate_result['round']}/"
-                                f"{gate_result['retry_limit']} — address HIGH findings"
-                            ),
-                            "done_file": retry_done_file,
+                    transition = decide_transition(
+                        gate_decision={"pass": False, "rework_point": "verify"},
+                        failure_mode=failure_mode,
+                        history_facts={
+                            "failure_count_on_stage": gate_result.get("round", 1),
+                            "max_retries": gate_result.get("retry_limit", max_retries),
+                            # same_failure_swap_succeeded 由层5 reflection 回注后填;先 False
+                            "same_failure_swap_succeeded": False,
+                            "missing_dep": gate_result.get("reason", ""),
                         },
                     )
+                    db.log_event(story_key, stage, "transition_decision", transition)
+                    repair_action = build_repair_action(
+                        transition_decision=transition,
+                        story_key=story_key,
+                        gate_result=gate_result,
+                        adapter_name=adapter_name,
+                    )
+                    if repair_action is None:
+                        # escalate/proceed/skip → 不插 action,标失败(transition 决策已落事件)
+                        db.update_story(
+                            story_key,
+                            status="failed",
+                            last_error=str(transition.get("reason", ""))[:500],
+                        )
+                        return
+                    actions.insert(idx + 1, repair_action)
                     ctx["_agent_actions"] = actions
                     db.update_story(
                         story_key,
                         context_json=json.dumps(ctx, ensure_ascii=False),
                     )
                     log.info(
-                        "[%s] Verify gate blocked (round %d/%d); retry scheduled",
+                        "[%s] Verify gate blocked (round %d/%d); transition=%s adapter=%s",
                         story_key,
                         gate_result["round"],
                         gate_result["retry_limit"],
+                        transition["action"],
+                        repair_action.get("adapter", "-"),
                     )
                 elif gate_result["decision"] == "fail":
                     db.update_story(

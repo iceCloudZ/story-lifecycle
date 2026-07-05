@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from ...infra.story_paths import safe_segment
+
 # 默认同 stage 重试上限(超过 → escalate)
 _DEFAULT_MAX_RETRIES = 3
 
@@ -88,3 +90,65 @@ def _gate_passed(gate_decision: dict | bool) -> bool:
     if isinstance(gate_decision, dict):
         return bool(gate_decision.get("pass", False))
     return bool(gate_decision)
+
+
+# ---- Handler-side 映射:decide_transition 决策 → planner 可插入的 action ----
+
+# swap_approach 时轮转的 adapter 序(与 recovery 一致)
+_SWAP_ADAPTER_ORDER: tuple[str, ...] = ("codex", "claude", "kimi")
+
+
+def build_repair_action(
+    *,
+    transition_decision: dict,
+    story_key: str,
+    gate_result: dict,
+    adapter_name: str,
+) -> dict | None:
+    """把 ``decide_transition`` 的决策映射成 planner 可 ``actions.insert`` 的 action dict。
+
+    Returns:
+        - ``retry`` → verify 修复 action(同 adapter)。
+        - ``swap_approach`` → verify 修复 action(**换** adapter,轮转序下一个)。
+        - ``insert_rescue_stage`` → 救援 stage action(stage=``rescue_stage``)。
+        - ``proceed`` / ``escalate`` / ``skip`` → ``None``(caller 自己处理推进/标失败)。
+    """
+    action = transition_decision.get("action")
+    if action in ("proceed", "escalate", "skip", None):
+        return None
+
+    reason = transition_decision.get("reason", "")
+    round_n = (gate_result or {}).get("round", 1)
+    seg = safe_segment(story_key)
+
+    if action == "insert_rescue_stage":
+        rescue = transition_decision.get("rescue_stage", "setup_dependency")
+        return {
+            "action": "launch",
+            "stage": rescue,
+            "adapter": adapter_name,
+            "focus": f"rescue stage — {reason}",
+            "done_file": f".story/done/{seg}/{rescue}.json",
+        }
+
+    # retry 或 swap_approach → verify 修复(done_file 与原 verify-gate round 格式一致)
+    if action == "swap_approach":
+        repair_adapter = _next_adapter(adapter_name, list(_SWAP_ADAPTER_ORDER))
+    else:
+        repair_adapter = adapter_name
+    return {
+        "action": "launch",
+        "stage": "verify",
+        "adapter": repair_adapter,
+        "focus": f"repair round {round_n} — {reason}",
+        "done_file": f".story/done/{seg}/verify-round{round_n}.json",
+    }
+
+
+def _next_adapter(current: str, order: list[str]) -> str:
+    """下一个 adapter(current 不在 order → order[0])。"""
+    if not order:
+        return current
+    if current not in order:
+        return order[0]
+    return order[(order.index(current) + 1) % len(order)]
