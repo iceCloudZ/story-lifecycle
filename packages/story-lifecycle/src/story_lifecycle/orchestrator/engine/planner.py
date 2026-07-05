@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ...infra.llm_client import get_llm, with_story_key
 from ...infra.story_paths import safe_segment, safe_story_path
+from ...infra.paths import stage_done_file_rel
 from .agent_tools import ORCHESTRATOR_TOOLS
 
 log = logging.getLogger("story-lifecycle.planner")
@@ -293,7 +294,7 @@ def run_orchestrator_agent(
                         "focus": args.get("focus", ""),
                         "done_file": args.get(
                             "done_file",
-                            f".story-done/{safe_segment(story_key)}-{args.get('stage', '')}.json",
+                            stage_done_file_rel(story_key, args.get("stage", "")),
                         ),
                     }
                     actions.append(action)
@@ -423,6 +424,46 @@ def _write_retrospect(workspace: str, story_key: str, actions: list) -> None:
         log.warning("[%s] failed to write retrospect.md: %s", story_key, exc)
 
 
+def _build_verify_history_facts(*, db, failed_adapter, gate_round, retry_limit):
+    """层5 回注:查全局决策事件 → reflect playbook → transition ``history_facts``。
+
+    飞轮闭环:历史 recovery 换 adapter 成功 → reflect 沉淀规则 → 当前 verify-gate
+    失败时 ``same_failure_swap_succeeded=True`` → decide_transition 选 swap_approach。
+    任何异常 → 安全兜底(不阻塞 verify-gate 主流程)。
+    """
+    try:
+        from ..learning.reflection import build_transition_history_facts
+
+        raw = db.get_recent_events_by_type(
+            ["recovery_action", "judge_verdict", "transition_decision"], limit=100
+        )
+        parsed = []
+        for r in raw:
+            try:
+                payload = json.loads(r.get("payload") or "{}")
+            except Exception:
+                payload = {}
+            parsed.append(
+                {
+                    "story_key": r.get("story_key", ""),
+                    "event_type": r.get("event_type", ""),
+                    "payload": payload,
+                }
+            )
+        return build_transition_history_facts(
+            events=parsed,
+            failed_adapter=failed_adapter,
+            gate_round=gate_round,
+            retry_limit=retry_limit,
+        )
+    except Exception:
+        return {
+            "failure_count_on_stage": gate_round,
+            "max_retries": retry_limit,
+            "same_failure_swap_succeeded": False,
+        }
+
+
 @with_story_key()
 def continue_orchestrator_agent(story_key: str, headless: bool = False):
     """用户确认规划后，执行 action list。
@@ -495,7 +536,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             focus = action.get("focus", "")
             done_file_rel = action.get(
                 "done_file",
-                f".story-done/{safe_segment(story_key)}-{stage}.json",
+                stage_done_file_rel(story_key, stage),
             )
 
             # 更新当前阶段
@@ -768,33 +809,61 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     max_retries=max_retries,
                 )
                 if gate_result["decision"] == "retry":
-                    retry_done_file = (
-                        f".story/done/{safe_segment(story_key)}/verify"
-                        f"-round{gate_result['round']}.json"
+                    # 层2 transition(阶段3 接入):decide_transition 决定怎么转,替硬编码 insert。
+                    from .transition import build_repair_action, decide_transition
+
+                    reason_text = str(gate_result.get("reason", "")).lower()
+                    failure_mode = (
+                        "missing_dependency"
+                        if any(
+                            k in reason_text
+                            for k in ("depend", "import", "no module", "no such file")
+                        )
+                        else "quality"
                     )
-                    actions.insert(
-                        idx + 1,
-                        {
-                            "action": "launch",
-                            "stage": "verify",
-                            "adapter": adapter_name,
-                            "focus": (
-                                f"repair round {gate_result['round']}/"
-                                f"{gate_result['retry_limit']} — address HIGH findings"
-                            ),
-                            "done_file": retry_done_file,
-                        },
+                    # 层5 回注:reflect playbook → history_facts(让 swap_approach 真触发,
+                    # 替硬编码 False)。飞轮:历史"换 adapter 成功"→ 当前同类失败时 decide_transition 选 swap_approach。
+                    history_facts = _build_verify_history_facts(
+                        db=db,
+                        failed_adapter=adapter_name,
+                        gate_round=gate_result.get("round", 1),
+                        retry_limit=gate_result.get("retry_limit", max_retries),
                     )
+                    if failure_mode == "missing_dependency":
+                        history_facts["missing_dep"] = gate_result.get("reason", "")
+                    transition = decide_transition(
+                        gate_decision={"pass": False, "rework_point": "verify"},
+                        failure_mode=failure_mode,
+                        history_facts=history_facts,
+                    )
+                    db.log_event(story_key, stage, "transition_decision", transition)
+                    repair_action = build_repair_action(
+                        transition_decision=transition,
+                        story_key=story_key,
+                        gate_result=gate_result,
+                        adapter_name=adapter_name,
+                    )
+                    if repair_action is None:
+                        # escalate/proceed/skip → 不插 action,标失败(transition 决策已落事件)
+                        db.update_story(
+                            story_key,
+                            status="failed",
+                            last_error=str(transition.get("reason", ""))[:500],
+                        )
+                        return
+                    actions.insert(idx + 1, repair_action)
                     ctx["_agent_actions"] = actions
                     db.update_story(
                         story_key,
                         context_json=json.dumps(ctx, ensure_ascii=False),
                     )
                     log.info(
-                        "[%s] Verify gate blocked (round %d/%d); retry scheduled",
+                        "[%s] Verify gate blocked (round %d/%d); transition=%s adapter=%s",
                         story_key,
                         gate_result["round"],
                         gate_result["retry_limit"],
+                        transition["action"],
+                        repair_action.get("adapter", "-"),
                     )
                 elif gate_result["decision"] == "fail":
                     db.update_story(

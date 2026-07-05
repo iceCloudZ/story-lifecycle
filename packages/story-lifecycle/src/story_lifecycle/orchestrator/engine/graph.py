@@ -25,6 +25,9 @@ _executor = ThreadPoolExecutor(max_workers=4)
 _running_stories: dict[str, int] = {}
 _running_lock = threading.Lock()
 
+# 层3 rescue:单次 run_story 内换 adapter 重跑的次数上限(与 rescue_story/decide_recovery 协同)。
+_MAX_RECOVERY = 3
+
 # Workspace mutex — cross-process safe via filelock + in-process threading.Lock.
 _workspace_locks_dir = STORY_HOME / "workspace-locks"
 _workspace_locks_dir.mkdir(parents=True, exist_ok=True)
@@ -172,8 +175,10 @@ def is_epoch_current(story_key: str, epoch: int) -> bool:
 def run_story(story_key: str, epoch: int = 0):
     """Run a story through the Agent execution loop.
 
-    Replaces the old LangGraph StateGraph invocation.
+    Replaces the old LangGraph StateGraph invocation. 层3 rescue Handler:
+    失败 → ``decide_recovery`` → ``rescue_story`` 换 adapter → 有界重跑(上限 ``_MAX_RECOVERY``)。
     """
+    import json as _json
     import traceback
 
     story = db.get_story(story_key)
@@ -184,14 +189,82 @@ def run_story(story_key: str, epoch: int = 0):
         if workspace:
             acquired = acquire_workspace(workspace, story_key)
 
-        planner.continue_orchestrator_agent(story_key)
-    except Exception:
-        log.error(f"run_story failed for {story_key}:\n{traceback.format_exc()}")
+        # 有界重试循环:可恢复失败 → 换 adapter 重跑;不可恢复 / 超上限 / 无 _agent_actions → 停。
+        while True:
+            try:
+                planner.continue_orchestrator_agent(story_key)
+                return  # 成功
+            except Exception as exc:
+                log.error(
+                    f"run_story attempt failed for {story_key}:\n{traceback.format_exc()}"
+                )
+                # 异常回写(0d-D):不标 failed 则崩溃 story 永远卡 active。
+                try:
+                    db.update_story(
+                        story_key, status="failed", last_error=str(exc)[:500]
+                    )
+                except Exception:
+                    log.exception("failed to mark story %s as failed", story_key)
+                # 层3 recovery:决策救法 + 落 recovery_action 事件(审计 + 层5 反思数据源)
+                from .recovery import decide_recovery, rescue_story
+
+                story_rec = db.get_story(story_key) or {}
+                stage_rec = story_rec.get("current_stage") or ""
+                try:
+                    prior_ctx = _json.loads(story_rec.get("context_json") or "{}")
+                except Exception:
+                    prior_ctx = {}
+                attempt_count = int(prior_ctx.get("_recovery_attempt", 0)) + 1
+                recovery = decide_recovery(
+                    exc=exc,
+                    story_facts={
+                        "story_key": story_key,
+                        "stage": stage_rec,
+                        "priority": story_rec.get("priority") or "P2",
+                        "workspace": story_rec.get("workspace") or "",
+                    },
+                    adapter="claude",  # 兜底;rescue_story 会按 ctx action 的 adapter 换
+                    attempt_count=attempt_count,
+                )
+                db.log_event(story_key, stage_rec, "recovery_action", recovery)
+                if recovery.get("action") != "retry_new_adapter":
+                    break  # 不可恢复(escalate/skip/downgrade)→ 停
+                # rescue:换失败 stage 的 adapter + bump 计数
+                rescue = rescue_story(
+                    story_key=story_key,
+                    recovery_decision=recovery,
+                    ctx=prior_ctx,
+                    current_stage=stage_rec,
+                    max_attempts=_MAX_RECOVERY,
+                )
+                if not rescue.get("scheduled"):
+                    break  # 超 _agent_actions 不匹配 / 超上限 → 停(story 已 failed)
+                try:
+                    db.update_story(
+                        story_key,
+                        context_json=_json.dumps(prior_ctx, ensure_ascii=False),
+                        status="implementing",
+                    )
+                except Exception:
+                    db.update_story(story_key, status="implementing")
+                log.info(
+                    "[%s] rescue: retry stage %s with %s (attempt %d/%d)",
+                    story_key,
+                    stage_rec,
+                    rescue.get("new_adapter"),
+                    rescue["attempt"],
+                    _MAX_RECOVERY,
+                )
+                # loop → 重新调 planner(读更新后的 ctx,用新 adapter)
+        # 终态失败:写 graph_error.log
         err_file = STORY_HOME / "graph_error.log"
-        err_file.write_text(
-            f"run_story failed for {story_key}:\n{traceback.format_exc()}",
-            encoding="utf-8",
-        )
+        try:
+            err_file.write_text(
+                f"run_story failed for {story_key}:\n{traceback.format_exc()}",
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
     finally:
         if acquired and workspace:
             release_workspace(workspace, story_key, epoch)
@@ -260,12 +333,33 @@ def find_ready_interactive_stories() -> list[str]:
     return ready
 
 
+def order_ready_stories(story_keys: list[str]) -> list[str]:
+    """层5 scheduler:把 ready story 按 decide_schedule(优先级+就绪+FIFO)排序。
+
+    替 ``resume_ready_interactive_stories`` 原本的 FIFO 提交序。查不到行的 key(已删)丢弃。
+    """
+    from .scheduler import decide_schedule
+
+    stories: list[dict] = []
+    for k in story_keys:
+        row = db.get_story(k)
+        if not row:
+            continue
+        row["ready"] = True  # 都已就绪(done file 在)
+        stories.append(row)
+    return decide_schedule(stories=stories)
+
+
 def resume_ready_interactive_stories() -> list[str]:
-    """Submit interactive stories that have produced a done file."""
+    """Submit interactive stories that have produced a done file.
+
+    层5 scheduler:按优先级排序提交(替 FIFO)。
+    """
     ready = find_ready_interactive_stories()
-    for story_key in ready:
+    ordered = order_ready_stories(ready)
+    for story_key in ordered:
         resume_story_async(story_key)
-    return ready
+    return ordered
 
 
 def recover_orphan_stories():

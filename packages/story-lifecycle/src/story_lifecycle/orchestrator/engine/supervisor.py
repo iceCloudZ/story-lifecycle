@@ -12,11 +12,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Callable
 
 log = logging.getLogger(__name__)
+
+# pty.alive 轮询周期。真实 ManagedPty 进程死时 _read_loop 退出但**不往 tap 推 sentinel**,
+# 故 supervise_pty_session 用 wait_for 超时后检查 pty.alive 退出,避免 task 永久阻塞。
+_POLL_SECONDS = 1.0
 
 
 def decide_response(
@@ -115,6 +120,63 @@ def handle_pty_output(
         log_event_fn=log_event_fn,
     )
     return True
+
+
+async def supervise_pty_session(
+    *,
+    pty,
+    adapter: str,
+    story_facts: dict,
+    is_awaiting_fn: Callable,
+    llm_invoke: Callable[[str], str],
+    log_event_fn: Callable,
+    buffer_bytes: int = 2000,
+) -> None:
+    """持续监督一个 PTY session(消费 ``add_tap`` 旁路 queue)。
+
+    codex/kimi 轨异步闭环::
+
+        add_tap → 每条输出解码追加到滑窗 buffer → handle_pty_output
+        (命中"AI 在等人"则决策 + pty.write 应答 + log)→ 命中后清 buffer。
+
+    退出条件:tap 收到 ``None`` sentinel,或 ``pty.alive`` 变 False。
+    ``finally`` 必 ``remove_tap`` 防泄漏。
+
+    真实 ``ManagedPty`` 进程死时 ``_read_loop`` 退出但**不推 sentinel**,
+    故用 ``wait_for`` 超时后轮询 ``pty.alive`` 退出(每 ``_POLL_SECONDS`` 一次),
+    避免 task 在死 PTY 上永久阻塞。
+    """
+    tap = pty.add_tap()
+    buffer = ""
+    try:
+        while getattr(pty, "alive", True):
+            try:
+                data = await asyncio.wait_for(tap.get(), timeout=_POLL_SECONDS)
+            except asyncio.TimeoutError:
+                continue
+            if data is None:
+                break  # sentinel(测试 + 优雅关闭信号)
+            text = (
+                data.decode("utf-8", errors="replace")
+                if isinstance(data, (bytes, bytearray))
+                else str(data)
+            )
+            buffer = buffer + text
+            if len(buffer) > buffer_bytes:
+                buffer = buffer[-buffer_bytes:]
+            answered = handle_pty_output(
+                buffer=buffer,
+                pty=pty,
+                adapter=adapter,
+                story_facts=story_facts,
+                is_awaiting_fn=is_awaiting_fn,
+                llm_invoke=llm_invoke,
+                log_event_fn=log_event_fn,
+            )
+            if answered:
+                buffer = ""  # 应答后清窗,避免同问题重复触发
+    finally:
+        pty.remove_tap(tap)
 
 
 def _build_decision_prompt(

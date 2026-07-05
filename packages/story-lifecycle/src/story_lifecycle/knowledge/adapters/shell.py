@@ -50,6 +50,10 @@ class ShellAdapter(BaseAdapter):
         template = self._config.get("launch_cmd", "")
         return template.format(model=model)
 
+    def bypass_flags(self) -> list[str]:
+        # 从 adapters.yaml 的 bypass_flags 读(kimi: ["--auto"] / ["-y"];aider: [])。
+        return list(self._config.get("bypass_flags", []) or [])
+
     def headless_launch_cmd(self, model: str, prompt: str) -> list[str] | None:
         """Headless mode launch command.
 
