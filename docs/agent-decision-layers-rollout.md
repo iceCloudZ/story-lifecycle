@@ -204,9 +204,14 @@ def _distribute(self, data: bytes) -> None  # put 到 _queue + 所有 taps,Queue
 - **0b-2 决策侧** ✅ DONE(决策半):`decide_permission(tool_name, tool_input, story_facts, llm_invoke) -> {behavior, reason}`,
   复用 `supervisor.decide_response`(选项固定 [allow, deny],守 §2.2 #5)。真 deepseek 实测:
   `rm -rf /` → **deny**、`Read README.md` → **allow**、`Write import os` → **allow**(决策正确)。
-- **0b-2 MCP server 暴露** ⏳ 未做(plumbing):lifecycle 需跑 MCP server(stdio JSON-RPC)暴露 `permission` 工具,
-  Handler 调 `decide_permission`。决策侧已就绪;MCP server 暴露 + `--permission-prompt-tool` 接入是剩余步骤。
-- **0b-3 端到端** ⏳ 受环境限:本机 Claude 全程 allow(无 permission_request 可触发),无法自然驱动 MCP 闭环;
+  `permission_tool_response` 包成 MCP `--permission-prompt-tool` 返回形(`{behavior, updatedInput, message}`)+ 落日志。
+- **0b-2 应答机制 = 选项 (b) defer/resume(不走 MCP)** ✅ DONE:`supervise_claude_stream(lines, story_facts, llm_invoke, log_event_fn)`
+  —— 消费 stream-json 行流 → `extract_awaiting` 命中(permission_request/elicitation)→ `decide_response` 决策 →
+  `log_decision` 落 `supervisor_decision`。与 codex/kimi PTY 轨 `supervise_pty_session` 对称(共用 `decide_response` 大脑,
+  感知源是结构化 stream-json 而非 PTY regex)。复用已建的 `claude_stream.py`,**不引入 MCP server 子进程**。
+  Handler 拿 decisions 后用 `claude -p --resume` 回填答案(本机 Claude 全 allow → 无真 permission_request → 回填环境阻断,
+  但决策循环已 4 测验证)。
+- **0b-3 端到端** ⏳ 受环境限:本机 Claude 全程 allow(无 permission_request 可触发),无法自然驱动 defer/resume 回填闭环;
   codex/kimi PTY 轨(0c-4)已用受控 agent 证明了同一决策大脑的全链路闭环(capture→detect→decide→write→log)。
 - **0b-2 应答机制(design 探索)**:选一:
   - (a) `--permission-prompt-tool mcp__lifecycle__permission`:lifecycle 跑 MCP server 暴露 `permission_prompt`,Claude 调时 → `decide_response` → 返回 allow/deny。**支持 Claude.ai 订阅认证**(Agent SDK 要 API key 付费)。

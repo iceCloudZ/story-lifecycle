@@ -17,6 +17,8 @@ from story_lifecycle.orchestrator.engine.claude_stream import (
     decide_permission,
     extract_awaiting,
     parse_line,
+    permission_tool_response,
+    supervise_claude_stream,
 )
 
 _FIX = Path(__file__).parent / "fixtures" / "claude_stream_samples.json"
@@ -145,3 +147,169 @@ class TestDecidePermission:
             llm_invoke=fake_llm,
         )
         assert d["behavior"] == ALLOW
+
+
+class TestPermissionToolResponse:
+    """permission_tool_response:把 decide_permission 包成 MCP --permission-prompt-tool 的返回形。
+
+    MCP 契约:返回 ``{behavior: allow|deny, updatedInput, message}``。
+    """
+
+    def test_allow_response_shape(self):
+        def fake_llm(p):
+            return '{"choice":"allow","reason":"safe"}'
+
+        r = permission_tool_response(
+            tool_name="Read",
+            tool_input={"file_path": "README.md"},
+            story_facts={"story_key": "M-1", "stage": "implement"},
+            llm_invoke=fake_llm,
+        )
+        assert r["behavior"] == "allow"
+        assert r["updatedInput"] == {"file_path": "README.md"}  # 原样回传
+        assert "safe" in r["message"]
+
+    def test_deny_response_shape(self):
+        def fake_llm(p):
+            return '{"choice":"deny","reason":"destructive"}'
+
+        r = permission_tool_response(
+            tool_name="Bash",
+            tool_input={"command": "rm -rf /"},
+            story_facts={"story_key": "M-2", "stage": "implement"},
+            llm_invoke=fake_llm,
+        )
+        assert r["behavior"] == "deny"
+        assert r["updatedInput"] == {"command": "rm -rf /"}
+
+    def test_logs_supervisor_decision_when_log_fn_given(self):
+        def fake_llm(p):
+            return '{"choice":"deny","reason":"no"}'
+
+        logged = []
+
+        def fake_log(story_key, stage, event_type, payload):
+            logged.append({"story_key": story_key, "event_type": event_type, "payload": payload})
+
+        permission_tool_response(
+            tool_name="Write",
+            tool_input={"file_path": "/etc/x"},
+            story_facts={"story_key": "M-3", "stage": "verify"},
+            llm_invoke=fake_llm,
+            log_event_fn=fake_log,
+        )
+        assert len(logged) == 1
+        assert logged[0]["event_type"] == "supervisor_decision"
+        assert logged[0]["payload"]["choice"] == "deny"
+        assert logged[0]["payload"]["adapter"] == "claude"
+
+    def test_no_log_fn_does_not_crash(self):
+        def fake_llm(p):
+            return '{"choice":"allow","reason":"ok"}'
+
+        r = permission_tool_response(
+            tool_name="Read",
+            tool_input={},
+            story_facts={"story_key": "M-4", "stage": "implement"},
+            llm_invoke=fake_llm,
+        )
+        assert r["behavior"] == "allow"
+
+
+class TestSuperviseClaudeStream:
+    """supervise_claude_stream:Claude 轨决策循环(消费 stream-json 行 → decide → log)。
+
+    defer/resume 路径(0b-2 选项 b,不走 MCP):lifecycle 跑 ``claude -p --output-format stream-json``、
+    本函数消费其行流,命中 awaiting(permission_request / elicitation)→ decide_response → 落
+    supervisor_decision;Handler 再用决策 ``claude --resume`` 回填。决策循环与 PTY 轨共用 decide_response。
+    """
+
+    @staticmethod
+    def _lines(*names):
+        return [SAMPLES[n] for n in names]
+
+    def test_non_awaiting_lines_yield_no_decisions(self):
+        """真 init / Write tool_use / result 行都不触发决策。"""
+        calls = {"n": 0, "logs": 0}
+
+        def fake_llm(p):
+            calls["n"] += 1
+            return '{"choice":"allow","reason":"x"}'
+
+        def fake_log(*a, **k):
+            calls["logs"] += 1
+
+        decisions = supervise_claude_stream(
+            lines=self._lines("system_init", "assistant_tool_use_bash", "result_success"),
+            story_facts={"story_key": "C-1", "stage": "implement"},
+            llm_invoke=fake_llm,
+            log_event_fn=fake_log,
+        )
+        assert decisions == []
+        assert calls["n"] == 0
+        assert calls["logs"] == 0
+
+    def test_permission_request_line_yields_decision_and_logs(self):
+        logged = []
+
+        def fake_llm(p):
+            return '{"choice":"deny","reason":"destructive"}'
+
+        def fake_log(story_key, stage, event_type, payload):
+            logged.append({"story_key": story_key, "event_type": event_type, "payload": payload})
+
+        perm_line = json.dumps(
+            {"type": "permission_request", "tool_name": "Bash", "input": {"command": "rm -rf /"}}
+        )
+        decisions = supervise_claude_stream(
+            lines=[SAMPLES["system_init"], perm_line],
+            story_facts={"story_key": "C-2", "stage": "implement"},
+            llm_invoke=fake_llm,
+            log_event_fn=fake_log,
+        )
+        assert len(decisions) == 1
+        assert decisions[0]["choice"] == "deny"
+        assert decisions[0]["options"] == [ALLOW, DENY]
+        assert len(logged) == 1
+        assert logged[0]["event_type"] == "supervisor_decision"
+        assert logged[0]["payload"]["adapter"] == "claude"
+        assert logged[0]["payload"]["choice"] == "deny"
+
+    def test_elicitation_line_yields_decision_with_its_options(self):
+        def fake_llm(p):
+            return '{"choice":"A","reason":"faster"}'
+
+        eli_line = json.dumps(
+            {"type": "elicitation", "message": "用 A 还是 B?", "options": ["A", "B"]}
+        )
+        decisions = supervise_claude_stream(
+            lines=[eli_line],
+            story_facts={"story_key": "C-3", "stage": "design"},
+            llm_invoke=fake_llm,
+            log_event_fn=lambda *a, **k: None,
+        )
+        assert decisions[0]["choice"] == "A"
+        assert decisions[0]["options"] == ["A", "B"]
+
+    def test_multiple_awaiting_lines_yield_multiple_decisions(self):
+        n = {"c": 0}
+
+        def fake_llm(p):
+            n["c"] += 1
+            return '{"choice":"allow","reason":"ok"}'
+
+        lines = [
+            json.dumps({"type": "permission_request", "tool_name": "Read", "input": {}}),
+            SAMPLES["result_success"],
+            json.dumps({"type": "permission_request", "tool_name": "Glob", "input": {}}),
+        ]
+        decisions = supervise_claude_stream(
+            lines=lines,
+            story_facts={"story_key": "C-4", "stage": "implement"},
+            llm_invoke=fake_llm,
+            log_event_fn=lambda *a, **k: None,
+        )
+        assert len(decisions) == 2  # 中间 result 行不算
+        assert n["c"] == 2
+
+

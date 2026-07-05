@@ -125,3 +125,111 @@ def decide_permission(
         llm_invoke=llm_invoke,
     )
     return {"behavior": decision["choice"], "reason": decision["reason"]}
+
+
+def permission_tool_response(
+    *,
+    tool_name: str,
+    tool_input: dict,
+    story_facts: dict,
+    llm_invoke: Callable[[str], str],
+    log_event_fn: Callable | None = None,
+) -> dict:
+    """MCP ``--permission-prompt-tool`` 返回形:decide_permission + 落日志 + MCP 契约 dict。
+
+    Claude 经 ``--permission-prompt-tool mcp__lifecycle__permission`` 调本工具时,MCP server
+    Handler 调本函数。返回 ``{behavior: "allow"|"deny", updatedInput, message}``(MCP 契约):
+    - ``behavior``: ``decide_permission`` 的 allow/deny。
+    - ``updatedInput``: 原样回传(不改写 Claude 的工具输入)。
+    - ``message``: 决策理由(给 Claude 看)。
+
+    ``log_event_fn`` 注入时落 ``supervisor_decision`` 事件(审计 + 层5 反思数据源)。
+    """
+    decision = decide_permission(
+        tool_name=tool_name,
+        tool_input=tool_input,
+        story_facts=story_facts,
+        llm_invoke=llm_invoke,
+    )
+    if log_event_fn is not None:
+        try:
+            log_event_fn(
+                story_facts.get("story_key", ""),
+                story_facts.get("stage", ""),
+                "supervisor_decision",
+                {
+                    "adapter": "claude",
+                    "question": _summarize_perm(tool_name, tool_input),
+                    "options": [ALLOW, DENY],
+                    "choice": decision["behavior"],
+                    "reason": decision["reason"],
+                },
+            )
+        except Exception:
+            pass
+    return {
+        "behavior": decision["behavior"],
+        "updatedInput": tool_input,
+        "message": decision["reason"],
+    }
+
+
+def supervise_claude_stream(
+    *,
+    lines,
+    story_facts: dict,
+    llm_invoke: Callable[[str], str],
+    log_event_fn: Callable,
+    permission_tool: str = DEFAULT_PERM_TOOL,
+) -> list[dict]:
+    """Claude 轨决策循环(defer/resume 路径,0b-2 选项 b,**不走 MCP**)。
+
+    消费 ``claude -p --output-format stream-json`` 的行流:每行过 ``extract_awaiting``,
+    命中"在等人"(permission_request / elicitation / permission MCP 工具调用)→
+    ``decide_response`` 决策 → ``log_decision`` 落 ``supervisor_decision`` 事件。
+    非命中行(system/init、thinking、正常 tool_use、result)→ 跳过(不调 LLM)。
+
+    与 codex/kimi PTY 轨的 ``supervisor.supervise_pty_session`` 对称:共用 ``decide_response``
+    决策大脑,只是感知源是 stream-json 行(结构化)而非 PTY 文本(regex)。
+
+    Handler(caller)拿到返回的 decisions 后,用 ``claude -p --resume <session>`` 把答案回填
+    Claude(本机 Claude 全 allow,无真 permission_request,该回填环境阻断)。
+
+    Args:
+        lines: stream-json 行的可迭代(每行一条 JSON 事件文本)。
+
+    Returns:
+        ``[{question, options, choice, reason}]`` —— 命中并决策过的点。
+    """
+    from .supervisor import decide_response, log_decision
+
+    decisions: list[dict] = []
+    for line in lines:
+        awaiting = extract_awaiting(line, permission_tool=permission_tool)
+        if not awaiting:
+            continue
+        question, options = awaiting
+        decision = decide_response(
+            question=question,
+            options=options,
+            story_facts=story_facts,
+            llm_invoke=llm_invoke,
+        )
+        log_decision(
+            story_key=story_facts.get("story_key", ""),
+            stage=story_facts.get("stage", ""),
+            adapter="claude",
+            question=question,
+            options=options,
+            decision=decision,
+            log_event_fn=log_event_fn,
+        )
+        decisions.append(
+            {
+                "question": question,
+                "options": options,
+                "choice": decision["choice"],
+                "reason": decision["reason"],
+            }
+        )
+    return decisions
