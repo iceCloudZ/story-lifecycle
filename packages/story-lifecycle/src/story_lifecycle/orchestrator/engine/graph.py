@@ -333,12 +333,33 @@ def find_ready_interactive_stories() -> list[str]:
     return ready
 
 
+def order_ready_stories(story_keys: list[str]) -> list[str]:
+    """层5 scheduler:把 ready story 按 decide_schedule(优先级+就绪+FIFO)排序。
+
+    替 ``resume_ready_interactive_stories`` 原本的 FIFO 提交序。查不到行的 key(已删)丢弃。
+    """
+    from .scheduler import decide_schedule
+
+    stories: list[dict] = []
+    for k in story_keys:
+        row = db.get_story(k)
+        if not row:
+            continue
+        row["ready"] = True  # 都已就绪(done file 在)
+        stories.append(row)
+    return decide_schedule(stories=stories)
+
+
 def resume_ready_interactive_stories() -> list[str]:
-    """Submit interactive stories that have produced a done file."""
+    """Submit interactive stories that have produced a done file.
+
+    层5 scheduler:按优先级排序提交(替 FIFO)。
+    """
     ready = find_ready_interactive_stories()
-    for story_key in ready:
+    ordered = order_ready_stories(ready)
+    for story_key in ordered:
         resume_story_async(story_key)
-    return ready
+    return ordered
 
 
 def recover_orphan_stories():

@@ -58,3 +58,31 @@ class TestDecideSchedule:
         order = decide_schedule(stories=[st("A", "P1"), st("B", "P3")])
         assert all(isinstance(k, str) for k in order)
         assert set(order) == {"A", "B"}
+
+
+from story_lifecycle.infra.db import models as db
+from story_lifecycle.orchestrator.engine import graph
+
+
+def test_order_ready_stories_by_priority():
+    """graph.order_ready_stories 按 decide_schedule 优先级排(替 FIFO)。"""
+    for k, p in (("LO", "P2"), ("HI", "P0"), ("MID", "P1")):
+        db.create_story(k, k, "")
+        db.update_story(k, priority=p)
+    ordered = graph.order_ready_stories(["LO", "HI", "MID"])
+    assert ordered[0] == "HI"  # P0 最高
+    assert ordered[1] == "MID"  # P1
+    assert ordered[2] == "LO"  # P2
+
+
+def test_order_ready_stories_empty():
+    assert graph.order_ready_stories([]) == []
+
+
+def test_order_ready_stories_missing_story_row_kept():
+    """某个 key 在 db 里查不到(已删)→ 不崩,其余照排。"""
+    db.create_story("KEEP", "keep", "")
+    db.update_story("KEEP", priority="P0")
+    ordered = graph.order_ready_stories(["GONE", "KEEP"])
+    assert ordered == ["KEEP"]  # GONE 被丢,KEEP 保留
+
