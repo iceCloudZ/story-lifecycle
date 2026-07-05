@@ -122,3 +122,82 @@ class TestDecideRecovery:
             attempt_count=1,
         )
         assert isinstance(r["reason"], str) and r["reason"]
+
+
+from story_lifecycle.orchestrator.engine.recovery import rescue_story
+
+
+class TestRescueStory:
+    """rescue_story:把 retry_new_adapter 决策落到 ctx —— 换失败 stage 的 adapter + bump 计数。"""
+
+    def test_retry_swaps_failing_stage_adapter_and_bumps_attempt(self):
+        ctx = {
+            "_recovery_attempt": 0,
+            "_agent_actions": [
+                {"action": "launch", "stage": "implement", "adapter": "codex"},
+                {"action": "launch", "stage": "verify", "adapter": "claude"},
+            ],
+        }
+        r = rescue_story(
+            story_key="S-1",
+            recovery_decision={"action": "retry_new_adapter", "new_adapter": "claude"},
+            ctx=ctx,
+            current_stage="implement",
+            max_attempts=3,
+        )
+        assert r["scheduled"] is True
+        assert r["new_adapter"] == "claude"
+        assert r["attempt"] == 1
+        # 失败 stage 的 adapter 被换
+        assert ctx["_agent_actions"][0]["adapter"] == "claude"
+        # 其它 stage 不动
+        assert ctx["_agent_actions"][1]["adapter"] == "claude"  # 原本就是 claude
+        assert ctx["_recovery_attempt"] == 1
+
+    def test_non_retry_action_not_scheduled(self):
+        ctx = {"_recovery_attempt": 0, "_agent_actions": []}
+        r = rescue_story(
+            story_key="S-2",
+            recovery_decision={"action": "escalate_human"},
+            ctx=ctx,
+            current_stage="implement",
+        )
+        assert r["scheduled"] is False
+
+    def test_exceeding_max_attempts_not_scheduled(self):
+        ctx = {"_recovery_attempt": 3, "_agent_actions": [
+            {"action": "launch", "stage": "implement", "adapter": "codex"}]}
+        r = rescue_story(
+            story_key="S-3",
+            recovery_decision={"action": "retry_new_adapter", "new_adapter": "claude"},
+            ctx=ctx,
+            current_stage="implement",
+            max_attempts=3,
+        )
+        assert r["scheduled"] is False  # 已 3 次,超上限
+
+    def test_no_matching_action_not_scheduled(self):
+        """ctx 里没有失败 stage 的 action(无 _agent_actions)→ 无法安排重试。"""
+        ctx = {"_recovery_attempt": 0, "_agent_actions": []}
+        r = rescue_story(
+            story_key="S-4",
+            recovery_decision={"action": "retry_new_adapter", "new_adapter": "claude"},
+            ctx=ctx,
+            current_stage="implement",
+            max_attempts=3,
+        )
+        assert r["scheduled"] is False
+
+    def test_attempt_counter_increments_across_calls(self):
+        ctx = {"_recovery_attempt": 1, "_agent_actions": [
+            {"action": "launch", "stage": "implement", "adapter": "codex"}]}
+        r = rescue_story(
+            story_key="S-5",
+            recovery_decision={"action": "retry_new_adapter", "new_adapter": "claude"},
+            ctx=ctx,
+            current_stage="implement",
+            max_attempts=3,
+        )
+        assert r["attempt"] == 2
+        assert ctx["_recovery_attempt"] == 2
+

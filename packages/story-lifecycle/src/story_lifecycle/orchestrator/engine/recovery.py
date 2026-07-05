@@ -119,3 +119,65 @@ def _next_adapter(current: str, order: list[str]) -> str:
         return order[0]
     idx = order.index(current)
     return order[(idx + 1) % len(order)]
+
+
+def rescue_story(
+    *,
+    story_key: str,
+    recovery_decision: dict,
+    ctx: dict,
+    current_stage: str,
+    max_attempts: int = 3,
+) -> dict:
+    """Handler:把 ``retry_new_adapter`` 决策落到 ctx,为重试做准备。
+
+    - 在 ``ctx["_agent_actions"]`` 里找失败 stage(``current_stage``)的 launch action,
+      把它的 adapter 换成 ``recovery_decision["new_adapter"]``。
+    - bump ``ctx["_recovery_attempt"]``(重试次数上限的依据)。
+
+    不在此处重新执行(planner 重启归 run_story 的有界重试循环),只做 ctx 外科 + 计数。
+
+    Args:
+        recovery_decision: ``decide_recovery`` 的输出。
+        ctx: story context dict(就地修改:_agent_actions 里换 adapter、_recovery_attempt bump)。
+        current_stage: 失败的 stage 名(定位要换 adapter 的 action)。
+        max_attempts: 重试上限(超过 → 不安排)。
+
+    Returns:
+        ``{"scheduled": bool, "new_adapter"?, "attempt"?, "reason"?}``。
+        scheduled=True 表示已为重试准备好(ctx 已改);caller 据此决定是否重跑。
+    """
+    if recovery_decision.get("action") != "retry_new_adapter":
+        return {
+            "scheduled": False,
+            "reason": f"recovery action={recovery_decision.get('action')} 不是 retry",
+        }
+
+    attempt = int(ctx.get("_recovery_attempt", 0)) + 1
+    if attempt > max_attempts:
+        return {
+            "scheduled": False,
+            "reason": f"重试次数 {attempt} 超上限 {max_attempts}",
+        }
+
+    new_adapter = recovery_decision.get("new_adapter")
+    actions = ctx.get("_agent_actions") or []
+    swapped = False
+    for a in actions:
+        if (
+            isinstance(a, dict)
+            and a.get("action") == "launch"
+            and a.get("stage") == current_stage
+        ):
+            a["adapter"] = new_adapter
+            swapped = True
+            break
+
+    ctx["_recovery_attempt"] = attempt
+    if not swapped:
+        return {
+            "scheduled": False,
+            "attempt": attempt,
+            "reason": f"ctx 里找不到 stage={current_stage} 的 launch action,无法换 adapter",
+        }
+    return {"scheduled": True, "new_adapter": new_adapter, "attempt": attempt}

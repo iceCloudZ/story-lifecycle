@@ -66,3 +66,38 @@ def test_run_story_logs_recovery_action_on_raise(monkeypatch):
     # story 不卡 active(标 failed)
     assert db.get_story("REC-1")["status"] == "failed"
 
+
+def test_run_story_rescues_on_retryable_failure(monkeypatch):
+    """层3 rescue Handler:有 _agent_actions + 可恢复失败 → 换 adapter 重跑,planner 被调 2 次。"""
+    db.create_story("RESC-1", title="", workspace="")
+    db.update_story(
+        "RESC-1",
+        current_stage="implement",
+        priority="P2",
+        context_json=json.dumps(
+            {"_agent_actions": [{"action": "launch", "stage": "implement", "adapter": "codex"}]}
+        ),
+    )
+
+    calls = {"n": 0}
+
+    def flaky(story_key):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("done file never appeared")
+        # 第 2 次:成功(直接返回)
+
+    monkeypatch.setattr(graph.planner, "continue_orchestrator_agent", flaky)
+
+    graph.run_story("RESC-1", epoch=0)
+
+    assert calls["n"] == 2  # 重试了一次
+    ctx = json.loads(db.get_story("RESC-1")["context_json"])
+    assert ctx["_recovery_attempt"] == 1  # 计数 bump
+    assert ctx["_agent_actions"][0]["adapter"] != "codex"  # adapter 被换
+    events = db.get_recent_quality_events("RESC-1", ["recovery_action"])
+    assert len(events) >= 1
+    # rescue 后 status 重置成 implementing(再跑),成功后不再标 failed
+    assert db.get_story("RESC-1")["status"] != "failed"
+
+
