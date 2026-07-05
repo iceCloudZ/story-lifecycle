@@ -1215,6 +1215,20 @@ def get_recent_quality_events(
     return [dict(r) for r in rows]
 
 
+def get_recent_events_by_type(event_types: list[str], limit: int = 100) -> list[dict]:
+    """跨所有 story 取近期事件(无 story_key 过滤)。
+
+    供层5 reflection 的全局 playbook 用(飞轮知识是跨 story 的)。
+    """
+    placeholders = ",".join("?" * len(event_types))
+    with _db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM event_log WHERE event_type IN ({placeholders}) ORDER BY id DESC LIMIT ?",
+            list(event_types) + [limit],
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # -------- Learned pattern helpers --------
 
 

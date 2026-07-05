@@ -81,3 +81,38 @@ def _payload_bool(payload, keys) -> bool:
     if not isinstance(payload, dict):
         return False
     return any(payload.get(k) is True for k in keys)
+
+
+def build_transition_history_facts(
+    *,
+    events: list[dict],
+    failed_adapter: str,
+    gate_round: int,
+    retry_limit: int,
+) -> dict:
+    """层5 回注:把 reflect 的 playbook 翻译成 transition 的 ``history_facts``。
+
+    飞轮闭环:recovery 换 adapter 成功 → ``reflect`` 沉淀"adapter X 失败 → 换 Y 成功"
+    → 本函数检查 playbook 里是否有以 ``failed_adapter`` 为失败方的规则 →
+    ``same_failure_swap_succeeded=True`` → ``decide_transition`` 返回 ``swap_approach``
+    (替硬编码 False,让 swap 真触发)。
+
+    Args:
+        events: 决策事件流(同 ``reflect``,caller 从 event_log 查近期事件传入)。
+        failed_adapter: 当前 verify-gate 失败的 adapter(要查"换法是否解过它")。
+        gate_round: 当前 verify 修复轮次 → ``failure_count_on_stage``。
+        retry_limit: gate 重试上限 → ``max_retries``。
+
+    Returns:
+        ``{"failure_count_on_stage", "max_retries", "same_failure_swap_succeeded"}``,
+        可直接喂 ``decide_transition`` 的 ``history_facts``。
+    """
+    playbook = reflect(events=events)["playbook"]
+    # reflect 的 rule 形如 "adapter codex 失败 → 换 claude 成功"
+    needle = f"adapter {failed_adapter} 失败"
+    swap_worked = any(rule["rule"].startswith(needle) for rule in playbook)
+    return {
+        "failure_count_on_stage": gate_round,
+        "max_retries": retry_limit,
+        "same_failure_swap_succeeded": swap_worked,
+    }

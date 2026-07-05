@@ -82,3 +82,69 @@ class TestReflect:
         ]
         r = reflect(events=events)
         assert r["playbook"] == []
+
+
+from story_lifecycle.orchestrator.learning.reflection import (
+    build_transition_history_facts,
+)
+
+
+class TestBuildTransitionHistoryFacts:
+    """层5 回注:reflect 的 playbook → transition 的 history_facts(让 swap_approach 真触发)。
+
+    飞轮:recovery 换 adapter 成功 → reflect 沉淀"X 失败→换 Y 成功" → 本函数把它变成
+    transition 的 ``same_failure_swap_succeeded`` → decide_transition 返回 swap_approach。
+    """
+
+    def test_matching_playbook_rule_sets_swap_succeeded(self):
+        """历史有"codex 失败→换 claude 成功"→ 当前 codex 失败时 swap_succeeded=True。"""
+        events = [
+            ev("recovery_action", "S-x", action="retry_new_adapter",
+               failed_adapter="codex", new_adapter="claude"),
+            ev("judge_verdict", "S-x", passed=True),
+        ]
+        hf = build_transition_history_facts(
+            events=events, failed_adapter="codex", gate_round=1, retry_limit=3
+        )
+        assert hf["same_failure_swap_succeeded"] is True
+        assert hf["failure_count_on_stage"] == 1
+        assert hf["max_retries"] == 3
+
+    def test_no_matching_rule_leaves_swap_false(self):
+        """历史只解过 codex→claude,当前 kimi 失败 → swap_succeeded=False。"""
+        events = [
+            ev("recovery_action", "S-x", action="retry_new_adapter",
+               failed_adapter="codex", new_adapter="claude"),
+            ev("judge_verdict", "S-x", passed=True),
+        ]
+        hf = build_transition_history_facts(
+            events=events, failed_adapter="kimi", gate_round=1, retry_limit=3
+        )
+        assert hf["same_failure_swap_succeeded"] is False
+
+    def test_empty_events_defaults(self):
+        hf = build_transition_history_facts(
+            events=[], failed_adapter="codex", gate_round=2, retry_limit=3
+        )
+        assert hf["same_failure_swap_succeeded"] is False
+        assert hf["failure_count_on_stage"] == 2
+
+    def test_feeds_decide_transition_to_swap_approach(self):
+        """端到端:history_facts 让 decide_transition 返回 swap_approach(非 retry)。"""
+        from story_lifecycle.orchestrator.engine.transition import decide_transition
+
+        events = [
+            ev("recovery_action", "S-x", action="retry_new_adapter",
+               failed_adapter="codex", new_adapter="claude"),
+            ev("judge_verdict", "S-x", passed=True),
+        ]
+        hf = build_transition_history_facts(
+            events=events, failed_adapter="codex", gate_round=1, retry_limit=3
+        )
+        decision = decide_transition(
+            gate_decision={"pass": False, "rework_point": "verify"},
+            failure_mode="quality",
+            history_facts=hf,
+        )
+        assert decision["action"] == "swap_approach"
+

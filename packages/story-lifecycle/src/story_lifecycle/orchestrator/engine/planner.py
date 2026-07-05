@@ -424,6 +424,46 @@ def _write_retrospect(workspace: str, story_key: str, actions: list) -> None:
         log.warning("[%s] failed to write retrospect.md: %s", story_key, exc)
 
 
+def _build_verify_history_facts(*, db, failed_adapter, gate_round, retry_limit):
+    """层5 回注:查全局决策事件 → reflect playbook → transition ``history_facts``。
+
+    飞轮闭环:历史 recovery 换 adapter 成功 → reflect 沉淀规则 → 当前 verify-gate
+    失败时 ``same_failure_swap_succeeded=True`` → decide_transition 选 swap_approach。
+    任何异常 → 安全兜底(不阻塞 verify-gate 主流程)。
+    """
+    try:
+        from ..learning.reflection import build_transition_history_facts
+
+        raw = db.get_recent_events_by_type(
+            ["recovery_action", "judge_verdict", "transition_decision"], limit=100
+        )
+        parsed = []
+        for r in raw:
+            try:
+                payload = json.loads(r.get("payload") or "{}")
+            except Exception:
+                payload = {}
+            parsed.append(
+                {
+                    "story_key": r.get("story_key", ""),
+                    "event_type": r.get("event_type", ""),
+                    "payload": payload,
+                }
+            )
+        return build_transition_history_facts(
+            events=parsed,
+            failed_adapter=failed_adapter,
+            gate_round=gate_round,
+            retry_limit=retry_limit,
+        )
+    except Exception:
+        return {
+            "failure_count_on_stage": gate_round,
+            "max_retries": retry_limit,
+            "same_failure_swap_succeeded": False,
+        }
+
+
 @with_story_key()
 def continue_orchestrator_agent(story_key: str, headless: bool = False):
     """用户确认规划后，执行 action list。
@@ -781,16 +821,20 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         )
                         else "quality"
                     )
+                    # 层5 回注:reflect playbook → history_facts(让 swap_approach 真触发,
+                    # 替硬编码 False)。飞轮:历史"换 adapter 成功"→ 当前同类失败时 decide_transition 选 swap_approach。
+                    history_facts = _build_verify_history_facts(
+                        db=db,
+                        failed_adapter=adapter_name,
+                        gate_round=gate_result.get("round", 1),
+                        retry_limit=gate_result.get("retry_limit", max_retries),
+                    )
+                    if failure_mode == "missing_dependency":
+                        history_facts["missing_dep"] = gate_result.get("reason", "")
                     transition = decide_transition(
                         gate_decision={"pass": False, "rework_point": "verify"},
                         failure_mode=failure_mode,
-                        history_facts={
-                            "failure_count_on_stage": gate_result.get("round", 1),
-                            "max_retries": gate_result.get("retry_limit", max_retries),
-                            # same_failure_swap_succeeded 由层5 reflection 回注后填;先 False
-                            "same_failure_swap_succeeded": False,
-                            "missing_dep": gate_result.get("reason", ""),
-                        },
+                        history_facts=history_facts,
                     )
                     db.log_event(story_key, stage, "transition_decision", transition)
                     repair_action = build_repair_action(
