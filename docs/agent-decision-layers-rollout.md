@@ -81,11 +81,14 @@ pytest packages/story-lifecycle/tests/                            # 全包
 | 层2 边界 | 3 | `decide_transition` | ✅ Decider | 8 测全 action 矩阵 + 历史 swap 优先;planner.py:776 接入待做 |
 | 层5 元 | 4 | `reflect` / `decide_schedule` | ✅ Decider | reflect 跑真 event_log(stats 正确);6+6 测 |
 
-**全量回归**:`723 passed, 1 failed(预存在 profile 一致性,无关), 4 skipped`。
-**诚实的待办**(非阻塞,各层 Decider 已就绪):
-- 0b-2/0b-3 Claude MCP server 暴露 + `--permission-prompt-tool` 真闭环(本机 Claude 全程 allow,无真 permission_request 可触发;codex/kimi PTY 轨已证明同一决策大脑闭环)。
-- 0d perms bypass-flags 接入(CLI flag 各异 + codex 环境阻断)。
-- 层3 rescue Handler(retry 换 adapter 重启 planner)、层2 planner.py:776 硬编码 insert 替换 + replanner、层5 playbook→history_facts 回注 + scheduler→graph FIFO 替换。
+**全量回归**:`742 passed, 1 failed(预存在 profile 一致性,无关), 4 skipped`。
+**Plumbing 接入进度**(2026-07-05 续):
+- ✅ **层2** `decide_transition` 接入 planner verify-gate(替 `planner.py:776` 硬编码 insert;retry/swap/rescue/escalate)。
+- ✅ **层3** rescue Handler(`run_story` 有界重试循环:失败→换 adapter 重跑,上限 `_MAX_RECOVERY=3`)。
+- ✅ **0b-2(b)** Claude 轨 defer/resume(`supervise_claude_stream`,不走 MCP,复用 `claude_stream.py`)。
+**仍待接**(非阻塞,Decider 已就绪):
+- 0b-3 `claude -p --resume` 真回填(本机 Claude 全 allow,无 permission_request 可触发)+ 0d perms bypass-flags(codex 环境阻断)。
+- 层2 replanner(执行反馈→重规划 `invoke_with_tools`)、层5 playbook→`history_facts` 回注(让 transition swap_approach 真触发)+ scheduler→graph FIFO 替换。
 
 ### 4.1 新增/修改文件
 
