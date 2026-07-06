@@ -981,7 +981,12 @@ def _build_cli_prompt(
 ) -> str:
     """构建给 CLI 的执行 prompt。"""
     from ...infra.story_paths import story_evidence_dir
-    from .prompt_sections import build_kb_tool_section, build_knowledge_section, build_quality_section
+    from .prompt_sections import (
+        build_design_dimensions_section,
+        build_kb_tool_section,
+        build_knowledge_section,
+        build_quality_section,
+    )
 
     stage_desc = ""
     if stage in profile_stages:
@@ -1013,6 +1018,12 @@ def _build_cli_prompt(
     # Agentic RAG：不预注入死包，给 agent kb.py 工具引导（agent 自己决定查什么）。
     # task_type 让 agent 知道查哪个域；kb.py 做精确取数（graph/bugs/playbook）。
     knowledge_section = build_kb_tool_section(story_key, workspace, stage)
+
+    # design 阶段:维度 checklist + 禁 brainstorming + 高价值维度 playbook 窄注入
+    # (替代 brainstorming 自由探索——hc-all 重环境发散/context rot,见 runbook §7.4)
+    dimensions_section = ""
+    if stage == "design":
+        dimensions_section = build_design_dimensions_section(story_key, workspace, stage)
 
     # 项目仓库与分支隔离：注入每个绑定仓库的分支/基线/路径，由 CLI 自行判断
     # 是否需要 worktree 或切分支。后端的 prepare_worktrees 仍是可选的手动 API，
@@ -1060,6 +1071,7 @@ def _build_cli_prompt(
 {prd_section}
 {transcript_section}
 {knowledge_section}
+{dimensions_section}
 {quality_section}
 ### 关键要点
 {focus}

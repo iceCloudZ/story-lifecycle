@@ -402,6 +402,53 @@ python -c "import sys;sys.path.insert(0,'packages/story-lifecycle/src');from sto
 
 ---
 
+## 7.3 design=claude PTY 实验(2026-07-06 21:xx:验证 superpowers 链路 → claude hc-all 重环境 design 太重,停)
+
+**动机**: §7.1/§7.2 design/build/verify 全用 kimi(CAS 已验,事件 ×1)。用户议题(USER#7):理想全自动流程要"agent 调 superpowers brainstorming 澄清需求"——需验证 claude(原生加载 `.claude/skills` + superpowers)作 design agent 在真实 hc-all 环境的表现。claude 网关 529 已恢复。
+
+**配置(commit `6dcd6d39`)**: `realtest.yaml` `execution_mode: interactive_pty` + design/verify `cli: claude`; `knowledge/adapters/claude.py` `readiness_marker='❯'`(配合 `a05f9f9a` `_wait_ready`,修 PTY idle)。线2(PTY readiness/idle 修复)已在 `a05f9f9a`。
+
+**线1/线2 核心验证 ✅**(driver log `tmp_drive_1065570_pty.log`, epoch=1):
+```
+21:11:47 EXECUTE stage=design adapter=claude cmd=[claude.cmd]   ← design=claude(非 kimi)
+21:11:47 injecting prompt into PTY                              ← PTY 路径(非 headless)
+21:11:53 PTY session started                                    ← 6s,_wait_ready 等到 ❯ marker,不 idle
+```
+三件事都成:**design 走 claude PTY**、**PTY 不 idle**(readiness 检测生效)、**claude 加载 hc-all 环境**(CPU 爆表在干活)。PTY 双轨 + idle 修复全链路通。
+
+**实验负面结论(Follow-up, 不阻塞)**: claude design 在 hc-all 重环境 ~10min(21:11→21:21+) CPU 2291s+ 仍涨但**零文件产出**(design.json 没出)。原因:claude 交互式在 hc-all 加载巨重 context —— `AGENTS.md`/`CLAUDE.md`(`@RTK.md`+`@AGENTS.md` import 链)+ codegraph MCP + superpowers skills(brainstorming 深度探索)。重环境下 claude 交互式 design 效率问题。
+
+**决策**:用户经 AskUserQuestion 选"停,记 follow-up"(design 性价比低,线1 核心已验证)。停 driver(`b4ckxclbx`)+ 杀实验 claude(60944/19172)+ reset 1065570(`_reset_1065570.py`:active/design → idle/design,清 driver_claim 残留 + `_active_execution`)。
+
+**Follow-up 待办**:
+1. claude design 减载:design 阶段只载 brainstorming(非全部 superpowers)/精简 hc-all context 注入/或 design 仍用 kimi、仅特定澄清节点切 claude。
+2. 本配置 `realtest` design/verify=claude 保留作"PTY 双轨 + claude readiness"成果启用入口;生产重任务用 kimi profile。
+
+**自验证**:线1/线2(PTY/idle/skill 加载)✅;claude 重环境 design 效率 ⚠️(记 follow-up);1065570 reset 干净(idle/design/claim=None);config commit `6dcd6d39`。
+
+---
+
+## 7.4 design 飞轮注入方向(2026-07-06:维度 checklist + 飞轮窄注入替代 brainstorming,A/B 验证)
+
+**背景**:§7.3 design=claude 实验发现 claude 在 hc-all design 10min 超时。深挖真因 + 探讨「编排工作流全自动开发」(USER#7)后,形成 design 改造方向。
+
+**#4 真因修正**(非 §7.3 的"负载高"):claude design 在 hc-all 超时 = (1) **context rot**(Chroma 2025:相关信息塞 prompt 仍 degrade;hc-all 前置塞满 `AGENTS.md`/`@RTK.md`/codegraph/superpowers);(2) **brainstorming 发散**(headless 复现:`AskUserQuestion` 0、brainstorm 22 次、陷探索循环、design.json 没产)。非 CPU 空转卡死。
+
+**改造方向:维度 checklist + 飞轮窄注入**(替代 brainstorming 自由探索)
+- design 核心价值 = 产品→技术转化(识别技术决策点)。**13 维度 checklist**(从 27 spec 提炼):现状分析 / 架构数据流 / 数据模型 / 接口契约 / 核心逻辑(算法·状态机) / 一致性并发 / 性能容量 / 降级兼容 / 边界异常 / 安全 / 权限 / 风险回滚 / 非目标。决策点 = 维度里有岔路的项。
+- 飞轮 = Augment Agent Learning Flywheel(execute→coach→distill→improve)↔ hc-all 资产(event_log/transcript → playbooks/failures → design 注入)。**窄注入**(非前置塞满)避 context rot。
+
+**A/B 验证(security 维度)**:1065570 PRD + deepseek,无注入 vs 注入 `hc-all/.story/knowledge/playbooks/security-parameter-trust.md`(蒸馏自 8 spec):
+- 参数 4→7(+75%)、篡改测试 5→13(+160%)。
+- B 发现裸 LLM 漏的 CORE:`appVersion` header 降级风险(篡改低版本→降级旧校验→安全水位下降)、`DELETE id` 误删。
+- 证明飞轮注入补 PRD + 裸 LLM 盲点。`appVersion` 已回写 playbook(闭环)。
+
+**前端**:分步向导接 design 的 `decision_points`(每维度命中的决策点),复用 plan-confirm SSE 架构。
+
+**Follow-up**:① design prompt 改造(禁 brainstorming / 加维度 checklist / 注入 playbook);② 推广更多维度 playbook(缓存/降级/并发);③ design 产出回写 playbook 闭环。
+
+---
+
 ## 8. 清理 / 回滚
 
 - 子 repo 回原分支:`git -C D:/hc-all/hc-user checkout feature/ice/maintain_supplier_fix_0702`(原分支);test 分支保留观察或 `git -C D:/hc-all/hc-user branch -D story-realtest-065458` 删。
