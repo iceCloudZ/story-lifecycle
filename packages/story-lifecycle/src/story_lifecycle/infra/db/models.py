@@ -32,6 +32,7 @@ VALID_COLUMNS = frozenset(
         "tapd_type",
         "intake_state",
         "context_revision",
+        "driver_claim",
     }
 )
 
@@ -253,6 +254,13 @@ def init_db():
             conn.execute(
                 "ALTER TABLE story ADD COLUMN context_revision INTEGER DEFAULT 0"
             )
+        except sqlite3.OperationalError:
+            pass
+        # driver_claim: cross-process driver mutual-exclusion token (optimistic
+        # CAS). NULL = free; non-NULL = held by a driver (token = pid:epoch:ts).
+        # See graph.start_story_async / claim_story_driver. Idempotent migration.
+        try:
+            conn.execute("ALTER TABLE story ADD COLUMN driver_claim TEXT")
         except sqlite3.OperationalError:
             pass
 
@@ -694,6 +702,38 @@ def delete_story(story_key: str):
 
 
 # -------- Event log --------
+
+
+def claim_story_driver(story_key: str, token: str) -> bool:
+    """Optimistic CAS claim for cross-process driver mutual exclusion.
+
+    ``NULL`` driver_claim = free; the first caller's conditional UPDATE wins and
+    returns True; concurrent callers (other processes) see rowcount 0 and return
+    False. SQLite serializes the UPDATE so exactly one caller wins. The in-process
+    ``_running_stories`` dict can't see other processes (each python process has
+    its own), so without this a second driver double-drives the same story
+    (real-run 2026-07-06: event_log events appeared ×2).
+    """
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE story SET driver_claim = ? WHERE story_key = ? "
+            "AND driver_claim IS NULL",
+            (token, story_key),
+        )
+        return cur.rowcount == 1
+
+
+def release_story_driver(story_key: str, token: str) -> None:
+    """Release the driver claim — only if it is still ours (token matches).
+
+    Guards against releasing a claim a newer driver force-claimed after a crash.
+    """
+    with _db() as conn:
+        conn.execute(
+            "UPDATE story SET driver_claim = NULL "
+            "WHERE story_key = ? AND driver_claim = ?",
+            (story_key, token),
+        )
 
 
 def log_event(story_key: str, stage: str, event_type: str, payload: dict | None = None):

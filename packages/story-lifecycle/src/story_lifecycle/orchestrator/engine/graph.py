@@ -172,11 +172,16 @@ def is_epoch_current(story_key: str, epoch: int) -> bool:
         return _story_epochs.get(story_key, 0) == epoch
 
 
-def run_story(story_key: str, epoch: int = 0):
+def run_story(story_key: str, epoch: int = 0, claim_token: str = ""):
     """Run a story through the Agent execution loop.
 
     Replaces the old LangGraph StateGraph invocation. 层3 rescue Handler:
     失败 → ``decide_recovery`` → ``rescue_story`` 换 adapter → 有界重跑(上限 ``_MAX_RECOVERY``)。
+
+    ``claim_token`` is the driver_claim won by ``start_story_async``; it is
+    released in ``finally`` so the story becomes drivable again on exit/crash
+    of this run (only released if still ours). Callers that invoke ``run_story``
+    directly (e.g. swebench) pass no token → no claim lifecycle.
     """
     import json as _json
     import traceback
@@ -268,6 +273,11 @@ def run_story(story_key: str, epoch: int = 0):
     finally:
         if acquired and workspace:
             release_workspace(workspace, story_key, epoch)
+        if claim_token:
+            try:
+                db.release_story_driver(story_key, claim_token)
+            except Exception:
+                log.exception("failed to release driver claim for %s", story_key)
         with _running_lock:
             if _running_stories.get(story_key) == epoch:
                 _running_stories.pop(story_key, None)
@@ -286,15 +296,38 @@ def start_story_async(story_key: str):
         )
         return
 
+    # Cross-process driver mutual exclusion (optimistic CAS, real-run 2026-07-06).
+    # The in-process _running_stories dict below can't see OTHER processes — each
+    # python process has its own — so two drivers (e.g. tmp_drive_minimal + a
+    # serve worker) both passed the old guard and double-drove the same story
+    # (event_log events appeared ×2, interleaved per stage). Claim atomically in
+    # the SHARED DB: only one caller's UPDATE (driver_claim NULL -> token)
+    # succeeds; the loser returns here. See db.claim_story_driver.
+    import os as _os, time as _time
+    claim_token = f"{_os.getpid()}:{int(_time.time())}"
+    if not db.claim_story_driver(story_key, claim_token):
+        cur = db.get_story(story_key) or {}
+        log.info(
+            f"start_story_async: {story_key} already driven by another process "
+            f"(driver_claim={cur.get('driver_claim')!r}); skipping (CAS lost)"
+        )
+        return
+
     with _running_lock:
         if story_key in _running_stories:
+            # Re-entrant call within this process: another in-process path is
+            # already driving. Release the DB claim we just won so we don't
+            # strand it; defer to the existing in-process run.
+            db.release_story_driver(story_key, claim_token)
             return
         _story_epochs[story_key] = _story_epochs.get(story_key, 0) + 1
         epoch = _story_epochs[story_key]
         _running_stories[story_key] = epoch
 
-    log.info(f"Submitting story {story_key} to executor (epoch={epoch})")
-    _executor.submit(run_story, story_key, epoch)
+    log.info(
+        f"Submitting story {story_key} to executor (epoch={epoch}) [claim={claim_token}]"
+    )
+    _executor.submit(run_story, story_key, epoch, claim_token)
 
 
 def resume_story_async(story_key: str):
