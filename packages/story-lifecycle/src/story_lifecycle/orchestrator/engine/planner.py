@@ -1036,6 +1036,17 @@ def _build_cli_prompt(
 **硬约束**：若 git 操作失败（分支已存在且冲突、无权限、仓库不可写等），**立即停止后续工作**，将错误写入完成协议的 `summary` 字段并把 `status` 设为 `"error"`，不要尝试在错误的分支或主分支上继续。
 """
 
+    # 执行约束（根因 guard，real-run 2026-07-06）：代码阶段 agent（kimi）会自作主张跑
+    # mvn/tsc 自检 -> 大 repo 上耗时>10min 阻塞 -> 永远到不了 done 握手 -> stage 失败。
+    # 显式禁止耗时构建/编译/测试命令，让 agent 专注写代码 + done；编译/测试归后续阶段/CI。
+    exec_constraint_section = (
+        "\n### 执行约束（重要）\n"
+        "本阶段**只写代码/文档 + 写完成协议（done）**。**不要运行**耗时的构建/编译/测试命令"
+        "（`mvn`、`gradle`、`mvnw`、`npm install`、`yarn install`、`tsc`、`jest`、`vitest`、`pytest` 等）"
+        "—— 它们在大型仓库上常阻塞超过 10 分钟，会让你永远写不到 done 握手；"
+        "编译/类型/测试由后续阶段或 CI 负责，语法/类型问题靠阅读判断即可。\n"
+    )
+
     return f"""## 任务: {stage}
 
 ### Story 信息
@@ -1052,6 +1063,7 @@ def _build_cli_prompt(
 ### 关键要点
 {focus}
 {worktree_section}
+{exec_constraint_section}
 ### 完成协议
 完成后必须写入文件 `{done_file}`，内容为 JSON:
 {{"stage": "{stage}", "status": "done", "summary": "完成摘要", "files_changed": []}}
