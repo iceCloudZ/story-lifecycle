@@ -13,6 +13,7 @@ import json
 from story_lifecycle.orchestrator.engine.clarify import (
     CLARIFY_MARKER,
     CLARIFY_REQUEST_FILENAME,
+    clarify_request_rel,
     clear_clarify_request,
     extract_clarification_from_stream,
     read_clarify_request,
@@ -78,6 +79,20 @@ class TestClearClarifyRequest:
 
     def test_missing_file_returns_false(self, tmp_path):
         assert clear_clarify_request(tmp_path / CLARIFY_REQUEST_FILENAME) is False
+
+
+class TestClarifyRequestRel:
+    def test_rel_path_takes_done_file_dir_forward_slash(self):
+        """侧文件相对路径取自 done file 同目录(正斜杠,与 poll loop Path() 兼容)。
+
+        prompt 注入与 poll loop 查的是同一文件,路径必须一致 —— 集中到此函数。
+        """
+        rel = clarify_request_rel(".story/done/S-1/design.json")
+        assert rel == ".story/done/S-1/clarify_request.json"
+
+    def test_rel_path_handles_already_forward_slash(self):
+        rel = clarify_request_rel(".story/done/S-1/design.json")
+        assert "\\" not in rel  # 跨 OS 统一正斜杠(prompt/claude 友好)
 
 
 class TestExtractClarificationFromStream:

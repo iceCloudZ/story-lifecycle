@@ -1019,11 +1019,20 @@ def _build_cli_prompt(
     # task_type 让 agent 知道查哪个域；kb.py 做精确取数（graph/bugs/playbook）。
     knowledge_section = build_kb_tool_section(story_key, workspace, stage)
 
-    # design 阶段:维度 checklist + 禁 brainstorming + 高价值维度 playbook 窄注入
+    # design 阶段:维度 checklist + 禁 brainstorming + 逐问澄清协议 + 高价值维度 playbook 窄注入
     # (替代 brainstorming 自由探索——hc-all 重环境发散/context rot,见 runbook §7.4)
+    # clarify_file:侧文件路径(done file 同目录)——claude 遇关键岔路写它后停,
+    # poll loop 并行查它,先现则暂停 awaiting-clarify(详见 docs/design-hitl-runbook.md)。
     dimensions_section = ""
     if stage == "design":
-        dimensions_section = build_design_dimensions_section(story_key, workspace, stage)
+        from .clarify import clarify_request_rel
+
+        dimensions_section = build_design_dimensions_section(
+            story_key,
+            workspace,
+            stage,
+            clarify_file=clarify_request_rel(done_file),
+        )
 
     # 项目仓库与分支隔离：注入每个绑定仓库的分支/基线/路径，由 CLI 自行判断
     # 是否需要 worktree 或切分支。后端的 prepare_worktrees 仍是可选的手动 API，

@@ -26,6 +26,16 @@ CLARIFY_MARKER = "<<CLARIFY>>"
 CLARIFY_REQUEST_FILENAME = "clarify_request.json"
 
 
+def clarify_request_rel(done_file) -> str:
+    """侧文件相对路径(相对 workspace,正斜杠),取自 done file 同目录。
+
+    prompt 注入(claude 写文件)+ poll loop(编排层查文件)必须指向**同一文件**,
+    路径在此集中算,避免两端各拼各的漂移。正斜杠跨 OS(prompt/claude/cwd=workspace 均兼容)。
+    """
+    parent = Path(done_file).parent
+    return "/".join((*parent.parts, CLARIFY_REQUEST_FILENAME))
+
+
 def read_clarify_request(path) -> dict | None:
     """读侧文件 ``clarify_request.json`` → 规整提问 dict 或 None。
 

@@ -84,3 +84,18 @@ class TestDesignDimensions:
     def test_non_design_stage_no_dimensions(self, tmp_path):
         p = _build("build", tmp_path)
         assert "设计维度 checklist" not in p
+
+    def test_design_stage_instructs_clarify_protocol(self, tmp_path):
+        """design prompt 指示侧文件 clarify 协议(替代『不要提澄清问题』)。
+
+        runbook 块1 + 架构偏差:claude -p 无 AskUserQuestion → 改指示 claude 遇关键
+        歧义写 clarify_request.json 后停(不写 design.json),由编排层接住 HITL。
+        clarify 路径取自 done file 同目录(= poll loop 查的位置)。
+        """
+        p = _build("design", tmp_path)
+        assert "不要提澄清问题" not in p  # 旧禁令移除
+        assert "clarify_request.json" in p  # 新协议文件名
+        # 路径取自 done file 同目录(.story/done/S-1/),与 poll loop 一致
+        assert ".story/done/S-1/clarify_request.json" in p
+        # 触发条件:遇关键歧义才问(非无脑问)
+        assert "歧义" in p or "岔路" in p
