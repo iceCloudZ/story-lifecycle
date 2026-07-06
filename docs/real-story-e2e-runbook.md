@@ -281,7 +281,7 @@ python -c "import sys;sys.path.insert(0,'packages/story-lifecycle/src');from sto
 
 ---
 
-## 7.1 续跑进度(2026-07-06 下午:修 kimi done-fumble 根因,跑干净全程)
+## 7.1 续跑进度(2026-07-06:修 kimi done-fumble 根因 → ✅ 干净全程跑通)
 
 **背景**:§7 那次跑,build/verify 的 done 是**人工桥**(kimi 写了代码但漏写 done 握手),所以 judge 判的是桥数据。要"真跑完"必须让 kimi 自己写 done。本节是根因定位 + 修复 + 干净全程跑(无桥)的进度。
 
@@ -289,37 +289,63 @@ python -c "import sys;sys.path.insert(0,'packages/story-lifecycle/src');from sto
 
 **修复(TDD+commit `fix(prompt): forbid heavy build/compile cmds`)**:`_build_cli_prompt` 加无条件"### 执行约束(重要)"段,禁止跑 `mvn/gradle/npm install/yarn/tsc/jest/vitest/pytest` 等耗时构建/编译/测试命令(归后续阶段/CI),agent 只写代码 + done。test_build_cli_prompt.py(4 测,RED→GREEN)。配套前置修复(均已 commit):headless stderr 排空、profile.execution_mode→headless、poll_timeout 45min、start_story_async 不自动 plan(先 run_orchestrator_agent)。
 
-**当前状态(暂停时)**:
-- profile `realtest`:`execution_mode: headless`,design/build/verify 全 kimi(claude 网关 529 不可用)。
-- 子 repo 在 `story-realtest-065458`、**干净重置过**(老 master),kimi 正重写代码。
-- done 目录:**全部清空过**(design/build/verify.json 都删了,要 kimi 自己重写,不要桥)。
-- 跑到:**design.json 已由 kimi 真写**(status=done,files=1)✓;**build 进行中**(kimi 写了 hc-user 8 + hc-admin 5 文件,**没跑编译**=约束生效),build.json 还没落;verify 未到。
-- 一个 `tmp_drive_minimal.py` 后台在跑(borjhpm22 那条;留意可能有多份残留 python 进程,见续跑步骤 0)。
+### ✅ 完成(2026-07-06 晚:干净全程跑通,无桥,kimi 自写 done,judge 判真数据 → completed)
 
-**续跑步骤(下次会话)**:
-0. **先清进程**:`tmp_drive_minimal` 只留一份(hermes+Python312 各一为一组);多余的 + 孤儿 kimi 杀掉(`taskkill /PID <pid> /T /F`,注意 Git Bash 把 `/PID` 转成路径,用 `MSYS_NO_PATHCONV=1 taskkill /PID <pid> /T /F`)。
-1. **看当前到哪了**:
-   ```bash
-   cd D:/github/story-lifecycle && python -c "import sys,time,os,sqlite3;sys.path.insert(0,'packages/story-lifecycle/src');sys.stdout.reconfigure(encoding='utf-8',errors='replace');
-from story_lifecycle.entry.cli.setup import load_config_to_env; load_config_to_env()
-from story_lifecycle.infra.db import models as db
-from story_lifecycle.orchestrator.engine.graph import is_story_running
-K='tapd-1144381896001065458';s=db.get_story(K);print(s['status'],'/',s['current_stage'],'running=',is_story_running(K),'err=',repr((s.get('last_error') or '')[:80]))
-dd=f'D:/hc-all/.story/done/{K}';print('done:',os.listdir(dd) if os.path.isdir(dd) else [])
-con=sqlite3.connect(os.path.expanduser('~/.story-lifecycle/story.db'))
-for r in con.execute(\"select id,stage,event_type,substr(payload,1,80) from event_log where story_key=? and event_type in ('judge_verdict','transition_decision','recovery_action') order by id desc limit 6\",(K,)):print(' ',r)"
-   ```
-   - 若 story 已终态(completed/failed)且 **build.json/verify.json 都是 kimi 自己写的(非桥:summary 里没"人工桥")** → 看 judge_verdict 是不是判的**真 kimi verify 数据** → 是的话就是真跑完,贴 §7。
-   - 若 build 还卡着没 done:**多半又是 kimi 自编译或漏 done**。先用全量捕复现确认(build 直接跑 `kimi -p prompt_build.md` 看 stderr 是否又跑 mvn/tsc);若约束没生效,检查驱动进程是不是用了旧 planner.py(杀掉重启 `tmp_drive_minimal.py`)。
-2. **要重跑**:`tmp_drive_minimal.py` 还在就先看它跑没跑完;要重启就重置 story(`status=idle,current_stage=design`,清 `_active_execution/_recovery_attempt/review_round_count_*/last_done_data/last_verify_summary`,**保留 `_agent_actions`**)+ `python tmp_drive_minimal.py`。design.json 在 → design 秒过 → build(带约束)→ verify → gate→judge。
-3. **关键判据**:build.json/verify.json 必须是 kimi 自己写的(非桥)。judge_verdict 判的是真数据才算"五层真触发"。若 kimi 仍漏 done,考虑 planner 侧兜底(agent rc=0 + 有 git diff 但无 done → 用 git diff 合成 done),但要先确认约束修复在生效。
+续跑步骤 0–3 执行后,**story 干净到 `completed`**(非 timeout)。核心判据全过:
 
-**已 commit 的修复(本会话)**:
+| 判据 | 结果 |
+|---|---|
+| build.json / verify.json 是 **kimi 自写(非桥)** | ✅ build=17 files、verify=18 files,summary 无"人工桥";retrospect.md 列真文件 |
+| judge_verdict 判**真 kimi 数据** | ✅ `#401/#402 pass=true`:"硬指标通过,遗留项为预期设计选择""实现符合 spec,国际化及索引优化均已完成,manualRequest 是有意设计避免性能问题" |
+| 干净终态 | ✅ `status=completed / verify / err=""`(对比 §7 的 failed-escalate、暂停时的 failed-timeout) |
+| agent 真改 hc-all | ✅ hc-user(Controller/Service/Mapper/DAO/VO)+ hc-admin(页面/路由/菜单/i18n)工作区真 diff;verify 阶段还**真修了 spec 不一致**(接口统一 `/api/login-record/page`、菲律宾自然日转换、枚举码、SQL 精确匹配、`ORDER BY create_time DESC,user_id DESC` 走索引、`manualRequest=true` 避免 500 万级日志表全表) |
+
+**单 driver 时序(driver log `tmp_drive_cleanrun.log`,epoch=1 一次 submit)**:
+```
+18:22:09 submit → 18:22:10 design 秒过(消费已有 design.json)
+              → 18:22:11 build kimi 启动 → 18:25:21 build done(3min,没跑 mvn/tsc=约束生效)
+              → 18:25:22 verify kimi 启动 → 18:31:42 verify done(6min,修 spec 不一致)
+              → 18:31:43 deepseek judge POST 200 → 18:31:45 All stages completed + retrospect.md
+```
+约束修复兑现:build 从暂停时的"卡死/需人工桥"变成 **3min 自写 done**。
+
+### 续跑步骤(已验,留作复现手册)
+
+0. **清进程**:driver 失败/暂停后,kimi 孙进程会残留(headless `python wrapper → kimi.exe`,`_kill_headless` 杀 wrapper 不杀孙)。Git Bash 杀进程用 `MSYS_NO_PATHCONV=1 taskkill /PID <pid> /T /F`(`/PID` 否则被转义)。**注意:只杀本 run 的孤儿 kimi,别误杀用户在别的任务开的 kimi —— 先按 mtime/CPU/父进程辨明再杀。**
+1. **重置 story**(`tmp_reset_clean.py`,`_agent_actions` 保留但去掉 gate-retry 残留的 repair action,清 `_active_execution/_recovery_attempt/last_done_data/last_verify_summary/review_round_count_*`)→ `status=idle,current_stage=design`。
+2. **done 目录**:保留 `design.json`(design 秒过),移走 `build.json/verify.json`(让 kimi 在约束下自写,不要桥)。本 run 的备份留 `.bak_pre_cleanrun`。
+3. **单 driver**:`cd D:/github/story-lifecycle && ./.venv-monorepo-test/Scripts/python.exe tmp_drive_minimal.py > tmp_drive_cleanrun.log 2>&1`(后台)。**只起一个 driver**,起前确认无 `tmp_drive_minimal`/`run_story` 残留。
+4. **关键判据**:build/verify done 必须 kimi 自写(非桥);judge_verdict 判真数据。
+
+### ⚠️ 发现(遗留 follow-up,不阻塞本目标):事件 ×2 / 疑似第二 driver
+
+本 run 每个 stage 的 `completed` 与 `judge_verdict` 各出现 **2 条**(design/build/verify completed×2、judge×2 且 reason 不同=2 次真 LLM 调用),且**按 stage 交错**(非"两个完整 pass 串联")。但 driver log 只有一条线性 pass(epoch=1、每 stage 一次 kimi spawn)。
+
+- **推断**:存在**第二个 driver 进程**(可能 serve 进程 resume 或残留 driver),与主 driver **并发**跑同一 story —— 交错事件说明 `acquire_workspace` 的 filelock **未能在两进程间串行化**(否则会是"先一全 pass、再一全 pass"的串联顺序,而非交错)。
+- **为何本 run 没 timeout**:约束修复后 kimi 快(build 3min / verify 6min,远小于 45min poll_timeout)。§7.1 暂停时的 `Stage verify timed out` = 并发 driver 中慢的那条撞 45min —— **并发问题没修,只是被 kimi 速度掩盖**。
+- **follow-up 建议**:
+  1. 查 `acquire_workspace` 为何未跨进程串行(filelock 路径/Windows 语义/是否同 workspace);
+  2. 或加**库级** per-story 互斥(DB 行锁 / `story.status` CAS),不依赖进程内 dict + 文件锁;
+  3. serve 是否在启动/状态变更时 resume story —— 若是,文档化"serve 与 driver 不要同时驱动同一 story"。
+- **本 run 的可靠性不受影响**:两 driver 都判 pass、终态 completed;交错重消费 done 没产生错误状态(done 是幂等证据,judge 两次都 pass)。
+
+**已 commit 的修复(本会话 + 前会话)**:
 - `aaa02b87` §4.1 supervisor→planner + §4.2 judge→gate wiring(前会话)
 - `098b3a7c` fix(headless): drain stderr(PIPE 死锁)
 - `e23c96e8` feat(execution): profile.execution_mode→headless
 - `305421fc` docs(runbook): §7 checkpoint
-- `fix(prompt): forbid heavy build/compile cmds`(本次 kimi-done 根因)
+- `1448cc0a` fix(prompt): forbid heavy build/compile cmds(本次 kimi-done 根因)
+- 本节 §7.1 完成落档(下方 commit)
+
+### §7.1 自验证(对齐 §5)
+
+1. ✅ **约束修复在生效**:build 3min 自写 done(无 mvn/tsc 卡死),对比暂停时的"卡死/需人工桥"。
+2. ✅ **无桥**:build.json(17 files)/verify.json(18 files)summary 均无"人工桥"。
+3. ✅ **kimi 自写 done**:两 done 均本 run kimi 在约束下产出;retrospect.md 列真实文件 + verify 真修 spec 不一致。
+4. ✅ **judge 判真数据**:`judge_verdict #401/#402 pass=true`,理由针对真实实现(spec 对齐/i18n/索引/manualRequest)。
+5. ✅ **干净终态**:`status=completed`(§7 是 failed-escalate,暂停时是 failed-timeout)。
+6. ✅ **五层**:judge(层4)真 fire 判真数据;transition(层2)/recovery(层3)/supervisor(层1)本 run **未触发 = 干净 pass 本就不该触发**(无失败无需转/救/答),符合 §5.2"记录未触发原因"。reflection(层5)跨 story,单 run 不触发。
+7. ⚠️ **遗留**:事件 ×2 / 疑似第二 driver(见上"发现"),被 kimi 速度掩盖,留 follow-up。
 
 ---
 
