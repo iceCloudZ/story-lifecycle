@@ -704,6 +704,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         launch_cmd,
                         workspace,
                         cli_prompt,  # prompt 作为第 4 个参数注入到 PTY
+                        readiness_marker=getattr(adapter, "readiness_marker", None),
                     )
                     log.info("[%s] PTY session started for stage=%s", story_key, stage)
                     # §4.1 层1 supervisor(interactive PTY):daemon 线程跑 supervise_pty_session。

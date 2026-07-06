@@ -8,6 +8,7 @@ Fallback: subprocess.Popen (no PTY, but output captured via pipe)
 import asyncio
 import atexit
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -439,6 +440,44 @@ def list_pty_sessions(story_id: str) -> list[dict]:
         ]
 
 
+def _wait_ready(pty: "ManagedPty", marker: str | None, timeout: float) -> bool:
+    """Poll PTY output (via broadcast tap) until ``marker`` regex matches, or timeout.
+
+    Fixes interactive-agent idle (real-run §7.1 follow-up): ``ensure_agent_pty``
+    used a fixed ``sleep(2.0)`` before injecting the prompt; agents that take >2s
+    to show their input prompt (loading skills, indexing) swallow the early
+    injection → idle → stage timeout. Here we tap the output stream and inject
+    only once the agent signals readiness (or after ``timeout`` as a fallback).
+
+    ``marker=None`` → no wait (legacy path), return True immediately.
+    Returns True if ready (or no marker), False on timeout.
+    """
+    if not marker:
+        return True
+    tap = pty.add_tap()
+    try:
+        deadline = time.time() + timeout
+        buf = ""
+        while time.time() < deadline:
+            try:
+                chunk = tap.get_nowait()
+            except asyncio.QueueEmpty:
+                time.sleep(0.1)
+                continue
+            if isinstance(chunk, (bytes, bytearray)):
+                buf += chunk.decode("utf-8", errors="replace")
+            else:
+                buf += str(chunk)
+            if re.search(marker, buf):
+                return True
+        return False
+    finally:
+        try:
+            pty.remove_tap(tap)
+        except Exception:
+            pass
+
+
 def ensure_agent_pty(
     story_id: str,
     command: list[str],
@@ -446,8 +485,16 @@ def ensure_agent_pty(
     prompt: str,
     env: dict | None = None,
     startup_delay: float = 2.0,
+    readiness_marker: str | None = None,
+    readiness_timeout: float = 30.0,
 ) -> tuple[str, ManagedPty]:
-    """Start a new agent PTY session. Returns (session_id, pty)."""
+    """Start a new agent PTY session. Returns (session_id, pty).
+
+    If ``readiness_marker`` is set, poll PTY output until the marker matches (or
+    ``readiness_timeout``) before injecting ``prompt`` — fixes interactive-agent
+    idle (slow startup swallowing the early injection). Without a marker, falls
+    back to the legacy fixed ``startup_delay`` sleep.
+    """
     session_id, pty = spawn_pty(
         story_id,
         command,
@@ -455,7 +502,9 @@ def ensure_agent_pty(
         env=env,
         purpose="agent",
     )
-    if startup_delay:
+    if readiness_marker:
+        _wait_ready(pty, readiness_marker, readiness_timeout)
+    elif startup_delay:
         time.sleep(startup_delay)
 
     if prompt:

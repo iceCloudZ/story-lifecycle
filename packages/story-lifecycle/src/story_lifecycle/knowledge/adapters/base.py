@@ -11,6 +11,13 @@ from datetime import datetime, timezone
 class BaseAdapter(ABC):
     """Abstract interface for AI coding CLI tools."""
 
+    # PTY readiness marker (regex). When starting an interactive PTY, output is
+    # polled until this matches before injecting the prompt — fixes slow-startup
+    # idle (agent loads skills/indexing >2s, swallows the early injection; see
+    # pty._wait_ready, real-run §7.1 follow-up). None → legacy fixed startup_delay
+    # sleep. Subclasses override with their CLI's input-prompt regex.
+    readiness_marker: str | None = None
+
     @abstractmethod
     def switch_provider(self, provider: str) -> str | None:
         """Return the shell command to switch provider, or None if not needed."""
