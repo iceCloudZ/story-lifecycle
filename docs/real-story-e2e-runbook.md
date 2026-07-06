@@ -349,6 +349,59 @@ python -c "import sys;sys.path.insert(0,'packages/story-lifecycle/src');from sto
 
 ---
 
+## 7.2 换一个真 story + 修并发(2026-07-06 晚:driver_claim CAS → 1065570 干净跑,事件 ×1)
+
+**驱动**:§7.1 发现事件 ×2 / 疑似第二 driver 并发(被 kimi 速度掩盖)。用户拍板"走方案 B(乐观 CAS)"+"换个真 story 跑流程验证"。
+
+### 修并发:driver_claim CAS(commit `382ff4f3`,TDD)
+
+- **为何不用 status CAS**:`status` 列被重载 —— schema 默认值就是 `'active'`,且 api.py **3 个 HTTP 入口**(autostart、advance-from-paused→active、skip→active)专门对 `active` 的 story 调 `start_story_async`。纯 `WHERE status='idle'` CAS 会破坏这些路径。
+- **实现**:加专用列 `driver_claim TEXT`(VALID_COLUMNS + init_db 幂等 ALTER,跟 `context_revision` 同款)。`start_story_async` 在候选 guard 后先 `db.claim_story_driver(token)`(`UPDATE story SET driver_claim=? WHERE driver_claim IS NULL`,SQLite 串行 → 只一个 caller rowcount=1),CAS 输则 return。`run_story` finally 里 `release_story_driver`(只释放自己的 token)。进程内 `_running_stories` dict 保留作同进程 re-entry guard(重入时释放刚赢的 DB claim)。
+- **TDD**:`test_driver_claim_cas.py` 7 测(claim win/lose、release-if-mine、start_story_async bails-when-claimed / claims-and-drives / candidate-still-rejected、run_story finally-releases)。回归 **790 passed**(1 预存在 profile fail)。
+
+### 跑 story `tapd-1144381896001065570`(联系人姓名校验/资方格式校验规则配置)
+
+**换 story**:非 065458。PRD `D:/hc-all/story/1065570-联系人姓名校验/PRD.md`。绑 **hc-config 单 repo**(`story-realtest-1065570` from master,干净;跳过 hc-user 消费方免动它的 dirty 状态)。reset(idle/design/realtest,清 exec 态,设 prd_path,`_agent_actions` 空让 deepseek 现规划)。**serve 保持运行**(用 CAS 版 driver,若 serve 真是第二 driver,CAS 这次应挡住 → 事件应 ×1)。
+
+**时序(单 driver,CAS claim `36452:...` 全程持有,`tmp_drive_1065570.log`)**:
+```
+19:26 deepseek 规划(2 POST 200,产 3 actions)→ CAS claim → design kimi
+19:31 design done(5min)            → build kimi
+19:47 build done(16min,18 文件)    → verify kimi
+19:58 verify done(11min) → deepseek judge 200 → All stages completed
+终态 completed;driver_claim=None(finally 正确释放)
+```
+
+**结果(本 run 事件 id>=403)**:
+
+| event | 065458(无 CAS) | **1065570(有 CAS)** |
+|---|---|---|
+| design completed | ×2 | **×1**(#403) |
+| build completed | ×2 | **×1**(#404) |
+| verify completed | ×2 | **×1**(#405) |
+| judge_verdict | ×2 | **×1**(#406) |
+
+**counts: completed=3, judge_verdict=1 —— 全 ×1。CAS 在生产环境彻底消除了并发双 driver 的重复**(对比 §7.1 的 ×2)。这是 CAS 的决定性证据。
+
+- **judge #406 pass=true** 判真数据:"代码覆盖规则表、操作日志、CRUD、Feign、缓存及零宽断言拦截,清理了残留代码,结构与职责清晰"。
+- **agent 真改 hc-config**:18 新 java(FormatValidation 五层:admin controller/service/dto、api Feign、business controller/service/vo、component entity/mapper、VersionUtils)+ 2 pom + DDL `sql/20250706_format_validation_rule.sql`(规则表/操作日志表)。
+- **干净终态 completed**(非 timeout/failed)。
+
+### ⚠️ 新发现(done 文件被清,留 follow-up,不阻塞)
+
+1065570 的 design/build/verify.json 在被消费后**消失了**(done 目录只剩 retrospect.md),导致 `retrospect.md` 显示"未捕获到任何阶段 done 产物"(retrospect 读 done 文件生成)。065458 时 done 文件保留。`reset_workspace` 在 src 里**不存在**(只有注释,无定义/调用),代码无 stage 间清 done 逻辑 → 推测是 **kimi 自己清理了它写的 done**(kimi 行为因任务而异)。证据不丢:event_log 保留完整 summary,judge 在 done 消失前已跑。follow-up:retrospect 改读 event_log(而非 done 文件);或 planner 消费 done 后落一份不可清的副本。
+
+### §7.2 自验证
+
+1. ✅ **换 story**:1065570(联系人姓名校验),非 065458。
+2. ✅ **CAS 落地**:driver_claim 列 + claim/release,TDD 7 测,回归 790 passed。
+3. ✅ **CAS 实战**:事件全 ×1(对比 §7.1 ×2),driver_claim 正确 claim→release。
+4. ✅ **干净 completed**:design→build→verify→judge pass,单 driver ~32min。
+5. ✅ **kimi 真实现**:hc-config 18 java + DDL + pom;judge 判真数据 pass。
+6. ✅ **铁律**:TDD、不动 pty.py、commit 带 Co-Authored-By(`382ff4f3`)、claude 529 全 kimi、单 driver 不竞争。
+
+---
+
 ## 8. 清理 / 回滚
 
 - 子 repo 回原分支:`git -C D:/hc-all/hc-user checkout feature/ice/maintain_supplier_fix_0702`(原分支);test 分支保留观察或 `git -C D:/hc-all/hc-user branch -D story-realtest-065458` 删。
