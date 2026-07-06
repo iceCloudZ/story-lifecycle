@@ -445,7 +445,9 @@ python -c "import sys;sys.path.insert(0,'packages/story-lifecycle/src');from sto
 
 **前端**:分步向导接 design 的 `decision_points`(每维度命中的决策点),复用 plan-confirm SSE 架构。
 
-**Follow-up**:① design prompt 改造(禁 brainstorming / 加维度 checklist / 注入 playbook);② 推广更多维度 playbook(缓存/降级/并发);③ design 产出回写 playbook 闭环。
+**端到端验证(2026-07-06,commit a34cc843)**:deepseek 公平对比(A/B 都注 PRD 全文,只差 dimensions_section):改造后 design prompt 让 agent 维度覆盖 **2/5→5/5**、输出 **decision_points**(改造前无)、引用 **Parameter Trust/CORE 分级**(改造前无)。证明 dimensions 注入让 design 从自由方案 → 按维度系统转化 + decision_points(前端可接),而非 brainstorming 发散。
+
+**Follow-up**:① 推广更多高价值维度 playbook(并发/缓存;跳过降级-A/B 证低价值);② design 产出回写 playbook 闭环;③ claude 真跑验"禁 brainstorming 约束"对 claude+superpowers 生效(端到端用 deepseek,该约束面向 claude)。
 
 ---
 
