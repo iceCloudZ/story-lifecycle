@@ -273,11 +273,53 @@ python -c "import sys;sys.path.insert(0,'packages/story-lifecycle/src');from sto
 
 ### §5 自验证
 
-1. ✅ §4.1/4.2/4.3 测试 GREEN(772 passed,1 预存在)。
+1. ✅ §4.1/4.2/4.3 测试 GREEN(779 passed,1 预存在)。
 2. ✅ 五层真触发(judge_verdict ×4、transition_decision ×3;supervisor/recovery 条件性未触发+记因)。
 3. ✅ agent 真改 hc-all(hc-user 7 文件、hc-admin 6 文件 + 新 loginRecord 页)。
 4. ✅ 回归无新 fail。
 5. ✅ 证据落档(本节)。
+
+---
+
+## 7.1 续跑进度(2026-07-06 下午:修 kimi done-fumble 根因,跑干净全程)
+
+**背景**:§7 那次跑,build/verify 的 done 是**人工桥**(kimi 写了代码但漏写 done 握手),所以 judge 判的是桥数据。要"真跑完"必须让 kimi 自己写 done。本节是根因定位 + 修复 + 干净全程跑(无桥)的进度。
+
+**根因(已复现确认)**:kimi-code 在代码阶段(build/verify)写完代码后会**自作主张跑 `mvn compile` + `tsc --noEmit` 自检** —— 大 Java/Vue 仓库上这俩常阻塞 >10 分钟 → kimi 永远到不了 done 握手 → stage 失败。复现方法:直接 `kimi -p prompt_build.md`,全量捕 stdout/stderr,看到 kimi 写完代码后跑 mvn/tsc 卡死(被 600s timeout 杀)。设计/design + verify-round1(没跑重编译)→ done 正常写。25 文件合成测试(不编译)→ done 正常写 → 排除"turn/output 预算"假说,锁定"自编译阻塞"。
+
+**修复(TDD+commit `fix(prompt): forbid heavy build/compile cmds`)**:`_build_cli_prompt` 加无条件"### 执行约束(重要)"段,禁止跑 `mvn/gradle/npm install/yarn/tsc/jest/vitest/pytest` 等耗时构建/编译/测试命令(归后续阶段/CI),agent 只写代码 + done。test_build_cli_prompt.py(4 测,RED→GREEN)。配套前置修复(均已 commit):headless stderr 排空、profile.execution_mode→headless、poll_timeout 45min、start_story_async 不自动 plan(先 run_orchestrator_agent)。
+
+**当前状态(暂停时)**:
+- profile `realtest`:`execution_mode: headless`,design/build/verify 全 kimi(claude 网关 529 不可用)。
+- 子 repo 在 `story-realtest-065458`、**干净重置过**(老 master),kimi 正重写代码。
+- done 目录:**全部清空过**(design/build/verify.json 都删了,要 kimi 自己重写,不要桥)。
+- 跑到:**design.json 已由 kimi 真写**(status=done,files=1)✓;**build 进行中**(kimi 写了 hc-user 8 + hc-admin 5 文件,**没跑编译**=约束生效),build.json 还没落;verify 未到。
+- 一个 `tmp_drive_minimal.py` 后台在跑(borjhpm22 那条;留意可能有多份残留 python 进程,见续跑步骤 0)。
+
+**续跑步骤(下次会话)**:
+0. **先清进程**:`tmp_drive_minimal` 只留一份(hermes+Python312 各一为一组);多余的 + 孤儿 kimi 杀掉(`taskkill /PID <pid> /T /F`,注意 Git Bash 把 `/PID` 转成路径,用 `MSYS_NO_PATHCONV=1 taskkill /PID <pid> /T /F`)。
+1. **看当前到哪了**:
+   ```bash
+   cd D:/github/story-lifecycle && python -c "import sys,time,os,sqlite3;sys.path.insert(0,'packages/story-lifecycle/src');sys.stdout.reconfigure(encoding='utf-8',errors='replace');
+from story_lifecycle.entry.cli.setup import load_config_to_env; load_config_to_env()
+from story_lifecycle.infra.db import models as db
+from story_lifecycle.orchestrator.engine.graph import is_story_running
+K='tapd-1144381896001065458';s=db.get_story(K);print(s['status'],'/',s['current_stage'],'running=',is_story_running(K),'err=',repr((s.get('last_error') or '')[:80]))
+dd=f'D:/hc-all/.story/done/{K}';print('done:',os.listdir(dd) if os.path.isdir(dd) else [])
+con=sqlite3.connect(os.path.expanduser('~/.story-lifecycle/story.db'))
+for r in con.execute(\"select id,stage,event_type,substr(payload,1,80) from event_log where story_key=? and event_type in ('judge_verdict','transition_decision','recovery_action') order by id desc limit 6\",(K,)):print(' ',r)"
+   ```
+   - 若 story 已终态(completed/failed)且 **build.json/verify.json 都是 kimi 自己写的(非桥:summary 里没"人工桥")** → 看 judge_verdict 是不是判的**真 kimi verify 数据** → 是的话就是真跑完,贴 §7。
+   - 若 build 还卡着没 done:**多半又是 kimi 自编译或漏 done**。先用全量捕复现确认(build 直接跑 `kimi -p prompt_build.md` 看 stderr 是否又跑 mvn/tsc);若约束没生效,检查驱动进程是不是用了旧 planner.py(杀掉重启 `tmp_drive_minimal.py`)。
+2. **要重跑**:`tmp_drive_minimal.py` 还在就先看它跑没跑完;要重启就重置 story(`status=idle,current_stage=design`,清 `_active_execution/_recovery_attempt/review_round_count_*/last_done_data/last_verify_summary`,**保留 `_agent_actions`**)+ `python tmp_drive_minimal.py`。design.json 在 → design 秒过 → build(带约束)→ verify → gate→judge。
+3. **关键判据**:build.json/verify.json 必须是 kimi 自己写的(非桥)。judge_verdict 判的是真数据才算"五层真触发"。若 kimi 仍漏 done,考虑 planner 侧兜底(agent rc=0 + 有 git diff 但无 done → 用 git diff 合成 done),但要先确认约束修复在生效。
+
+**已 commit 的修复(本会话)**:
+- `aaa02b87` §4.1 supervisor→planner + §4.2 judge→gate wiring(前会话)
+- `098b3a7c` fix(headless): drain stderr(PIPE 死锁)
+- `e23c96e8` feat(execution): profile.execution_mode→headless
+- `305421fc` docs(runbook): §7 checkpoint
+- `fix(prompt): forbid heavy build/compile cmds`(本次 kimi-done 根因)
 
 ---
 
