@@ -447,7 +447,10 @@ python -c "import sys;sys.path.insert(0,'packages/story-lifecycle/src');from sto
 
 **端到端验证(2026-07-06,commit a34cc843)**:deepseek 公平对比(A/B 都注 PRD 全文,只差 dimensions_section):改造后 design prompt 让 agent 维度覆盖 **2/5→5/5**、输出 **decision_points**(改造前无)、引用 **Parameter Trust/CORE 分级**(改造前无)。证明 dimensions 注入让 design 从自由方案 → 按维度系统转化 + decision_points(前端可接),而非 brainstorming 发散。
 
-**Follow-up**:① 推广更多高价值维度 playbook(并发/缓存;跳过降级-A/B 证低价值);② design 产出回写 playbook 闭环;③ claude 真跑验"禁 brainstorming 约束"对 claude+superpowers 生效(端到端用 deepseek,该约束面向 claude)。
+**claude 真跑验证(子代理,2026-07-07)**:deepseek 端到端 + **claude headless 真跑** 双证。claude 在 hc-all 重环境 **8.2min 收敛(EXIT=0,vs #4 的 124 超时)**、design.json 产出(vs #4 未产)、brainstorming **0 次**(vs 22 次发散,claude 主动遵守禁令并在思考中复述)、**10 条 decision_points(DP1-10)** + 13 维度全覆盖。安全飞轮生效:DP5 主动识别 appVersion 头篡改降级(playbook 高价值点)。**a34cc843 解决 #4 坐实**。
+注:当前 prompt 是「禁提问 + 一次性 DP」方向(AskUserQuestion 0)。后续 (a) claude PTY 逐问要改 prompt「遇歧义用 AskUserQuestion 提问」——claude 既已证遵守 prompt 约束,改提问也会遵守。
+
+**Follow-up**:① 推广更多高价值维度 playbook(并发/缓存;跳过降级-A/B 证低价值);② design 产出回写 playbook 闭环;③ (a) claude PTY 逐问:prompt 改提问 + supervisor `decide_response` 改 HITL + awaiting detector 认 claude 提问 + 前端对话流。
 
 ---
 
