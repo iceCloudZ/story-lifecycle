@@ -9,6 +9,12 @@ class ClaudeAdapter(BaseAdapter):
 
     name = "claude"
 
+    # Claude Code TUI shows its input prompt "❯" once booted (skills/AGENTS
+    # loaded). Poll PTY output until it appears before injecting the prompt —
+    # measured via tmp_probe_claude.py (boots in ~10s on hc-all). See
+    # pty._wait_ready.
+    readiness_marker = r"❯"
+
     def switch_provider(self, provider: str) -> str | None:
         # No-op: provider switching is not supported for the Claude CLI.
         # (Previously this shelled out to `cc use <provider>` via bash -c with an
