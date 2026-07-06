@@ -13,9 +13,12 @@ import json
 from story_lifecycle.orchestrator.engine.clarify import (
     CLARIFY_MARKER,
     CLARIFY_REQUEST_FILENAME,
+    append_clarify_history,
     clarify_request_rel,
     clear_clarify_request,
+    consume_clarify_answer,
     extract_clarification_from_stream,
+    read_clarify_history,
     read_clarify_request,
 )
 
@@ -92,7 +95,91 @@ class TestClarifyRequestRel:
 
     def test_rel_path_handles_already_forward_slash(self):
         rel = clarify_request_rel(".story/done/S-1/design.json")
-        assert "\\" not in rel  # 跨 OS 统一正斜杠(prompt/claude 友好)
+        assert "\\" not in rel  # 跨 OS 统一正斜杠(prompt/claude 句柄)
+
+
+class TestClarifyHistory:
+    """累计 Q&A 历史(clarify_history.json)——回注后带它重启 claude,实现
+    「前答影响后问」(动态澄清)。runbook 块5 回注侧的数据载体。"""
+
+    def test_read_missing_returns_empty(self, tmp_path):
+        assert read_clarify_history(tmp_path / "clarify_history.json") == []
+
+    def test_append_creates_and_returns_list(self, tmp_path):
+        p = tmp_path / "clarify_history.json"
+        out = append_clarify_history(p, question="存哪?", answer="hc_user")
+        assert out == [{"question": "存哪?", "answer": "hc_user"}]
+        assert read_clarify_history(p) == [{"question": "存哪?", "answer": "hc_user"}]
+
+    def test_append_accumulates_across_rounds(self, tmp_path):
+        p = tmp_path / "clarify_history.json"
+        append_clarify_history(p, "q1", "a1")
+        append_clarify_history(p, "q2", "a2")
+        assert read_clarify_history(p) == [
+            {"question": "q1", "answer": "a1"},
+            {"question": "q2", "answer": "a2"},
+        ]
+
+    def test_read_corrupt_returns_empty(self, tmp_path):
+        p = tmp_path / "clarify_history.json"
+        p.write_text("not json", encoding="utf-8")
+        assert read_clarify_history(p) == []
+
+
+class TestConsumeClarifyAnswer:
+    """POST /clarify/answer 的核心:读待答 request → 累计 history → 清 request。
+    纯文件操作(路径 caller 算);DB/重驱动(start_story_async)归 API 层。"""
+
+    def test_consumes_pending_appends_history_clears_request(self, tmp_path):
+        req_path = tmp_path / CLARIFY_REQUEST_FILENAME
+        hist_path = tmp_path / "clarify_history.json"
+        req_path.write_text(
+            json.dumps(
+                {
+                    "id": "q1",
+                    "question": "存哪?",
+                    "header": "存储",
+                    "options": ["hc_user", "hc_config"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        out = consume_clarify_answer(req_path, hist_path, "hc_user")
+
+        assert out == {"question": "存哪?", "answer": "hc_user", "id": "q1"}
+        assert not req_path.exists()  # request 清掉(防 resume 重复触发)
+        assert read_clarify_history(hist_path) == [
+            {"question": "存哪?", "answer": "hc_user"}
+        ]
+
+    def test_no_pending_returns_none(self, tmp_path):
+        req_path = tmp_path / CLARIFY_REQUEST_FILENAME
+        hist_path = tmp_path / "clarify_history.json"
+        # 无 request 文件
+        assert consume_clarify_answer(req_path, hist_path, "x") is None
+        assert read_clarify_history(hist_path) == []  # 未累计
+
+    def test_consume_accumulates_across_rounds(self, tmp_path):
+        req_path = tmp_path / CLARIFY_REQUEST_FILENAME
+        hist_path = tmp_path / "clarify_history.json"
+        # 第一轮
+        req_path.write_text(
+            json.dumps({"id": "q1", "question": "Q1", "options": ["a", "b"]}),
+            encoding="utf-8",
+        )
+        consume_clarify_answer(req_path, hist_path, "A1")
+        # 第二轮(claude 重启后又写了新 request)
+        req_path.write_text(
+            json.dumps({"id": "q2", "question": "Q2", "options": ["c", "d"]}),
+            encoding="utf-8",
+        )
+        consume_clarify_answer(req_path, hist_path, "A2")
+
+        assert read_clarify_history(hist_path) == [
+            {"question": "Q1", "answer": "A1"},
+            {"question": "Q2", "answer": "A2"},
+        ]
 
 
 class TestExtractClarificationFromStream:

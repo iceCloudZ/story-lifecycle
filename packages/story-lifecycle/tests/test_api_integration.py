@@ -4,6 +4,8 @@ Covers: Timeline, Gate History, Loop Trace, Findings, Dependency Graph,
 Patterns, and boundary conditions.
 """
 
+import json
+
 import pytest
 
 from story_lifecycle.infra.db import models as db
@@ -571,3 +573,100 @@ class TestStoryListWithFilters:
         data = resp.json()
         assert data["tapdStatus"] == "progressing"
         assert data["sourceType"] == "tapd"
+
+
+# ---------------------------------------------------------------------------
+# design 逐问澄清 HITL API(runbook 块4/块8):GET /clarify + POST /clarify/answer
+# ---------------------------------------------------------------------------
+
+
+def _write_clarify_request(workspace, story_key, payload):
+    from story_lifecycle.infra.paths import stage_done_file_rel
+    from story_lifecycle.orchestrator.engine.clarify import clarify_request_rel
+
+    p = workspace / clarify_request_rel(stage_done_file_rel(story_key, "design"))
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+class TestClarifyAPI:
+    def test_get_clarify_no_pending(self, api_client, isolated_story_home, tmp_path):
+        db.upsert_story(
+            "CL-1", title="t", workspace=str(tmp_path),
+            profile="minimal", status="active",
+        )
+        resp = api_client.get("/api/story/CL-1/clarify")
+        assert resp.status_code == 200
+        assert resp.json()["waiting"] is False
+
+    def test_get_clarify_with_pending(self, api_client, isolated_story_home, tmp_path):
+        db.upsert_story(
+            "CL-2", title="t", workspace=str(tmp_path),
+            profile="minimal", status="awaiting-clarify",
+        )
+        _write_clarify_request(
+            tmp_path, "CL-2",
+            {"id": "q1", "question": "存哪?", "header": "存储",
+             "options": ["hc_user", "hc_config"]},
+        )
+        resp = api_client.get("/api/story/CL-2/clarify")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["waiting"] is True
+        assert data["question"]["question"] == "存哪?"
+        assert data["question"]["options"] == ["hc_user", "hc_config"]
+
+    def test_answer_consumes_accumulates_and_redrives(
+        self, api_client, isolated_story_home, tmp_path, monkeypatch
+    ):
+        from story_lifecycle.infra.paths import stage_done_file_rel
+        from story_lifecycle.orchestrator.engine.clarify import (
+            clarify_history_rel,
+            read_clarify_history,
+        )
+
+        db.upsert_story(
+            "CL-3", title="t", workspace=str(tmp_path),
+            profile="minimal", status="awaiting-clarify",
+        )
+        req_path = _write_clarify_request(
+            tmp_path, "CL-3",
+            {"id": "q1", "question": "存哪?", "options": ["hc_user", "hc_config"]},
+        )
+        # mock start_story_async(避免 POST 真去驱动 claude)
+        driven = {"n": 0}
+        monkeypatch.setattr(
+            "story_lifecycle.orchestrator.service.api.start_story_async",
+            lambda key: driven.__setitem__("n", driven["n"] + 1),
+        )
+
+        resp = api_client.post(
+            "/api/story/CL-3/clarify/answer", json={"answer": "hc_user", "id": "q1"}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["answer"] == "hc_user"
+        assert driven["n"] == 1  # exit-and-resume 重驱动
+        assert not req_path.exists()  # 待答 request 已消费
+        hist_path = tmp_path / clarify_history_rel(stage_done_file_rel("CL-3", "design"))
+        assert read_clarify_history(hist_path) == [
+            {"question": "存哪?", "answer": "hc_user"}
+        ]
+        assert db.get_story("CL-3")["status"] == "active"  # 翻状态
+
+    def test_answer_no_pending_returns_404(
+        self, api_client, isolated_story_home, tmp_path, monkeypatch
+    ):
+        db.upsert_story(
+            "CL-4", title="t", workspace=str(tmp_path),
+            profile="minimal", status="active",
+        )
+        monkeypatch.setattr(
+            "story_lifecycle.orchestrator.service.api.start_story_async",
+            lambda key: None,
+        )
+        resp = api_client.post(
+            "/api/story/CL-4/clarify/answer", json={"answer": "x"}
+        )
+        assert resp.status_code == 404

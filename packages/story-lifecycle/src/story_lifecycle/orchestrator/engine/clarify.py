@@ -24,6 +24,8 @@ from pathlib import Path
 
 CLARIFY_MARKER = "<<CLARIFY>>"
 CLARIFY_REQUEST_FILENAME = "clarify_request.json"
+CLARIFY_HISTORY_FILENAME = "clarify_history.json"
+CLARIFY_MAX_ROUNDS = 5  # design 逐问澄清轮数上限(防无限问;prompt 另嘱 claude 最多 3 轮)
 
 
 def clarify_request_rel(done_file) -> str:
@@ -34,6 +36,64 @@ def clarify_request_rel(done_file) -> str:
     """
     parent = Path(done_file).parent
     return "/".join((*parent.parts, CLARIFY_REQUEST_FILENAME))
+
+
+def clarify_history_rel(done_file) -> str:
+    """累计 Q&A 历史相对路径(同 clarify_request_rel,同目录)。"""
+    parent = Path(done_file).parent
+    return "/".join((*parent.parts, CLARIFY_HISTORY_FILENAME))
+
+
+def read_clarify_history(path) -> list[dict]:
+    """读累计 Q&A 历史 → ``[{question, answer}, ...]`` 或 ``[]``(failsafe)。"""
+    p = Path(path)
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [
+        {"question": str(e.get("question", "")), "answer": str(e.get("answer", ""))}
+        for e in data
+        if isinstance(e, dict)
+    ]
+
+
+def append_clarify_history(path, question: str, answer: str) -> list[dict]:
+    """追加一轮 Q&A 到历史,返回新历史列表(原子写整文件)。
+
+    回注侧(POST /clarify/answer)调:把本轮 (question, answer) 累计 → 下次重启
+    claude 时 prompt 注入此历史,claude 基于已有回答决定下一问(动态澄清)。
+    """
+    history = read_clarify_history(path)
+    history.append({"question": question, "answer": answer})
+    p = Path(path)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(history, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+    return history
+
+
+def consume_clarify_answer(req_path, hist_path, answer: str) -> dict | None:
+    """POST /clarify/answer 核心:读待答 request → 累计 history → 清 request。
+
+    纯文件操作(路径由 caller 经 ``stage_done_file_rel`` + ``clarify_request_rel``
+    算出);DB 状态翻转 + 重驱动(``start_story_async``)归 API 层。
+
+    Returns:
+        ``{question, answer, id}`` 或 None(无待答 request)。
+    """
+    req = read_clarify_request(req_path)
+    if not req:
+        return None
+    append_clarify_history(hist_path, req["question"], answer)
+    clear_clarify_request(req_path)
+    return {"question": req["question"], "answer": answer, "id": req.get("id")}
 
 
 def read_clarify_request(path) -> dict | None:

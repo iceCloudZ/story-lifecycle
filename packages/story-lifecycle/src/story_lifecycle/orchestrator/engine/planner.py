@@ -834,6 +834,65 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         ),
                     )
                     return
+                # design 阶段逐问澄清(runbook 块5):poll clarify_request.json,先于 done
+                # file 现身则暂停 HITL——claude 遇关键岔路写它后停(不写 design.json)。
+                # exit-and-resume:此处 return 释放 driver claim;POST /clarify/answer 累计
+                # Q&A 到 clarify_history 后 start_story_async 重驱动,带历史重启 claude。
+                if stage == "design":
+                    from .clarify import (
+                        CLARIFY_MAX_ROUNDS,
+                        clarify_request_rel,
+                        clear_clarify_request,
+                        read_clarify_request,
+                    )
+                    from .supervisor import emit_clarification_request
+
+                    _clarify_path = Path(workspace) / clarify_request_rel(done_file_rel)
+                    _req = read_clarify_request(_clarify_path)
+                    if _req:
+                        _rounds = int(ctx.get("_clarify_rounds", 0)) + 1
+                        if _rounds > CLARIFY_MAX_ROUNDS:
+                            log.warning(
+                                "[%s] design clarify rounds %d > cap %d; forcing fail",
+                                story_key, _rounds, CLARIFY_MAX_ROUNDS,
+                            )
+                            clear_clarify_request(_clarify_path)
+                            if headless_proc is not None:
+                                _kill_headless(headless_proc)
+                            db.update_story(
+                                story_key,
+                                status="failed",
+                                last_error=(
+                                    f"design clarify exceeded {CLARIFY_MAX_ROUNDS} rounds"
+                                ),
+                            )
+                            return
+                        ctx["_clarify_rounds"] = _rounds
+                        emit_clarification_request(
+                            story_key=story_key,
+                            stage=stage,
+                            question=_req["question"],
+                            options=_req["options"],
+                            header=_req.get("header") or _req["question"],
+                            ai_suggestion=None,
+                            context=_req.get("context"),
+                            log_event_fn=db.log_event,
+                        )
+                        if headless_proc is not None:
+                            _kill_headless(headless_proc)
+                        # 注:不清 clarify_request.json —— 它是「当前待答问题」载体,
+                        # 由 POST /clarify/answer 消费(读问题→累计 history→清→重驱动)。
+                        db.update_story(
+                            story_key,
+                            context_json=json.dumps(ctx, ensure_ascii=False),
+                            status="awaiting-clarify",
+                            last_error="awaiting human clarification",
+                        )
+                        log.info(
+                            "[%s] design paused for clarification (round %d): %s",
+                            story_key, _rounds, _req["question"][:80],
+                        )
+                        return  # exit-and-resume —— POST /clarify/answer 重驱动
                 # 检查 done file
                 if done_path.exists():
                     try:
@@ -1025,7 +1084,11 @@ def _build_cli_prompt(
     # poll loop 并行查它,先现则暂停 awaiting-clarify(详见 docs/design-hitl-runbook.md)。
     dimensions_section = ""
     if stage == "design":
-        from .clarify import clarify_request_rel
+        from .clarify import (
+            clarify_history_rel,
+            clarify_request_rel,
+            read_clarify_history,
+        )
 
         dimensions_section = build_design_dimensions_section(
             story_key,
@@ -1033,6 +1096,19 @@ def _build_cli_prompt(
             stage,
             clarify_file=clarify_request_rel(done_file),
         )
+        # 回注后重启 claude 时,注入已澄清的 Q&A 历史——claude 基于已有回答决定
+        # 下一问(动态澄清:第一个答影响后续问),不重复问。runbook 块5 回注侧。
+        _history_path = Path(workspace or ".") / clarify_history_rel(done_file)
+        _history = read_clarify_history(_history_path)
+        if _history:
+            _lines = "\n".join(
+                f"- 问：{h['question']}\n  答：{h['answer']}" for h in _history
+            )
+            dimensions_section += (
+                "\n### 已澄清的历史问答（基于这些回答继续，勿重复问已答过的）\n"
+                + _lines
+                + "\n"
+            )
 
     # 项目仓库与分支隔离：注入每个绑定仓库的分支/基线/路径，由 CLI 自行判断
     # 是否需要 worktree 或切分支。后端的 prepare_worktrees 仍是可选的手动 API，

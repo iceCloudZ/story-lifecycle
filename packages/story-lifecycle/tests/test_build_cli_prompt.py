@@ -7,6 +7,8 @@ verify-round1 which didn't compile: done written fine). The prompt must explicit
 heavy build/compile/test commands so the agent writes code + done instead of blocking.
 """
 
+import json
+
 from story_lifecycle.orchestrator.engine.planner import _build_cli_prompt
 
 
@@ -99,3 +101,24 @@ class TestDesignDimensions:
         assert ".story/done/S-1/clarify_request.json" in p
         # 触发条件:遇关键歧义才问(非无脑问)
         assert "歧义" in p or "岔路" in p
+
+    def test_design_stage_injects_clarify_history_when_present(self, tmp_path):
+        """回注后重启 claude:prompt 注入已澄清 Q&A 历史(基于前答继续,动态澄清)。"""
+        from story_lifecycle.orchestrator.engine.clarify import clarify_history_rel
+
+        hist_path = tmp_path / clarify_history_rel(".story/done/S-1/design.json")
+        hist_path.parent.mkdir(parents=True, exist_ok=True)
+        hist_path.write_text(
+            json.dumps([{"question": "配置存哪?", "answer": "hc_user"}]),
+            encoding="utf-8",
+        )
+
+        p = _build("design", tmp_path)
+        assert "已澄清的历史问答" in p
+        assert "配置存哪?" in p
+        assert "hc_user" in p
+
+    def test_design_stage_no_history_section_when_absent(self, tmp_path):
+        """无 clarify_history → 不注入历史段(回归守护,首次 design 无历史)。"""
+        p = _build("design", tmp_path)
+        assert "已澄清的历史问答" not in p
