@@ -2,7 +2,7 @@
 # 基于 minimal,改 build 用 kimi(用户确认能跑通),开 quality gate(让层4 judge + 层2 transition 真触发)。
 version: 4
 cli: claude
-execution_mode: interactive_pty
+execution_mode: headless                 # PTY 路径 kimi-code idle(交互注入未触发);headless(kimi -p wrapper + stderr drain)验证可跑通
 author: zzh
 branch_rule: "feature/{author}/{story_key}_{summary}_{date}"
 

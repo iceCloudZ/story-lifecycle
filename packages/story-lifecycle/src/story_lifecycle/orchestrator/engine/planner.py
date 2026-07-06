@@ -511,12 +511,19 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     # 解析 profile 用于生成 prompt 和质量门禁配置
     profile_stages = {}
     quality_cfg = {}
+    rp = None
     try:
         rp = resolve_profile(profile_name)
         profile_stages = {name: cfg for name, cfg in rp.stages.items()}
         quality_cfg = rp.quality or {}
     except Exception:
         pass
+    # profile 的 execution_mode 覆盖 headless(默认 PTY;realtest 等 profile 显式 headless →
+    # headless 路径:kimi -p wrapper + stderr drain,真跑验证可跑通。PTY 路径 kimi idle 见 docs)。
+    from .execution import headless_from_profile
+
+    if headless_from_profile(rp):
+        headless = True
 
     # 逐个执行 action；使用 while 以便在 verify gate 触发 retry 时插入重试 action
     idx = 0
@@ -763,7 +770,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
 
             # 轮询 done file
             done_path = Path(workspace) / done_file_rel
-            poll_timeout = 30 * 60  # 30 minutes
+            poll_timeout = 45 * 60  # 45 minutes(realtest:大 codebase 上 kimi design/build 较慢,§0.1 时间不限,留余量)
             poll_interval = 5  # seconds
             elapsed = 0
             headless_attempt = 1  # headless 重试计数（首次=1）
