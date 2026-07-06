@@ -54,6 +54,21 @@ export interface Plan {
   confirmed?: boolean
 }
 
+// design 逐问澄清 HITL(runbook 块4):claude 遇关键岔路暂停等人答。
+export interface ClarifyQuestion {
+  id?: string | null
+  header?: string
+  question: string
+  options: string[]
+  context?: string | null
+}
+export interface ClarifyState {
+  ok: boolean
+  waiting: boolean
+  status?: string
+  question?: ClarifyQuestion
+}
+
 export interface LoopRound {
   stage: string
   loop_decision?: string
@@ -273,6 +288,18 @@ export const planApi = {
       body: JSON.stringify({ answer }),
     }),
   waitQuestion: (key: string) => fetchJSON<Record<string, unknown>>(`/api/story/${key}/wait`),
+}
+
+// Clarify APIs (design 逐问 HITL, runbook 块4/块8)
+export const clarifyApi = {
+  get: (key: string) => fetchJSON<ClarifyState>(`/api/story/${key}/clarify`),
+  streamUrl: (key: string) => `/api/story/${key}/clarify/stream`,
+  answer: (key: string, answer: string, id?: string | null) =>
+    fetchJSON<Record<string, unknown>>(`/api/story/${key}/clarify/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answer, id }),
+    }),
 }
 
 // Stats API

@@ -1,0 +1,60 @@
+/* design 逐问澄清 HITL 对话(runbook 块4)。暗色主题,与 StoryDetail 一致。 */
+.clarify-dialog {
+  margin: 0 0 16px 0;
+  padding: 16px 18px;
+  border: 1px solid #00d2ff44;
+  border-left: 3px solid #00d2ff;
+  border-radius: 8px;
+  background: #0d2a33;
+  color: #ccc;
+}
+.cd-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.cd-icon { font-size: 18px; }
+.cd-title { font-weight: 700; color: #00d2ff; }
+.cd-hint { margin-left: auto; font-size: 12px; color: #888; }
+.cd-question { margin-bottom: 12px; }
+.cd-q-header { font-size: 15px; font-weight: 600; color: #e6e6e6; margin-bottom: 4px; }
+.cd-q-body { font-size: 14px; line-height: 1.5; color: #ccc; }
+.cd-q-context { margin-top: 6px; font-size: 12px; color: #888; font-style: italic; }
+.cd-options { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.cd-option {
+  padding: 7px 14px;
+  border: 1px solid #00d2ff66;
+  border-radius: 6px;
+  background: #103a47;
+  color: #d6f7ff;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.cd-option:hover:not(:disabled) { background: #155063; border-color: #00d2ff; }
+.cd-option:disabled { opacity: 0.5; cursor: default; }
+.cd-custom { display: flex; gap: 8px; }
+.cd-custom input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #0a1a20;
+  color: #ccc;
+  font-size: 13px;
+}
+.cd-custom input:focus { outline: none; border-color: #00d2ff88; }
+.cd-send {
+  padding: 7px 16px;
+  border: none;
+  border-radius: 6px;
+  background: #00d2ff;
+  color: #06222b;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 13px;
+}
+.cd-send:disabled { opacity: 0.45; cursor: default; }
+.cd-error { margin-top: 8px; font-size: 12px; color: #ff6b6b; }
+.cd-status { margin-top: 8px; font-size: 12px; color: #00d2ff; }

@@ -12,6 +12,7 @@ import QualityGateTab from '../components/QualityGateTab'
 import TerminalTab from '../components/TerminalTab'
 import ContextTab from '../components/ContextTab'
 import BugsTab from '../components/BugsTab'
+import ClarifyDialog from '../components/ClarifyDialog'
 import './StoryDetailPage.css'
 
 // Visible modules for the semi-automatic workflow. Legacy modules (loop,
@@ -206,6 +207,7 @@ export default function StoryDetailPage() {
           onArchive={handleArchive}
         />
         <div className="sdpv2-content">
+          <ClarifyDialog storyKey={storyKey} status={detail.status} />
           {activeTab === 'overview' && (
             <OverviewTab
               storyKey={storyKey}
