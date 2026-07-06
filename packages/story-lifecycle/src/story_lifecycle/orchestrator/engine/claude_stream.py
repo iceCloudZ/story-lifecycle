@@ -280,6 +280,7 @@ def supervise_headless_stdout(
     llm_invoke: Callable[[str], str],
     log_event_fn: Callable,
     permission_tool: str = DEFAULT_PERM_TOOL,
+    stderr_tail: list | None = None,
 ) -> list[dict]:
     """同步消费 headless proc 的 stdout(drain + 检测提问 + 决策/日志)。
 
@@ -294,14 +295,38 @@ def supervise_headless_stdout(
     决策+日志,但不回写 agent(headless agent 也一般不提问;真要答需走 interactive PTY 轨的
     ``supervise_pty_session``)。
 
+    **stderr drain**(``stderr_tail``):headless agent(kimi 叙述、claude 日志)大量写 stderr;
+    planner 的 Popen 用 stderr=PIPE,若不排空,stderr 超 64KB 管道缓冲 → proc 阻塞在 stderr
+    写 → 同样死锁(且 stdout drain 救不了,因为 proc 卡在 stderr)。传 ``stderr_tail``(list)
+    时,本函数起一个嵌套 daemon 线程并发排空 stderr、滚动保留尾部(~8KB),供 caller(planner
+    的 retry 诊断)读取。真实 bug 回归见 ``test_drains_stderr_preventing_pipe_deadlock``。
+
     Args:
-        proc: subprocess.Popen(有 ``.stdout``)。
+        proc: subprocess.Popen(有 ``.stdout`` / ``.stderr``)。
         adapter: claude → 解 stream-json;其它 → 用 ``make_awaiting_fn`` 文本检测。
+        stderr_tail: 可选 list;非空时并发排空 proc.stderr,滚动尾部追加进此 list。
 
     Returns:
         ``[{question, options, choice, reason}]`` —— 命中并决策过的点。
     """
     from .supervisor import decide_response, log_decision
+
+    # 并发排空 stderr,防 stderr PIPE 满致 proc 阻塞(kimi/claude 大量写 stderr)。
+    # 嵌套 daemon 线程:与下方 stdout 循环并行;stderr 关闭时 readline 返 b"" 自然退出。
+    if stderr_tail is not None and getattr(proc, "stderr", None) is not None:
+        import threading as _th
+
+        def _drain_stderr():
+            try:
+                for raw in iter(proc.stderr.readline, b""):
+                    stderr_tail.append(raw.decode("utf-8", "replace"))
+                    # 滚动:总长留 ~8KB,够 retry 诊断看尾部即可,不无限涨内存。
+                    while sum(len(s) for s in stderr_tail) > 8192 and len(stderr_tail) > 1:
+                        stderr_tail.pop(0)
+            except Exception:
+                pass
+
+        _th.Thread(target=_drain_stderr, daemon=True, name="drain-headless-stderr").start()
 
     decisions: list[dict] = []
     # kimi 等(非 claude)用文本 awaiting detector;claude 用 stream-json extract_awaiting

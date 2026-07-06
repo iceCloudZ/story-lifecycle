@@ -1,0 +1,60 @@
+# Story Lifecycle — Realtest Profile (real E2E: design=claude, build=kimi, verify=claude)
+# 基于 minimal,改 build 用 kimi(用户确认能跑通),开 quality gate(让层4 judge + 层2 transition 真触发)。
+version: 4
+cli: claude
+execution_mode: interactive_pty
+author: zzh
+branch_rule: "feature/{author}/{story_key}_{summary}_{date}"
+
+stages:
+  design:
+    order: 1
+    description: "代码调研与方案设计"
+    cli: kimi                      # 529: claude(open.bigmodel.cn 网关)过载不可用, design 改 kimi(已 smoke 验证可跑通)
+    skill: "/brainstorming"
+    confirm: false
+    review: false
+    max_retries: 2
+    allowed_providers: [deepseek, zhipu]
+    expected_outputs:
+      - research_path
+      - spec_path
+      - complexity
+    next_default: [build]
+
+  build:
+    order: 2
+    description: "实施计划与编码实现"
+    cli: kimi                      # 用户确认:编码用 kimi(确定可跑通)
+    confirm: false
+    review: false
+    max_retries: 3
+    allowed_providers: [deepseek, zhipu, anthropic]
+    expected_outputs:
+      - plan_path
+      - files_changed
+      - summary
+    next_default: [verify]
+
+  verify:
+    order: 3
+    description: "验证与交付资料包"
+    cli: kimi                      # 529: claude 网关过载, verify 改 kimi
+    confirm: false
+    review: false
+    max_retries: 2
+    allowed_providers: [deepseek, zhipu, anthropic]
+    expected_outputs:
+      - test_report_path
+      - delivery_path
+      - context_pack_path
+    next_default: []
+
+quality:
+  enabled: true                       # 开 quality gate → 层4 judge + 层2 transition 真触发
+  block_on_open_high_findings: true
+
+adversarial:
+  enabled: false
+
+reviewers: {}

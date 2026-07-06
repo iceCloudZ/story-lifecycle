@@ -616,6 +616,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     cli_prompt[:120],
                 )
                 headless_proc = None
+                _stderr_tail = []  # headless stderr 排空 holder(kimi 叙述/claude 日志 → 防 PIPE 死锁 + retry 诊断)
                 if headless:
                     import subprocess as _sp
                     # I2 miner binding：headless 路径不经过 adapter.inject_prompt()，
@@ -664,6 +665,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         _sup_llm = get_llm().invoke
                         _sup_sf = {"story_key": story_key, "stage": stage, "summary": focus}
                         _sup_proc = headless_proc
+                        _sup_stderr = _stderr_tail  # drain 线程排空 stderr 到此 holder
 
                         def _drain_headless():
                             try:
@@ -673,6 +675,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                     story_facts=_sup_sf,
                                     llm_invoke=_sup_llm,
                                     log_event_fn=db.log_event,
+                                    stderr_tail=_sup_stderr,
                                 )
                             except Exception:
                                 pass
@@ -773,10 +776,11 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     and not done_path.exists()
                 ):
                     rc = headless_proc.returncode
-                    stderr_tail, stdout_tail = b"", b""
+                    stderr_tail, stdout_tail = "", b""
                     try:
-                        if headless_proc.stderr:
-                            stderr_tail = headless_proc.stderr.read()[-500:]
+                        # stderr 已由 drain daemon(supervise_headless_stdout)排空到 _stderr_tail;
+                        # 不再 headless_proc.stderr.read()(与 drain 线程争用 / 阻塞)。
+                        stderr_tail = "".join(_stderr_tail)[-500:]
                         if headless_proc.stdout:
                             stdout_tail = headless_proc.stdout.read()[-800:]
                     except Exception:

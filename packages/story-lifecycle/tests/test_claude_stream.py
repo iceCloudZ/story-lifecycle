@@ -423,6 +423,50 @@ class TestSuperviseHeadlessStdout:
         assert decisions == []
         assert calls["n"] == 0  # 没提问不调 LLM
 
+    def test_drains_stderr_preventing_pipe_deadlock(self):
+        """真跑回归出的 bug:headless agent(kimi 叙述/claude 日志)大量写 stderr,
+        planner 的 Popen 用 stderr=PIPE 却只 drain stdout → stderr 超 64KB 管道缓冲
+        → proc 阻塞在 stderr 写 → supervise 的 stdout 读永远等不到 EOF(死锁)。
+        本测用真子进程写 200KB 到 stderr(>64KB 管道),断言 supervise_headless_stdout
+        带 stderr_tail 时并发排空 stderr、proc 正常结束、tail 捕获到内容(不死锁)。"""
+        import subprocess
+        import sys
+        import threading
+
+        # 写 200KB 到 stderr(超管道缓冲)+ 一行 stdout,然后正常退出
+        code = (
+            "import sys; sys.stderr.buffer.write(b'E'*200000); sys.stderr.buffer.flush();"
+            "sys.stdout.buffer.write(b'line\\n'); sys.stdout.buffer.flush()"
+        )
+        proc = subprocess.Popen(
+            [sys.executable, "-c", code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stderr_tail = []
+        result = {}
+
+        def run():
+            result["decisions"] = supervise_headless_stdout(
+                proc=proc,
+                adapter="claude",
+                story_facts={"story_key": "H-SD", "stage": "design"},
+                llm_invoke=lambda p: '{"choice":"allow","reason":"x"}',
+                log_event_fn=lambda *a, **k: None,
+                stderr_tail=stderr_tail,
+            )
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        t.join(timeout=15)
+        assert not t.is_alive(), (
+            "supervise_headless_stdout 死锁:stderr PIPE 满(200KB)>64KB 未排空,proc 阻塞"
+        )
+        proc.wait(timeout=5)
+        assert proc.returncode == 0
+        assert len(stderr_tail) > 0, "stderr 未排空到 tail"
+        assert "E" in "".join(stderr_tail)
+
 
 
 
