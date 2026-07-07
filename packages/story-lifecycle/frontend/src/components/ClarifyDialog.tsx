@@ -5,15 +5,17 @@ import type { ClarifyQuestion } from '../api/client'
 import './ClarifyDialog.css'
 
 /**
- * design 阶段「逐问澄清」HITL 对话(runbook 块4)。
+ * design 阶段「逐问澄清」HITL 对话(外接 MCP 方案,runbook 块4)。
  *
- * claude 遇关键歧义写 clarify_request.json 后暂停(status=awaiting-clarify);
- * 本组件轮询 GET /clarify 取当前待答问题 → 用户选选项/自定义答 → POST /clarify/answer
- * → 后端累计 history + 重驱动 claude(带 Q&A 重启,前答影响后问)。下一问出现时再次展示,
- * 形成动态对话流,直到 claude 收敛写 design.json(status 离开 awaiting-clarify)。
+ * claude 遇关键歧义调 mcp__lifecycle__clarify → MCP server 落 clarification_request 事件 +
+ * 阻塞等人答(同一 claude 进程,不重 spawn)。本组件轮询 GET /clarify 取待答问题 → 用户答 →
+ * POST /clarify/answer 落 clarification_answer 事件 → MCP server 解除 claude 阻塞 → claude
+ * 带答继续。下一问出现时再展示,直到 claude 收敛写 design.json。
  *
- * 用 react-query 轮询(与详情页 refetchInterval 一致);SSE 端点 /clarify/stream 亦可用。
+ * 显示条件:data.waiting(status 仍 active——claude 阻塞在 MCP 调用上,非特殊 status)。
  */
+const RUNNING = new Set(['planning', 'active', 'implementing'])
+
 export default function ClarifyDialog({
   storyKey,
   status,
@@ -26,14 +28,15 @@ export default function ClarifyDialog({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
+  const running = RUNNING.has(status)
   const { data } = useQuery({
     queryKey: ['clarify', storyKey],
     queryFn: () => clarifyApi.get(storyKey),
-    enabled: status === 'awaiting-clarify',
-    refetchInterval: status === 'awaiting-clarify' ? 2000 : false,
+    enabled: running,
+    refetchInterval: running ? 3000 : false,
   })
 
-  if (status !== 'awaiting-clarify' || !data?.waiting || !data.question) return null
+  if (!data?.waiting || !data.question) return null
   const q: ClarifyQuestion = data.question
 
   async function submit(answer: string) {

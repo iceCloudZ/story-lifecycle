@@ -87,38 +87,15 @@ class TestDesignDimensions:
         p = _build("build", tmp_path)
         assert "设计维度 checklist" not in p
 
-    def test_design_stage_instructs_clarify_protocol(self, tmp_path):
-        """design prompt 指示侧文件 clarify 协议(替代『不要提澄清问题』)。
+    def test_design_stage_instructs_mcp_clarify_protocol(self, tmp_path):
+        """design prompt 指示遇关键歧义调 mcp__lifecycle__clarify 工具(外接 MCP HITL)。
 
-        runbook 块1 + 架构偏差:claude -p 无 AskUserQuestion → 改指示 claude 遇关键
-        歧义写 clarify_request.json 后停(不写 design.json),由编排层接住 HITL。
-        clarify 路径取自 done file 同目录(= poll loop 查的位置)。
+        方向变更(2026-07-07):从侧文件协议改为外接 MCP clarify 工具——实测 claude
+        真的调用它并用人答继续(context 保留)。见 memory story-lifecycle-design-hitl。
         """
         p = _build("design", tmp_path)
         assert "不要提澄清问题" not in p  # 旧禁令移除
-        assert "clarify_request.json" in p  # 新协议文件名
-        # 路径取自 done file 同目录(.story/done/S-1/),与 poll loop 一致
-        assert ".story/done/S-1/clarify_request.json" in p
+        assert "mcp__lifecycle__clarify" in p  # 指示调 MCP clarify 工具
+        assert "clarify_request.json" not in p  # 侧文件协议已移除
         # 触发条件:遇关键歧义才问(非无脑问)
         assert "歧义" in p or "岔路" in p
-
-    def test_design_stage_injects_clarify_history_when_present(self, tmp_path):
-        """回注后重启 claude:prompt 注入已澄清 Q&A 历史(基于前答继续,动态澄清)。"""
-        from story_lifecycle.orchestrator.engine.clarify import clarify_history_rel
-
-        hist_path = tmp_path / clarify_history_rel(".story/done/S-1/design.json")
-        hist_path.parent.mkdir(parents=True, exist_ok=True)
-        hist_path.write_text(
-            json.dumps([{"question": "配置存哪?", "answer": "hc_user"}]),
-            encoding="utf-8",
-        )
-
-        p = _build("design", tmp_path)
-        assert "已澄清的历史问答" in p
-        assert "配置存哪?" in p
-        assert "hc_user" in p
-
-    def test_design_stage_no_history_section_when_absent(self, tmp_path):
-        """无 clarify_history → 不注入历史段(回归守护,首次 design 无历史)。"""
-        p = _build("design", tmp_path)
-        assert "已澄清的历史问答" not in p

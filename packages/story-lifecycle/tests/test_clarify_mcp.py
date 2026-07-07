@@ -12,6 +12,7 @@ import pytest
 
 from story_lifecycle.orchestrator.mcp.clarify_server import (
     CLARIFY_TOOL,
+    get_pending_clarification,
     handle_clarify_call,
     poll_clarify_answer,
 )
@@ -128,3 +129,33 @@ class TestClarifyToolSchema:
         schema = CLARIFY_TOOL["inputSchema"]
         assert "question" in schema["required"]
         assert "options" in schema["required"]
+
+
+class TestGetPendingClarification:
+    """GET /clarify 的核心:DB 事件里找「最新未答的 clarification_request」。
+
+    事件驱动(MCP 方案):MCP server 落 clarification_request,POST /clarify/answer 落
+    clarification_answer。pending = 最新 request 且无匹配 id 的 answer。
+    """
+
+    def test_returns_latest_unanswered_request(self):
+        events = [
+            {"event_type": "clarification_request", "payload": {"id": "r1", "question": "Q1", "options": ["a", "b"], "header": "H1"}},
+            {"event_type": "clarification_answer", "payload": {"id": "r1", "answer": "a"}},
+            {"event_type": "clarification_request", "payload": {"id": "r2", "question": "Q2", "options": ["c", "d"], "header": "H2"}},
+        ]
+        pending = get_pending_clarification("S-1", get_events_fn=lambda _k: events)
+        assert pending is not None
+        assert pending["id"] == "r2"  # 最新且未答
+        assert pending["question"] == "Q2"
+        assert pending["options"] == ["c", "d"]
+
+    def test_none_when_latest_request_answered(self):
+        events = [
+            {"event_type": "clarification_request", "payload": {"id": "r1", "question": "Q1", "options": ["a"]}},
+            {"event_type": "clarification_answer", "payload": {"id": "r1", "answer": "a"}},
+        ]
+        assert get_pending_clarification("S-1", get_events_fn=lambda _k: events) is None
+
+    def test_none_when_no_request(self):
+        assert get_pending_clarification("S-1", get_events_fn=lambda _k: []) is None

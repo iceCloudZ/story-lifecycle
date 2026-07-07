@@ -596,6 +596,34 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     launch_cmd = adapter.headless_launch_cmd(model=model, prompt="")
                 else:
                     launch_cmd = adapter.interactive_launch_cmd(model=model)
+
+                # design 阶段 + claude:接外接 MCP clarify 工具(--mcp-config 加载 lifecycle
+                # server)+ 注入 STORY_KEY env(MCP server 经继承读它定位 story DB)。
+                # 见 orchestrator/mcp/clarify_server.py + memory story-lifecycle-design-hitl。
+                story_env = None
+                if stage == "design" and adapter_name == "claude":
+                    import os as _os
+                    import sys as _sys
+
+                    try:
+                        from ..mcp.clarify_server import write_mcp_config
+
+                        _mcp_cfg = (
+                            safe_story_path(workspace, ".story", "context", story_key)
+                            / "clarify_mcp.json"
+                        )
+                        write_mcp_config(_mcp_cfg, _sys.executable)
+                        launch_cmd = list(launch_cmd) + ["--mcp-config", str(_mcp_cfg)]
+                        story_env = {**_os.environ, "STORY_KEY": story_key}
+                        log.info(
+                            "[%s] design clarify MCP wired: --mcp-config=%s STORY_KEY set",
+                            story_key, _mcp_cfg,
+                        )
+                    except Exception:
+                        log.exception(
+                            "[%s] design clarify MCP wiring failed (clarify unavailable)",
+                            story_key,
+                        )
                 _ctx_markers = (
                     "上下文",
                     "context",
@@ -651,6 +679,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             stdin=_sp.PIPE,
                             stdout=_sp.PIPE,
                             stderr=_sp.PIPE,
+                            env=story_env,
                         )
                         headless_proc.stdin.write(cli_prompt.encode("utf-8"))
                         headless_proc.stdin.close()
@@ -705,6 +734,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         workspace,
                         cli_prompt,  # prompt 作为第 4 个参数注入到 PTY
                         readiness_marker=getattr(adapter, "readiness_marker", None),
+                        env=story_env,
                     )
                     log.info("[%s] PTY session started for stage=%s", story_key, stage)
                     # §4.1 层1 supervisor(interactive PTY):daemon 线程跑 supervise_pty_session。
@@ -807,6 +837,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             headless_proc = _sp.Popen(
                                 launch_cmd, cwd=workspace,
                                 stdin=_sp.PIPE, stdout=_sp.PIPE, stderr=_sp.PIPE,
+                                env=story_env,
                             )
                             headless_proc.stdin.write(cli_prompt.encode("utf-8"))
                             headless_proc.stdin.close()
@@ -834,65 +865,10 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         ),
                     )
                     return
-                # design 阶段逐问澄清(runbook 块5):poll clarify_request.json,先于 done
-                # file 现身则暂停 HITL——claude 遇关键岔路写它后停(不写 design.json)。
-                # exit-and-resume:此处 return 释放 driver claim;POST /clarify/answer 累计
-                # Q&A 到 clarify_history 后 start_story_async 重驱动,带历史重启 claude。
-                if stage == "design":
-                    from .clarify import (
-                        CLARIFY_MAX_ROUNDS,
-                        clarify_request_rel,
-                        clear_clarify_request,
-                        read_clarify_request,
-                    )
-                    from .supervisor import emit_clarification_request
-
-                    _clarify_path = Path(workspace) / clarify_request_rel(done_file_rel)
-                    _req = read_clarify_request(_clarify_path)
-                    if _req:
-                        _rounds = int(ctx.get("_clarify_rounds", 0)) + 1
-                        if _rounds > CLARIFY_MAX_ROUNDS:
-                            log.warning(
-                                "[%s] design clarify rounds %d > cap %d; forcing fail",
-                                story_key, _rounds, CLARIFY_MAX_ROUNDS,
-                            )
-                            clear_clarify_request(_clarify_path)
-                            if headless_proc is not None:
-                                _kill_headless(headless_proc)
-                            db.update_story(
-                                story_key,
-                                status="failed",
-                                last_error=(
-                                    f"design clarify exceeded {CLARIFY_MAX_ROUNDS} rounds"
-                                ),
-                            )
-                            return
-                        ctx["_clarify_rounds"] = _rounds
-                        emit_clarification_request(
-                            story_key=story_key,
-                            stage=stage,
-                            question=_req["question"],
-                            options=_req["options"],
-                            header=_req.get("header") or _req["question"],
-                            ai_suggestion=None,
-                            context=_req.get("context"),
-                            log_event_fn=db.log_event,
-                        )
-                        if headless_proc is not None:
-                            _kill_headless(headless_proc)
-                        # 注:不清 clarify_request.json —— 它是「当前待答问题」载体,
-                        # 由 POST /clarify/answer 消费(读问题→累计 history→清→重驱动)。
-                        db.update_story(
-                            story_key,
-                            context_json=json.dumps(ctx, ensure_ascii=False),
-                            status="awaiting-clarify",
-                            last_error="awaiting human clarification",
-                        )
-                        log.info(
-                            "[%s] design paused for clarification (round %d): %s",
-                            story_key, _rounds, _req["question"][:80],
-                        )
-                        return  # exit-and-resume —— POST /clarify/answer 重驱动
+                # 注:design 逐问澄清走外接 MCP(claude 阻塞在 mcp__lifecycle__clarify 调用上,
+                # MCP server 阻塞等人答 → 返回 → claude 继续)。故本 poll loop 无需特殊 clarify
+                # 处理——claude 在等 MCP 返回期间一直 alive、未写 done file,loop 正常等 done。
+                # 待答问题/答案经 DB 事件流转(clarification_request/answer),见 orchestrator/mcp/。
                 # 检查 done file
                 if done_path.exists():
                     try:
@@ -1078,37 +1054,12 @@ def _build_cli_prompt(
     # task_type 让 agent 知道查哪个域；kb.py 做精确取数（graph/bugs/playbook）。
     knowledge_section = build_kb_tool_section(story_key, workspace, stage)
 
-    # design 阶段:维度 checklist + 禁 brainstorming + 逐问澄清协议 + 高价值维度 playbook 窄注入
-    # (替代 brainstorming 自由探索——hc-all 重环境发散/context rot,见 runbook §7.4)
-    # clarify_file:侧文件路径(done file 同目录)——claude 遇关键岔路写它后停,
-    # poll loop 并行查它,先现则暂停 awaiting-clarify(详见 docs/design-hitl-runbook.md)。
+    # design 阶段:维度 checklist + 禁 brainstorming + 逐问澄清(调 mcp__lifecycle__clarify)
+    # + 高价值维度 playbook。遇关键岔路 claude 调外接 MCP clarify 工具(见 orchestrator/mcp/),
+    # 人答经它返回,claude 带答继续(context 保留)。详见 memory story-lifecycle-design-hitl。
     dimensions_section = ""
     if stage == "design":
-        from .clarify import (
-            clarify_history_rel,
-            clarify_request_rel,
-            read_clarify_history,
-        )
-
-        dimensions_section = build_design_dimensions_section(
-            story_key,
-            workspace,
-            stage,
-            clarify_file=clarify_request_rel(done_file),
-        )
-        # 回注后重启 claude 时,注入已澄清的 Q&A 历史——claude 基于已有回答决定
-        # 下一问(动态澄清:第一个答影响后续问),不重复问。runbook 块5 回注侧。
-        _history_path = Path(workspace or ".") / clarify_history_rel(done_file)
-        _history = read_clarify_history(_history_path)
-        if _history:
-            _lines = "\n".join(
-                f"- 问：{h['question']}\n  答：{h['answer']}" for h in _history
-            )
-            dimensions_section += (
-                "\n### 已澄清的历史问答（基于这些回答继续，勿重复问已答过的）\n"
-                + _lines
-                + "\n"
-            )
+        dimensions_section = build_design_dimensions_section(story_key, workspace, stage)
 
     # 项目仓库与分支隔离：注入每个绑定仓库的分支/基线/路径，由 CLI 自行判断
     # 是否需要 worktree 或切分支。后端的 prepare_worktrees 仍是可选的手动 API，

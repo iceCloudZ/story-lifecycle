@@ -173,17 +173,16 @@ def build_design_dimensions_section(
     story_key: str,
     workspace: str,
     stage: str,
-    clarify_file: str = "",
 ) -> str:
-    """design 阶段注入「设计维度 checklist + 禁 brainstorming + 逐问澄清协议 + 高价值维度 playbook」。
+    """design 阶段注入「设计维度 checklist + 禁 brainstorming + 逐问澄清(MCP) + 高价值维度 playbook」。
 
     替代 brainstorming 自由探索——后者在 hc-all 重环境发散/context rot(见
     docs/real-story-e2e-runbook.md §7.4)。让 agent 按维度做产品→技术转化。
 
-    **逐问澄清协议**(docs/design-hitl-runbook.md):遇关键岔路(不澄清就出不了正确方案)
-    时,写 ``clarify_file``(侧文件)后停,由编排层接住 HITL(暂停→推前端→人答→带累计
-    Q&A 重启)。基于前答决定下一问(动态澄清)。**注意**:claude -p 无 AskUserQuestion
-    工具(实测),故走侧文件而非 tool_use。
+    **逐问澄清(外接 MCP)**:遇关键岔路(不澄清就出不了正确方案)时,调用
+    ``mcp__lifecycle__clarify(question, options)`` 工具提问——编排层暴露的 in-process
+    MCP 工具,人答经它返回,claude 带答继续(context 保留,不重 spawn)。基于前答决定下一问
+    (动态澄清)。方向见 memory story-lifecycle-design-hitl(2026-07-07)。
 
     design-only;其他 stage 返回 ""。Failsafe:任何异常返回 checklist 骨架,不阻塞 prompt。
     高价值维度 playbook(当前 security;后续推广降级/并发/缓存)从
@@ -196,30 +195,17 @@ def build_design_dimensions_section(
         "\n## 设计维度 checklist（产品→技术转化框架）\n"
         "**不要调用 brainstorming skill**（hc-all 重环境发散/context rot，自由探索会卡死）；"
         "按下面维度逐个做产品→技术转化。**遇关键岔路**（多种选择/信息缺失/资方差异，且不澄清"
-        "就出不了正确方案）时，按下方「逐问澄清协议」发起一次提问；无歧义的维度直接输出一条"
-        "决策点（选择 + 理由）到完成协议的 decision_points:\n"
+        "就出不了正确方案）时，**调用 `mcp__lifecycle__clarify` 工具**提问（一次一个：question + "
+        "2-4 个 options），拿到人答再继续；**基于已答内容决定下一个问，勿重复问已答过的**。"
+        "无歧义的维度直接输出一条决策点（选择 + 理由）到完成协议的 decision_points:\n"
         "1. 现状分析（现有代码/链路） 2. 架构数据流 3. 数据模型（表/字段/索引/历史数据）"
         " 4. 接口契约（API/Feign/DTO/MQ/幂等） 5. 核心逻辑（算法/状态机/事件接入点）"
         " 6. 一致性并发（对账/锁/事务） 7. 性能容量（缓存/大表/慢查询）"
         " 8. 降级兼容（灰度/兜底/回滚/新老版本） 9. 边界异常 10. 安全（Parameter Trust）"
         " 11. 权限 12. 风险回滚 13. 非目标\n"
+        "**纪律**：只问真正卡住你的岔路（最多 3 轮）；能从代码/PRD/既有约定推断的，自己决断进 "
+        "decision_points，不要问。\n"
     )
-
-    # 逐问澄清协议(侧文件):claude 遇关键岔路写 clarify_request.json 后停。
-    if clarify_file:
-        section += (
-            "\n### 逐问澄清协议（遇关键岔路、不澄清就出不了正确方案时，一次问一个）\n"
-            "当某维度的岔路**必须澄清才能给出正确设计**时（资方差异/接口缺失/多种合理方案），"
-            "按以下步骤发起**一次**提问（基于已得到的回答决定下一个问）：\n"
-            f"1. 把问题写成 JSON **写入文件** `{clarify_file}`（相对当前工作目录），格式：\n"
-            '   {"id": "<自取短id>", "header": "<一句话主题>", "question": "<具体问题>", '
-            '"options": ["<选项1>", "<选项2>"], "context": "<为何必须澄清>"}\n'
-            "2. 写完该文件后**立即停止**——**不要**写完成协议/done 文件，**不要**继续产出 design。\n"
-            "3. 编排层会暂停、把问题推给人类；人类回答后会带你累计的 Q&A 重启你，你基于回答继续"
-            "（出下一个问，或收敛写 design）。\n"
-            "**纪律**：只问真正卡住你的岔路（最多 3 轮）；能从代码/PRD/既有约定推断的，自己决断进 "
-            "decision_points，不要问。\n"
-        )
 
     # 高价值维度 playbook 窄注入(MVP: security;存在才注,failsafe)。
     # 只取「## 怎么用」之前的框架段,避免全文撑爆 prompt(context rot 教训)。

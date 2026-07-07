@@ -2812,46 +2812,29 @@ def api_get_wait_question(story_key: str):
     }
 
 
-# -------- design 逐问澄清 HITL (runbook 块4 前端 / 块8 后端) --------
-
-
-def _design_clarify_paths(workspace: str, story_key: str):
-    """返回 (request_path, history_path) —— 取 design done file 同目录。
-
-    design 是逐问澄清的唯一 stage(see docs/design-hitl-runbook.md)。两文件路径与
-    poll loop、prompt 注入完全一致(经 stage_done_file_rel + clarify_*_rel 集中算)。
-    """
-    from ...infra.paths import stage_done_file_rel
-    from ..engine.clarify import clarify_history_rel, clarify_request_rel
-
-    base = Path(workspace or ".")
-    done_rel = stage_done_file_rel(story_key, "design")
-    return base / clarify_request_rel(done_rel), base / clarify_history_rel(done_rel)
+# -------- design 逐问澄清 HITL(外接 MCP;事件驱动) --------
 
 
 @app.get("/api/story/{story_key}/clarify")
 def api_get_clarify(story_key: str):
-    """取当前待答澄清问题(design 逐问 HITL,轮询用)。无待答 → {waiting: false}。"""
+    """取当前待答澄清问题(design 逐问 HITL,前端轮询用)。无待答 → {waiting: false}。
+
+    事件驱动:claude 调 ``mcp__lifecycle__clarify`` → MCP server 落 ``clarification_request``
+    事件 → 本端点从事件查「最新未答 request」。详见 ``orchestrator/mcp/clarify_server.py``。
+    """
     story = db.get_story(story_key)
     if not story:
         raise HTTPException(status_code=404, detail="story not found")
-    from ..engine.clarify import read_clarify_request
+    from ..mcp.clarify_server import get_pending_clarification
 
-    req_path, _ = _design_clarify_paths(story.get("workspace", ""), story_key)
-    req = read_clarify_request(req_path)
-    if not req:
+    pending = get_pending_clarification(story_key, get_events_fn=db.get_story_events)
+    if not pending:
         return {"ok": True, "waiting": False, "status": story.get("status")}
     return {
         "ok": True,
         "waiting": True,
         "status": story.get("status"),
-        "question": {
-            "id": req.get("id"),
-            "header": req.get("header"),
-            "question": req["question"],
-            "options": req["options"],
-            "context": req.get("context"),
-        },
+        "question": pending,
     }
 
 
@@ -2862,34 +2845,27 @@ class ClarifyAnswerRequest(BaseModel):
 
 @app.post("/api/story/{story_key}/clarify/answer")
 def api_clarify_answer(story_key: str, req: ClarifyAnswerRequest):
-    """回答当前待答澄清 → 累计 history → 重驱动 design(带 Q&A 重启 claude)。
+    """回答当前待答澄清 → 落 clarification_answer 事件 → MCP server 解除 claude 阻塞。
 
-    exit-and-resume:poll loop 检测到 clarify 时 return 释放 driver claim;本端点
-    消费待答问题(读→累计 history→清)→ 翻 status=active → start_story_async 重驱动,
-    continue_orchestrator_agent 带 clarify_history 重启 claude(前答影响后问)。
+    claude 此刻**阻塞在 mcp__lifecycle__clarify 调用上**(同一进程,不重 spawn);本端点
+    只落 answer 事件,MCP server 的 poll_clarify_answer 拾取后返回 → claude 带答继续。
     """
     story = db.get_story(story_key)
     if not story:
         raise HTTPException(status_code=404, detail="story not found")
-    from ..engine.clarify import consume_clarify_answer
+    from ..mcp.clarify_server import get_pending_clarification
 
-    req_path, hist_path = _design_clarify_paths(story.get("workspace", ""), story_key)
-    result = consume_clarify_answer(req_path, hist_path, req.answer)
-    if not result:
+    pending = get_pending_clarification(story_key, get_events_fn=db.get_story_events)
+    if not pending:
         raise HTTPException(status_code=404, detail="No pending clarification")
-    db.update_story(story_key, status="active", last_error="")
+    rid = req.id or pending.get("id")
     db.log_event(
         story_key,
         "design",
         "clarification_answer",
-        {
-            "id": result.get("id"),
-            "question": result["question"],
-            "answer": req.answer,
-        },
+        {"id": rid, "question": pending.get("question"), "answer": req.answer},
     )
-    start_story_async(story_key)  # 重驱动(claim 已释放,可重新 CAS 拿到)
-    return {"ok": True, "question": result["question"], "answer": req.answer}
+    return {"ok": True, "id": rid, "question": pending.get("question"), "answer": req.answer}
 
 
 @app.get("/api/story/{story_key}/clarify/stream")

@@ -59,6 +59,20 @@ _ANSWER_TIMEOUT_S = 45 * 60
 _POLL_INTERVAL_S = 2.0
 
 
+def _event_payload(ev: dict) -> dict:
+    """解码事件 payload(DB 存 JSON 字符串;测试可能传 dict)→ dict,失败返 {}。
+
+    ``db.get_story_events`` 返回的 payload 是 JSON 字符串,本模块的函数要兼容 str/dict。
+    """
+    p = ev.get("payload")
+    if isinstance(p, str):
+        try:
+            return json.loads(p)
+        except (json.JSONDecodeError, ValueError):
+            return {}
+    return p if isinstance(p, dict) else {}
+
+
 def handle_clarify_call(
     *,
     story_key: str,
@@ -133,14 +147,80 @@ def poll_clarify_answer(
         for ev in get_events_fn(story_key) or []:
             if ev.get("event_type") != "clarification_answer":
                 continue
-            payload = ev.get("payload") or {}
+            payload = _event_payload(ev)
             if payload.get("id") == request_id:
                 return payload.get("answer")
         sleep_fn(poll_interval)
     return None
 
 
+def get_pending_clarification(
+    story_key: str,
+    *,
+    get_events_fn: Callable[[str], list[dict]],
+) -> dict | None:
+    """DB 事件里找「最新未答的 clarification_request」(GET /clarify 用)。
+
+    Returns:
+        ``{id, question, options, header}`` 或 None(无 request / 最新 request 已答)。
+
+    用于前端轮询:展示当前待答问题。事件驱动——request 由 MCP server 落,answer 由
+    POST /clarify/answer 落;pending = 最新 request 且无匹配 id 的 answer。
+    """
+    events = get_events_fn(story_key) or []
+    answered: set = set()
+    latest_request = None
+    for ev in events:
+        etype = ev.get("event_type")
+        payload = _event_payload(ev)
+        if etype == "clarification_answer":
+            if payload.get("id") is not None:
+                answered.add(payload["id"])
+        elif etype == "clarification_request":
+            latest_request = payload  # 顺序遍历,后者覆盖 → 最新
+    if not latest_request:
+        return None
+    if latest_request.get("id") in answered:
+        return None
+    return {
+        "id": latest_request.get("id"),
+        "question": str(latest_request.get("question", "")),
+        "options": list(latest_request.get("options", []) or []),
+        "header": latest_request.get("header") or str(latest_request.get("question", "")),
+    }
+
+
 # ---- stdio JSONRPC loop (薄 I/O 层) ----------------------------------------
+
+
+def write_mcp_config(config_path, python_bin: str) -> str:
+    """写 ``.mcp.json``(指向本 server,经 ``claude --mcp-config <path>`` 加载),返回路径。
+
+    claude 启动时加载此配置 → 连上 lifecycle MCP server → tools/list 暴露 clarify 工具。
+    用 ``-m`` 跑模块(相对 import ``...infra.db`` 才能解析)。python_bin 用编排层
+    ``sys.executable``(其 env 已装 story_lifecycle)。STORY_KEY 不写这里——走 spawn env
+    继承(claude 子进程 → MCP server 子进程都继承编排层注入的 STORY_KEY)。
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    p = _Path(config_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        _json.dumps(
+            {
+                "mcpServers": {
+                    "lifecycle": {
+                        "command": python_bin,
+                        "args": ["-m", "story_lifecycle.orchestrator.mcp.clarify_server"],
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return str(p)
 
 
 def run_server() -> None:

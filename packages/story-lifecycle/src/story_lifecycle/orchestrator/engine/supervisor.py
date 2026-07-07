@@ -30,8 +30,6 @@ def decide_response(
     options: list[str],
     story_facts: dict,
     llm_invoke: Callable[[str], str],
-    hitl: bool = False,
-    ai_suggestion: str | None = None,
 ) -> dict:
     """Pure Decider. Choose a response for a code-agent question.
 
@@ -40,27 +38,10 @@ def decide_response(
         options: 可选项列表(choice 必须是其中之一,后续测试驱动校验)。
         story_facts: 结构化 story 上下文(story_key/stage/profile/已做决策等)。
         llm_invoke: 注入的 LLM 调用,prompt -> JSON 字符串。
-        hitl: Human-In-The-Loop——design 阶段「claude 逐问 + 人答」。True 时**不调
-            llm_invoke**,改返回 ``{mode: "hitl", pause: True, clarification_request}``:
-            检测到提问即暂停 story 等人答(DB/SSE/回注由 Handler/编排层接,本函数纯)。
-            详见 docs/design-hitl-runbook.md。默认 False = 旧自动答行为。
-        ai_suggestion: 可选预填建议(HITL 时随 clarification_request 推前端作参考,
-            非绑定;默认 None)。
 
     Returns:
-        自动答: ``{"choice": str, "reason": str}``。
-        HITL: ``{"mode": "hitl", "pause": True, "clarification_request": {...}}``。
+        {"choice": str, "reason": str}
     """
-    if hitl:
-        return {
-            "mode": "hitl",
-            "pause": True,
-            "clarification_request": {
-                "question": question,
-                "options": list(options),
-                "ai_suggestion": ai_suggestion,
-            },
-        }
     prompt = _build_decision_prompt(question, options, story_facts)
     raw = llm_invoke(prompt)
     decision = _parse_decision(raw)
@@ -98,53 +79,6 @@ def log_decision(
             "reason": decision["reason"],
         },
     )
-
-
-def emit_clarification_request(
-    *,
-    story_key: str,
-    stage: str,
-    question: str,
-    options: list[str],
-    header: str = "",
-    ai_suggestion: str | None = None,
-    context: str | None = None,
-    log_event_fn: Callable,
-    id_factory: Callable[[], str] | None = None,
-) -> str:
-    """Handler: 落 ``clarification_request`` 事件 + 生成/返回 id。
-
-    design 阶段「claude 逐问 + 人答」的提问侧(详见 docs/design-hitl-runbook.md):
-    编排层检测到 claude 的提问(侧文件 clarify_request.json / stream marker /
-    AskUserQuestion tool_use)→ 调本 Handler → 暂停 story、推前端、等人答。
-    返回的 ``id`` 供回注端 ``POST /clarify/answer {id, answer}`` 引用本轮提问。
-
-    非纯(id 生成 + log_event I/O)——与 ``log_decision`` 同属 Handler 层;
-    纯 Decider(``decide_response``)不碰 id / DB。
-
-    Args:
-        header: 前端展示主标题;缺省取 ``question`` 文本。
-        ai_suggestion: 可选预填建议(前端展示、非绑定)。
-        context: 可选提问上下文(前端展示辅助说明)。
-        id_factory: 可选 id 生成器(测试注入);缺省 ``uuid4().hex[:12]``。
-    """
-    import uuid
-
-    rid = (id_factory or (lambda: uuid.uuid4().hex[:12]))()
-    log_event_fn(
-        story_key,
-        stage=stage,
-        event_type="clarification_request",
-        payload={
-            "id": rid,
-            "header": header or question,
-            "question": question,
-            "options": list(options),
-            "ai_suggestion": ai_suggestion,
-            "context": context,
-        },
-    )
-    return rid
 
 
 def handle_pty_output(

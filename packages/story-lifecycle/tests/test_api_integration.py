@@ -580,33 +580,28 @@ class TestStoryListWithFilters:
 # ---------------------------------------------------------------------------
 
 
-def _write_clarify_request(workspace, story_key, payload):
-    from story_lifecycle.infra.paths import stage_done_file_rel
-    from story_lifecycle.orchestrator.engine.clarify import clarify_request_rel
-
-    p = workspace / clarify_request_rel(stage_done_file_rel(story_key, "design"))
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    return p
+def _log_clarify_request(story_key, payload):
+    """落 clarification_request 事件(模拟 MCP server 收到 clarify 调用后落的事件)。"""
+    db.log_event(story_key, "design", "clarification_request", payload)
 
 
 class TestClarifyAPI:
-    def test_get_clarify_no_pending(self, api_client, isolated_story_home, tmp_path):
+    """事件驱动(MCP 方案):request/answer 都走 DB event_log,无侧文件、无重 spawn。"""
+
+    def test_get_clarify_no_pending(self, api_client, isolated_story_home):
         db.upsert_story(
-            "CL-1", title="t", workspace=str(tmp_path),
-            profile="minimal", status="active",
+            "CL-1", title="t", workspace="/tmp", profile="minimal", status="active"
         )
         resp = api_client.get("/api/story/CL-1/clarify")
         assert resp.status_code == 200
         assert resp.json()["waiting"] is False
 
-    def test_get_clarify_with_pending(self, api_client, isolated_story_home, tmp_path):
+    def test_get_clarify_with_pending(self, api_client, isolated_story_home):
         db.upsert_story(
-            "CL-2", title="t", workspace=str(tmp_path),
-            profile="minimal", status="awaiting-clarify",
+            "CL-2", title="t", workspace="/tmp", profile="minimal", status="active"
         )
-        _write_clarify_request(
-            tmp_path, "CL-2",
+        _log_clarify_request(
+            "CL-2",
             {"id": "q1", "question": "存哪?", "header": "存储",
              "options": ["hc_user", "hc_config"]},
         )
@@ -617,54 +612,26 @@ class TestClarifyAPI:
         assert data["question"]["question"] == "存哪?"
         assert data["question"]["options"] == ["hc_user", "hc_config"]
 
-    def test_answer_consumes_accumulates_and_redrives(
-        self, api_client, isolated_story_home, tmp_path, monkeypatch
-    ):
-        from story_lifecycle.infra.paths import stage_done_file_rel
-        from story_lifecycle.orchestrator.engine.clarify import (
-            clarify_history_rel,
-            read_clarify_history,
-        )
-
+    def test_answer_writes_event_and_clears_pending(self, api_client, isolated_story_home):
         db.upsert_story(
-            "CL-3", title="t", workspace=str(tmp_path),
-            profile="minimal", status="awaiting-clarify",
+            "CL-3", title="t", workspace="/tmp", profile="minimal", status="active"
         )
-        req_path = _write_clarify_request(
-            tmp_path, "CL-3",
+        _log_clarify_request(
+            "CL-3",
             {"id": "q1", "question": "存哪?", "options": ["hc_user", "hc_config"]},
         )
-        # mock start_story_async(避免 POST 真去驱动 claude)
-        driven = {"n": 0}
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.service.api.start_story_async",
-            lambda key: driven.__setitem__("n", driven["n"] + 1),
-        )
-
         resp = api_client.post(
             "/api/story/CL-3/clarify/answer", json={"answer": "hc_user", "id": "q1"}
         )
-
         assert resp.status_code == 200
         assert resp.json()["answer"] == "hc_user"
-        assert driven["n"] == 1  # exit-and-resume 重驱动
-        assert not req_path.exists()  # 待答 request 已消费
-        hist_path = tmp_path / clarify_history_rel(stage_done_file_rel("CL-3", "design"))
-        assert read_clarify_history(hist_path) == [
-            {"question": "存哪?", "answer": "hc_user"}
-        ]
-        assert db.get_story("CL-3")["status"] == "active"  # 翻状态
+        # answer 事件已落 → 该 request 不再 pending
+        resp2 = api_client.get("/api/story/CL-3/clarify")
+        assert resp2.json()["waiting"] is False
 
-    def test_answer_no_pending_returns_404(
-        self, api_client, isolated_story_home, tmp_path, monkeypatch
-    ):
+    def test_answer_no_pending_returns_404(self, api_client, isolated_story_home):
         db.upsert_story(
-            "CL-4", title="t", workspace=str(tmp_path),
-            profile="minimal", status="active",
-        )
-        monkeypatch.setattr(
-            "story_lifecycle.orchestrator.service.api.start_story_async",
-            lambda key: None,
+            "CL-4", title="t", workspace="/tmp", profile="minimal", status="active"
         )
         resp = api_client.post(
             "/api/story/CL-4/clarify/answer", json={"answer": "x"}
