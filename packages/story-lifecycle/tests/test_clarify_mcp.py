@@ -159,3 +159,89 @@ class TestGetPendingClarification:
 
     def test_none_when_no_request(self):
         assert get_pending_clarification("S-1", get_events_fn=lambda _k: []) is None
+
+
+class TestRunServerStdioChain:
+    """集成:mock-claude 经 stdio 驱动真 clarify_server.run_server 跑通全链路。
+
+    覆盖 ``run_server`` 的 stdio JSONRPC 循环(单测难覆盖的 I/O 层):MCP 握手 →
+    tools/call clarify → server 落 clarification_request + 阻塞轮询 DB → answer 落 →
+    返回人答。真 claude 调用 MCP 的那半(网关侧)另由 real-claude 探针验证(memory)。
+    """
+
+    def test_handshake_call_block_answer_respond(self, isolated_story_home, monkeypatch):
+        import json as _json
+        import os as _os
+        import subprocess as _sp
+        import sys as _sys
+        import threading as _th
+        import time as _time
+
+        from story_lifecycle.infra.db import models as _db
+
+        # isolated_story_home(经 _isolated_db autouse)已把 STORY_HOME 指向带 schema 的
+        # 隔离 DB(event_log 在)。server 子进程继承同一 STORY_HOME → 同一 DB。
+        _home = _os.environ["STORY_HOME"]
+        key = "MOCK-SRV-1"
+        _db.upsert_story(key, title="m", workspace=_home, profile="minimal", status="active")
+        monkeypatch.setenv("STORY_KEY", key)
+
+        # PYTHONPATH 让子进程 `python -m story_lifecycle...` 能 import。
+        import story_lifecycle as _sl
+        _src_root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_sl.__file__)))
+        _env = {**_os.environ, "PYTHONPATH": _src_root + _os.pathsep + _os.environ.get("PYTHONPATH", "")}
+
+        srv = _sp.Popen(
+            [_sys.executable, "-m", "story_lifecycle.orchestrator.mcp.clarify_server"],
+            stdin=_sp.PIPE, stdout=_sp.PIPE, stderr=_sp.PIPE,
+            env=_env, text=True, encoding="utf-8", errors="replace",
+        )
+        try:
+            def send(o):
+                srv.stdin.write(_json.dumps(o, ensure_ascii=False) + "\n")
+                srv.stdin.flush()
+
+            def recv():
+                line = srv.stdout.readline()
+                if not line:
+                    err = srv.stderr.read() if srv.stderr else ""
+                    raise AssertionError(
+                        f"server stdout EOF (poll={srv.poll()}): stderr={err[:2000]}"
+                    )
+                return _json.loads(line)
+
+            send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+            assert "result" in recv()
+            send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            assert "clarify" in [t["name"] for t in recv()["result"]["tools"]]
+
+            # 后台:轮询 DB,一见 clarification_request 就回 answer
+            def answerer():
+                for _ in range(60):
+                    for ev in _db.get_story_events(key):
+                        if ev.get("event_type") == "clarification_request":
+                            p = _db.parse_event_payload(ev)
+                            _db.log_event(key, "design", "clarification_answer",
+                                          {"id": p.get("id"), "answer": "hc_user"})
+                            return
+                    _time.sleep(0.3)
+
+            _th.Thread(target=answerer, daemon=True).start()
+
+            send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+                "name": "clarify",
+                "arguments": {"question": "hc_user or hc_config?", "options": ["hc_user", "hc_config"]},
+            }})
+            r = recv()
+            assert r["result"]["content"][0]["text"] == "hc_user"
+            assert r["result"]["isError"] is False
+
+            types = [e.get("event_type") for e in _db.get_story_events(key)]
+            assert types == ["clarification_request", "clarification_answer"]
+        finally:
+            try:
+                srv.stdin.close()
+                srv.wait(timeout=5)
+            except Exception:
+                srv.kill()
