@@ -338,24 +338,94 @@ def api_spawn_pty(story_id: str):
     return _ensure_story_agent_pty(s)
 
 
+def _build_interactive_stage_prompt(story: dict, stage: str) -> str:
+    """构建交互终端 spawn 时注入的 stage prompt(复用自主路径 ``_build_cli_prompt``)。
+
+    让点「启动终端」后 claude 直接拿到 design/build 任务上下文(需求 PRD 路径 + 设计维度
+    协议 + done 握手 + 项目仓库),人只管 steer(Esc 打断 + 打字纠偏),不用手打需求。
+    之前 ``_ensure_story_agent_pty`` 传空 prompt → 起空白 ❯ = 这个 bug 的修。
+    """
+    from ...knowledge.context_providers import get_transcript_context
+    from ...infra.paths import stage_done_file_rel
+    from ..engine import planner
+    import json as _json
+
+    story_key = story["story_key"]
+    workspace = story.get("workspace", "")
+    try:
+        ctx = _json.loads(story.get("context_json") or "{}")
+    except (_json.JSONDecodeError, TypeError):
+        ctx = {}
+    profile_stages = {}
+    try:
+        rp = resolve_profile(story.get("profile", "minimal"))
+        profile_stages = {n: c for n, c in rp.stages.items()}
+    except Exception:
+        pass
+    stage_cfg = profile_stages.get(stage)
+    focus = (
+        stage_cfg.description
+        if stage_cfg and hasattr(stage_cfg, "description")
+        else ""
+    ) or ""
+    project_lines = []
+    try:
+        for sp in db.get_story_projects(story_key):
+            proj = db.get_project(sp["project_id"])
+            if proj:
+                project_lines.append(
+                    f"- 仓库 `{proj['repo_path']}`: 分支 `{sp['branch']}`, "
+                    f"基线 `{sp.get('base_branch', 'main')}`"
+                )
+    except Exception:
+        pass
+    transcript_section = ""
+    try:
+        transcript_section = get_transcript_context(story_key, workspace, stage) or ""
+    except Exception:
+        pass
+    return planner._build_cli_prompt(
+        story_key=story_key,
+        title=story.get("title", ""),
+        stage=stage,
+        focus=focus,
+        done_file=stage_done_file_rel(story_key, stage),
+        profile_stages=profile_stages,
+        prd_path=ctx.get("prd_path", ""),
+        project_section="\n".join(project_lines),
+        workspace=workspace,
+        transcript_section=transcript_section,
+    )
+
+
 def _ensure_story_agent_pty(story: dict) -> dict:
     workspace = story.get("workspace", "")
     if not workspace or not Path(workspace).exists():
         raise HTTPException(400, "Invalid workspace")
 
     profile = resolve_profile(story.get("profile", "minimal"))
-    stage_cfg = profile.stage(story.get("current_stage", "design"))
+    stage = story.get("current_stage", "design") or "design"
+    stage_cfg = profile.stage(stage)
     adapter_name = stage_cfg.cli or profile.cli or "claude"
     model = stage_cfg.model or profile.model or "sonnet"
     existing = get_pty(story["story_key"])
     reused = bool(existing and existing.alive and existing.purpose == "agent")
+
+    # 自动注入 stage prompt(需求 + 设计协议 + done 握手),不再起空白 ❯。
+    # failsafe:构建失败则退回空 prompt(旧行为),不阻断 spawn。
+    prompt = ""
+    if not reused:
+        try:
+            prompt = _build_interactive_stage_prompt(story, stage)
+        except Exception:
+            pass
 
     adapter = get_adapter(adapter_name)
     session_id, _ = ensure_agent_pty(
         story["story_key"],
         adapter.interactive_launch_cmd(model),
         workspace,
-        "",
+        prompt,
     )
     return {
         "ok": True,

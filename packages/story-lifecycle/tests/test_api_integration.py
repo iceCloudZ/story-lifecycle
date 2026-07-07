@@ -580,6 +580,38 @@ class TestStoryListWithFilters:
 # ---------------------------------------------------------------------------
 
 
+class TestInteractiveStagePrompt:
+    """交互终端 spawn 时应自动注入 stage prompt(不是空白 ❯ 让人手打)。
+
+    `_ensure_story_agent_pty` 之前传 "" → 起空白 claude。修:复用自主路径的
+    _build_cli_prompt 构建 design 提示词注入。人只管 steer,不用手填需求。
+    """
+
+    def test_design_prompt_has_title_prd_protocol_donepath(self, isolated_story_home):
+        from story_lifecycle.orchestrator.service.api import _build_interactive_stage_prompt
+
+        db.upsert_story(
+            "IP-1", title="借款增加第二紧急联系人", workspace="/tmp/ip-ws",
+            profile="minimal", status="planning", current_stage="design",
+        )
+        db.update_context("IP-1", "prd_path", "/tmp/ip-ws/PRD.md")
+        story = db.get_story("IP-1")
+
+        p = _build_interactive_stage_prompt(story, "design")
+
+        assert "借款增加第二紧急联系人" in p  # 标题
+        assert "/tmp/ip-ws/PRD.md" in p  # PRD 路径注入(让 claude 读)
+        assert "mcp__lifecycle__clarify" in p or "设计维度" in p  # design 协议
+        assert ".story/done/IP-1/design.json" in p  # done 握手路径
+
+    def test_non_design_stage_still_builds(self, isolated_story_home):
+        from story_lifecycle.orchestrator.service.api import _build_interactive_stage_prompt
+
+        db.upsert_story("IP-2", title="t", workspace="/tmp/ip-ws2", profile="minimal")
+        p = _build_interactive_stage_prompt(db.get_story("IP-2"), "build")
+        assert isinstance(p, str) and len(p) > 0  # 不抛、非空
+
+
 def _log_clarify_request(story_key, payload):
     """落 clarification_request 事件(模拟 MCP server 收到 clarify 调用后落的事件)。"""
     db.log_event(story_key, "design", "clarification_request", payload)
