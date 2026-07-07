@@ -432,14 +432,26 @@ def _ensure_story_agent_pty(story: dict) -> dict:
             pass
 
     adapter = get_adapter(adapter_name)
-    session_id, _ = ensure_agent_pty(
+    # prompt 传 "" 让 ensure_agent_pty 只做 readiness 等待、不内部写(它 text+\r 一次写
+    # 在 claude TUI 里被当 paste 摆输入框、\r 不 submit)。readiness 后我们自己分两次写:
+    # text 进输入框 → 延迟 → 单独 \r 提交。
+    session_id, pty = ensure_agent_pty(
         story["story_key"],
         adapter.interactive_launch_cmd(model),
         workspace,
-        prompt,
+        "",
         readiness_marker=getattr(adapter, "readiness_marker", None),
-        readiness_timeout=120.0,  # hc-all 重,boot 慢,给足(claude adapter 实测 ~10s 但留余量)
+        readiness_timeout=180.0,  # hc-all boot ~100s+,给 3min 余量
     )
+    if prompt:
+        import time as _time
+
+        try:
+            pty.write(prompt.encode("utf-8"))  # 单行「读文件」指令进输入框
+            _time.sleep(0.4)
+            pty.write(b"\r")  # 单独 \r 提交(避开 paste 模式 \r 不 submit)
+        except Exception:
+            pass
     return {
         "ok": True,
         "reused": reused,
