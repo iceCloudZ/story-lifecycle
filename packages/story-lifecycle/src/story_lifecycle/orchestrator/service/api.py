@@ -426,6 +426,8 @@ def _ensure_story_agent_pty(story: dict) -> dict:
         adapter.interactive_launch_cmd(model),
         workspace,
         prompt,
+        readiness_marker=getattr(adapter, "readiness_marker", None),
+        readiness_timeout=120.0,  # hc-all 重,boot 慢,给足(claude adapter 实测 ~10s 但留余量)
     )
     return {
         "ok": True,
