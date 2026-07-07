@@ -447,9 +447,12 @@ def _ensure_story_agent_pty(story: dict) -> dict:
         import time as _time
 
         try:
-            pty.write(prompt.encode("utf-8"))  # 单行「读文件」指令进输入框
+            # claude Code 用 Ink;裸 PTY 写入被当 paste 但不 submit(claude-code#15553)。
+            # 正道:bracketed paste —— \x1b[200~ 文本 \x1b[201~ 让 Ink text-input 干净收下
+            # 整段填充输入框,再单独 \r 作为 keystroke 提交。
+            pty.write(b"\x1b[200~" + prompt.encode("utf-8") + b"\x1b[201~")
             _time.sleep(0.4)
-            pty.write(b"\r")  # 单独 \r 提交(避开 paste 模式 \r 不 submit)
+            pty.write(b"\r")
         except Exception:
             pass
     return {
