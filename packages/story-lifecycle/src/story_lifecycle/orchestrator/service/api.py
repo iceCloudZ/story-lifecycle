@@ -411,12 +411,23 @@ def _ensure_story_agent_pty(story: dict) -> dict:
     existing = get_pty(story["story_key"])
     reused = bool(existing and existing.alive and existing.purpose == "agent")
 
-    # 自动注入 stage prompt(需求 + 设计协议 + done 握手),不再起空白 ❯。
-    # failsafe:构建失败则退回空 prompt(旧行为),不阻断 spawn。
+    # 自动注入 stage 任务。多行 prompt 直接写 PTY 会被 claude TUI 当成 paste 摆在输入框、
+    # 末尾 \r 不 submit(实测 idle)。改:把完整 prompt 写文件,只注入**单行**「读文件」指令
+    # —— 单行 + \r 干净 submit,claude 用 Read 读全文再执行。failsafe:失败退回空(旧行为)。
     prompt = ""
     if not reused:
         try:
-            prompt = _build_interactive_stage_prompt(story, stage)
+            from ...infra.story_paths import safe_story_path
+
+            full = _build_interactive_stage_prompt(story, stage)
+            pdir = safe_story_path(workspace, ".story", "context", story["story_key"])
+            pdir.mkdir(parents=True, exist_ok=True)
+            pfile = pdir / f"prompt_{stage}.md"
+            pfile.write_text(full, encoding="utf-8")
+            prompt = (
+                f"请读取 `{pfile}` 并严格按其中的说明执行本阶段({stage})任务,"
+                f"完成后按其完成协议写入 done 文件。"
+            )
         except Exception:
             pass
 
