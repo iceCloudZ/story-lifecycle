@@ -106,8 +106,15 @@ class BaseAdapter(ABC):
         """
         return None
 
-    def interactive_launch_cmd(self, model: str) -> list[str]:
-        """Return argv for an interactive PTY process."""
+    def interactive_launch_cmd(self, model: str, prompt: str = "") -> list[str]:
+        """Return argv for an interactive PTY process.
+
+        ``prompt`` (optional): an initial prompt to seed the session with.
+        Adapters whose CLI supports an initial-message argument (e.g.
+        ``claude "query"``) should include it so the agent starts on the task
+        without a separate PTY injection (which needs unreliable readiness
+        detection). Ignored by the base implementation.
+        """
         return shlex.split(self.launch_cmd(model), posix=os.name != "nt")
 
     def bypass_flags(self) -> list[str]:

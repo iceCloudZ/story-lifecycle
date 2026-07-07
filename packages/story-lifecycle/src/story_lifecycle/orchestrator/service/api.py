@@ -321,7 +321,11 @@ def api_spawn_session(story_key: str, req: SpawnSessionRequest = None):
     req = req or SpawnSessionRequest()
     adapter = get_adapter(req.adapter or "claude")
     model = req.model or "sonnet"
-    command = adapter.interactive_launch_cmd(model)
+    # Seed the spawn with the current stage's prompt via `claude "query"` so the
+    # agent auto-starts the design/build task (no PTY injection). Same path as
+    # _ensure_story_agent_pty. Blank on failure → empty initial message.
+    prompt = _build_stage_launch_prompt(s)
+    command = adapter.interactive_launch_cmd(model, prompt=prompt)
 
     session_id, _ = spawn_pty(
         story_key, command, workspace, purpose=req.adapter or "claude"
@@ -395,7 +399,34 @@ def _build_interactive_stage_prompt(story: dict, stage: str) -> str:
         project_section="\n".join(project_lines),
         workspace=workspace,
         transcript_section=transcript_section,
+        interactive=True,  # 交互式 claude("query",无 MCP):逐问澄清改「终端问人」
     )
+
+
+def _build_stage_launch_prompt(story: dict) -> str:
+    """Build the short read-file instruction that seeds a spawn with the current
+    stage's full prompt. Writes the full prompt to
+    ``.story/context/<key>/prompt_<stage>.md`` and returns a one-line instruction
+    to read+execute it (passed as ``claude "query"`` so claude auto-starts once
+    its own startup finishes — no PTY injection / readiness guessing). Empty
+    string on failure (spawn proceeds without a seed → blank claude).
+    """
+    workspace = story.get("workspace", "")
+    stage = story.get("current_stage", "design") or "design"
+    try:
+        from ...infra.story_paths import safe_story_path
+
+        full = _build_interactive_stage_prompt(story, stage)
+        pdir = safe_story_path(workspace, ".story", "context", story["story_key"])
+        pdir.mkdir(parents=True, exist_ok=True)
+        pfile = pdir / f"prompt_{stage}.md"
+        pfile.write_text(full, encoding="utf-8")
+        return (
+            f"请读取 `{pfile}` 并严格按其中的说明执行本阶段({stage})任务,"
+            f"完成后按其完成协议写入 done 文件。"
+        )
+    except Exception:
+        return ""
 
 
 def _ensure_story_agent_pty(story: dict) -> dict:
@@ -411,50 +442,24 @@ def _ensure_story_agent_pty(story: dict) -> dict:
     existing = get_pty(story["story_key"])
     reused = bool(existing and existing.alive and existing.purpose == "agent")
 
-    # 自动注入 stage 任务。多行 prompt 直接写 PTY 会被 claude TUI 当成 paste 摆在输入框、
-    # 末尾 \r 不 submit(实测 idle)。改:把完整 prompt 写文件,只注入**单行**「读文件」指令
-    # —— 单行 + \r 干净 submit,claude 用 Read 读全文再执行。failsafe:失败退回空(旧行为)。
-    prompt = ""
-    if not reused:
-        try:
-            from ...infra.story_paths import safe_story_path
-
-            full = _build_interactive_stage_prompt(story, stage)
-            pdir = safe_story_path(workspace, ".story", "context", story["story_key"])
-            pdir.mkdir(parents=True, exist_ok=True)
-            pfile = pdir / f"prompt_{stage}.md"
-            pfile.write_text(full, encoding="utf-8")
-            prompt = (
-                f"请读取 `{pfile}` 并严格按其中的说明执行本阶段({stage})任务,"
-                f"完成后按其完成协议写入 done 文件。"
-            )
-        except Exception:
-            pass
+    # 把完整 stage prompt 写文件,生成单行「读文件」指令作 `claude "query"` 的初始消息
+    # —— claude 自己管 readiness,不用 PTY 注入。failsafe:失败退回空(空白 claude)。
+    # 复用 sessions/spawn 端点同一路径(见 _build_stage_launch_prompt)。
+    prompt = _build_stage_launch_prompt(story) if not reused else ""
 
     adapter = get_adapter(adapter_name)
-    # prompt 传 "" 让 ensure_agent_pty 只做 readiness 等待、不内部写(它 text+\r 一次写
-    # 在 claude TUI 里被当 paste 摆输入框、\r 不 submit)。readiness 后我们自己分两次写:
-    # text 进输入框 → 延迟 → 单独 \r 提交。
+    # 把 stage prompt 作为 `claude "query"` 的初始消息传入 —— claude 自己管
+    # readiness(加载完自动处理初始 prompt),不用 PTY 注入、也不用猜 readiness
+    # marker(TUI ~6s 画完但 ~100s 才 ready,没可靠输出信号)。prompt 文件照写
+    # (指令短作 arg,完整 prompt 在文件里让 claude Read)。见 handoff-design-hitl §10。
     session_id, pty = ensure_agent_pty(
         story["story_key"],
-        adapter.interactive_launch_cmd(model),
+        adapter.interactive_launch_cmd(model, prompt=prompt),
         workspace,
-        "",
-        readiness_marker=getattr(adapter, "readiness_marker", None),
-        readiness_timeout=180.0,  # hc-all boot ~100s+,给 3min 余量
+        "",  # 不内部注入 —— prompt 已在 launch cmd 里作初始消息
+        readiness_marker=None,  # claude "query" 自己管 readiness,不等
+        startup_delay=0,
     )
-    if prompt:
-        import time as _time
-
-        try:
-            # claude Code 用 Ink;裸 PTY 写入被当 paste 但不 submit(claude-code#15553)。
-            # 正道:bracketed paste —— \x1b[200~ 文本 \x1b[201~ 让 Ink text-input 干净收下
-            # 整段填充输入框,再单独 \r 作为 keystroke 提交。
-            pty.write(b"\x1b[200~" + prompt.encode("utf-8") + b"\x1b[201~")
-            _time.sleep(0.4)
-            pty.write(b"\r")
-        except Exception:
-            pass
     return {
         "ok": True,
         "reused": reused,

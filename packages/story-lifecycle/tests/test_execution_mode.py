@@ -62,7 +62,7 @@ def test_terminal_spawn_starts_profile_agent_not_shell(
     calls = []
 
     class FakeAdapter:
-        def interactive_launch_cmd(self, model):
+        def interactive_launch_cmd(self, model, prompt=""):
             return ["claude-test"]
 
     monkeypatch.setattr(api, "get_adapter", lambda name: FakeAdapter(), raising=False)

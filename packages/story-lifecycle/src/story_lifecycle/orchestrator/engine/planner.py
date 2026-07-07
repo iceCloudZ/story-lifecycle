@@ -1013,8 +1013,13 @@ def _build_cli_prompt(
     project_section: str = "",
     workspace: str = "",
     transcript_section: str = "",
+    interactive: bool = False,
 ) -> str:
-    """构建给 CLI 的执行 prompt。"""
+    """构建给 CLI 的执行 prompt。
+
+    ``interactive``:交互式终端路径(``claude "query"``,无 MCP)传 True —— design 维度
+    协议的逐问澄清改为「在终端直接问人」(见 prompt_sections.build_design_dimensions_section)。
+    """
     from ...infra.story_paths import story_evidence_dir
     from .prompt_sections import (
         build_design_dimensions_section,
@@ -1059,7 +1064,7 @@ def _build_cli_prompt(
     # 人答经它返回,claude 带答继续(context 保留)。详见 memory story-lifecycle-design-hitl。
     dimensions_section = ""
     if stage == "design":
-        dimensions_section = build_design_dimensions_section(story_key, workspace, stage)
+        dimensions_section = build_design_dimensions_section(story_key, workspace, stage, interactive=interactive)
 
     # 项目仓库与分支隔离：注入每个绑定仓库的分支/基线/路径，由 CLI 自行判断
     # 是否需要 worktree 或切分支。后端的 prepare_worktrees 仍是可选的手动 API，

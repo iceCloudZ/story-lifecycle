@@ -135,8 +135,27 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
     const onResize = () => fit.fit()
     window.addEventListener('resize', onResize)
 
+    // Refit when the container itself resizes — covers the panel mounting
+    // before layout settles (e.g. tab opened in the background → 0-width at
+    // open). Without this xterm stays at the initial tiny cols, the PTY gets
+    // resized to a garbling width, and the agent TUI renders at ~2 cols.
+    let raf = 0
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        try {
+          fit.fit()
+        } catch {
+          /* container disposed mid-callback */
+        }
+      })
+    })
+    ro.observe(containerRef.current)
+
     return () => {
       window.removeEventListener('resize', onResize)
+      ro.disconnect()
+      cancelAnimationFrame(raf)
       term.dispose()
       termRef.current = null
       fitRef.current = null
