@@ -58,7 +58,7 @@
 |---|---|---|---|---|
 | T3.1 | clarify MCP 阻塞 + 交互式双路径 | `[已完成]` | [reports/T3.1-clarify-dual-path.md](reports/T3.1-clarify-dual-path.md) | `6e14aff1` |
 | T3.2 | supervisor HITL 决策 | `[已完成]` | [reports/T3.2-supervisor-boundary.md](reports/T3.2-supervisor-boundary.md) | `44909b54` |
-| T3.3 | approval_queue 阻塞部署 | `[待办]` | — | — |
+| T3.3 | approval_queue 阻塞部署 | `[已完成/已澄清]` | [reports/T3.3-approval-blocks-deploy.md](reports/T3.3-approval-blocks-deploy.md) | `<待填充>` |
 
 ### 阶段四:补齐其余模块(①②⑤⑥)
 
