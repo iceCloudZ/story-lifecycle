@@ -68,7 +68,7 @@
 | T4.2 | ② 上下文:resolver 零副作用不变量 | `[已完成]` | [reports/T4.2-resolver-pure.md](reports/T4.2-resolver-pure.md) | `474912ae` |
 | T4.3 | ② 上下文:SOFT 缝降级 | `[已完成]` | [reports/T4.3-soft-seam-degradation.md](reports/T4.3-soft-seam-degradation.md) | `b2ebf1a8` |
 | T4.4 | ⑤ 交付:worktree 清理无残留 | `[已完成]` | [reports/T4.4-worktree-cleanup.md](reports/T4.4-worktree-cleanup.md) | `09bb600d` |
-| T4.5 | ⑥ 飞轮:anchors round-trip + 卸包照跑 | `[待办]` | — | — |
+| T4.5 | ⑥ 飞轮:anchors round-trip + 卸包照跑 | `[已完成]` | [reports/T4.5-anchors-round-trip.md](reports/T4.5-anchors-round-trip.md) | `<待填充>` |
 
 ### 阶段五:机制建设(长期可维护)
 
