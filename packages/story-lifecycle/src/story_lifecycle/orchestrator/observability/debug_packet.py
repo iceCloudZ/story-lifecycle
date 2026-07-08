@@ -44,7 +44,13 @@ def _check_llm_configured() -> bool:
 
 
 def _has_loop_exhausted(story_key: str) -> bool:
-    """Check if evaluator loop reached max_rounds or no-progress."""
+    """Check if evaluator loop reached max_retries (fail verdict).
+
+    Note: a ``no_progress`` payload field used to be checked here too, but the
+    ``detect_no_progress`` producer was removed in ISS-008 (FC rewrite). Only
+    the ``decision == fail`` branch remains — it's the live signal (written by
+    gate.run_verify_gate on round_count > max_retries).
+    """
     events = db.get_story_events(story_key)
     for e in reversed(events):
         et = e.get("event_type", "")
@@ -57,8 +63,6 @@ def _has_loop_exhausted(story_key: str) -> bool:
                     continue
             if isinstance(payload, dict):
                 if payload.get("decision") == "fail":
-                    return True
-                if payload.get("no_progress"):
                     return True
     return False
 

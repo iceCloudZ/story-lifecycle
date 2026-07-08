@@ -228,6 +228,16 @@ def run_verify_gate(
         )
         if not verdict["pass"]:
             round_count = increment_review_round_count(context, stage)
+            if round_count > max_retries:
+                # 与 HIGH-findings 路径同语义:修复轮次超上限就硬闸 fail,不无限 retry。
+                # (T1.6 修复 —— 见 reports/T1.6-judge-rework-guard.md)
+                return {
+                    "decision": "fail",
+                    "reason": f"judge rework persists after {max_retries} repair rounds: {verdict['reason']}",
+                    "round": round_count,
+                    "retry_limit": max_retries,
+                    "judge_verdict": verdict,
+                }
             return {
                 "decision": "retry",
                 "reason": f"judge rework({verdict.get('rework_point')}): {verdict['reason']}",
