@@ -56,7 +56,7 @@
 
 | 卡号 | 任务 | 状态 | 报告 | commit |
 |---|---|---|---|---|
-| T3.1 | clarify MCP 阻塞 + 交互式双路径 | `[已完成]` | [reports/T3.1-clarify-dual-path.md](reports/T3.1-clarify-dual-path.md) | `942ff9d8` |
+| T3.1 | clarify MCP 阻塞 + 交互式双路径 | `[已完成]` | [reports/T3.1-clarify-dual-path.md](reports/T3.1-clarify-dual-path.md) | `6e14aff1` |
 | T3.2 | supervisor HITL 决策 | `[待办]` | — | — |
 | T3.3 | approval_queue 阻塞部署 | `[待办]` | — | — |
 
