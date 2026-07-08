@@ -41,7 +41,7 @@
 | T1.3 | no_progress 终止(防死循环) | `[已完成]` | [原报告](reports/T1.3-gate-no-progress.md) · [复核](reports/T1.3-no-progress-revisit.md) · [收尾](reports/T1.3-closed-by-doc-fix.md) | `a246e5d6` |
 | T1.4 | evaluator_loop repair-packet 构造 | `[已完成]` | [reports/T1.4-repair-packet.md](reports/T1.4-repair-packet.md) | `3dd69ed0` |
 | T1.5 | Finding 生命周期(quality 飞轮) | `[已完成]` | [reports/T1.5-finding-lifecycle.md](reports/T1.5-finding-lifecycle.md) | `17b1a426` |
-| T1.6 | judge rework 兜底 + 死代码清理 + CI 接入 | `[已完成]` | [reports/T1.6-judge-rework-guard.md](reports/T1.6-judge-rework-guard.md) | (本次) |
+| T1.6 | judge rework 兜底 + 死代码清理 + CI 接入 | `[已完成]` | [reports/T1.6-judge-rework-guard.md](reports/T1.6-judge-rework-guard.md) | `f4ebd50f` |
 
 ### 阶段二:执行编排(模块③,第二大风险区)
 
