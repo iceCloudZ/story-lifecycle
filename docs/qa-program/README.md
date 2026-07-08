@@ -40,7 +40,7 @@
 | T1.2 | gate 三判定(advance/retry/fail)分支覆盖 | `[已完成]` | [reports/T1.2-gate-branches.md](reports/T1.2-gate-branches.md) | `f36936e0` |
 | T1.3 | no_progress 终止(防死循环) | `[阻塞]` | [reports/T1.3-gate-no-progress.md](reports/T1.3-gate-no-progress.md) | `a246e5d6` |
 | T1.4 | evaluator_loop repair-packet 构造 | `[已完成]` | [reports/T1.4-repair-packet.md](reports/T1.4-repair-packet.md) | `3dd69ed0` |
-| T1.5 | Finding 生命周期(quality 飞轮) | `[已完成]` | [reports/T1.5-finding-lifecycle.md](reports/T1.5-finding-lifecycle.md) | 待补 |
+| T1.5 | Finding 生命周期(quality 飞轮) | `[已完成]` | [reports/T1.5-finding-lifecycle.md](reports/T1.5-finding-lifecycle.md) | `17b1a426` |
 
 ### 阶段二:执行编排(模块③,第二大风险区)
 
