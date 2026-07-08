@@ -9,7 +9,7 @@ import subprocess
 import sys
 from unittest.mock import patch
 
-from story_lifecycle.cli import list_cmd
+from story_lifecycle.entry.cli import list_cmd
 
 
 def test_done_cmd_calls_retrospect_script_with_story_key():
