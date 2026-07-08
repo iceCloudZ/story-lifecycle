@@ -74,13 +74,15 @@ def test_high_findings_exceeding_max_retries_fail(
     assert "repair rounds" in result["reason"]
 
 
-def test_empty_findings_advance_even_if_rounds_exceeded(
+def test_empty_findings_with_exceeded_rounds_still_fail(
     monkeypatch, tmp_path, quality_cfg, gate_ctx_at_max
 ):
-    """No open HIGH findings means quality is OK: gate advances regardless of round count.
+    """Hard gate: even if no open HIGH findings remain, exceeding max_retries must fail.
 
-    The "hard" gate only fires when there are still HIGH findings *and* the repair
-    budget is exhausted. Once findings are cleared, the stage is allowed to pass.
+    NOTE: This assertion reflects the literal wording of the T1.1 task card
+    ("无论 finding 数量/质量如何"). The project owner has not yet confirmed
+    whether this is the intended semantics; if the intended semantics is instead
+    "no findings => advance", this test should be changed to expect "advance".
     """
     _patch_judge_and_log(monkeypatch)
 
@@ -103,5 +105,5 @@ def test_empty_findings_advance_even_if_rounds_exceeded(
         max_retries=max_retries,
     )
 
-    assert result["decision"] == "advance"
-    assert "no open HIGH findings" in result["reason"]
+    # This asserts the gate is truly hard: retry budget exhaustion is itself a fail condition.
+    assert result["decision"] == "fail"
