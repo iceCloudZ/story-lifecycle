@@ -237,6 +237,15 @@ def run_server() -> None:
     tools/call。clarify 调用经 ``handle_clarify_call``(落事件 + 阻塞轮询 DB)。
     story_key 从 env ``STORY_KEY`` 读(编排层 spawn claude 时注入)。
     """
+    # MCP 用 json.dumps(ensure_ascii=False) 输出中文到 stdout。Windows Python 默认
+    # stdout 编码是 cp1252(非 UTF-8),写中文会 UnicodeEncodeError。强制 UTF-8。
+    # (Python 3.7+ reconfigure;CI 矩阵覆盖 3.10/3.12。)
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
     story_key = os.environ.get("STORY_KEY", "")
     # 延迟 import 避免纯单测时拉起 DB。
     from ...infra.db import models as db
