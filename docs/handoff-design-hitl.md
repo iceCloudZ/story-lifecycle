@@ -201,3 +201,19 @@ prompt arg 起 → claude 自动开跑 design(WS 抓 190KB:thinking + Read PRD +
 `mcp__lifecycle__clarify`」会报无此工具。给 `build_design_dimensions_section(*, interactive=False)`
 加旗标:interactive=True 时改「在终端直接问人」(人 watch 终端直接答);`_build_cli_prompt(interactive=...)`
 串到 `_build_interactive_stage_prompt`(传 True)。自主路径默认 False 保留 MCP。测试 57 passed。
+
+**后续(2026-07-08):会话持久化(resume,方案 A)。** 杀孤儿/重启不丢进度,下次启动续上。
+- 确定性 UUID:`uuid5(NAMESPACE_DNS, f"{story_key}:{stage}")` —— 同 story+stage 永远同一 ID。
+- 标记文件 `.story/context/<key>/session_<stage>.json` = `{session_id, name, stage}`。
+- `api._build_stage_launch_cmd(story, adapter, model) → (cmd, is_resume)`:
+  - NEW(无标记):`claude --session-id <uuid> --name <key>-<stage> "<read-file seed>"` + 写标记。
+  - RESUME(有标记):`claude --resume <uuid> "继续..."` —— 加载 transcript 接着干。
+- 两个 spawn 端点(`sessions/spawn` + `pty/spawn`)+ Overview「启动终端」按钮都走它。
+  `_ensure_story_agent_pty` 加 reused 早返回(有存活 PTY 直接返回,不重复 spawn)。
+- **关键前提**:new + resume 必须**同 cwd**(workspace)—— `--resume` 查找 scoped 到当前目录。
+  transcript 在 `~/.claude/projects/<project>/<uuid>.jsonl`(claude 自动存),杀进程不丢。
+- 测试:`test_session_resume.py`(5 测)+ 全套 68 passed。
+- **待办(依赖)**:干净 resume 需先杀掉旧 serve 留的孤儿 claude(否则两个 claude resume 同
+  session 会 interleaved)。需加 bat 重启前清 PTY 端点(`DELETE /api/pty` 调 `cleanup_all`)+ serve
+  启动扫孤儿(claude.exe,parent=cmd/winpty,cmdline 含「请读取 `...prompt_」)。方案 B(`--bg`+
+  attach+daemon)留作后续(彻底无孤儿,live 续接,但复杂+要验变体支持)。

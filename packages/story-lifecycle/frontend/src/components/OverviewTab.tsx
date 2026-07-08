@@ -34,6 +34,28 @@ export default function OverviewTab({
     { name: 'test', status: 'pending' as const },
   ]
 
+  // 启动交互式终端(design HITL):有存活会话直接跳,否则 spawn 一个再跳。
+  // 避免重复 spawn(sessions/spawn 总是新建)。spawn 走 claude "query" seed prompt。
+  async function startTerminal() {
+    try {
+      const r = await fetch(`/api/story/${storyKey}/sessions`)
+      const data = r.ok ? await r.json() : { sessions: [] }
+      const hasAlive = (data.sessions || []).some(
+        (s: { status: string }) => s.status === 'running'
+      )
+      if (!hasAlive) {
+        await fetch(`/api/story/${storyKey}/sessions/spawn`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ adapter: 'claude', model: '' }),
+        })
+      }
+    } catch {
+      /* 终端 tab 兜底显示「启动终端」按钮 */
+    }
+    onTabChange('terminal')
+  }
+
   return (
     <div className="tab-content overview-tab">
       {/* Top bar */}
@@ -79,6 +101,10 @@ export default function OverviewTab({
 
       {/* Action buttons */}
       <div className="ot-actions">
+        {/* HITL 终端入口:启动交互式 agent 跑当前 stage(design 等),人 watch + Esc + steer */}
+        <button className="btn" onClick={startTerminal} title="开交互式终端,claude 自动跑当前阶段,你实时 watch + Esc 打断 + 打字纠偏">
+          🖥️ 启动 {detail.currentStage} 终端(HITL)
+        </button>
         {detail.status === 'planning' && !isConfirmed && resolvedActions.length > 0 && (
           <>
             <button className="btn btn-primary" onClick={onConfirmPlan}>

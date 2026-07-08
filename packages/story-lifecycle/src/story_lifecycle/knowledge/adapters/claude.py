@@ -30,15 +30,29 @@ class ClaudeAdapter(BaseAdapter):
     def launch_cmd(self, model: str) -> str:
         return "claude"
 
-    def interactive_launch_cmd(self, model: str, prompt: str = "") -> list[str]:
+    def interactive_launch_cmd(
+        self,
+        model: str,
+        prompt: str = "",
+        session_id: str = "",
+        session_name: str = "",
+        resume: bool = False,
+    ) -> list[str]:
         # `claude "query"` opens the interactive TUI with the prompt as the
-        # initial user message (auto-submitted — claude processes it once its
-        # own startup finishes). This seeds the design task WITHOUT a PTY
-        # injection, sidestepping the readiness-detection problem (TUI shows
-        # its prompt ~6s in but isn't ready to accept pasted input until
-        # ~100s; no reliable output marker for that). Verified via
-        # tmp_claude_query_test.py. See docs/handoff-design-hitl.md §10.
+        # initial user message (auto-submitted — claude manages its own readiness,
+        # no PTY injection / readiness guessing). Session persistence:
+        #   NEW    → claude --session-id <uuid> --name <name> "<prompt>"
+        #   RESUME → claude --resume <uuid> "<prompt>"   (loads transcript, continues)
+        # Both must run with the same cwd — --resume lookup is cwd-scoped.
+        # See api._build_stage_launch_cmd + docs/handoff-design-hitl.md §11.
         cmd = [resolve_executable("claude")]
+        if resume and session_id:
+            cmd += ["--resume", session_id]
+        else:
+            if session_id:
+                cmd += ["--session-id", session_id]
+            if session_name:
+                cmd += ["--name", session_name]
         if prompt:
             cmd.append(prompt)
         return cmd

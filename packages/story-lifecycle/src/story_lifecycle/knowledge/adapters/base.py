@@ -106,14 +106,22 @@ class BaseAdapter(ABC):
         """
         return None
 
-    def interactive_launch_cmd(self, model: str, prompt: str = "") -> list[str]:
+    def interactive_launch_cmd(
+        self,
+        model: str,
+        prompt: str = "",
+        session_id: str = "",
+        session_name: str = "",
+        resume: bool = False,
+    ) -> list[str]:
         """Return argv for an interactive PTY process.
 
         ``prompt`` (optional): an initial prompt to seed the session with.
         Adapters whose CLI supports an initial-message argument (e.g.
         ``claude "query"``) should include it so the agent starts on the task
         without a separate PTY injection (which needs unreliable readiness
-        detection). Ignored by the base implementation.
+        detection). ``session_id``/``session_name``/``resume`` are for
+        session-persistence (e.g. claude --session-id/--resume); ignored by base.
         """
         return shlex.split(self.launch_cmd(model), posix=os.name != "nt")
 

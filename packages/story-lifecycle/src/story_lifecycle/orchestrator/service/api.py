@@ -321,16 +321,13 @@ def api_spawn_session(story_key: str, req: SpawnSessionRequest = None):
     req = req or SpawnSessionRequest()
     adapter = get_adapter(req.adapter or "claude")
     model = req.model or "sonnet"
-    # Seed the spawn with the current stage's prompt via `claude "query"` so the
-    # agent auto-starts the design/build task (no PTY injection). Same path as
-    # _ensure_story_agent_pty. Blank on failure → empty initial message.
-    prompt = _build_stage_launch_prompt(s)
-    command = adapter.interactive_launch_cmd(model, prompt=prompt)
-
+    # 启动(NEW)或续上(RESUME)—— 同 _ensure_story_agent_pty 路径(claude "query" seed /
+    # claude --resume <uuid>)。前端「启动终端」走这个端点。
+    command, is_resume = _build_stage_launch_cmd(s, adapter, model)
     session_id, _ = spawn_pty(
         story_key, command, workspace, purpose=req.adapter or "claude"
     )
-    return {"session_id": session_id, "ok": True}
+    return {"session_id": session_id, "ok": True, "resumed": is_resume}
 
 
 @app.post("/api/pty/{story_id}/spawn")
@@ -429,6 +426,63 @@ def _build_stage_launch_prompt(story: dict) -> str:
         return ""
 
 
+def _build_stage_launch_cmd(story: dict, adapter, model: str) -> tuple[list[str], bool]:
+    """Build the claude launch cmd for a story+stage: NEW or RESUME.
+
+    Deterministic session UUID (uuid5 of ``story_key:stage``) + a marker file
+    (``.story/context/<key>/session_<stage>.json``) decide:
+      NEW    → claude --session-id <uuid> --name <key>-<stage> "<read-file seed>"
+               + write marker. (seeds the stage task via claude "query")
+      RESUME → claude --resume <uuid> "<continue>"   (loads transcript, continues)
+
+    Both run with cwd=workspace — required: ``--resume`` lookup is cwd-scoped,
+    so resume must run from the same dir as the original session. Transcripts
+    persist at ``~/.claude/projects/<project>/<uuid>.jsonl`` (claude auto-saves),
+    so a killed/orphan claude resumes here with full history.
+    Returns ``(cmd, is_resume)``. See docs/handoff-design-hitl.md §11 +
+    tests/test_session_resume.py.
+    """
+    import json as _json
+    import uuid as _uuid
+
+    from ...infra.story_paths import safe_story_path
+
+    story_key = story["story_key"]
+    workspace = story.get("workspace", "")
+    stage = story.get("current_stage", "design") or "design"
+    session_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"{story_key}:{stage}"))
+    session_name = f"{story_key}-{stage}"
+    marker = safe_story_path(workspace, ".story", "context", story_key) / f"session_{stage}.json"
+    if marker.exists():
+        cmd = adapter.interactive_launch_cmd(
+            model,
+            prompt="继续上次的任务,完成后按完成协议写入 done 文件。",
+            session_id=session_id,
+            resume=True,
+        )
+        return cmd, True
+    seed = _build_stage_launch_prompt(story)
+    cmd = adapter.interactive_launch_cmd(
+        model,
+        prompt=seed,
+        session_id=session_id,
+        session_name=session_name,
+        resume=False,
+    )
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            _json.dumps(
+                {"session_id": session_id, "name": session_name, "stage": stage},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+    return cmd, False
+
+
 def _ensure_story_agent_pty(story: dict) -> dict:
     workspace = story.get("workspace", "")
     if not workspace or not Path(workspace).exists():
@@ -441,28 +495,34 @@ def _ensure_story_agent_pty(story: dict) -> dict:
     model = stage_cfg.model or profile.model or "sonnet"
     existing = get_pty(story["story_key"])
     reused = bool(existing and existing.alive and existing.purpose == "agent")
-
-    # 把完整 stage prompt 写文件,生成单行「读文件」指令作 `claude "query"` 的初始消息
-    # —— claude 自己管 readiness,不用 PTY 注入。failsafe:失败退回空(空白 claude)。
-    # 复用 sessions/spawn 端点同一路径(见 _build_stage_launch_prompt)。
-    prompt = _build_stage_launch_prompt(story) if not reused else ""
+    if reused:
+        # 已有存活会话 —— 直接返回,不重复 spawn(避免孤儿/重复)
+        return {
+            "ok": True,
+            "reused": True,
+            "resumed": False,
+            "purpose": "agent",
+            "adapter": adapter_name,
+            "model": model,
+            "session_id": existing.session_id,
+        }
 
     adapter = get_adapter(adapter_name)
-    # 把 stage prompt 作为 `claude "query"` 的初始消息传入 —— claude 自己管
-    # readiness(加载完自动处理初始 prompt),不用 PTY 注入、也不用猜 readiness
-    # marker(TUI ~6s 画完但 ~100s 才 ready,没可靠输出信号)。prompt 文件照写
-    # (指令短作 arg,完整 prompt 在文件里让 claude Read)。见 handoff-design-hitl §10。
+    # 启动(NEW)或续上(RESUME):claude "query" seed / claude --resume <uuid>。
+    # claude 自己管 readiness,不用 PTY 注入。见 _build_stage_launch_cmd + handoff §11。
+    command, is_resume = _build_stage_launch_cmd(story, adapter, model)
     session_id, pty = ensure_agent_pty(
         story["story_key"],
-        adapter.interactive_launch_cmd(model, prompt=prompt),
+        command,
         workspace,
-        "",  # 不内部注入 —— prompt 已在 launch cmd 里作初始消息
-        readiness_marker=None,  # claude "query" 自己管 readiness,不等
+        "",  # 不内部注入 —— prompt 已在 launch cmd 里
+        readiness_marker=None,  # claude "query"/--resume 自己管 readiness
         startup_delay=0,
     )
     return {
         "ok": True,
-        "reused": reused,
+        "reused": False,
+        "resumed": is_resume,
         "purpose": "agent",
         "adapter": adapter_name,
         "model": model,
