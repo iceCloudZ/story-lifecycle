@@ -1035,9 +1035,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                 db.update_story(
                                     story_key,
                                     status="paused",
-                                    context_json=json.dumps(
-                                        ctx, ensure_ascii=False
-                                    ),
+                                    context_json=json.dumps(ctx, ensure_ascii=False),
                                 )
                                 db.log_event(
                                     story_key,
