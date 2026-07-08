@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import type { IDisposable } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import './TerminalPanel.css'
 
@@ -10,18 +11,37 @@ interface Props {
   sessionId?: string
 }
 
+type ConnectionState =
+  | 'idle'
+  | 'connecting'
+  | 'streaming'
+  | 'reconnecting'
+  | 'exited'
+  | 'not_found'
+  | 'lost'
+
+const MAX_RECONNECT_ATTEMPTS = 5
+const BASE_RECONNECT_DELAY_MS = 1000
+const MAX_RECONNECT_DELAY_MS = 30000
+
 export default function TerminalPanel({ storyKey, autoConnect = false, sessionId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  const onDataDisposableRef = useRef<IDisposable | null>(null)
   // When sessionId is provided, the session already exists — skip spawn
   const [spawned, setSpawned] = useState(!!sessionId)
   const [prevStoryKey, setPrevStoryKey] = useState(storyKey)
   const [searchVisible, setSearchVisible] = useState(false)
   const [searchText, setSearchText] = useState('')
-  const [wsStatus, setWsStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
+  const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reconnectAttemptsRef = useRef(0)
+  const shouldReconnectRef = useRef(true)
+  // Sockets we are intentionally closing (session switch / unmount) should not
+  // trigger the reconnect logic in their onclose handler.
+  const closingWsRef = useRef<Set<WebSocket>>(new Set())
   // Ref indirection lets onclose reference connectWs without a TDZ self-reference.
   const connectWsRef = useRef<() => void>(() => {})
 
@@ -32,26 +52,81 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
     if (r.ok) setSpawned(true)
   }, [storyKey, sessionId])
 
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+    if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+      setConnectionState('lost')
+      return
+    }
+    const delay = Math.min(
+      BASE_RECONNECT_DELAY_MS * 2 ** reconnectAttemptsRef.current,
+      MAX_RECONNECT_DELAY_MS
+    )
+    reconnectAttemptsRef.current += 1
+    setConnectionState('reconnecting')
+    reconnectTimerRef.current = setTimeout(() => connectWsRef.current(), delay)
+  }, [])
+
   const connectWs = useCallback(() => {
     if (!storyKey || !spawned) return
+
+    // Reset reconnect control for a fresh connection attempt.
+    shouldReconnectRef.current = true
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+    // Drop any previous socket before opening a new one (handles session switch).
+    if (wsRef.current) {
+      closingWsRef.current.add(wsRef.current)
+      try {
+        wsRef.current.close()
+      } catch {
+        /* ignore */
+      }
+      wsRef.current = null
+    }
+
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsPath = sessionId
       ? `${proto}//${location.host}/ws/pty/${storyKey}/${sessionId}`
       : `${proto}//${location.host}/ws/pty/${storyKey}`
     const ws = new WebSocket(wsPath)
     ws.binaryType = 'arraybuffer'
-    setWsStatus('connecting')
+    wsRef.current = ws
+    setConnectionState('connecting')
 
     ws.onopen = () => {
-      setWsStatus('connected')
+      reconnectAttemptsRef.current = 0
+      setConnectionState('streaming')
     }
 
-    ws.onclose = () => {
-      setWsStatus('disconnected')
-      // Auto-reconnect after 3 seconds
-      if (spawned) {
-        reconnectTimerRef.current = setTimeout(() => connectWsRef.current(), 3000)
+    ws.onclose = (event) => {
+      const wasIntentional = closingWsRef.current.has(ws)
+      closingWsRef.current.delete(ws)
+      if (wsRef.current === ws) {
+        wsRef.current = null
       }
+      if (wasIntentional) {
+        return
+      }
+      if (!shouldReconnectRef.current) {
+        return
+      }
+      if (event.code === 1000) {
+        shouldReconnectRef.current = false
+        setConnectionState('exited')
+        return
+      }
+      if (event.code === 4404) {
+        shouldReconnectRef.current = false
+        setConnectionState('not_found')
+        return
+      }
+      scheduleReconnect()
     }
 
     ws.onerror = () => {
@@ -65,7 +140,13 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
         try {
           const msg = JSON.parse(event.data)
           if (msg.type === 'exit') {
+            shouldReconnectRef.current = false
             termRef.current?.write('\r\n\x1b[33m[Process exited]\x1b[0m\r\n')
+            setConnectionState('exited')
+          } else if (msg.type === 'error' && msg.code === 'session_not_found') {
+            shouldReconnectRef.current = false
+            termRef.current?.write('\r\n\x1b[31m[Session not found]\x1b[0m\r\n')
+            setConnectionState('not_found')
           }
         } catch {
           termRef.current?.write(event.data)
@@ -76,15 +157,14 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
     // User input → PTY
     const term = termRef.current
     if (term) {
-      term.onData((data) => {
+      onDataDisposableRef.current?.dispose()
+      onDataDisposableRef.current = term.onData((data) => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(data)
         }
       })
     }
-
-    wsRef.current = ws
-  }, [storyKey, spawned, sessionId])
+  }, [storyKey, spawned, sessionId, scheduleReconnect])
 
   // Keep the reconnect ref pointed at the latest connectWs (in an effect, not
   // during render).
@@ -156,6 +236,8 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
       window.removeEventListener('resize', onResize)
       ro.disconnect()
       cancelAnimationFrame(raf)
+      onDataDisposableRef.current?.dispose()
+      onDataDisposableRef.current = null
       term.dispose()
       termRef.current = null
       fitRef.current = null
@@ -164,15 +246,23 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
 
   // Connect WebSocket when terminal is ready
   useEffect(() => {
+    const closing = closingWsRef.current
     if (spawned && termRef.current) {
+      shouldReconnectRef.current = true
+      reconnectAttemptsRef.current = 0
       connectWs()
     }
     return () => {
+      shouldReconnectRef.current = false
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
       }
-      wsRef.current?.close()
-      wsRef.current = null
+      if (wsRef.current) {
+        closing.add(wsRef.current)
+        wsRef.current.close()
+        wsRef.current = null
+      }
     }
   }, [spawned, connectWs])
 
@@ -183,6 +273,7 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
   if (storyKey !== prevStoryKey) {
     setPrevStoryKey(storyKey)
     setSpawned(false)
+    setConnectionState('idle')
     setSearchVisible(false)
   }
 
@@ -202,6 +293,18 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
     // Full search requires @xterm/addon-search which can be added later
   }
 
+  const statusText: Record<ConnectionState, string> = {
+    idle: '○ 空闲',
+    connecting: '● 连接中...',
+    streaming: '● 已连接',
+    reconnecting: '🟡 重新连接中...',
+    exited: '⚪ 进程已退出',
+    not_found: '⚪ 会话不存在',
+    lost: '🔴 连接丢失',
+  }
+
+  const showStartNew = connectionState === 'exited' || connectionState === 'not_found' || connectionState === 'lost'
+
   if (!storyKey) {
     return <div className="terminal-empty">选择一个 Story 后启动终端</div>
   }
@@ -219,16 +322,23 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
   return (
     <div className="terminal-wrapper">
       <div className="terminal-toolbar">
-        <span className={`ws-status ws-${wsStatus}`}>
-          {wsStatus === 'connected' ? '● 已连接' : wsStatus === 'connecting' ? '● 连接中...' : '○ 断开连接'}
+        <span className={`ws-status ws-${connectionState}`}>
+          {statusText[connectionState]}
         </span>
-        <button
-          className="toolbar-btn"
-          onClick={() => setSearchVisible(!searchVisible)}
-          title="搜索"
-        >
-          🔍
-        </button>
+        <div className="terminal-toolbar-actions">
+          {showStartNew && !sessionId && (
+            <button className="toolbar-btn" onClick={handleSpawn}>
+              重新启动
+            </button>
+          )}
+          <button
+            className="toolbar-btn"
+            onClick={() => setSearchVisible(!searchVisible)}
+            title="搜索"
+          >
+            🔍
+          </button>
+        </div>
       </div>
       {searchVisible && (
         <div className="terminal-search">

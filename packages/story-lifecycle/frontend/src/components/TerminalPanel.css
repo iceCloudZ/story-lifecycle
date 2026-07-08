@@ -21,9 +21,19 @@
   font-size: 12px;
 }
 
-.ws-connected { color: #16a34a; }
+.ws-streaming { color: #16a34a; }
 .ws-connecting { color: #d97706; }
-.ws-disconnected { color: #dc2626; }
+.ws-reconnecting { color: #d97706; }
+.ws-exited { color: #6b7280; }
+.ws-not_found { color: #6b7280; }
+.ws-lost { color: #dc2626; }
+.ws-idle { color: #6b7280; }
+
+.terminal-toolbar-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
 
 .toolbar-btn {
   padding: 2px 8px;

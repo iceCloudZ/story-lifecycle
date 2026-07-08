@@ -62,11 +62,21 @@
 }
 .tt-no-session {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   height: 100%;
   color: #6b7280;
   font-size: 13px;
+  gap: 8px;
+}
+.tt-no-session .tt-hint {
+  font-size: 11px;
+  color: #9ca3af;
+}
+.tt-session-tab.tt-exited {
+  opacity: 0.7;
+  text-decoration: line-through;
 }
 
 @keyframes sp-pulse {

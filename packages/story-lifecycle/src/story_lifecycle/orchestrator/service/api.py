@@ -24,6 +24,7 @@ from ...sourcing.workspace_diff import get_story_workspace_diff
 from ...infra.db import models as db
 from ...infra.db.models import init_db
 from ...infra.terminal.pty import (
+    cleanup_all,
     get_pty,
     ensure_agent_pty,
     kill_pty,
@@ -134,6 +135,16 @@ async def lifespan(app: FastAPI):
             await watcher
         except asyncio.CancelledError:
             pass
+        # Clean PTY teardown on shutdown: ask each agent to `/exit` first so
+        # claude flushes its transcript (a complete transcript is what makes
+        # --resume pick up full history), force-killing any that don't exit in
+        # time. Runs in a worker thread because cleanup_all blocks (polls
+        # pty.alive up to _CLEAN_EXIT_TIMEOUT per PTY). Best-effort — if uvicorn
+        # hard-cuts shutdown the atexit backstop still fires. See handoff §12.
+        try:
+            await asyncio.to_thread(cleanup_all)
+        except Exception:
+            pass
 
 
 async def _watch_interactive_done_files():
@@ -226,13 +237,30 @@ def notify_story_update_sync(story_key: str, status: str = "", stage: str = ""):
 
 
 async def _pty_ws_handler(ws: WebSocket, story_id: str, session_id: str = ""):
-    """Shared PTY WebSocket handler."""
+    """Shared PTY WebSocket handler.
+
+    Close-code semantics (product decision: distinguish terminal death from
+    transient errors so the UI stops reconnecting to dead sessions):
+
+    - 4404: session does not exist. The frontend should NOT auto-reconnect.
+    - 1000: PTY existed but the underlying process has already exited. The
+            frontend should show "process exited" and stop reconnecting.
+    - 1011: internal server error during streaming. The frontend may retry
+            with exponential backoff.
+    """
     await ws.accept()
 
     pty = get_pty(story_id, session_id)
     if not pty:
-        await ws.send_json({"type": "error", "message": "No PTY for this story"})
-        await ws.close(code=4044)
+        await ws.send_json({"type": "error", "code": "session_not_found",
+                            "message": "No PTY session for this story"})
+        await ws.close(code=4404)
+        return
+
+    if not pty.alive:
+        await ws.send_json({"type": "exit", "reason": "process_ended",
+                            "message": "PTY process has already exited"})
+        await ws.close(code=1000)
         return
 
     async def read_and_send():
@@ -245,7 +273,7 @@ async def _pty_ws_handler(ws: WebSocket, story_id: str, session_id: str = ""):
             except Exception:
                 break
         try:
-            await ws.send_json({"type": "exit"})
+            await ws.send_json({"type": "exit", "reason": "process_ended"})
         except Exception:
             pass
 
@@ -534,6 +562,20 @@ def _ensure_story_agent_pty(story: dict) -> dict:
 def api_kill_session(story_key: str, session_id: str):
     """Kill a specific PTY session."""
     kill_pty(story_key, session_id)
+    return {"ok": True}
+
+
+@app.delete("/api/pty")
+def api_kill_all_pty():
+    """Cleanly tear down EVERY PTY session across all stories.
+
+    Sends ``/exit`` to each agent first (so claude flushes its transcript —
+    needed for a complete ``--resume`` later), force-killing any that don't exit
+    in time. Called by the serve-restart bat (before its taskkill) and by serve
+    shutdown. For tearing down a single story's sessions use
+    ``DELETE /api/pty/{story_id}`` instead. See handoff §12.
+    """
+    cleanup_all(prefer_clean_exit=True)
     return {"ok": True}
 
 

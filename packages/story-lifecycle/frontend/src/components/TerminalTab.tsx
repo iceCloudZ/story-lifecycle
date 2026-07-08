@@ -60,12 +60,12 @@ export default function TerminalTab({ storyKey }: Props) {
     }
   }
 
-  // Auto-select first running session, or the first session if none running
+  // Auto-select only a RUNNING session. Never auto-pick an exited session,
+  // because that causes the terminal to reconnect to a dead PTY forever.
   const activeSessionId =
     activeSession ||
-    (sessions.length > 0
-      ? (sessions.find((s) => s.status === 'running') || sessions[0]).session_id
-      : null)
+    sessions.find((s) => s.status === 'running')?.session_id ||
+    null
 
   return (
     <div className="tab-content terminal-tab">
@@ -74,8 +74,9 @@ export default function TerminalTab({ storyKey }: Props) {
         {sessions.map((s) => (
           <button
             key={s.session_id}
-            className={`tt-session-tab ${s.session_id === activeSessionId ? 'active' : ''}`}
+            className={`tt-session-tab ${s.session_id === activeSessionId ? 'active' : ''} ${s.status !== 'running' ? 'tt-exited' : ''}`}
             onClick={() => setActiveSession(s.session_id)}
+            title={s.status === 'running' ? '运行中' : '已退出'}
           >
             <span className="tt-adapter-icon">
               {s.adapter === 'claude' ? '🟠' : '🟢'}
@@ -98,7 +99,10 @@ export default function TerminalTab({ storyKey }: Props) {
         </div>
       ) : (
         <div className="tt-no-session">
-          <p>暂无 CLI 会话</p>
+          <p>当前没有运行中的 CLI 会话</p>
+          {sessions.length > 0 && (
+            <p className="tt-hint">点击上方历史会话可查看最终输出，或启动新会话继续工作。</p>
+          )}
           <button className="btn btn-primary" onClick={handleSpawn}>
             启动终端
           </button>
