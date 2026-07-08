@@ -24,8 +24,12 @@ jobs:
           python-version: '3.12'
           cache: pip
 
-      - name: Install dev tools at root
-        run: pip install -e ".[dev]"
+      - name: Install dev tools
+        # Root pyproject is a workspace container, NOT a buildable package
+        # (packages=[], no wheel — by design, per AGENTS.md). Installing it
+        # editable fails on hatchling's file-selection heuristic. Install the
+        # dev deps directly instead.
+        run: pip install "pytest>=8.0" "pytest-asyncio>=0.24.0" "ruff>=0.11.0"
 
       - name: Install story-lifecycle (editable)
         run: pip install -e packages/story-lifecycle
@@ -52,8 +56,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install dev tools at root
-        run: pip install -e ".[dev]"
+      - name: Install dev tools
+        # Root pyproject is a workspace container, not a buildable package —
+        # see lint job note. Install dev deps directly.
+        run: pip install "pytest>=8.0" "pytest-asyncio>=0.24.0" "ruff>=0.11.0"
 
       - name: Install story-lifecycle + its deps (editable)
         run: |
@@ -99,8 +105,10 @@ jobs:
           python-version: '3.12'
           cache: pip
 
-      - name: Install dev tools at root
-        run: pip install -e ".[dev]"
+      - name: Install dev tools
+        # Root pyproject is a workspace container, not a buildable package —
+        # see lint job note. Install dev deps directly.
+        run: pip install "pytest>=8.0" "pytest-asyncio>=0.24.0" "ruff>=0.11.0"
 
       - name: Install story-lifecycle + knowledge (editable)
         run: |

@@ -22,6 +22,10 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
+# Intentionally empty: root is a workspace container (pytest config + dev deps),
+# NOT a buildable package — no wheel is produced. `pip install -e ".[dev]"` fails
+# on hatchling's file-selection heuristic, so CI installs dev deps directly
+# (see .github/workflows/ci.yml). Package installs use packages/<pkg>/pyproject.toml.
 packages = []
 
 [tool.pytest.ini_options]
