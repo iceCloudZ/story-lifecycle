@@ -42,3 +42,31 @@ pythonpath = [
 markers = [
     "real_e2e: real-AI end-to-end (slow/costly; skipped by default, run with `pytest -m real_e2e`)",
 ]
+
+[tool.coverage.run]
+source = ["packages/story-lifecycle/src/story_lifecycle"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/test_*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "pass",
+]
+precision = 1
+show_missing = true
+skip_covered = false
+
+[tool.coverage.html]
+directory = ".story-runs/coverage-html"
+
+[tool.coverage.xml]
+output = ".story-runs/coverage.xml"
