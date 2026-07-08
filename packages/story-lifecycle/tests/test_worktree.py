@@ -16,6 +16,7 @@ from story_lifecycle.orchestrator.workspace.worktree.decider import (
     CleanupRejectReason,
 )
 from story_lifecycle.orchestrator.workspace.worktree.handler import (
+    cleanup_worktree,
     prepare_worktrees,
 )
 
@@ -391,3 +392,70 @@ class TestPreparePathDerivation:
 
         results = prepare_worktrees("S4", worktree_root=str(tmp_path / "wts"))
         assert results[0]["action"] == "reject"
+
+
+class TestWorktreeCleanupIntegration:
+    """cleanup_worktree end-to-end: directory removal + DB state update."""
+
+    def test_cleanup_removes_worktree_and_updates_db(self, tmp_path, isolated_story_home):
+        from story_lifecycle.infra.db import models as db
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+        branch = _default_branch(repo)
+        proj = db.create_project(name="svc", repo_path=str(repo), default_branch=branch)
+        db.create_story("S-CLEAN", "S-CLEAN", str(repo))
+        db.update_story("S-CLEAN", intake_state="ready")
+        db.bind_story_project("S-CLEAN", proj["id"], branch="feat/clean", base_branch=branch)
+
+        results = prepare_worktrees("S-CLEAN", worktree_root=str(tmp_path / "wts"))
+        assert results[0]["action"] == "create"
+        wt_path = results[0]["worktree_path"]
+        assert Path(wt_path).exists()
+
+        # Cleanup with merged delivery
+        result = cleanup_worktree("S-CLEAN", proj["id"], delivery_state="merged")
+        assert result["action"] == "cleanup"
+        assert not Path(wt_path).exists()
+
+        sp = db.get_story_project("S-CLEAN", proj["id"])
+        assert sp["worktree_path"] is None or sp["worktree_path"] == ""
+        assert sp["worktree_state"] == "unprepared"
+
+    def test_cleanup_rejects_dirty_worktree(self, tmp_path, isolated_story_home):
+        from story_lifecycle.infra.db import models as db
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+        branch = _default_branch(repo)
+        proj = db.create_project(name="svc", repo_path=str(repo), default_branch=branch)
+        db.create_story("S-DIRTY", "S-DIRTY", str(repo))
+        db.update_story("S-DIRTY", intake_state="ready")
+        db.bind_story_project("S-DIRTY", proj["id"], branch="feat/dirty", base_branch=branch)
+
+        results = prepare_worktrees("S-DIRTY", worktree_root=str(tmp_path / "wts"))
+        wt_path = results[0]["worktree_path"]
+        # Make worktree dirty
+        (Path(wt_path) / "dirty.txt").write_text("x")
+
+        result = cleanup_worktree("S-DIRTY", proj["id"], delivery_state="merged")
+        assert result["action"] == "reject"
+        assert Path(wt_path).exists()
+
+    def test_cleanup_rejects_not_finalized(self, tmp_path, isolated_story_home):
+        from story_lifecycle.infra.db import models as db
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+        branch = _default_branch(repo)
+        proj = db.create_project(name="svc", repo_path=str(repo), default_branch=branch)
+        db.create_story("S-NOFIN", "S-NOFIN", str(repo))
+        db.update_story("S-NOFIN", intake_state="ready")
+        db.bind_story_project("S-NOFIN", proj["id"], branch="feat/nofin", base_branch=branch)
+
+        results = prepare_worktrees("S-NOFIN", worktree_root=str(tmp_path / "wts"))
+        wt_path = results[0]["worktree_path"]
+
+        result = cleanup_worktree("S-NOFIN", proj["id"], delivery_state="review_pending")
+        assert result["action"] == "reject"
+        assert Path(wt_path).exists()
