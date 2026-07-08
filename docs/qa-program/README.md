@@ -64,7 +64,7 @@
 
 | 卡号 | 任务 | 状态 | 报告 | commit |
 |---|---|---|---|---|
-| T4.1 | ① 接入:tapd 幂等 + prd 边界 | `[已完成]` | [reports/T4.1-tapd-idempotent-prd-boundary.md](reports/T4.1-tapd-idempotent-prd-boundary.md) | `<待填充>` |
+| T4.1 | ① 接入:tapd 幂等 + prd 边界 | `[已完成]` | [reports/T4.1-tapd-idempotent-prd-boundary.md](reports/T4.1-tapd-idempotent-prd-boundary.md) | `56af5a98` |
 | T4.2 | ② 上下文:resolver 零副作用不变量 | `[待办]` | — | — |
 | T4.3 | ② 上下文:SOFT 缝降级 | `[待办]` | — | — |
 | T4.4 | ⑤ 交付:worktree 清理无残留 | `[待办]` | — | — |
