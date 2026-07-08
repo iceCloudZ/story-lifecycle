@@ -46,7 +46,7 @@
 
 | 卡号 | 任务 | 状态 | 报告 | commit |
 |---|---|---|---|---|
-| T2.1 | FC 规划循环(mock LLM 生成 actions) | `[已完成]` | [reports/T2.1-fc-planning-loop.md](reports/T2.1-fc-planning-loop.md) | 待补 |
+| T2.1 | FC 规划循环(mock LLM 生成 actions) | `[已完成]` | [reports/T2.1-fc-planning-loop.md](reports/T2.1-fc-planning-loop.md) | `93d6af4f` |
 | T2.2 | plan_confirm 暂停语义 | `[待办]` | — | — |
 | T2.3 | .done 握手轮询(超时/成功) | `[待办]` | — | — |
 | T2.4 | 三启动模式一致性(-p / query / release) | `[待办]` | — | — |
