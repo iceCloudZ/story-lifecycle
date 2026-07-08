@@ -82,3 +82,47 @@ def test_prd_generator_can_return_manual_download_required(monkeypatch):
 
     assert result.action == "manual_download_required"
     assert result.dingtalk_links == ["https://alidocs.dingtalk.com/i/nodes/doc"]
+
+
+def test_prd_generator_handles_empty_title(monkeypatch):
+    """空标题时 prd_generator 不崩,仍能生成 prompt 并返回 LLM 结果。"""
+    llm = FakeLLM(
+        {
+            "action": "generated",
+            "dingtalk_links": [],
+            "markdown": "# PRD\n\n无标题需求",
+            "summary": "ok",
+        }
+    )
+    monkeypatch.setattr(prd_generator, "get_llm", lambda: llm)
+
+    result = prd_generator.generate_prd_from_source(
+        prd_generator.StorySourceSnapshot(
+            story_key="tapd-empty",
+            source_type="tapd",
+            source_id="empty",
+            title="",
+            description="只有正文没有标题",
+        )
+    )
+
+    assert result.action == "generated"
+    assert "title:" in llm.prompt
+    assert "只有正文没有标题" in llm.prompt
+
+
+def test_prd_generator_handles_very_long_title():
+    """超长标题正常进入 prompt,不崩不截断标题(描述已限 12000,标题不做额外限制)。"""
+    long_title = "需求" * 5000  # 10000 chars
+    prompt = prd_generator.build_prd_generator_prompt(
+        prd_generator.StorySourceSnapshot(
+            story_key="tapd-long",
+            source_type="tapd",
+            source_id="long",
+            title=long_title,
+            description="短描述",
+        )
+    )
+
+    assert long_title in prompt
+    assert "短描述" in prompt

@@ -69,3 +69,42 @@ class TestSyncById:
         result = CliRunner().invoke(sync_cmd, ["--id", "9999999"])
         assert result.exit_code != 0
         assert "未找到" in result.output or "9999999" in result.output
+
+    def test_sync_by_id_is_idempotent(
+        self, isolated_story_home, monkeypatch
+    ):
+        """同一 TAPD id 连续 sync 两次只建一个 story;第二次为更新。"""
+        from story_lifecycle.entry.cli.sync_cmd import sync_cmd
+        from story_lifecycle.sourcing.sources import tapd_source
+
+        monkeypatch.setattr(
+            tapd_source.TapdSource, "get_detail", lambda self, i: _fake_item(i)
+        )
+        monkeypatch.setattr(
+            "story_lifecycle.entry.cli.sync_cmd._load_tapd_config",
+            lambda: {"workspace_id": "123"},
+        )
+
+        tmpdir = tempfile.mkdtemp()
+        os.makedirs(os.path.join(tmpdir, ".story"), exist_ok=True)
+
+        # First sync -> created
+        result1 = CliRunner().invoke(
+            sync_cmd, ["--id", "1066988", "-w", tmpdir]
+        )
+        assert result1.exit_code == 0, result1.output
+        assert "新建 1" in result1.output
+
+        stories_after_first = db.list_visible_stories(show_all=True)
+        assert len([s for s in stories_after_first if s["story_key"] == "tapd-1066988"]) == 1
+
+        # Second sync -> updated, not created
+        result2 = CliRunner().invoke(
+            sync_cmd, ["--id", "1066988", "-w", tmpdir]
+        )
+        assert result2.exit_code == 0, result2.output
+        assert "更新 1" in result2.output
+        assert "新建 0" in result2.output
+
+        stories_after_second = db.list_visible_stories(show_all=True)
+        assert len([s for s in stories_after_second if s["story_key"] == "tapd-1066988"]) == 1
