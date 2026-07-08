@@ -50,7 +50,7 @@
 | T2.2 | plan_confirm 暂停语义 | `[已完成]` | [reports/T2.2-plan-confirm-pause.md](reports/T2.2-plan-confirm-pause.md) | `08c3df94` |
 | T2.3 | .done 握手轮询(超时/成功) | `[已完成]` | [reports/T2.3-done-handshake.md](reports/T2.3-done-handshake.md) | `5210a81f` |
 | T2.4 | 三启动模式一致性(-p / query / release) | `[已完成]` | [reports/T2.4-launch-modes.md](reports/T2.4-launch-modes.md) | `c642f187` |
-| T2.5 | PTY/HITL bug 回归(最近 5 个 fix(pty)) | `[已完成]` | [reports/T2.5-pty-injection-regression.md](reports/T2.5-pty-injection-regression.md) | 待补 |
+| T2.5 | PTY/HITL bug 回归(最近 5 个 fix(pty)) | `[已完成]` | [reports/T2.5-pty-injection-regression.md](reports/T2.5-pty-injection-regression.md) | `bd0b8075` |
 
 ### 阶段三:HITL(模块⑦)
 
