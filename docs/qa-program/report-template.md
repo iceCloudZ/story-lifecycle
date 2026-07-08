@@ -104,9 +104,5 @@ commit: `<hash>`(若多窗口接力,列全部相关 commit)
 
 | 卡号 | 日期 | 状态 | 报告 |
 |---|---|---|---|
-| _(尚无报告,等 T1.1 开工)_ | | | |
-
-<!-- 示例(实际产出时替换):
-| T1.1 | 2026-07-08 | ✅ 已完成 | [reports/T1.1-gate-hard-fail.md](reports/T1.1-gate-hard-fail.md) |
-| T1.2 | 2026-07-09 | 🔶 部分完成 | [reports/T1.2-gate-branches.md](reports/T1.2-gate-branches.md) |
--->
+| T5.1 | 2026-07-08 | ✅ 已完成 | [reports/T5.1-coverage-baseline.md](reports/T5.1-coverage-baseline.md) |
+| T5.2 | 2026-07-08 | ✅ 已完成 | [reports/T5.2-architecture-invariants.md](reports/T5.2-architecture-invariants.md) |

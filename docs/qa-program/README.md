@@ -75,7 +75,7 @@
 | 卡号 | 任务 | 状态 | 报告 | commit |
 |---|---|---|---|---|
 | T5.1 | coverage 度量 + 按模块报告 | `[已完成]` | [reports/T5.1-coverage-baseline.md](reports/T5.1-coverage-baseline.md) | `470fea14` |
-| T5.2 | tests/invariants/ 目录 + 架构不变量集 | `[待办]` | — | — |
+| T5.2 | tests/invariants/ 目录 + 架构不变量集 | `[已完成]` | [reports/T5.2-architecture-invariants.md](reports/T5.2-architecture-invariants.md) | 待填写 |
 
 ---
 
