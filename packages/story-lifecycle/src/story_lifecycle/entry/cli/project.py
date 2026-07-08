@@ -104,7 +104,10 @@ def init_knowledge(
         interactive_confirm,
         show_next_steps,
     )
-    from ...knowledge.knowledge_store.run_writer import create_run_id, write_run_artifacts
+    from ...knowledge.knowledge_store.run_writer import (
+        create_run_id,
+        write_run_artifacts,
+    )
     from ...knowledge.knowledge_store.generator import generate_knowledge_files
     from ...knowledge.knowledge_store.paths import manifest_path
 

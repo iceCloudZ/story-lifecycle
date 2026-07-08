@@ -153,7 +153,9 @@ def prepare(
     failed = 0
     for inst in inst_list:
         # instance_id comes from JSONL (semi-external); validate before path concat.
-        if not _SAFE_ID_RE.match(inst.instance_id or "") or inst.instance_id.startswith("."):
+        if not _SAFE_ID_RE.match(inst.instance_id or "") or inst.instance_id.startswith(
+            "."
+        ):
             console.print(
                 f"  [red]✗[/] {inst.instance_id}: unsafe instance_id (path traversal risk), skipped"
             )

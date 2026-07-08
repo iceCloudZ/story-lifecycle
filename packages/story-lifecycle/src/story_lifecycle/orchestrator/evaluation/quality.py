@@ -17,7 +17,9 @@ _FAILURE_CHECKLIST_PATH = (
 )
 
 
-def _load_failure_checklist_items(task_type: str | None = None, limit: int = 5) -> list[str]:
+def _load_failure_checklist_items(
+    task_type: str | None = None, limit: int = 5
+) -> list[str]:
     """Load preventive checklist items from failure-checklist.md.
 
     Falls back to the generic items if no task_type-specific file exists.

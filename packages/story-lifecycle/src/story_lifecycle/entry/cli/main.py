@@ -446,7 +446,10 @@ def _run_web_board(host, port):
 
     threading.Thread(target=open_browser, daemon=True).start()
     uvicorn.run(
-        "story_lifecycle.orchestrator.service.api:app", host=host, port=port, reload=False
+        "story_lifecycle.orchestrator.service.api:app",
+        host=host,
+        port=port,
+        reload=False,
     )
 
 
@@ -481,7 +484,10 @@ def _run_server(host, port):
     _sl.setLevel(logging.INFO)
 
     uvicorn.run(
-        "story_lifecycle.orchestrator.service.api:app", host=host, port=port, reload=False
+        "story_lifecycle.orchestrator.service.api:app",
+        host=host,
+        port=port,
+        reload=False,
     )
 
 

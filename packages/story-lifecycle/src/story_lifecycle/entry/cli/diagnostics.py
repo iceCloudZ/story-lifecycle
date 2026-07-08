@@ -33,14 +33,18 @@ def diagnostics(story_key, global_diag, output, include_diff, event_limit, no_zi
     init_db()
 
     if global_diag:
-        from ...orchestrator.observability.diagnostics import create_global_diagnostics_bundle
+        from ...orchestrator.observability.diagnostics import (
+            create_global_diagnostics_bundle,
+        )
 
         result = create_global_diagnostics_bundle(
             output_path=output,
             no_zip=no_zip,
         )
     elif story_key:
-        from ...orchestrator.observability.diagnostics import create_story_diagnostics_bundle
+        from ...orchestrator.observability.diagnostics import (
+            create_story_diagnostics_bundle,
+        )
 
         result = create_story_diagnostics_bundle(
             story_key=story_key,

@@ -86,7 +86,9 @@ def get_project(remote_path: str) -> dict | None:
             r = client.get(f"/api/v4/projects/{encoded}")
             if r.status_code == 200:
                 return r.json()
-            log.warning("gitlab project lookup failed: %s %s", r.status_code, remote_path)
+            log.warning(
+                "gitlab project lookup failed: %s %s", r.status_code, remote_path
+            )
         except Exception as e:
             log.warning("gitlab project lookup error: %s", e)
     return None
@@ -103,7 +105,11 @@ def find_merge_request(project_id: int, source_branch: str) -> dict | None:
             try:
                 r = client.get(
                     f"/api/v4/projects/{project_id}/merge_requests",
-                    params={"source_branch": source_branch, "state": state, "per_page": "10"},
+                    params={
+                        "source_branch": source_branch,
+                        "state": state,
+                        "per_page": "10",
+                    },
                 )
                 if r.status_code != 200:
                     continue
@@ -127,7 +133,9 @@ def get_mr_changes(project_id: int, mr_iid: int) -> dict | None:
 
     with _client() as client:
         try:
-            r = client.get(f"/api/v4/projects/{project_id}/merge_requests/{mr_iid}/changes")
+            r = client.get(
+                f"/api/v4/projects/{project_id}/merge_requests/{mr_iid}/changes"
+            )
             if r.status_code == 200:
                 return r.json()
             log.warning("gitlab mr changes failed: %s", r.status_code)
@@ -138,9 +146,7 @@ def get_mr_changes(project_id: int, mr_iid: int) -> dict | None:
 
 def build_compare_url(project_path: str, base_branch: str, source_branch: str) -> str:
     """Build a GitLab branch compare URL for manual fallback."""
-    return (
-        f"{_gitlab_url()}/{project_path}/-/compare/{base_branch}...{source_branch}"
-    )
+    return f"{_gitlab_url()}/{project_path}/-/compare/{base_branch}...{source_branch}"
 
 
 def build_mr_url(project_path: str, mr_iid: int) -> str:

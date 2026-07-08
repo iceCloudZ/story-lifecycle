@@ -16,9 +16,20 @@ from __future__ import annotations
 # 优先级 → 排序权重(数字小 = 优先)。未知优先级当 P2(权重 2)。
 # 支持 P0-P5 **和** 真 DB 用的 high/medium/low(大小写无关)。
 _PRIORITY_RANK: dict[str, int] = {
-    "P0": 0, "P1": 1, "P2": 2, "P3": 3, "P4": 4, "P5": 5,
-    "HIGH": 1, "MEDIUM": 2, "LOW": 4,
-    "HIGHEST": 0, "LOWEST": 5, "NORMAL": 2, "CRITICAL": 0, "URGENT": 0,
+    "P0": 0,
+    "P1": 1,
+    "P2": 2,
+    "P3": 3,
+    "P4": 4,
+    "P5": 5,
+    "HIGH": 1,
+    "MEDIUM": 2,
+    "LOW": 4,
+    "HIGHEST": 0,
+    "LOWEST": 5,
+    "NORMAL": 2,
+    "CRITICAL": 0,
+    "URGENT": 0,
 }
 _DEFAULT_RANK = 2  # P2
 
@@ -34,6 +45,7 @@ def decide_schedule(*, stories: list[dict]) -> list[str]:
     Returns:
         Ordered list of ``story_key`` (best-first).
     """
+
     def sort_key(s: dict):
         ready = 0 if s.get("ready", True) else 1  # ready(0) 先于 blocked(1)
         prio = (s.get("priority") or "P2").upper()

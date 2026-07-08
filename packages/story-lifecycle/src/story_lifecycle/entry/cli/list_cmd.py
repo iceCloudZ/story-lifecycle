@@ -14,6 +14,7 @@ from rich.table import Table
 
 console = Console()
 
+
 def _resolve_retrospect_script() -> str:
     """Resolve the miner retrospect-script path without assuming the monorepo layout.
 
@@ -39,8 +40,13 @@ def _resolve_retrospect_script() -> str:
     return os.path.normpath(
         os.path.join(
             os.path.dirname(__file__),
-            "..", "..", "..", "..",
-            "story-miner", "scripts", "retrospect.py",
+            "..",
+            "..",
+            "..",
+            "..",
+            "story-miner",
+            "scripts",
+            "retrospect.py",
         )
     )
 

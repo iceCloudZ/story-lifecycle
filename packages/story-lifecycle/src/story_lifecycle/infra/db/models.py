@@ -154,9 +154,7 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_lt_story ON llm_trace(story_key)"
-        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lt_story ON llm_trace(story_key)")
         _backfill_llm_trace_story_keys(conn)
         # Finding table for quality flywheel
         conn.execute("""
@@ -564,7 +562,9 @@ def list_visible_stories(
     completed_pool = list_completed_stories(limit=100)
     stories = stories + [s for s in completed_pool if s.get("status") == "completed"]
     if show_all:
-        stories = stories + [s for s in completed_pool if s.get("status") != "completed"]
+        stories = stories + [
+            s for s in completed_pool if s.get("status") != "completed"
+        ]
 
     if status:
         stories = [s for s in stories if s["status"] == status]
@@ -1568,8 +1568,19 @@ def bind_story_project(
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
     _select = "SELECT * FROM story_project WHERE story_key = ? AND project_id = ?"
     _vals = (
-        story_key, project_id, branch, base_branch, base_commit, worktree_path,
-        workspace_type, worktree_state, summary, source, evidence_ref, now, now,
+        story_key,
+        project_id,
+        branch,
+        base_branch,
+        base_commit,
+        worktree_path,
+        workspace_type,
+        worktree_state,
+        summary,
+        source,
+        evidence_ref,
+        now,
+        now,
     )
     try:
         with _db() as conn:
@@ -1628,7 +1639,9 @@ def update_story_project(story_key: str, project_id: int, **kwargs) -> None:
     kwargs["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     sets = ", ".join(f"{k} = ?" for k in kwargs)
     values = list(kwargs.values()) + [story_key, project_id]
-    _update_sql = f"UPDATE story_project SET {sets} WHERE story_key = ? AND project_id = ?"
+    _update_sql = (
+        f"UPDATE story_project SET {sets} WHERE story_key = ? AND project_id = ?"
+    )
     try:
         with _db() as conn:
             conn.execute(_update_sql, values)

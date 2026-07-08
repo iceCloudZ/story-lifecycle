@@ -1,6 +1,5 @@
 """Doctor — check system environment and available CLI tools."""
 
-import os
 import re
 import shutil
 import sqlite3
@@ -350,10 +349,23 @@ def run_doctor_fix(interactive: bool = True):
 # ---------------------------------------------------------------------------
 
 _REPOS = [
-    "hc-order", "hc-user", "hc-risk-management", "hc-message", "hc-config",
-    "hc-limit", "hc-third-party", "hc-coupon", "hc-marketing", "hc-callback",
-    "hc-gateway", "hc-job", "hc-audit", "hc-aiops", "hc-pytest",
-    "story-board", "ys-frame-parent",
+    "hc-order",
+    "hc-user",
+    "hc-risk-management",
+    "hc-message",
+    "hc-config",
+    "hc-limit",
+    "hc-third-party",
+    "hc-coupon",
+    "hc-marketing",
+    "hc-callback",
+    "hc-gateway",
+    "hc-job",
+    "hc-audit",
+    "hc-aiops",
+    "hc-pytest",
+    "story-board",
+    "ys-frame-parent",
 ]
 
 
@@ -371,8 +383,23 @@ def _repo_has_grep_match(repo_path: Path, short_id: str) -> bool:
         return False
     try:
         r = subprocess.run(
-            ["git", "-C", str(repo_path), "log", "master", "--grep", short_id, "--oneline", "-n", "1"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+            [
+                "git",
+                "-C",
+                str(repo_path),
+                "log",
+                "master",
+                "--grep",
+                short_id,
+                "--oneline",
+                "-n",
+                "1",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
         )
         return r.returncode == 0 and bool(r.stdout.strip())
     except Exception:
@@ -433,7 +460,11 @@ def run_linkage_health():
                 try:
                     r = subprocess.run(
                         ["git", "-C", str(repo_path), "rev-parse", "--verify", branch],
-                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=10,
                     )
                     if r.returncode == 0:
                         found_repo = repo_name
@@ -455,8 +486,16 @@ def run_linkage_health():
     table.add_column("Count")
     table.add_column("Rate")
     table.add_row("Stories with branch", str(total), "—")
-    table.add_row("Hard branch (story_key in branch)", f"{hard_branch}/{total}", f"{pct_hard_branch}%")
-    table.add_row("Merge commit reachable (git log --grep)", f"{hard_commit}/{total}", f"{pct_hard_commit}%")
+    table.add_row(
+        "Hard branch (story_key in branch)",
+        f"{hard_branch}/{total}",
+        f"{pct_hard_branch}%",
+    )
+    table.add_row(
+        "Merge commit reachable (git log --grep)",
+        f"{hard_commit}/{total}",
+        f"{pct_hard_commit}%",
+    )
     table.add_row("Orphan / not found", str(orphan_branch), "—")
     console.print(table)
 

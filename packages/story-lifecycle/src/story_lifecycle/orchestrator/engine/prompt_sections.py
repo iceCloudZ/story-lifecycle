@@ -31,14 +31,53 @@ from ...knowledge import context_providers
 # ("日志", "表结构", "页面", "上线"…) are common across many stories and should
 # not steal a story from a more specific business domain.
 TASK_TYPE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
-    ("credit-limit", ("授信", "额度", "风控", "增信", "提额", "credit", "limit", "risk", "授信节点")),
-    ("fund-flow", ("放款", "还款", "提现", "清分", "对账", "借贷", "repay", "withdraw", "loan", "fund")),
-    ("marketing", ("营销", "活动", "MGM", "券", "免息", "奖励", "coupon", "activity", "marketing")),
-    ("user-profile", ("用户", "资料", "认证", "隐私", "KYC", "user", "profile", "联系人")),
+    (
+        "credit-limit",
+        ("授信", "额度", "风控", "增信", "提额", "credit", "limit", "risk", "授信节点"),
+    ),
+    (
+        "fund-flow",
+        (
+            "放款",
+            "还款",
+            "提现",
+            "清分",
+            "对账",
+            "借贷",
+            "repay",
+            "withdraw",
+            "loan",
+            "fund",
+        ),
+    ),
+    (
+        "marketing",
+        (
+            "营销",
+            "活动",
+            "MGM",
+            "券",
+            "免息",
+            "奖励",
+            "coupon",
+            "activity",
+            "marketing",
+        ),
+    ),
+    (
+        "user-profile",
+        ("用户", "资料", "认证", "隐私", "KYC", "user", "profile", "联系人"),
+    ),
     ("order", ("订单", "交易", "order", "borrow", "liquidate")),
     ("integration", ("三方", "对接", "回调", "third-party", "callback", "integration")),
-    ("gateway-infra", ("网关", "限流", "配置", "调度", "状态机", "gateway", "config", "infra")),
-    ("message-notify", ("短信", "OTP", "通知", "模板", "whatsapp", "sms", "message", "notify", "路由")),
+    (
+        "gateway-infra",
+        ("网关", "限流", "配置", "调度", "状态机", "gateway", "config", "infra"),
+    ),
+    (
+        "message-notify",
+        ("短信", "OTP", "通知", "模板", "whatsapp", "sms", "message", "notify", "路由"),
+    ),
     ("deploy", ("部署", "上线", "发版", "deploy", "release", "skyladder", "nexus")),
     ("data-sql", ("SQL", "查询", "迁移", "schema", "sql", "data", "DDL", "表结构")),
     ("frontend", ("前端", "admin", "页面", "frontend", "protable", "proform", "组件")),
@@ -92,12 +131,15 @@ def build_kb_tool_section(story_key: str, workspace: str, stage: str) -> str:
         try:
             from pathlib import Path as _Path
 
-            _p = _Path(
-                __import__("os").environ.get(
-                    "STORY_MINER_OUT",
-                    "D:/github/story-lifecycle/packages/story-miner/scripts/out",
+            _p = (
+                _Path(
+                    __import__("os").environ.get(
+                        "STORY_MINER_OUT",
+                        "D:/github/story-lifecycle/packages/story-miner/scripts/out",
+                    )
                 )
-            ) / "story_task_types.json"
+                / "story_task_types.json"
+            )
             if _p.exists():
                 for _r in _json.loads(_p.read_text(encoding="utf-8")):
                     if _r.get("story_key") == story_key:
@@ -200,7 +242,9 @@ def build_design_dimensions_section(
     # 逐问澄清协议:交互式终端(claude "query",无 MCP)→ 在终端直接问人;
     # 自主路径(headless -p,有 MCP)→ 调 mcp__lifecycle__clarify 工具。
     if interactive:
-        _clarify = "**在终端直接问人**（一次一个：question + 2-4 个 options），拿到人答再继续"
+        _clarify = (
+            "**在终端直接问人**（一次一个：question + 2-4 个 options），拿到人答再继续"
+        )
     else:
         _clarify = "**调用 `mcp__lifecycle__clarify` 工具**提问（一次一个：question + 2-4 个 options），拿到人答再继续"
     section = (

@@ -40,9 +40,13 @@ def build_replan_messages(
     Returns:
         ``[{role: system}, {role: user}]`` —— 喂 invoke_with_tools 的初始 messages。
     """
-    prior_summary = ", ".join(
-        f"{a.get('stage', '?')}@{a.get('adapter', '?')}" for a in (prior_actions or [])
-    ) or "(无)"
+    prior_summary = (
+        ", ".join(
+            f"{a.get('stage', '?')}@{a.get('adapter', '?')}"
+            for a in (prior_actions or [])
+        )
+        or "(无)"
+    )
     system = (
         "你是 story 执行的重规划器。之前的做法失败了,基于反馈用 plan_step / skip_stage 工具"
         "产一个**改过的新计划**(换 adapter / 换 focus / 插救援 stage / 跳过)。\n"
@@ -84,10 +88,15 @@ def replan(
     actions: list[dict] = []
 
     for _round in range(_MAX_REPLAN_ROUNDS):
-        resp = invoke_with_tools(messages, tools, tool_choice="auto", temperature=0.1, timeout=90)
+        resp = invoke_with_tools(
+            messages, tools, tool_choice="auto", temperature=0.1, timeout=90
+        )
         tool_calls = resp.get("tool_calls") or []
         # 记 assistant 回复(多轮 tool-calling 协议要求)
-        messages.append(resp.get("message") or {"role": "assistant", "content": resp.get("content", "")})
+        messages.append(
+            resp.get("message")
+            or {"role": "assistant", "content": resp.get("content", "")}
+        )
         if not tool_calls:
             break
         for tc in tool_calls:

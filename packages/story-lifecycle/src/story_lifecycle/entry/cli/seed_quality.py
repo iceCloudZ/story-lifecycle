@@ -160,7 +160,10 @@ def apply(reviewed_file, yes):
     REVIEWED_FILE should be a JSON file from the review queue with
     review_status completed.
     """
-    from ...orchestrator.learning.seed_pipeline import load_reviewed_proposal, apply_reviewed
+    from ...orchestrator.learning.seed_pipeline import (
+        load_reviewed_proposal,
+        apply_reviewed,
+    )
 
     # 1. Load and validate the reviewed file
     try:
@@ -220,7 +223,10 @@ def apply(reviewed_file, yes):
 )
 def preview_packet(story_key, stage, tags):
     """Preview the Quality Packet that would be injected for a story."""
-    from ...orchestrator.evaluation.quality import build_quality_packet, build_quality_checklist
+    from ...orchestrator.evaluation.quality import (
+        build_quality_packet,
+        build_quality_checklist,
+    )
     from ...infra.db import models as db
 
     story = db.get_story(story_key)

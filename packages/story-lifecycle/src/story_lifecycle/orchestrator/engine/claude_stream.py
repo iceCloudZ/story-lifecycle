@@ -63,12 +63,7 @@ def extract_awaiting(
 
     # (2) elicitation / idle_prompt(选择/澄清)
     if etype in ("elicitation", "elicitation_dialog", "idle_prompt"):
-        msg = (
-            event.get("message")
-            or event.get("prompt")
-            or event.get("question")
-            or ""
-        )
+        msg = event.get("message") or event.get("prompt") or event.get("question") or ""
         opts = event.get("options") or []
         if not opts:
             return None
@@ -84,9 +79,7 @@ def extract_awaiting(
             ):
                 inp = content.get("input", {}) or {}
                 return (
-                    _summarize_perm(
-                        inp.get("tool_name", "tool"), inp.get("input", {})
-                    ),
+                    _summarize_perm(inp.get("tool_name", "tool"), inp.get("input", {})),
                     [ALLOW, DENY],
                 )
 
@@ -321,12 +314,16 @@ def supervise_headless_stdout(
                 for raw in iter(proc.stderr.readline, b""):
                     stderr_tail.append(raw.decode("utf-8", "replace"))
                     # 滚动:总长留 ~8KB,够 retry 诊断看尾部即可,不无限涨内存。
-                    while sum(len(s) for s in stderr_tail) > 8192 and len(stderr_tail) > 1:
+                    while (
+                        sum(len(s) for s in stderr_tail) > 8192 and len(stderr_tail) > 1
+                    ):
                         stderr_tail.pop(0)
             except Exception:
                 pass
 
-        _th.Thread(target=_drain_stderr, daemon=True, name="drain-headless-stderr").start()
+        _th.Thread(
+            target=_drain_stderr, daemon=True, name="drain-headless-stderr"
+        ).start()
 
     decisions: list[dict] = []
     # kimi 等(非 claude)用文本 awaiting detector;claude 用 stream-json extract_awaiting
@@ -379,4 +376,3 @@ def supervise_headless_stdout(
     except Exception:
         pass
     return decisions
-

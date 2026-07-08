@@ -160,7 +160,9 @@ class ManagedPty:
         self.cwd = cwd
         self.purpose = purpose
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=512)
-        self._taps: list[asyncio.Queue] = []  # 旁路 taps(supervisor 等),每条输出复制一份
+        self._taps: list[
+            asyncio.Queue
+        ] = []  # 旁路 taps(supervisor 等),每条输出复制一份
         self._alive = True
         self._process: object | None = None
         self._read_thread: threading.Thread | None = None
@@ -533,9 +535,9 @@ def kill_pty(story_id: str, session_id: str = ""):
 # Clean-exit teardown tunables. Exported as module constants so tests can zero
 # them (avoid blocking on real sleeps); kept here rather than kwargs so the
 # protocol is consistent across all callers.
-_CLEAN_EXIT_PASTE_DELAY = 0.4   # bracketed-paste settle before the `\r` submit
+_CLEAN_EXIT_PASTE_DELAY = 0.4  # bracketed-paste settle before the `\r` submit
 _CLEAN_EXIT_POLL_INTERVAL = 0.2  # how often to re-check `pty.alive`
-_CLEAN_EXIT_TIMEOUT = 10.0       # default patience before force-killing
+_CLEAN_EXIT_TIMEOUT = 10.0  # default patience before force-killing
 
 
 def _clean_exit_pty(pty: "ManagedPty", timeout: float = _CLEAN_EXIT_TIMEOUT) -> bool:

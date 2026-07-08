@@ -52,7 +52,9 @@ def _load_prompt_template() -> str:
 
     # Try package prompts/ directory
     try:
-        ref = _ir.files("story_lifecycle.infra.prompts").joinpath("knowledge-bootstrap.md")
+        ref = _ir.files("story_lifecycle.infra.prompts").joinpath(
+            "knowledge-bootstrap.md"
+        )
         return ref.read_text(encoding="utf-8")
     except (FileNotFoundError, TypeError):
         pass

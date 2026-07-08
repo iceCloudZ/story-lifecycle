@@ -16,8 +16,6 @@ fail 则不 apply / 触发 retry(本阶段最小判据:done 字段空/false → 
 
 from __future__ import annotations
 
-from typing import Optional
-
 
 def judge_quality(
     *,

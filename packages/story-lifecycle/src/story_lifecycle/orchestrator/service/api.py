@@ -252,14 +252,24 @@ async def _pty_ws_handler(ws: WebSocket, story_id: str, session_id: str = ""):
 
     pty = get_pty(story_id, session_id)
     if not pty:
-        await ws.send_json({"type": "error", "code": "session_not_found",
-                            "message": "No PTY session for this story"})
+        await ws.send_json(
+            {
+                "type": "error",
+                "code": "session_not_found",
+                "message": "No PTY session for this story",
+            }
+        )
         await ws.close(code=4404)
         return
 
     if not pty.alive:
-        await ws.send_json({"type": "exit", "reason": "process_ended",
-                            "message": "PTY process has already exited"})
+        await ws.send_json(
+            {
+                "type": "exit",
+                "reason": "process_ended",
+                "message": "PTY process has already exited",
+            }
+        )
         await ws.close(code=1000)
         return
 
@@ -393,9 +403,7 @@ def _build_interactive_stage_prompt(story: dict, stage: str) -> str:
         pass
     stage_cfg = profile_stages.get(stage)
     focus = (
-        stage_cfg.description
-        if stage_cfg and hasattr(stage_cfg, "description")
-        else ""
+        stage_cfg.description if stage_cfg and hasattr(stage_cfg, "description") else ""
     ) or ""
     project_lines = []
     try:
@@ -480,7 +488,10 @@ def _build_stage_launch_cmd(story: dict, adapter, model: str) -> tuple[list[str]
     stage = story.get("current_stage", "design") or "design"
     session_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"{story_key}:{stage}"))
     session_name = f"{story_key}-{stage}"
-    marker = safe_story_path(workspace, ".story", "context", story_key) / f"session_{stage}.json"
+    marker = (
+        safe_story_path(workspace, ".story", "context", story_key)
+        / f"session_{stage}.json"
+    )
     if marker.exists():
         cmd = adapter.interactive_launch_cmd(
             model,
@@ -2179,8 +2190,6 @@ def _workspace_root_for_project(repo_path: str) -> Path:
     return git_root if git_root is not None else path
 
 
-
-
 def _workspace_options_from_projects(projects: list[dict]) -> list[dict]:
     """Return unique selectable workspaces derived from registered projects."""
     options: dict[str, dict] = {}
@@ -3070,7 +3079,12 @@ def api_clarify_answer(story_key: str, req: ClarifyAnswerRequest):
         "clarification_answer",
         {"id": rid, "question": pending.get("question"), "answer": req.answer},
     )
-    return {"ok": True, "id": rid, "question": pending.get("question"), "answer": req.answer}
+    return {
+        "ok": True,
+        "id": rid,
+        "question": pending.get("question"),
+        "answer": req.answer,
+    }
 
 
 @app.get("/api/story/{story_key}/clarify/stream")
@@ -3080,6 +3094,8 @@ async def api_clarify_stream(story_key: str):
     复用 plan stream 的 StreamingResponse 模式;轮询 DB event_log + story status,
     有新澄清事件或状态变化即推。前端 EventSource 接;断开会自动重连。
     """
+    import json
+
     story = db.get_story(story_key)
     if not story:
 
@@ -3089,7 +3105,6 @@ async def api_clarify_stream(story_key: str):
         return StreamingResponse(err("story not found"), media_type="text/event-stream")
 
     async def gen():
-        import time as _time
 
         yield f"data: {json.dumps({'type': 'status', 'status': story.get('status')}, ensure_ascii=False)}\n\n"
         seen_ids: set[int] = set()
@@ -3103,7 +3118,6 @@ async def api_clarify_stream(story_key: str):
                 events = db.get_story_events(story_key)
             except Exception:
                 events = []
-            pushed = False
             for ev in events:
                 etype = ev.get("event_type", "")
                 if etype not in ("clarification_request", "clarification_answer"):
@@ -3113,7 +3127,6 @@ async def api_clarify_stream(story_key: str):
                 seen_ids.add(ev.get("id"))
                 payload = ev.get("payload") or {}
                 yield f"data: {json.dumps({'type': etype, **payload}, ensure_ascii=False)}\n\n"
-                pushed = True
             # 状态变化推送
             yield f"data: {json.dumps({'type': 'status', 'status': status}, ensure_ascii=False)}\n\n"
             # 终态:design 已离开 awaiting-clarify 且无新事件 → 收尾

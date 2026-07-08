@@ -303,7 +303,9 @@ def start_story_async(story_key: str):
     # (event_log events appeared ×2, interleaved per stage). Claim atomically in
     # the SHARED DB: only one caller's UPDATE (driver_claim NULL -> token)
     # succeeds; the loser returns here. See db.claim_story_driver.
-    import os as _os, time as _time
+    import os as _os
+    import time as _time
+
     claim_token = f"{_os.getpid()}:{int(_time.time())}"
     if not db.claim_story_driver(story_key, claim_token):
         cur = db.get_story(story_key) or {}

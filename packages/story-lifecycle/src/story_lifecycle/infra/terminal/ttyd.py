@@ -396,11 +396,11 @@ def launch_cli(story_key: str, workspace: str, launch_cmd: str, prompt_file: str
     script = Path(tempfile.gettempdir()) / f"story-launch-{safe_segment(story_key)}.sh"
     script.write_text(
         f"#!/bin/bash\n"
-        f"cd {ws_q} 2>/dev/null || {{ echo \"ERROR: cannot cd to {ws_q}\"; exit 1; }}\n"
-        f"echo \"Starting: {launch_cmd_display}\"\n"
-        f"{launch_cmd} \"$(cat {pf_q})\"\n"
+        f'cd {ws_q} 2>/dev/null || {{ echo "ERROR: cannot cd to {ws_q}"; exit 1; }}\n'
+        f'echo "Starting: {launch_cmd_display}"\n'
+        f'{launch_cmd} "$(cat {pf_q})"\n'
         f'echo ""\n'
-        f"echo \"Story {safe_segment(story_key)} done (exit code: $?). Closing in 3s...\"\n"
+        f'echo "Story {safe_segment(story_key)} done (exit code: $?). Closing in 3s..."\n'
         f"sleep 3\n",
         encoding="utf-8",
     )
@@ -453,9 +453,9 @@ def zellij_execution_args(
     script = Path(tempfile.gettempdir()) / f"story-launch-{safe_segment(story_key)}.sh"
     script.write_text(
         f"#!/bin/bash\n"
-        f"cd {ws_q} 2>/dev/null || {{ echo \"ERROR: cannot cd to {ws_q}\"; exit 1; }}\n"
-        f"echo \"Starting: {launch_cmd_display}\"\n"
-        f"{launch_cmd} \"$(cat {pf_q})\"\n"
+        f'cd {ws_q} 2>/dev/null || {{ echo "ERROR: cannot cd to {ws_q}"; exit 1; }}\n'
+        f'echo "Starting: {launch_cmd_display}"\n'
+        f'{launch_cmd} "$(cat {pf_q})"\n'
         f"_ec=$?\n"
         f'echo ""\n'
         f'echo $_ec > "{exit_marker_posix}"\n'

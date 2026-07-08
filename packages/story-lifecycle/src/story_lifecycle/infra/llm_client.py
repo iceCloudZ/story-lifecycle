@@ -73,9 +73,7 @@ def with_story_key(arg_name: str = "story_key", *, from_state: bool = False):
             if from_state:
                 state = args[0] if args else kwargs.get("state", {})
                 story_key = (
-                    state.get("story_key", "")
-                    if isinstance(state, dict)
-                    else ""
+                    state.get("story_key", "") if isinstance(state, dict) else ""
                 )
             else:
                 story_key = kwargs.get(arg_name, "")
@@ -489,7 +487,10 @@ class LLMClient:
             return result
         except Exception as exc:
             self._trace(
-                {}, int((time.monotonic() - t0) * 1000), model=self.model, error=str(exc)
+                {},
+                int((time.monotonic() - t0) * 1000),
+                model=self.model,
+                error=str(exc),
             )
             raise
 
@@ -533,9 +534,7 @@ class LLMClient:
         return None
 
     @staticmethod
-    def _trace(
-        usage: dict, duration_ms: int, *, model: str = "", error: str = ""
-    ):
+    def _trace(usage: dict, duration_ms: int, *, model: str = "", error: str = ""):
         try:
             from .db.models import log_llm_trace
 

@@ -75,9 +75,7 @@ def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id):
     # An explicit workspace is required: the old `or "."` fallback stored the
     # server's CWD as the story workspace, scattering evidence artifacts.
     if not workspace:
-        console.print(
-            "[red]必须指定 --workspace/-w（一个绝对路径的工作区目录）。[/]"
-        )
+        console.print("[red]必须指定 --workspace/-w（一个绝对路径的工作区目录）。[/]")
         raise SystemExit(1)
     if not Path(workspace).is_absolute():
         console.print(f"[red]workspace 必须是绝对路径，得到: {workspace!r}[/]")

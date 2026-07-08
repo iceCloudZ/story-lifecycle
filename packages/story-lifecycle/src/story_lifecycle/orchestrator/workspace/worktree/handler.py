@@ -127,13 +127,14 @@ def prepare_worktrees(story_key: str, worktree_root: str = "") -> list[dict]:
                 )
 
         else:  # PrepareAction.REJECT
-            if (
-                decision.reject_reason == RejectReason.PATH_CONFLICT
-                and sp.get("worktree_path")
+            if decision.reject_reason == RejectReason.PATH_CONFLICT and sp.get(
+                "worktree_path"
             ):
                 # 显式指定的路径被占(非 worktree)→ 改走外部独立 worktree
                 sp_ext = {**sp, "worktree_path": None}
-                wt_path = _derive_worktree_path(sp_ext, project, story_key, worktree_root)
+                wt_path = _derive_worktree_path(
+                    sp_ext, project, story_key, worktree_root
+                )
                 branch = sp.get("branch", "")
                 base_branch = sp.get("base_branch", "main")
                 base_commit = sp.get("base_commit", "")

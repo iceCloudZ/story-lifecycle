@@ -39,7 +39,10 @@ CLARIFY_TOOL = {
     "inputSchema": {
         "type": "object",
         "properties": {
-            "question": {"type": "string", "description": "The specific question to ask."},
+            "question": {
+                "type": "string",
+                "description": "The specific question to ask.",
+            },
             "options": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -186,7 +189,8 @@ def get_pending_clarification(
         "id": latest_request.get("id"),
         "question": str(latest_request.get("question", "")),
         "options": list(latest_request.get("options", []) or []),
-        "header": latest_request.get("header") or str(latest_request.get("question", "")),
+        "header": latest_request.get("header")
+        or str(latest_request.get("question", "")),
     }
 
 
@@ -212,7 +216,10 @@ def write_mcp_config(config_path, python_bin: str) -> str:
                 "mcpServers": {
                     "lifecycle": {
                         "command": python_bin,
-                        "args": ["-m", "story_lifecycle.orchestrator.mcp.clarify_server"],
+                        "args": [
+                            "-m",
+                            "story_lifecycle.orchestrator.mcp.clarify_server",
+                        ],
                     }
                 }
             },
@@ -242,7 +249,9 @@ def run_server() -> None:
 
     def _await(story_key, request_id, timeout):
         return poll_clarify_answer(
-            story_key, request_id, get_events_fn=db.get_story_events,
+            story_key,
+            request_id,
+            get_events_fn=db.get_story_events,
         )
 
     def _send(obj):
@@ -260,14 +269,17 @@ def run_server() -> None:
         method = msg.get("method")
         mid = msg.get("id")
         if method == "initialize":
-            _send({
-                "jsonrpc": "2.0", "id": mid,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "lifecycle", "version": "1.0"},
-                },
-            })
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "lifecycle", "version": "1.0"},
+                    },
+                }
+            )
         elif method == "notifications/initialized":
             pass  # 通知,无需响应
         elif method == "tools/list":
@@ -287,10 +299,18 @@ def run_server() -> None:
                 )
                 _send({"jsonrpc": "2.0", "id": mid, "result": result})
             else:
-                _send({"jsonrpc": "2.0", "id": mid, "result": {
-                    "content": [{"type": "text", "text": f"unknown tool: {name}"}],
-                    "isError": True,
-                }})
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid,
+                        "result": {
+                            "content": [
+                                {"type": "text", "text": f"unknown tool: {name}"}
+                            ],
+                            "isError": True,
+                        },
+                    }
+                )
 
 
 if __name__ == "__main__":

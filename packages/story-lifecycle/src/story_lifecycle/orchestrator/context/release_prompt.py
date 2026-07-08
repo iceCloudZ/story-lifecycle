@@ -110,7 +110,9 @@ def _render_release_prompt(story_key: str, bundle) -> str:
 
     _render_delivery_artifacts(lines, bundle.delivery_artifacts)
 
-    _inject_flywheel_sections(lines, story_key, story.get("workspace", ""), story.get("current_stage", ""))
+    _inject_flywheel_sections(
+        lines, story_key, story.get("workspace", ""), story.get("current_stage", "")
+    )
 
     return "\n".join(lines)
 
@@ -223,7 +225,9 @@ def _render_post_release_prompt(story_key: str, bundle) -> str:
 
     _render_delivery_artifacts(lines, bundle.delivery_artifacts)
 
-    _inject_flywheel_sections(lines, story_key, story.get("workspace", ""), story.get("current_stage", ""))
+    _inject_flywheel_sections(
+        lines, story_key, story.get("workspace", ""), story.get("current_stage", "")
+    )
 
     return "\n".join(lines)
 
@@ -482,7 +486,12 @@ def _render_batch_bugfix_prompt(story_key: str, bundle, bugs: list[dict]) -> str
 
     _render_delivery_artifacts(lines, bundle.delivery_artifacts)
 
-    _inject_flywheel_sections(lines, story_key, story.get("workspace", ""), story.get("current_stage", "") or "verify")
+    _inject_flywheel_sections(
+        lines,
+        story_key,
+        story.get("workspace", ""),
+        story.get("current_stage", "") or "verify",
+    )
 
     return "\n".join(lines)
 

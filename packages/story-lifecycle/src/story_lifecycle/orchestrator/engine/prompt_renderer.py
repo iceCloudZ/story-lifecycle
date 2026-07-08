@@ -378,7 +378,9 @@ Story: {state["story_key"]}
         "{quality_packet_section}": quality_section,
         "{quality_checklist}": checklist,
         "{repair_packet_section}": repair_section,
-        "{transcript_context}": (transcript_context + "\n") if transcript_context else "",
+        "{transcript_context}": (transcript_context + "\n")
+        if transcript_context
+        else "",
         "{knowledge_context}": (knowledge_context + "\n") if knowledge_context else "",
     }
     _had_repair_placeholder = "{repair_packet_section}" in template

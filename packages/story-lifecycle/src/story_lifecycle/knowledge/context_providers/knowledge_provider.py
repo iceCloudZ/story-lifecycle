@@ -17,6 +17,7 @@ that predate auto-tagging.
 The provider is intentionally lenient: missing artifacts, a missing DB, or a
 parse failure result in ``None`` so prompt rendering is never blocked.
 """
+
 from __future__ import annotations
 
 import json
@@ -246,9 +247,13 @@ class KnowledgeContextProvider:
         patterns = (phase2.get("patterns_by_task_type") or {}).get(task_type, [])
         if patterns:
             lines.append("### 历史高风险文件\n")
-            lines.append("以下文件在本类任务中反复改动且关联 bug 最多，设计/实现时建议重点 review：\n")
+            lines.append(
+                "以下文件在本类任务中反复改动且关联 bug 最多，设计/实现时建议重点 review：\n"
+            )
             for p in patterns[:5]:
-                lines.append(f"- `{p['file']}` (commits={p['commit_count']}, bug_weight={p['bug_weight']})")
+                lines.append(
+                    f"- `{p['file']}` (commits={p['commit_count']}, bug_weight={p['bug_weight']})"
+                )
             lines.append("")
 
         # 2. cycle-time 基线
@@ -262,24 +267,34 @@ class KnowledgeContextProvider:
         # 3. 该类 top bug 磁铁（警示）
         stories = graph.get("stories", [])
         type_stories = [
-            s for s in stories
-            if self._task_type_for(s.get("story_key", "")) == task_type and s.get("bug_count", 0) > 0
+            s
+            for s in stories
+            if self._task_type_for(s.get("story_key", "")) == task_type
+            and s.get("bug_count", 0) > 0
         ]
         type_stories.sort(key=lambda s: -s["bug_count"])
         if type_stories[:3]:
             lines.append("### 本类历史 bug 磁铁\n")
             for s in type_stories[:3]:
-                lines.append(f"- `{s['story_key']}` {s['title'][:50]} (bugs={s['bug_count']})")
+                lines.append(
+                    f"- `{s['story_key']}` {s['title'][:50]} (bugs={s['bug_count']})"
+                )
             lines.append("")
 
         # 4. 阶段-specific 提示
         if stage in ("design", "build"):
             lines.append("### 设计/实现建议\n")
-            lines.append("- 若改动涉及上述高风险文件，请在 research.md 中显式评估回归风险。\n")
-            lines.append("- 若需求与历史 bug 磁铁业务相似，优先复用已验证的分支/模块模式。\n")
+            lines.append(
+                "- 若改动涉及上述高风险文件，请在 research.md 中显式评估回归风险。\n"
+            )
+            lines.append(
+                "- 若需求与历史 bug 磁铁业务相似，优先复用已验证的分支/模块模式。\n"
+            )
         elif stage == "verify":
             lines.append("### 验证建议\n")
-            lines.append("- 针对上述高风险文件补充回归检查；若出现同类 bug，gate 应 block。\n")
+            lines.append(
+                "- 针对上述高风险文件补充回归检查；若出现同类 bug，gate 应 block。\n"
+            )
 
         # 5. playbook/scenario/failure 知识（④ 契约层 — via knowledge.KnowledgeIndex）
         try:

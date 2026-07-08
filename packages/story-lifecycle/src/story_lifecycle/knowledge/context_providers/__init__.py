@@ -68,9 +68,7 @@ def _default_provider_cfg() -> dict | None:
         return None
 
 
-def get_transcript_context(
-    story_key: str, workspace: str, stage: str
-) -> str | None:
+def get_transcript_context(story_key: str, workspace: str, stage: str) -> str | None:
     """Return historical transcript context for this story/stage, or None.
 
     If no provider is explicitly configured, falls back to the bundled
@@ -89,9 +87,7 @@ def get_transcript_context(
         return None
 
 
-def get_knowledge_context(
-    story_key: str, workspace: str, stage: str
-) -> str | None:
+def get_knowledge_context(story_key: str, workspace: str, stage: str) -> str | None:
     """Return mined knowledge context for this story/stage, or None.
 
     Reads story-miner output artifacts and returns a task_type-specific
@@ -103,8 +99,14 @@ def get_knowledge_context(
         provider = KnowledgeContextProvider()
         return provider.get_context(story_key, workspace, stage)
     except Exception as exc:  # noqa: BLE001
-        log.warning("knowledge context provider failed for %s/%s: %s", story_key, stage, exc)
+        log.warning(
+            "knowledge context provider failed for %s/%s: %s", story_key, stage, exc
+        )
         return None
 
 
-__all__ = ["BaseStoryContextProvider", "get_transcript_context", "get_knowledge_context"]
+__all__ = [
+    "BaseStoryContextProvider",
+    "get_transcript_context",
+    "get_knowledge_context",
+]

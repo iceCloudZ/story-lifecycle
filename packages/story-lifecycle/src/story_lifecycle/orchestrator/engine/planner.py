@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from ...infra.llm_client import get_llm, with_story_key
-from ...infra.story_paths import safe_segment, safe_story_path
+from ...infra.story_paths import safe_story_path
 from ...infra.paths import stage_done_file_rel
 from .agent_tools import ORCHESTRATOR_TOOLS
 
@@ -79,7 +79,9 @@ def compress_context(workspace: str, story_key: str, current_stage: str) -> str 
 
     compressed = llm.invoke(prompt, temperature=0.2)
 
-    compressed_file = safe_story_path(workspace, ".story-knowledge", story_key, "compressed.md")
+    compressed_file = safe_story_path(
+        workspace, ".story-knowledge", story_key, "compressed.md"
+    )
     compressed_file.parent.mkdir(parents=True, exist_ok=True)
     compressed_file.write_text(compressed, encoding="utf-8")
 
@@ -237,7 +239,6 @@ def run_orchestrator_agent(
     llm = get_llm()
     max_rounds = 10
 
-    t0 = time.monotonic()
     try:
         for round_idx in range(max_rounds):
             resp = llm.invoke_with_tools(
@@ -390,7 +391,6 @@ def _write_retrospect(workspace: str, story_key: str, actions: list) -> None:
     transcript 的深度复盘仍由 agent-transcript-miner 的 retrospect.py 负责。
     best-effort：写失败只告警，不影响 story 完成状态。
     """
-    from pathlib import Path as _P
 
     done_dir = safe_story_path(workspace, ".story", "done", story_key)
     lines = [f"# Retrospect — {story_key}", ""]
@@ -617,7 +617,8 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         story_env = {**_os.environ, "STORY_KEY": story_key}
                         log.info(
                             "[%s] design clarify MCP wired: --mcp-config=%s STORY_KEY set",
-                            story_key, _mcp_cfg,
+                            story_key,
+                            _mcp_cfg,
                         )
                     except Exception:
                         log.exception(
@@ -654,6 +655,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 _stderr_tail = []  # headless stderr 排空 holder(kimi 叙述/claude 日志 → 防 PIPE 死锁 + retry 诊断)
                 if headless:
                     import subprocess as _sp
+
                     # I2 miner binding：headless 路径不经过 adapter.inject_prompt()，
                     # 显式补写 anchor，使 miner.link 能按 (cwd+ts) 精确回填
                     # sessions.story_id。best-effort，绝不阻断 spawn。
@@ -667,7 +669,12 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         )
                     except Exception:
                         pass
-                    log.info("[%s] HEADLESS spawn stage=%s cmd=%s", story_key, stage, launch_cmd)
+                    log.info(
+                        "[%s] HEADLESS spawn stage=%s cmd=%s",
+                        story_key,
+                        stage,
+                        launch_cmd,
+                    )
                     # 非阻塞启动：done file 才是完成信号。claude -p 写完 done file 后
                     # 往往继续运行很久不自行退出，blocking subprocess.run 会一路卡到超时；
                     # 改用 Popen 与 done-file 轮询并发——done file 一出现即 kill claude、
@@ -699,7 +706,11 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         from .claude_stream import supervise_headless_stdout
 
                         _sup_llm = get_llm().invoke
-                        _sup_sf = {"story_key": story_key, "stage": stage, "summary": focus}
+                        _sup_sf = {
+                            "story_key": story_key,
+                            "stage": stage,
+                            "summary": focus,
+                        }
                         _sup_proc = headless_proc
                         _sup_stderr = _stderr_tail  # drain 线程排空 stderr 到此 holder
 
@@ -725,7 +736,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         pass
                     log.info(
                         "[%s] HEADLESS pid=%s stage=%s (polling done file, not exit)",
-                        story_key, headless_proc.pid, stage,
+                        story_key,
+                        headless_proc.pid,
+                        stage,
                     )
                 else:
                     _pty_session, _agent_pty = ensure_agent_pty(
@@ -748,7 +761,11 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         from .supervisor import supervise_pty_session
 
                         _sup_llm = get_llm().invoke
-                        _sup_sf = {"story_key": story_key, "stage": stage, "summary": focus}
+                        _sup_sf = {
+                            "story_key": story_key,
+                            "stage": stage,
+                            "summary": focus,
+                        }
                         _sup_pty = _agent_pty
                         _sup_det = make_awaiting_fn(adapter_name)
 
@@ -801,7 +818,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
 
             # 轮询 done file
             done_path = Path(workspace) / done_file_rel
-            poll_timeout = 45 * 60  # 45 minutes(realtest:大 codebase 上 kimi design/build 较慢,§0.1 时间不限,留余量)
+            poll_timeout = (
+                45 * 60
+            )  # 45 minutes(realtest:大 codebase 上 kimi design/build 较慢,§0.1 时间不限,留余量)
             poll_interval = 5  # seconds
             elapsed = 0
             headless_attempt = 1  # headless 重试计数（首次=1）
@@ -829,36 +848,51 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         log.warning(
                             "[%s] claude exited rc=%d before done file (attempt %d/%d); "
                             "re-launching. stderr=%r stdout_tail=%r",
-                            story_key, rc, headless_attempt, HEADLESS_MAX_ATTEMPTS,
-                            stderr_tail, stdout_tail,
+                            story_key,
+                            rc,
+                            headless_attempt,
+                            HEADLESS_MAX_ATTEMPTS,
+                            stderr_tail,
+                            stdout_tail,
                         )
                         headless_attempt += 1
                         try:
                             headless_proc = _sp.Popen(
-                                launch_cmd, cwd=workspace,
-                                stdin=_sp.PIPE, stdout=_sp.PIPE, stderr=_sp.PIPE,
+                                launch_cmd,
+                                cwd=workspace,
+                                stdin=_sp.PIPE,
+                                stdout=_sp.PIPE,
+                                stderr=_sp.PIPE,
                                 env=story_env,
                             )
                             headless_proc.stdin.write(cli_prompt.encode("utf-8"))
                             headless_proc.stdin.close()
                         except Exception as exc:
                             db.update_story(
-                                story_key, status="failed",
+                                story_key,
+                                status="failed",
                                 last_error=f"Stage {stage}: headless retry spawn failed: {exc}",
                             )
                             return
                         log.info(
                             "[%s] HEADLESS retry pid=%s stage=%s (attempt %d)",
-                            story_key, headless_proc.pid, stage, headless_attempt,
+                            story_key,
+                            headless_proc.pid,
+                            stage,
+                            headless_attempt,
                         )
                         continue
                     log.warning(
                         "[%s] claude exited rc=%d without done file after %d attempts; "
                         "giving up. stdout_tail=%r",
-                        story_key, rc, HEADLESS_MAX_ATTEMPTS, stdout_tail,
+                        story_key,
+                        rc,
+                        HEADLESS_MAX_ATTEMPTS,
+                        stdout_tail,
                     )
                     db.update_story(
-                        story_key, status="failed",
+                        story_key,
+                        status="failed",
                         last_error=(
                             f"Stage {stage}: claude exited (rc={rc}) without done file "
                             f"after {HEADLESS_MAX_ATTEMPTS} attempts"
@@ -913,12 +947,12 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
 
                 stage_cfg = profile_stages.get(stage)
                 max_retries = (
-                    stage_cfg.max_retries
-                    if hasattr(stage_cfg, "max_retries")
-                    else 2
+                    stage_cfg.max_retries if hasattr(stage_cfg, "max_retries") else 2
                 )
                 ctx["last_verify_summary"] = done_data.get("summary", "")
-                ctx["last_done_data"] = done_data  # §4.2:喂给 judge_verify_stage(层4 @ gate)
+                ctx["last_done_data"] = (
+                    done_data  # §4.2:喂给 judge_verify_stage(层4 @ gate)
+                )
                 gate_result = run_verify_gate(
                     story_key=story_key,
                     stage=stage,
@@ -1024,7 +1058,6 @@ def _build_cli_prompt(
     from .prompt_sections import (
         build_design_dimensions_section,
         build_kb_tool_section,
-        build_knowledge_section,
         build_quality_section,
     )
 
@@ -1064,7 +1097,9 @@ def _build_cli_prompt(
     # 人答经它返回,claude 带答继续(context 保留)。详见 memory story-lifecycle-design-hitl。
     dimensions_section = ""
     if stage == "design":
-        dimensions_section = build_design_dimensions_section(story_key, workspace, stage, interactive=interactive)
+        dimensions_section = build_design_dimensions_section(
+            story_key, workspace, stage, interactive=interactive
+        )
 
     # 项目仓库与分支隔离：注入每个绑定仓库的分支/基线/路径，由 CLI 自行判断
     # 是否需要 worktree 或切分支。后端的 prepare_worktrees 仍是可选的手动 API，

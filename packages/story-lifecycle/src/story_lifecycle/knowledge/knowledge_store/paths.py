@@ -92,7 +92,9 @@ def knowledge_done_file(workspace: str | Path) -> Path:
 
 
 def knowledge_context_dir(workspace: str | Path, story_key: str) -> Path:
-    return safe_story_path(workspace, ".story", "context", story_key, "knowledge-context")
+    return safe_story_path(
+        workspace, ".story", "context", story_key, "knowledge-context"
+    )
 
 
 def runs_dir(workspace: str | Path) -> Path:

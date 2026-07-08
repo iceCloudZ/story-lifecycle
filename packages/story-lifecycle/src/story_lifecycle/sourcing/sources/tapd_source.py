@@ -92,9 +92,7 @@ class TapdSource(StorySource):
                 # Don't silently drop a parent's children — log so the operator
                 # can tell a transient fetch failure from a genuine no-children
                 # result. Other parents are still processed.
-                log.warning(
-                    f"tapd: failed to fetch child stories for {item.id}: {e}"
-                )
+                log.warning(f"tapd: failed to fetch child stories for {item.id}: {e}")
 
         return results
 

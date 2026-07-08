@@ -97,7 +97,6 @@ def get_story_workspace_diff(story_key: str) -> dict:
     remote_url points to GitLab. Falls back to local ``git diff`` otherwise.
     """
 
-
     story = get_story(story_key)
     if not story:
         raise ValueError(f"story not found: {story_key}")
@@ -168,7 +167,9 @@ def get_story_workspace_diff(story_key: str) -> dict:
         base_branch = "HEAD"
 
     # Try GitLab first when a token is present.
-    gitlab_result = _try_gitlab_diff(story_key, repo, source_branch or current, base_branch)
+    gitlab_result = _try_gitlab_diff(
+        story_key, repo, source_branch or current, base_branch
+    )
     if gitlab_result:
         return gitlab_result
 

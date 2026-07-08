@@ -8,16 +8,16 @@ helpers and for backward-compatible imports.
 """
 
 import os
-from pathlib import Path
+from pathlib import Path  # noqa: F401  (re-exported; tests monkeypatch setup.Path)
 
 import yaml
 from rich.console import Console
 from rich.panel import Panel
 
 from ...infra.config import (
-    CONFIG_DIR,
+    CONFIG_DIR,  # noqa: F401  (re-exported; tests monkeypatch setup.CONFIG_DIR)
     CONFIG_FILE,
-    _merge_config,
+    _merge_config,  # noqa: F401  (re-exported; tests monkeypatch setup._merge_config)
     get_config,
     save_config,
 )

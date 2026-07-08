@@ -111,7 +111,9 @@ def handle_pty_output(
             llm_invoke=llm_invoke,
         )
     except Exception as exc:  # noqa: BLE001 — Handler 边界降级,绝不让 LLM 失常炸掉 PTY session
-        log.warning("supervisor decide failed for %s: %s", story_facts.get("story_key"), exc)
+        log.warning(
+            "supervisor decide failed for %s: %s", story_facts.get("story_key"), exc
+        )
         return False
     pty.write((decision["choice"] + "\r").encode("utf-8"))
     log_decision(
@@ -183,9 +185,7 @@ async def supervise_pty_session(
         pty.remove_tap(tap)
 
 
-def _build_decision_prompt(
-    question: str, options: list[str], story_facts: dict
-) -> str:
+def _build_decision_prompt(question: str, options: list[str], story_facts: dict) -> str:
     """Assemble the decision prompt. Feeds structured facts, not raw output."""
     return (
         "你是 code agent 的监督决策器。基于 story 上下文,为 agent 的提问选最佳回应。\n"
