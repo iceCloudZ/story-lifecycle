@@ -103,12 +103,16 @@ def handle_pty_output(
     if not hit:
         return False
     question, options = hit
-    decision = decide_response(
-        question=question,
-        options=options,
-        story_facts=story_facts,
-        llm_invoke=llm_invoke,
-    )
+    try:
+        decision = decide_response(
+            question=question,
+            options=options,
+            story_facts=story_facts,
+            llm_invoke=llm_invoke,
+        )
+    except Exception as exc:  # noqa: BLE001 — Handler 边界降级,绝不让 LLM 失常炸掉 PTY session
+        log.warning("supervisor decide failed for %s: %s", story_facts.get("story_key"), exc)
+        return False
     pty.write((decision["choice"] + "\r").encode("utf-8"))
     log_decision(
         story_key=story_facts["story_key"],
