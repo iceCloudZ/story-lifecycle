@@ -505,6 +505,8 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     # 进入执行即清除确认闸标记(确认闸 paused 后 resume,经 /advance → start_story_async
     # 重进此函数;_stage_gate 只在 paused 期间有意义,执行启动即失效)。
     ctx.pop("_stage_gate", None)
+    # STORY-STATE-MODEL: 同理清 Story 状态闸标记(/lifecycle/advance 推进后重进)。
+    ctx.pop("_story_state_gate", None)
     db.update_story(
         story_key,
         context_json=json.dumps(ctx, ensure_ascii=False),
@@ -514,13 +516,27 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     # 解析 profile 用于生成 prompt 和质量门禁配置
     profile_stages = {}
     quality_cfg = {}
+    story_states = {}  # STORY-STATE-MODEL: Story 业务状态机定义(开发/测试/...)
     rp = None
     try:
         rp = resolve_profile(profile_name)
         profile_stages = {name: cfg for name, cfg in rp.stages.items()}
         quality_cfg = rp.quality or {}
+        story_states = rp.story_states or {}
     except Exception:
         pass
+    # STORY-STATE-MODEL: 初始化 lifecycle_state(Story 业务状态,独立第一公民)。
+    # 优先级:ctx._lifecycle_state(resume 续用)> DB lifecycle_state > 默认"开发"。
+    # 写回 DB + ctx 保证一致。无 story_states 的 profile → lifecycle_state 仍存但
+    # driver 不按状态机跑(退化扁平,向后兼容)。
+    lifecycle_state = ctx.get("_lifecycle_state") or story.get("lifecycle_state") or "开发"
+    if ctx.get("_lifecycle_state") != lifecycle_state:
+        ctx["_lifecycle_state"] = lifecycle_state
+        db.update_story(
+            story_key,
+            lifecycle_state=lifecycle_state,
+            context_json=json.dumps(ctx, ensure_ascii=False),
+        )
     # profile 的 execution_mode 覆盖 headless(默认 PTY;realtest 等 profile 显式 headless →
     # headless 路径:kimi -p wrapper + stderr drain,真跑验证可跑通。PTY 路径 kimi idle 见 docs)。
     from .execution import headless_from_profile
@@ -1008,51 +1024,141 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                 _agent_pty.kill()
                             except Exception:
                                 pass
-                        # 确认闸(PLAN-stage-confirm-gate):stage_cfg.confirm=True 且后面
-                        # 还有未完成 launch action → paused 等人确认推进;否则 break 正常推进。
+                        # STORY-STATE-MODEL: Story 状态闸(业务层,优先于阶段间闸)。
+                        # 当前 lifecycle_state 定义的所有 stages 全 done → 按该状态 confirm
+                        # 规则转移:ui_button→paused 等人;config(auto)→直接推进;none→推进。
+                        # 触发转移后不再走下方阶段间闸。无 story_states 配置 → 跳过(向后兼容)。
+                        _state_handled = False
+                        if story_states and lifecycle_state in story_states:
+                            _state_def = story_states[lifecycle_state] or {}
+                            _state_stages = list(_state_def.get("stages") or [])
+                            if _state_stages and all(
+                                _ss in completed_stages for _ss in _state_stages
+                            ):
+                                _next_state = _state_def.get("next")
+                                _confirm = _state_def.get("confirm") or {}
+                                _ctype = _confirm.get("type", "none")
+                                # config 类型:auto_advance 看 key 指定的环境/全局配置
+                                _auto = False
+                                if _ctype == "config":
+                                    import os as _os
+
+                                    _ck = _confirm.get("key", "")
+                                    _auto = _os.environ.get(
+                                        f"STORY_{_ck}".upper(), ""
+                                    ).lower() in ("1", "true", "yes")
+                                if _next_state and (_ctype in ("none",) or _auto):
+                                    # 无条件 / 配置自动 → 直接推进到下一 Story 状态
+                                    lifecycle_state = _next_state
+                                    ctx["_lifecycle_state"] = _next_state
+                                    ctx.pop("_story_state_gate", None)
+                                    db.update_story(
+                                        story_key,
+                                        lifecycle_state=_next_state,
+                                        context_json=json.dumps(
+                                            ctx, ensure_ascii=False
+                                        ),
+                                    )
+                                    db.log_event(
+                                        story_key,
+                                        stage,
+                                        "story_state_transition",
+                                        {"from": lifecycle_state, "to": _next_state, "auto": True},
+                                    )
+                                    log.info(
+                                        "[%s] story state auto-advanced: %s → %s",
+                                        story_key,
+                                        stage,
+                                        _next_state,
+                                    )
+                                    _state_handled = True
+                                elif _next_state and _ctype == "ui_button":
+                                    # 人工确认 → paused,前端显示 Story 状态闸卡片
+                                    ctx["_story_state_gate"] = {
+                                        "from": lifecycle_state,
+                                        "to": _next_state,
+                                        "awaiting_confirm": True,
+                                        "label": _confirm.get(
+                                            "label", f"进入{_next_state}"
+                                        ),
+                                    }
+                                    db.update_story(
+                                        story_key,
+                                        status="paused",
+                                        context_json=json.dumps(
+                                            ctx, ensure_ascii=False
+                                        ),
+                                    )
+                                    db.log_event(
+                                        story_key,
+                                        stage,
+                                        "story_state_gate_reached",
+                                        {"from": lifecycle_state, "to": _next_state},
+                                    )
+                                    log.info(
+                                        "[%s] story state gate: %s done → paused awaiting confirm to advance %s → %s",
+                                        story_key,
+                                        stage,
+                                        lifecycle_state,
+                                        _next_state,
+                                    )
+                                    return  # 释放 driver;点「进入下一状态」→ /lifecycle/advance
+                                elif not _next_state:
+                                    # 终态:所有 Story 状态跑完 → 整个 story 完成
+                                    db.update_story(story_key, status="completed")
+                                    log.info(
+                                        "[%s] reached terminal story state %s (all done)",
+                                        story_key,
+                                        lifecycle_state,
+                                    )
+                                    _write_retrospect(workspace, story_key, actions)
+                                    return
+                        # 阶段间闸(PLAN-stage-confirm-gate):仅当 Story 状态闸未处理时执行。
+                        # stage_cfg.confirm=True 且后面还有未完成 launch action → paused。
                         # verify 是最后阶段无下一 stage,走自己的 gate,不受此影响。
-                        stage_cfg = profile_stages.get(stage)
-                        confirm_on = bool(
-                            stage_cfg
-                            and getattr(stage_cfg, "confirm", False)
-                            and stage != "verify"
-                        )
-                        if confirm_on:
-                            _next_stage = None
-                            for _j in range(idx + 1, len(actions)):
-                                _na = actions[_j]
-                                if _na.get("action") == "launch":
-                                    _ns = _na.get("stage", f"stage_{_j}")
-                                    if _ns not in completed_stages:
-                                        _next_stage = _ns
-                                        break
-                            if _next_stage is not None:
-                                ctx["_stage_gate"] = {
-                                    "completed_stage": stage,
-                                    "next_stage": _next_stage,
-                                    "awaiting_confirm": True,
-                                }
-                                db.update_story(
-                                    story_key,
-                                    status="paused",
-                                    context_json=json.dumps(ctx, ensure_ascii=False),
-                                )
-                                db.log_event(
-                                    story_key,
-                                    stage,
-                                    "stage_gate_reached",
-                                    {
+                        if not _state_handled:
+                            stage_cfg = profile_stages.get(stage)
+                            confirm_on = bool(
+                                stage_cfg
+                                and getattr(stage_cfg, "confirm", False)
+                                and stage != "verify"
+                            )
+                            if confirm_on:
+                                _next_stage = None
+                                for _j in range(idx + 1, len(actions)):
+                                    _na = actions[_j]
+                                    if _na.get("action") == "launch":
+                                        _ns = _na.get("stage", f"stage_{_j}")
+                                        if _ns not in completed_stages:
+                                            _next_stage = _ns
+                                            break
+                                if _next_stage is not None:
+                                    ctx["_stage_gate"] = {
                                         "completed_stage": stage,
                                         "next_stage": _next_stage,
-                                    },
-                                )
-                                log.info(
-                                    "[%s] stage gate: %s done → paused awaiting confirm to advance to %s",
-                                    story_key,
-                                    stage,
-                                    _next_stage,
-                                )
-                                return  # 释放 driver claim;点「推进」→ /advance 重进
+                                        "awaiting_confirm": True,
+                                    }
+                                    db.update_story(
+                                        story_key,
+                                        status="paused",
+                                        context_json=json.dumps(ctx, ensure_ascii=False),
+                                    )
+                                    db.log_event(
+                                        story_key,
+                                        stage,
+                                        "stage_gate_reached",
+                                        {
+                                            "completed_stage": stage,
+                                            "next_stage": _next_stage,
+                                        },
+                                    )
+                                    log.info(
+                                        "[%s] stage gate: %s done → paused awaiting confirm to advance to %s",
+                                        story_key,
+                                        stage,
+                                        _next_stage,
+                                    )
+                                    return  # 释放 driver claim;点「推进」→ /advance 重进
                         break
                     except Exception as exc:
                         log.error(f"[{story_key}] Error parsing done file: {exc}")

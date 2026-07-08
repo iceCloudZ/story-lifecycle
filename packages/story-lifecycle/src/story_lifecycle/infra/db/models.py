@@ -33,6 +33,7 @@ VALID_COLUMNS = frozenset(
         "intake_state",
         "context_revision",
         "driver_claim",
+        "lifecycle_state",
     }
 )
 
@@ -259,6 +260,14 @@ def init_db():
         # See graph.start_story_async / claim_story_driver. Idempotent migration.
         try:
             conn.execute("ALTER TABLE story ADD COLUMN driver_claim TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # STORY-STATE-MODEL: lifecycle_state = Story 业务状态(开发/测试/上线/结项),
+        # 独立第一公民,不从阶段派生(区别于引擎 status)。幂等迁移:老行取 DEFAULT '开发'。
+        try:
+            conn.execute(
+                "ALTER TABLE story ADD COLUMN lifecycle_state TEXT DEFAULT '开发'"
+            )
         except sqlite3.OperationalError:
             pass
 

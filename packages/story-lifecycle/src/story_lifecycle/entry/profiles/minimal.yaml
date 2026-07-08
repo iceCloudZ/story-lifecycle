@@ -63,3 +63,25 @@ adversarial:
   enabled: false
 
 reviewers: {}
+
+# STORY-STATE-MODEL: Story 业务状态机(第一公民,独立于阶段)。每个状态「拥有」一组
+# stages(execute),全 done 后按 confirm 规则转移到 next 状态。driver 跑完一个状态
+# 的所有 stages → 查 confirm → 转/停。与阶段间 confirm 闸并存,Story 状态闸优先。
+#   confirm.type:
+#     ui_button — paused 等人点「进入下一状态」(前端 /lifecycle/advance)
+#     config    — 看 key 指定的全局配置,值 true 则自动转移(无人值守)
+#     none      — 无条件转移
+# 无 story_states 段的 profile → driver 退化成扁平阶段行为(向后兼容)。
+story_states:
+  开发:
+    stages: [design, build]        # 开发状态跑这两个阶段
+    next: 测试
+    confirm: {type: ui_button, label: "完成开发，进入测试"}
+  测试:
+    stages: [verify]
+    next: 上线
+    confirm: {type: config, key: auto_advance_test}   # 默认未配=手动, 配 true 自动
+  上线:
+    stages: []                     # minimal 无上线阶段,终态占位
+    next: null
+    confirm: {type: none}

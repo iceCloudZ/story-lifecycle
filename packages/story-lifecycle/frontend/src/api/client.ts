@@ -29,6 +29,8 @@ export interface Story {
   findingsCount?: number
   openFindings?: number
   highSeverityFindings?: number
+  // STORY-STATE-MODEL: Story 业务状态(开发/测试/上线),独立第一公民
+  lifecycleState?: string | null
 }
 
 export interface AgentAction {
@@ -67,6 +69,27 @@ export interface Plan {
   confirmed?: boolean
   stages?: PlanStage[]
   stage_gate?: StageGate | null
+  // STORY-STATE-MODEL: Story 业务状态机视图(主进度条用)+ 状态闸
+  lifecycle_state?: string
+  story_states?: StoryStateView[]
+  story_state_gate?: StoryStateGate | null
+}
+
+// STORY-STATE-MODEL: Story 业务状态(开发/测试/上线)的一个节点视图
+export interface StoryStateView {
+  name: string
+  stages: string[]
+  current: boolean
+  done: boolean
+  done_count: number
+  total: number
+}
+
+export interface StoryStateGate {
+  from?: string
+  to?: string
+  awaiting_confirm?: boolean
+  label?: string
 }
 
 // design 逐问澄清 HITL(runbook 块4):claude 遇关键岔路暂停等人答。
@@ -264,6 +287,8 @@ export const storyApi = {
     })
   },
   advance: (key: string) => apiAction('PUT', `/api/story/${key}/advance`),
+  // STORY-STATE-MODEL: Story 业务状态推进(开发→测试→上线),区别于 /advance(driver resume)
+  advanceLifecycle: (key: string) => apiAction('POST', `/api/story/${key}/lifecycle/advance`),
   skip: (key: string, stage: string) => apiAction('PUT', `/api/story/${key}/skip/${stage}`),
   abort: (key: string) => apiAction('POST', `/api/story/${key}/abort`),
   delete: (key: string) => apiAction('DELETE', `/api/story/${key}`),

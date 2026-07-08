@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { statsApi, storyApi } from '../api/client'
-import type { Story, AgentAction, ActionButton, Plan, PlanStage } from '../api/client'
+import type { Story, AgentAction, ActionButton, Plan, PlanStage, StoryStateView } from '../api/client'
 import StageProgress from './StageProgress'
 import ActionCard from './ActionCard'
 import ContextTab from './ContextTab'
@@ -52,6 +52,13 @@ export default function OverviewTab({
   const showGateCard =
     detail.status === 'paused' && !!stageGate?.awaiting_confirm
 
+  // STORY-STATE-MODEL: Story 业务状态(主进度条)+ 状态闸(优先于阶段闸)。
+  // story_states 从 /plan 读;无 → 不显示主状态条(向后兼容无 story_states 的 profile)。
+  const storyStates: StoryStateView[] = planData?.story_states ?? []
+  const storyStateGate = planData?.story_state_gate ?? null
+  const showStateGateCard =
+    detail.status === 'paused' && !!storyStateGate?.awaiting_confirm
+
   return (
     <div className="tab-content overview-tab">
       {/* Top bar */}
@@ -60,11 +67,57 @@ export default function OverviewTab({
         <span className="ot-updated">更新: {detail.updatedAt}</span>
       </div>
 
-      {/* Progress bar */}
+      {/* STORY-STATE-MODEL: Story 业务状态主进度条(开发/测试/上线)— 第一公民视图 */}
+      {storyStates.length > 0 && (
+        <div className="ot-story-state-progress">
+          {storyStates.map((st) => {
+            const cls = st.done
+              ? 'ot-ss-node done'
+              : st.current
+                ? 'ot-ss-node current'
+                : 'ot-ss-node'
+            return (
+              <div key={st.name} className="ot-ss-item">
+                <span className={cls}>
+                  {st.done ? '✓' : st.current ? '●' : '○'}
+                </span>
+                <span className={`ot-ss-label ${st.current ? 'active' : ''}`}>
+                  {st.name}
+                </span>
+                {st.current && st.total > 0 && (
+                  <span className="ot-ss-sub">
+                    {' '}({st.done_count}/{st.total})
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* STORY-STATE-MODEL: Story 状态闸卡片(业务层,优先于阶段间闸) */}
+      {showStateGateCard && (
+        <div className="ot-story-state-gate-card">
+          <div className="ot-story-state-gate-title">
+            ✅ {storyStateGate?.from} 阶段全部完成
+          </div>
+          <div className="ot-story-state-gate-hint">
+            {storyStateGate?.label || `确认进入 ${storyStateGate?.to}`}
+          </div>
+          <button
+            className="btn btn-primary"
+            onClick={() => storyApi.advanceLifecycle(storyKey)}
+          >
+            {storyStateGate?.label || `进入 ${storyStateGate?.to}`} →
+          </button>
+        </div>
+      )}
+
+      {/* Progress bar (阶段进度,次视图) */}
       <StageProgress stages={stages} currentStage={detail.currentStage} />
 
-      {/* 确认闸卡片(stage gate):醒目引导人确认推进下一 stage */}
-      {showGateCard && (
+      {/* 确认闸卡片(stage gate):仅当 Story 状态闸未显示时才显示(不抢主位) */}
+      {showGateCard && !showStateGateCard && (
         <div className="ot-stage-gate-card">
           <div className="ot-stage-gate-title">
             ✅ {stageGate?.completed_stage} 已完成

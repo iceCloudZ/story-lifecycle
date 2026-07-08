@@ -201,6 +201,7 @@ def _serialize_story_summary(s: dict) -> dict:
         "sourceType": s.get("source_type"),
         "sourceId": s.get("source_id"),
         "parentKey": s.get("parent_key"),
+        "lifecycleState": s.get("lifecycle_state"),
     }
 
 
@@ -691,6 +692,7 @@ def get_story(story_key: str):
             "sourceType": s.get("source_type"),
             "sourceId": s.get("source_id"),
             "subs": sub_list,
+            "lifecycleState": s.get("lifecycle_state"),
         }
     )
 
@@ -818,6 +820,69 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
         return {"ok": True, "status": "resumed"}
 
     return {"ok": True}
+
+
+@app.post("/api/story/{story_key}/lifecycle/advance")
+def advance_lifecycle_state(story_key: str):
+    """STORY-STATE-MODEL: 推进 Story 业务状态到下一态(开发→测试→上线)。
+
+    区别于 ``PUT /advance``(那是 driver resume,从 paused 重启执行)。本端点处理
+    Story 状态机转移:校验当前状态 stages 全 done(防跳级)→ 清 _story_state_gate
+    → 推进 lifecycle_state → 若 next 有 stages 则 start_story_async 跑它们,
+    无 stages(终态)则标 completed。由前端 Story 状态闸卡片的「进入下一状态」触发。
+    """
+    import json as _json
+
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+    try:
+        ctx = _json.loads(s.get("context_json") or "{}")
+    except (ValueError, TypeError):
+        ctx = {}
+
+    gate = ctx.get("_story_state_gate")
+    if not gate or not gate.get("awaiting_confirm"):
+        raise HTTPException(409, "no pending story_state_gate")
+
+    cur_state = gate.get("from") or s.get("lifecycle_state") or "开发"
+    next_state = gate.get("to")
+    if not next_state:
+        raise HTTPException(409, "story_state_gate has no next state")
+
+    # 推进 lifecycle_state,清闸标记。driver 重进时从 next 状态的 stages 开始
+    # (start_idx 跳过 _completed_stages 已含的)。
+    ctx.pop("_story_state_gate", None)
+    ctx["_lifecycle_state"] = next_state
+    db.update_story(
+        story_key,
+        lifecycle_state=next_state,
+        status="active",
+        context_json=_json.dumps(ctx, ensure_ascii=False),
+    )
+    db.log_event(
+        story_key,
+        s.get("current_stage") or "",
+        "story_state_transition",
+        {"from": cur_state, "to": next_state, "auto": False},
+    )
+
+    # next 状态有无 stages 决定是继续跑还是终态完成
+    try:
+        rp = resolve_profile(s.get("profile", "minimal"))
+        states = rp.story_states or {}
+    except Exception:
+        states = {}
+    next_def = states.get(next_state) or {}
+    next_stages = list(next_def.get("stages") or [])
+
+    if not next_stages:
+        # 终态:无阶段可跑 → 整个 story 完成
+        db.update_story(story_key, status="completed")
+        return {"ok": True, "lifecycle_state": next_state, "status": "completed"}
+
+    start_story_async(story_key)
+    return {"ok": True, "lifecycle_state": next_state, "status": "active"}
 
 
 @app.put("/api/story/{story_key}/skip/{stage}")
@@ -2843,6 +2908,33 @@ def api_get_plan(story_key: str):
             )
     stage_gate = ctx.get("_stage_gate")
 
+    # STORY-STATE-MODEL: 组装 Story 业务状态视图(开发/测试/上线)+ 状态闸。
+    # storyStates 从 profile.story_states + lifecycle_state + _completed_stages 推导每个
+    # 状态的进度(done/进行中/待开始)。前端主进度条用它(替写死阶段)。无 story_states → 空。
+    cur_lifecycle = story.get("lifecycle_state") or ctx.get("_lifecycle_state") or "开发"
+    story_states_view = []
+    try:
+        _rp = resolve_profile(story.get("profile", "minimal"))
+        _states_cfg = _rp.story_states or {}
+    except Exception:
+        _states_cfg = {}
+    for _sname, _sdef in _states_cfg.items():
+        _sdef = _sdef or {}
+        _sstages = list(_sdef.get("stages") or [])
+        _done_count = sum(1 for _ss in _sstages if _ss in completed_stages)
+        story_states_view.append(
+            {
+                "name": _sname,
+                "stages": _sstages,
+                "current": _sname == cur_lifecycle,
+                "done": bool(_sstages)
+                and _done_count >= len(_sstages),
+                "done_count": _done_count,
+                "total": len(_sstages),
+            }
+        )
+    story_state_gate = ctx.get("_story_state_gate")
+
     # 尝试读取 plan 文件内容
     plan_content = ""
     plan_path = ctx.get("plan_path", "")
@@ -2864,6 +2956,9 @@ def api_get_plan(story_key: str):
         "mode": "agent" if agent_actions else "legacy",
         "stages": stages_view,
         "stage_gate": stage_gate,
+        "lifecycle_state": cur_lifecycle,
+        "story_states": story_states_view,
+        "story_state_gate": story_state_gate,
     }
 
     # Agent 模式：返回结构化 action list

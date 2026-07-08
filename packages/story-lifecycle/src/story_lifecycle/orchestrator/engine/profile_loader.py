@@ -54,6 +54,10 @@ class ResolvedProfile:
     quality: dict = field(default_factory=dict)
     adversarial: dict = field(default_factory=dict)
     reviewers: dict = field(default_factory=dict)
+    # STORY-STATE-MODEL: Story 业务状态机定义(开发/测试/上线...)。每个状态含
+    # stages(本状态要跑的阶段)、next(下一状态)、confirm(转移闸类型)。无该段 → 空
+    # dict,driver 退化成扁平阶段行为(向后兼容 realtest/swebench 等 profile)。
+    story_states: dict = field(default_factory=dict)
     raw: dict = field(default_factory=dict)
 
     def stage(self, stage_name: str) -> StageConfig:
@@ -77,6 +81,7 @@ class ResolvedProfile:
             "quality": self.quality,
             "adversarial": self.adversarial,
             "reviewers": self.reviewers,
+            "story_states": self.story_states,
         }
 
     @classmethod
@@ -110,6 +115,7 @@ class ResolvedProfile:
             quality=data.get("quality", {}),
             adversarial=data.get("adversarial", {}),
             reviewers=data.get("reviewers", {}),
+            story_states=data.get("story_states", {}),
         )
 
 
@@ -173,6 +179,7 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
         quality=raw.get("quality", {}),
         adversarial=raw.get("adversarial", {}),
         reviewers=raw.get("reviewers", {}),
+        story_states=raw.get("story_states", {}),
         raw=raw,
     )
 
