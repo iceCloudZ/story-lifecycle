@@ -76,9 +76,14 @@
 
 ---
 
-### T1.3 · no_progress 终止(防死循环) `[待办]`
+### T1.3 · no_progress 终止(防死循环) `[阻塞]` · 已查证(文档/实现不符)
 
-**现状**:README 提「连续无改善自动终止」(收敛条件),需确认代码实现 + 测覆盖。
+**现状**(2026-07-08 已查证):README 提「连续无改善自动终止」(收敛条件),**但代码未实现**。
+`detect_no_progress` 已被 ISS-008 删(见 `ARCHITECTURE.md:143` + `evaluator_loop.py:1-7`)。
+实际收敛兜底靠 `gate.py:247 if round_count > max_retries` 计数(T1.1 已验证有效)。
+残留 3 处 `no_progress` 引用全是消费方(shadow_router/debug_packet),等的是已不存在的信号 = 死代码。
+详见 [原报告](reports/T1.3-gate-no-progress.md) + [复核补充](reports/T1.3-no-progress-revisit.md)。
+**阻塞在产品决策**:owner 走 A(更新 README 删过期描述,T1.3 关闭)还是 B(补实现,不推荐)。
 
 **目标**:若存在 no_progress 检测逻辑,测它;若不存在(README 宣称但未实现),报告里标 `[阻塞]` 记录现状。
 
