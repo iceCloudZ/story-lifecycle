@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { statsApi } from '../api/client'
-import type { Story, AgentAction, ActionButton } from '../api/client'
+import { statsApi, storyApi } from '../api/client'
+import type { Story, AgentAction, ActionButton, Plan, PlanStage } from '../api/client'
 import StageProgress from './StageProgress'
 import ActionCard from './ActionCard'
 import ContextTab from './ContextTab'
@@ -10,6 +10,7 @@ interface Props {
   detail: Story
   resolvedActions: AgentAction[]
   isConfirmed: boolean
+  planData?: Plan
   onConfirmPlan: () => void
   onRegeneratePlan: () => void
   onAction: (action: ActionButton) => void
@@ -18,7 +19,7 @@ interface Props {
 }
 
 export default function OverviewTab({
-  storyKey, detail, resolvedActions, isConfirmed,
+  storyKey, detail, resolvedActions, isConfirmed, planData,
   onConfirmPlan, onRegeneratePlan, onAction, actions, onTabChange,
 }: Props) {
   const { data: stats } = useQuery({
@@ -27,34 +28,29 @@ export default function OverviewTab({
     enabled: !!detail,
   })
 
-  // Resolve stage list from profile — default to minimal profile stages
-  const stages = [
-    { name: 'design', status: 'pending' as const },
-    { name: 'implement', status: 'pending' as const },
-    { name: 'test', status: 'pending' as const },
-  ]
-
-  // 启动交互式终端(design HITL):有存活会话直接跳,否则 spawn 一个再跳。
-  // 避免重复 spawn(sessions/spawn 总是新建)。spawn 走 claude "query" seed prompt。
-  async function startTerminal() {
-    try {
-      const r = await fetch(`/api/story/${storyKey}/sessions`)
-      const data = r.ok ? await r.json() : { sessions: [] }
-      const hasAlive = (data.sessions || []).some(
-        (s: { status: string }) => s.status === 'running'
-      )
-      if (!hasAlive) {
-        await fetch(`/api/story/${storyKey}/sessions/spawn`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ adapter: 'claude', model: '' }),
-        })
-      }
-    } catch {
-      /* 终端 tab 兜底显示「启动终端」按钮 */
+  // stage 进度条用真实数据(PLAN-stage-confirm-gate):优先 /plan 回的 stages(done 标记
+  // 驱动状态);无 plan 数据(legacy / 规划前)回落到 minimal 默认三阶段。StageProgress
+  // 自己按 currentStage 把当前阶段标 running。
+  const stages = (() => {
+    const fromPlan = planData?.stages ?? []
+    if (fromPlan.length > 0) {
+      return fromPlan.map((s: PlanStage) => ({
+        name: s.name,
+        status: (s.done ? 'completed' : 'pending') as 'completed' | 'pending',
+      }))
     }
-    onTabChange('terminal')
-  }
+    return [
+      { name: 'design', status: 'pending' as const },
+      { name: 'build', status: 'pending' as const },
+      { name: 'verify', status: 'pending' as const },
+    ]
+  })()
+
+  // 确认闸卡片(stage_gate):story paused 且后端写了 _stage_gate 时显示醒目引导,
+  // 点「确认推进」走 /advance(替 paused 状态里不那么显眼的「继续执行」)。
+  const stageGate = planData?.stage_gate ?? null
+  const showGateCard =
+    detail.status === 'paused' && !!stageGate?.awaiting_confirm
 
   return (
     <div className="tab-content overview-tab">
@@ -66,6 +62,24 @@ export default function OverviewTab({
 
       {/* Progress bar */}
       <StageProgress stages={stages} currentStage={detail.currentStage} />
+
+      {/* 确认闸卡片(stage gate):醒目引导人确认推进下一 stage */}
+      {showGateCard && (
+        <div className="ot-stage-gate-card">
+          <div className="ot-stage-gate-title">
+            ✅ {stageGate?.completed_stage} 已完成
+          </div>
+          <div className="ot-stage-gate-hint">
+            确认推进到 <strong>{stageGate?.next_stage}</strong>?
+          </div>
+          <button
+            className="btn btn-primary"
+            onClick={() => storyApi.advance(storyKey)}
+          >
+            确认推进 → {stageGate?.next_stage}
+          </button>
+        </div>
+      )}
 
       {/* Info cards */}
       <div className="ot-info-grid">
@@ -101,14 +115,17 @@ export default function OverviewTab({
 
       {/* Action buttons */}
       <div className="ot-actions">
-        {/* HITL 终端入口:启动交互式 agent 跑当前 stage(design 等),人 watch + Esc + steer */}
-        <button className="btn" onClick={startTerminal} title="开交互式终端,claude 自动跑当前阶段,你实时 watch + Esc 打断 + 打字纠偏">
-          🖥️ 启动 {detail.currentStage} 终端(HITL)
-        </button>
+        {/*
+          主按钮统一走自动链路(PLAN-stage-confirm-gate):去掉孤立的「启动终端(HITL)」
+          主按钮(它调 /sessions/spawn 旁路自动链路,跑完 design 无人衔接下一阶段)。
+          planning → 「开始 design」走 /plan/confirm → continue_orchestrator_agent,
+          由自动链路 spawn design 终端(前端 TerminalTab 能发现)。执行期终端入口仍由
+          TerminalTab sidebar 提供(次要 debug 入口)。
+        */}
         {detail.status === 'planning' && !isConfirmed && resolvedActions.length > 0 && (
           <>
             <button className="btn btn-primary" onClick={onConfirmPlan}>
-              ✅ 确认并执行 ({resolvedActions.filter((a) => a.action === 'launch').length} 步)
+              ✅ 开始 design ({resolvedActions.filter((a) => a.action === 'launch').length} 步)
             </button>
             <button className="btn" onClick={onRegeneratePlan}>
               🔄 重新规划

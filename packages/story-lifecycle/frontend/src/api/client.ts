@@ -48,10 +48,25 @@ export interface ActionButton {
   variant?: 'primary' | 'danger'
 }
 
+export interface PlanStage {
+  name: string
+  focus?: string
+  adapter?: string
+  done?: boolean
+}
+
+export interface StageGate {
+  completed_stage?: string
+  next_stage?: string
+  awaiting_confirm?: boolean
+}
+
 export interface Plan {
   plan_summary?: string
   actions?: AgentAction[]
   confirmed?: boolean
+  stages?: PlanStage[]
+  stage_gate?: StageGate | null
 }
 
 // design 逐问澄清 HITL(runbook 块4):claude 遇关键岔路暂停等人答。

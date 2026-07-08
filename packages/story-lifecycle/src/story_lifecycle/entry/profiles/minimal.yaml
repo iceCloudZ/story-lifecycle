@@ -6,13 +6,19 @@ execution_mode: interactive_pty
 author: zzh                                       # 作者标识，进分支名
 branch_rule: "feature/{author}/{story_key}_{summary}_{date}"  # 占位符: {author}/{date}/{summary}/{story_key}/{project}
 
+# confirm 字段语义:stage 完成后是否 paused 等人确认推进(确认闸)。
+#   true  = stage done 后 paused,前端显示「✅ 已完成 → 确认推进」卡片,点「推进」走 /advance 才进下一 stage。
+#   false = stage done 后自动推进下一 stage(无停顿)。
+# minimal 是人主导的默认 profile → design/build 开确认闸,让人 review 后再进;verify 是最后阶段,
+# 走自己的 quality gate,无需 stage 间确认闸,保持 false。CI/自动化 profile(realtest/swebench/strict)
+# 应保持 confirm:false 跑全自动。
 stages:
   design:
     order: 1
     description: "代码调研与方案设计"
     cli: claude
     skill: "/brainstorming"
-    confirm: false
+    confirm: true
     review: false
     max_retries: 2
     allowed_providers: [deepseek, zhipu]
@@ -26,7 +32,7 @@ stages:
     order: 2
     description: "实施计划与编码实现"
     cli: claude
-    confirm: false
+    confirm: true
     review: false
     max_retries: 3
     allowed_providers: [deepseek, zhipu, anthropic]

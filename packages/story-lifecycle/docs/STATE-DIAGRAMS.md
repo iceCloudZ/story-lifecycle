@@ -1,5 +1,8 @@
 # 状态流程图（Mermaid）
 
+> ⚠️ **部分订正（2026-07-09）**：图 4（归一目标）与图 5（三层分层）里"Story 业务状态从 `_completed_stages` 派生"是**错误建模**。正确模型见 [`STORY-STATE-MODEL.md`](./STORY-STATE-MODEL.md)：Story 状态是独立第一公民，不从阶段派生；driver 层（阶段进度）服务于 Story 状态，是它的 Execute 展开。
+> 图 1/2/3（现状诊断）仍准确。以 STORY-STATE-MODEL.md 为最终模型。
+>
 > 现状还原，基于 STATE-MAP.md。GitHub/GitLab 原生渲染 Mermaid。
 > 创建：2026-07-08。
 

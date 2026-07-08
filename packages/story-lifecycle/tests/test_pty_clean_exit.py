@@ -58,7 +58,7 @@ def test_clean_exit_sends_bracketed_exit_then_carriage_return(fast_timings):
     # PTY exits immediately on the first alive poll.
     pty = _FakePty(alive_seq=[False])
 
-    result = pty_mod._clean_exit_pty(pty, timeout=1.0)
+    result = pty_mod.clean_exit_pty(pty, timeout=1.0)
 
     assert result is True
     assert pty.writes[0] == b"\x1b[200~/exit\x1b[201~"
@@ -70,7 +70,7 @@ def test_clean_exit_returns_true_when_pty_dies_within_timeout(fast_timings):
     """If the PTY dies after a couple of polls, clean_exit returns True."""
     pty = _FakePty(alive_seq=[True, True, False], default_alive=True)
 
-    result = pty_mod._clean_exit_pty(pty, timeout=1.0)
+    result = pty_mod.clean_exit_pty(pty, timeout=1.0)
 
     assert result is True
 
@@ -81,7 +81,7 @@ def test_clean_exit_returns_false_when_pty_never_exits(fast_timings, monkeypatch
     monkeypatch.setattr(pty_mod, "_CLEAN_EXIT_POLL_INTERVAL", 0)
     pty = _FakePty(default_alive=True)  # never dies
 
-    result = pty_mod._clean_exit_pty(pty, timeout=0.05)
+    result = pty_mod.clean_exit_pty(pty, timeout=0.05)
 
     assert result is False
     # it still tried the clean exit (sent /exit + \r) before giving up

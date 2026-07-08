@@ -540,8 +540,12 @@ _CLEAN_EXIT_POLL_INTERVAL = 0.2  # how often to re-check `pty.alive`
 _CLEAN_EXIT_TIMEOUT = 10.0  # default patience before force-killing
 
 
-def _clean_exit_pty(pty: "ManagedPty", timeout: float = _CLEAN_EXIT_TIMEOUT) -> bool:
+def clean_exit_pty(pty: "ManagedPty", timeout: float = _CLEAN_EXIT_TIMEOUT) -> bool:
     """Ask a PTY's agent to exit cleanly, then wait for it to die.
+
+    Public (no leading underscore) so the planner can reclaim an interactive
+    stage PTY after its done file appears — same /exit-then-wait protocol
+    ``cleanup_all`` uses on teardown.
 
     Sends ``/exit`` via **bracketed paste** (``\\x1b[200~ … \\x1b[201~``) — bare
     PTY writes are treated as a paste by claude's Ink input and never submit
@@ -584,7 +588,7 @@ def cleanup_all(prefer_clean_exit: bool = True):
         _ptys.clear()
     for pty in ptys:
         if prefer_clean_exit:
-            _clean_exit_pty(pty)
+            clean_exit_pty(pty)
         pty.kill()
 
 

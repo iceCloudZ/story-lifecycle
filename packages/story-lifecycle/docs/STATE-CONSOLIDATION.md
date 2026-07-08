@@ -1,6 +1,14 @@
 # 状态归一维护手册 — 从 4 处真相源收敛到 1 处
 
-> STATE-MAP.md 的姊妹篇。STATE-MAP 画"现状怎么跑",本文档定"怎么收敛到单一真相源"。
+> ⚠️ **部分订正（2026-07-09）**：本文原主张"Story 业务状态从 `_completed_stages` 派生，不另存"是**错误的**。正确模型见 [`STORY-STATE-MODEL.md`](./STORY-STATE-MODEL.md)：**Story 状态是独立第一公民，不从阶段派生**（Temporal/Jira/Process Manager 三个来源印证）。
+> 本文以下内容里：
+> - ❌ 步骤 4「status 语义分层」中"业务状态从 `_completed_stages` 派生"→ 错，应为独立字段 `story.lifecycle_state`。
+> - ❌「目标分层架构」中"业务状态派生视图"→ 错，应为独立第一公民。
+> - ✅ 步骤 1-3（`_completed_stages` 作 driver 层真相源、删冗余字段）→ **仍有效**，只是它定义的是 driver 层内部进度，不定义 Story 业务状态。
+> 以 STORY-STATE-MODEL.md 为准。
+>
+> ---
+> STATE-MAP.md 的姊妹篇。STATE-MAP 画"现状怎么跑"，本文档定"怎么收敛到单一真相源"。
 > 创建：2026-07-08。可执行治理清单，非一次性重构。
 > 范围：`packages/story-lifecycle`。
 

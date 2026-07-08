@@ -168,3 +168,75 @@ class TestGetPlan:
         assert data["mode"] == "agent"
         assert len(data["actions"]) == 1
         assert data["confirmed"] is False
+
+    def test_returns_stages_view_with_done_flags(self, client, tmp_path):
+        """PLAN-stage-confirm-gate:/plan 回 stages 进度条数据(done 标记)。"""
+        _create_story(client)
+        ctx = {
+            "_agent_actions": [
+                {"action": "launch", "stage": "design", "adapter": "claude", "focus": "f1"},
+                {"action": "launch", "stage": "build", "adapter": "claude", "focus": "f2"},
+            ],
+            "_completed_stages": ["design"],
+            "_plan_confirmed": True,
+        }
+        db.update_story("TEST-001", context_json=json.dumps(ctx))
+
+        resp = client.get("/api/story/TEST-001/plan")
+        assert resp.status_code == 200
+        data = resp.json()
+        stages = data["stages"]
+        assert len(stages) == 2
+        assert stages[0] == {
+            "name": "design",
+            "focus": "f1",
+            "adapter": "claude",
+            "done": True,
+        }
+        assert stages[1]["name"] == "build"
+        assert stages[1]["done"] is False
+
+    def test_returns_stage_gate_when_paused(self, client, tmp_path):
+        """paused + _stage_gate → /plan 回 stage_gate(前端显示确认闸卡片)。"""
+        _create_story(client, status="paused")
+        ctx = {
+            "_agent_actions": [{"action": "launch", "stage": "design", "adapter": "claude"}],
+            "_completed_stages": ["design"],
+            "_stage_gate": {
+                "completed_stage": "design",
+                "next_stage": "build",
+                "awaiting_confirm": True,
+            },
+        }
+        db.update_story("TEST-001", context_json=json.dumps(ctx))
+
+        resp = client.get("/api/story/TEST-001/plan")
+        assert resp.status_code == 200
+        gate = resp.json()["stage_gate"]
+        assert gate["completed_stage"] == "design"
+        assert gate["next_stage"] == "build"
+        assert gate["awaiting_confirm"] is True
+
+    def test_advance_clears_stage_gate_on_resume(self, client, tmp_path):
+        """PLAN-stage-confirm-gate:/advance(paused→resume)清除 _stage_gate 标记。"""
+        _create_story(client, status="paused")
+        ctx = {
+            "_agent_actions": [{"action": "launch", "stage": "design", "adapter": "claude"}],
+            "_completed_stages": ["design"],
+            "_stage_gate": {
+                "completed_stage": "design",
+                "next_stage": "build",
+                "awaiting_confirm": True,
+            },
+        }
+        db.update_story("TEST-001", context_json=json.dumps(ctx))
+
+        with patch("story_lifecycle.orchestrator.engine.graph.start_story_async"):
+            resp = client.put("/api/story/TEST-001/advance")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True, "status": "resumed"}
+        # _stage_gate 已清掉
+        updated = db.get_story("TEST-001")
+        ctx_after = json.loads(updated["context_json"])
+        assert "_stage_gate" not in ctx_after

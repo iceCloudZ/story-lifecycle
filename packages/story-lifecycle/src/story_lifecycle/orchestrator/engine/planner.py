@@ -502,6 +502,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
 
     # 更新状态为执行中
     ctx["_plan_confirmed"] = True
+    # 进入执行即清除确认闸标记(确认闸 paused 后 resume,经 /advance → start_story_async
+    # 重进此函数;_stage_gate 只在 paused 期间有意义,执行启动即失效)。
+    ctx.pop("_stage_gate", None)
     db.update_story(
         story_key,
         context_json=json.dumps(ctx, ensure_ascii=False),
@@ -525,8 +528,64 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     if headless_from_profile(rp):
         headless = True
 
+    # resume 跳过已完成 stage(PLAN-stage-confirm-gate):_completed_stages 记录已跑完的
+    # stage,resume 时从第一个未完成 launch action 开始,不重 spawn 不重跑(见 docs)。
+    completed_stages = list(ctx.get("_completed_stages", []))
+    if not completed_stages:
+        # 认领游离 done:用户可能手动跑出了某 stage 的 done file(如 design.json)而
+        # 从未走过自动链路(_completed_stages 为空)。扫一遍 launch actions,凡 done file
+        # 已存在的 stage 认领进 _completed_stages —— 点「开始」后不重跑。
+        orphan_claimed = []
+        for _a in actions:
+            if _a.get("action") != "launch":
+                continue
+            _st = _a.get("stage")
+            if not _st:
+                continue
+            _done_rel = _a.get("done_file", stage_done_file_rel(story_key, _st))
+            if (Path(workspace) / _done_rel).exists():
+                orphan_claimed.append(_st)
+        if orphan_claimed:
+            completed_stages = orphan_claimed
+            ctx["_completed_stages"] = completed_stages
+            # 对每个被认领的 stage 记一次 completed 事件(读 done file 作 payload):
+            # 跳过的 stage 也要在 timeline / 质量统计里出现,与正常 done 路径一致。
+            for _st in orphan_claimed:
+                try:
+                    _dp = Path(workspace) / stage_done_file_rel(story_key, _st)
+                    _dd = robust_json_parse(_dp) or {}
+                except Exception:
+                    _dd = {}
+                db.log_event(story_key, _st, "completed", _dd)
+            log.info(
+                "[%s] claimed orphan done files as completed: %s",
+                story_key,
+                completed_stages,
+            )
+
+    # 算 start_idx:第一个 stage ∉ _completed_stages 的 launch action 下标。
+    start_idx = 0
+    for _i, _a in enumerate(actions):
+        if _a.get("action") == "launch":
+            _st = _a.get("stage", f"stage_{_i}")
+            if _st in completed_stages:
+                continue
+            start_idx = _i
+            break
+        start_idx = _i + 1  # skip actions 仍推进
+    else:
+        start_idx = len(actions)  # 全部已完成 → 末尾(while 不进)
+
+    if start_idx > 0:
+        log.info(
+            "[%s] resuming from action %d (completed_stages=%s)",
+            story_key,
+            start_idx,
+            completed_stages,
+        )
+
     # 逐个执行 action；使用 while 以便在 verify gate 触发 retry 时插入重试 action
-    idx = 0
+    idx = start_idx
     while idx < len(actions):
         action = actions[idx]
         if action.get("action") == "skip":
@@ -652,6 +711,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     cli_prompt[:120],
                 )
                 headless_proc = None
+                _agent_pty = None  # interactive 分支才赋值(见 else);此处初始化让 done 块两类分支都能安全引用
                 _stderr_tail = []  # headless stderr 排空 holder(kimi 叙述/claude 日志 → 防 PIPE 死锁 + retry 诊断)
                 if headless:
                     import subprocess as _sp
@@ -918,9 +978,83 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         # 保留 done file 作为阶段完成证据：real-E2E asserters 与
                         # 审计都需要事后读取 {stage}.json。每个 stage 的 done 路径唯一，
                         # 重跑由 reset_workspace 清理 done/ 目录，无需在此 unlink。
-                        # headless：done file 已出现 → 回收 claude 进程（它往往仍在运行）
+                        # 记进度(PLAN-stage-confirm-gate):追加当前 stage 到 _completed_stages
+                        # 并持久化,resume 时 start_idx 跳过本 stage(不重 spawn PTY)。
+                        if stage not in completed_stages:
+                            completed_stages.append(stage)
+                        ctx["_completed_stages"] = completed_stages
+                        db.update_story(
+                            story_key,
+                            context_json=json.dumps(ctx, ensure_ascii=False),
+                        )
+                        # 回收 stage 进程(done 已确认,transcript 已写完整):
+                        # headless 走 _kill_headless;interactive PTY 对齐 headless —— 先
+                        # clean_exit_pty(/exit 握手 flush transcript,最长 _CLEAN_EXIT_TIMEOUT)
+                        # 再 .kill() 兜底。需要时用 claude --resume <per-stage uuid5> 回查。
                         if headless_proc is not None:
                             _kill_headless(headless_proc)
+                        if _agent_pty is not None:
+                            try:
+                                from ...infra.terminal.pty import clean_exit_pty
+
+                                clean_exit_pty(_agent_pty)
+                            except Exception:
+                                log.exception(
+                                    "[%s] clean_exit_pty failed for stage %s; force-killing",
+                                    story_key,
+                                    stage,
+                                )
+                            try:
+                                _agent_pty.kill()
+                            except Exception:
+                                pass
+                        # 确认闸(PLAN-stage-confirm-gate):stage_cfg.confirm=True 且后面
+                        # 还有未完成 launch action → paused 等人确认推进;否则 break 正常推进。
+                        # verify 是最后阶段无下一 stage,走自己的 gate,不受此影响。
+                        stage_cfg = profile_stages.get(stage)
+                        confirm_on = bool(
+                            stage_cfg
+                            and getattr(stage_cfg, "confirm", False)
+                            and stage != "verify"
+                        )
+                        if confirm_on:
+                            _next_stage = None
+                            for _j in range(idx + 1, len(actions)):
+                                _na = actions[_j]
+                                if _na.get("action") == "launch":
+                                    _ns = _na.get("stage", f"stage_{_j}")
+                                    if _ns not in completed_stages:
+                                        _next_stage = _ns
+                                        break
+                            if _next_stage is not None:
+                                ctx["_stage_gate"] = {
+                                    "completed_stage": stage,
+                                    "next_stage": _next_stage,
+                                    "awaiting_confirm": True,
+                                }
+                                db.update_story(
+                                    story_key,
+                                    status="paused",
+                                    context_json=json.dumps(
+                                        ctx, ensure_ascii=False
+                                    ),
+                                )
+                                db.log_event(
+                                    story_key,
+                                    stage,
+                                    "stage_gate_reached",
+                                    {
+                                        "completed_stage": stage,
+                                        "next_stage": _next_stage,
+                                    },
+                                )
+                                log.info(
+                                    "[%s] stage gate: %s done → paused awaiting confirm to advance to %s",
+                                    story_key,
+                                    stage,
+                                    _next_stage,
+                                )
+                                return  # 释放 driver claim;点「推进」→ /advance 重进
                         break
                     except Exception as exc:
                         log.error(f"[{story_key}] Error parsing done file: {exc}")

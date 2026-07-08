@@ -90,8 +90,10 @@ export default function StoryDetailPage() {
   const { data: planData } = useQuery({
     queryKey: ['plan', storyKey],
     queryFn: () => planApi.get(storyKey),
-    enabled: !!detail && detail.status === 'planning',
-    refetchInterval: planTriggered ? false : 5000,
+    // /plan 现在也回 stages 进度 + stage_gate(确认闸卡片),active/paused 期间也要拉。
+    // planning 阶段才需要高频轮询(SSE 流式规划);执行期降到 10s 够看进度/gate。
+    enabled: !!detail && ['planning', 'active', 'paused', 'implementing'].includes(detail.status),
+    refetchInterval: planTriggered ? false : (detail?.status === 'planning' ? 5000 : 10000),
   })
 
   // SSE stream for Agent planning
@@ -214,6 +216,7 @@ export default function StoryDetailPage() {
               detail={detail}
               resolvedActions={resolvedActions}
               isConfirmed={isConfirmed}
+              planData={planData}
               onConfirmPlan={handleConfirmPlan}
               onRegeneratePlan={handleRegeneratePlan}
               onAction={handleAction}

@@ -800,6 +800,19 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
 
     # Resume from paused
     if s["status"] == "paused":
+        # 确认闸推进:清掉 _stage_gate(进入执行即失效),让 planner 从下一未完成
+        # stage 继续。即便 planner 入口也清一遍,这里先清保证 paused 期间语义干净。
+        import json as _json
+
+        try:
+            _ctx = _json.loads(s.get("context_json") or "{}")
+        except (ValueError, TypeError):
+            _ctx = {}
+        if _ctx.pop("_stage_gate", None) is not None:
+            db.update_story(
+                story_key,
+                context_json=_json.dumps(_ctx, ensure_ascii=False),
+            )
         db.update_story(story_key, status="active")
         start_story_async(story_key)
         return {"ok": True, "status": "resumed"}
@@ -2810,6 +2823,26 @@ def api_get_plan(story_key: str):
     active_exec = ctx.get("_active_execution", {})
     agent_actions = ctx.get("_agent_actions")
 
+    # PLAN-stage-confirm-gate:组装 stages 进度条真实数据 + stage_gate(确认闸卡片)。
+    # stages 从 launch actions + _completed_stages 推导 done 标记;前端用 done 驱动
+    # 进度状态(✓完成/进行中/待开始)。stage_gate 在 paused 时由前端显示「确认推进」卡片。
+    completed_stages = list(ctx.get("_completed_stages", []))
+    stages_view = []
+    if agent_actions:
+        for _a in agent_actions:
+            if _a.get("action") != "launch":
+                continue
+            _st = _a.get("stage", "")
+            stages_view.append(
+                {
+                    "name": _st,
+                    "focus": _a.get("focus", ""),
+                    "adapter": _a.get("adapter", "claude"),
+                    "done": _st in completed_stages,
+                }
+            )
+    stage_gate = ctx.get("_stage_gate")
+
     # 尝试读取 plan 文件内容
     plan_content = ""
     plan_path = ctx.get("plan_path", "")
@@ -2829,6 +2862,8 @@ def api_get_plan(story_key: str):
         "adapter": active_exec.get("adapter", ""),
         "confirmed": ctx.get("_plan_confirmed", False),
         "mode": "agent" if agent_actions else "legacy",
+        "stages": stages_view,
+        "stage_gate": stage_gate,
     }
 
     # Agent 模式：返回结构化 action list
