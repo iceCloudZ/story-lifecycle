@@ -513,7 +513,11 @@ def ensure_agent_pty(
 
 
 def kill_pty(story_id: str, session_id: str = ""):
-    """Kill a specific PTY session, or all sessions for a story."""
+    """Kill a specific PTY session, or all sessions for a story (force-kill only).
+
+    For an *immediate* teardown use this. For a transcript-flushing teardown
+    (let claude `/exit` cleanly before killing) use ``cleanup_all`` instead.
+    """
     with _lock:
         sessions = _ptys.get(story_id, {})
         if session_id:
@@ -526,13 +530,60 @@ def kill_pty(story_id: str, session_id: str = ""):
             sessions.clear()
 
 
-def cleanup_all():
+# Clean-exit teardown tunables. Exported as module constants so tests can zero
+# them (avoid blocking on real sleeps); kept here rather than kwargs so the
+# protocol is consistent across all callers.
+_CLEAN_EXIT_PASTE_DELAY = 0.4   # bracketed-paste settle before the `\r` submit
+_CLEAN_EXIT_POLL_INTERVAL = 0.2  # how often to re-check `pty.alive`
+_CLEAN_EXIT_TIMEOUT = 10.0       # default patience before force-killing
+
+
+def _clean_exit_pty(pty: "ManagedPty", timeout: float = _CLEAN_EXIT_TIMEOUT) -> bool:
+    """Ask a PTY's agent to exit cleanly, then wait for it to die.
+
+    Sends ``/exit`` via **bracketed paste** (``\\x1b[200~ … \\x1b[201~``) — bare
+    PTY writes are treated as a paste by claude's Ink input and never submit
+    (claude-code#15553) — followed by a ``\\r`` keystroke to submit it. Polls
+    ``pty.alive`` until the process is gone or ``timeout`` elapses.
+
+    Returns True if the PTY exited within ``timeout`` (transcript flushed), False
+    if it's still alive (caller should ``pty.kill()`` as the force-kill fallback).
+
+    Why this matters: claude only flushes its
+    ``~/.claude/projects/<proj>/<uuid>.jsonl`` transcript on a clean ``/exit``;
+    a force-kill mid-run truncates it, so ``--resume`` later resumes from an
+    incomplete history. See docs/claude-code-agent-internals.md §2.2.
+    """
+    pty.write(b"\x1b[200~" + b"/exit" + b"\x1b[201~")
+    time.sleep(_CLEAN_EXIT_PASTE_DELAY)
+    pty.write(b"\r")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not pty.alive:
+            return True
+        time.sleep(_CLEAN_EXIT_POLL_INTERVAL)
+    return not pty.alive
+
+
+def cleanup_all(prefer_clean_exit: bool = True):
+    """Tear down every PTY across all stories.
+
+    With ``prefer_clean_exit=True`` (default) each PTY is asked to ``/exit``
+    cleanly first (so claude flushes its transcript) and force-killed only as a
+    fallback / backstop. With ``prefer_clean_exit=False`` every PTY is
+    force-killed immediately — use that for an explicit, no-wait teardown.
+
+    The PTYs are snapshotted + removed from the registry under the lock, then the
+    (potentially slow, up to ``_CLEAN_EXIT_TIMEOUT`` per PTY) clean-exit + kill
+    runs *outside* the lock so it doesn't block concurrent spawns/reads.
+    """
     with _lock:
-        for sessions in _ptys.values():
-            for pty in sessions.values():
-                pty.kill()
-            sessions.clear()
+        ptys = [pty for sessions in _ptys.values() for pty in sessions.values()]
         _ptys.clear()
+    for pty in ptys:
+        if prefer_clean_exit:
+            _clean_exit_pty(pty)
+        pty.kill()
 
 
 atexit.register(cleanup_all)
