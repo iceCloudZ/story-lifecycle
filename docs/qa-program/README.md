@@ -77,6 +77,7 @@
 |---|---|---|---|---|
 | T5.1 | coverage 度量 + 按模块报告 | `[已完成]` | [reports/T5.1-coverage-baseline.md](reports/T5.1-coverage-baseline.md) | `470fea14` |
 | T5.2 | tests/invariants/ 目录 + 架构不变量集 | `[已完成]` | [reports/T5.2-architecture-invariants.md](reports/T5.2-architecture-invariants.md) | `905c13e6` |
+| CI | CI 接入 + 转绿(修 6 层失败 + 3 真 bug) | `[已完成]` | [reports/CI-integration.md](reports/CI-integration.md) | `53547a1d` |
 
 ---
 
