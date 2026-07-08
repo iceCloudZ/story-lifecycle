@@ -61,14 +61,37 @@ export default function OverviewTab({
 
   return (
     <div className="tab-content overview-tab">
-      {/* Top bar */}
+      {/* Top bar — 标题 + TAPD 跳转 + 更新时间 */}
       <div className="ot-header">
-        <span className="ot-key">{detail.storyKey}</span>
-        <span className="ot-updated">更新: {detail.updatedAt}</span>
+        <div className="ot-header-left">
+          <span className="ot-title">{detail.title || detail.storyKey}</span>
+          <span className="ot-key">{detail.storyKey}</span>
+        </div>
+        <div className="ot-header-right">
+          {(() => {
+            // TAPD 跳转:优先 tapdUrl(后端同步时填);否则从 tapd- 前缀的 key 推导。
+            // story_id 格式:11{workspace 8位}{流水号} → URL /{ws}/prong/stories/view/{full_id}
+            const fullId = detail.storyKey.startsWith('tapd-')
+              ? detail.storyKey.slice(5)
+              : ''
+            const ws = fullId.length >= 10 ? fullId.slice(2, 10) : ''
+            const url =
+              detail.tapdUrl ||
+              (ws ? `https://www.tapd.cn/${ws}/prong/stories/view/${fullId}` : '')
+            return url ? (
+              <a className="ot-tapd-link" href={url} target="_blank" rel="noreferrer">
+                TAPD ↗
+              </a>
+            ) : null
+          })()}
+          <span className="ot-updated">更新: {detail.updatedAt}</span>
+        </div>
       </div>
 
-      {/* STORY-STATE-MODEL: Story 业务状态主进度条(开发/测试/上线)— 第一公民视图 */}
-      {storyStates.length > 0 && (
+      {/* 合并进度条:Story 业务状态为主节点(开发/测试/上线),每个状态展开它的阶段。
+          替掉原来两个重复的进度条(Story 状态条 + StageProgress)。无 story_states 时
+          退化用 StageProgress(向后兼容无 story_states 的 profile)。 */}
+      {storyStates.length > 0 ? (
         <div className="ot-story-state-progress">
           {storyStates.map((st) => {
             const cls = st.done
@@ -78,21 +101,42 @@ export default function OverviewTab({
                 : 'ot-ss-node'
             return (
               <div key={st.name} className="ot-ss-item">
-                <span className={cls}>
-                  {st.done ? '✓' : st.current ? '●' : '○'}
-                </span>
-                <span className={`ot-ss-label ${st.current ? 'active' : ''}`}>
-                  {st.name}
-                </span>
-                {st.current && st.total > 0 && (
-                  <span className="ot-ss-sub">
-                    {' '}({st.done_count}/{st.total})
+                <div className="ot-ss-head">
+                  <span className={cls}>
+                    {st.done ? '✓' : st.current ? '●' : '○'}
                   </span>
+                  <span className={`ot-ss-label ${st.current ? 'active' : ''}`}>
+                    {st.name}
+                  </span>
+                </div>
+                {/* 展开该状态下的阶段(design✓ / build● / ...) */}
+                {st.stages.length > 0 && (
+                  <div className="ot-ss-stages">
+                    {st.stages.map((sg) => {
+                      const isDone = (planData?.stages ?? []).some(
+                        (p) => p.name === sg && p.done
+                      )
+                      const isRunning = sg === detail.currentStage && st.current && !isDone
+                      const scls = isDone
+                        ? 'sg-chip done'
+                        : isRunning
+                          ? 'sg-chip running'
+                          : 'sg-chip'
+                      return (
+                        <span key={sg} className={scls}>
+                          {isDone ? '✓ ' : isRunning ? '● ' : ''}
+                          {sg}
+                        </span>
+                      )
+                    })}
+                  </div>
                 )}
               </div>
             )
           })}
         </div>
+      ) : (
+        <StageProgress stages={stages} currentStage={detail.currentStage} />
       )}
 
       {/* STORY-STATE-MODEL: Story 状态闸卡片(业务层,优先于阶段间闸) */}
@@ -113,9 +157,6 @@ export default function OverviewTab({
         </div>
       )}
 
-      {/* Progress bar (阶段进度,次视图) */}
-      <StageProgress stages={stages} currentStage={detail.currentStage} />
-
       {/* 确认闸卡片(stage gate):仅当 Story 状态闸未显示时才显示(不抢主位) */}
       {showGateCard && !showStateGateCard && (
         <div className="ot-stage-gate-card">
@@ -134,25 +175,37 @@ export default function OverviewTab({
         </div>
       )}
 
-      {/* Info cards */}
-      <div className="ot-info-grid">
-        <div className="ot-info-card">
-          <div className="ot-info-label">Profile</div>
-          <div className="ot-info-value">{detail.profile}</div>
-        </div>
-        <div className="ot-info-card">
-          <div className="ot-info-label">重试次数</div>
-          <div className="ot-info-value">{detail.executionCount} / 3</div>
-        </div>
-        <div className="ot-info-card">
-          <div className="ot-info-label">优先级</div>
-          <div className="ot-info-value">{detail.priority || '-'}</div>
-        </div>
-        <div className="ot-info-card">
-          <div className="ot-info-label">来源</div>
-          <div className="ot-info-value">{detail.sourceType || '-'}</div>
-        </div>
-      </div>
+      {/* Info cards — Profile 改可读;空值字段不显示(不占 '-') */}
+      {(() => {
+        // profile 名 → 可读标签
+        const profileLabel: Record<string, string> = {
+          minimal: '最小开发流程',
+          realtest: '真机测试流程',
+          strict: '严格流程',
+          swebench: 'SWE-bench 评测',
+          'headless-smoke': 'headless 冒烟',
+          demo: '演示流程',
+        }
+        const cards: { label: string; value: string }[] = [
+          { label: '流程', value: profileLabel[detail.profile] || detail.profile },
+          {
+            label: `${detail.currentStage} 重试`,
+            value: `${detail.executionCount} / 3`,
+          },
+        ]
+        if (detail.priority) cards.push({ label: '优先级', value: detail.priority })
+        if (detail.sourceType) cards.push({ label: '来源', value: detail.sourceType })
+        return (
+          <div className="ot-info-grid">
+            {cards.map((c) => (
+              <div key={c.label} className="ot-info-card">
+                <div className="ot-info-label">{c.label}</div>
+                <div className="ot-info-value">{c.value}</div>
+              </div>
+            ))}
+          </div>
+        )
+      })()}
 
       {/* Agent planning area */}
       {detail.status === 'planning' && resolvedActions.length > 0 && (

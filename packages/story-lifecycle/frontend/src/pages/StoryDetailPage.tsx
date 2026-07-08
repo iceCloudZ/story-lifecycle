@@ -26,21 +26,15 @@ const MODULES = [
 ]
 
 const ACTIONS: Record<string, ActionButton[]> = {
-  planning: [
-    { label: '终止', method: 'POST', path: '/abort', confirm: '确定终止此 Story？', variant: 'danger' },
-  ],
+  planning: [],
   active: [
-    { label: '跳过阶段', method: 'PUT', path: '/skip/{stage}' },
-    { label: '终止', method: 'POST', path: '/abort', confirm: '确定终止此 Story？', variant: 'danger' },
+    { label: '紧急停止', method: 'POST', path: '/emergency-stop', confirm: '立即杀掉运行中的 claude 进程并暂停（可恢复）。确定？', variant: 'danger' },
   ],
   paused: [
     { label: '继续执行', method: 'PUT', path: '/advance', variant: 'primary' },
-    { label: '跳过阶段', method: 'PUT', path: '/skip/{stage}' },
-    { label: '终止', method: 'POST', path: '/abort', confirm: '确定终止此 Story？', variant: 'danger' },
   ],
   blocked: [
     { label: '重试', method: 'PUT', path: '/advance', variant: 'primary' },
-    { label: '终止', method: 'POST', path: '/abort', confirm: '确定终止此 Story？', variant: 'danger' },
   ],
   failed: [
     { label: '删除', method: 'DELETE', path: '', confirm: '确定删除？不可恢复。', variant: 'danger' },
@@ -158,8 +152,7 @@ export default function StoryDetailPage() {
   async function handleAction(action: ActionButton) {
     if (action.confirm && !window.confirm(action.confirm)) return
     let url = `/api/story/${storyKey}`
-    if (action.path === '/skip/{stage}') url += `/skip/${detail?.currentStage}`
-    else if (action.path) url += action.path
+    if (action.path) url += action.path
     if (await apiAction(action.method, url)) {
       if (action.method === 'DELETE') navigate('/')
       else { refetch(); qc.invalidateQueries({ queryKey: ['timeline', storyKey] }) }

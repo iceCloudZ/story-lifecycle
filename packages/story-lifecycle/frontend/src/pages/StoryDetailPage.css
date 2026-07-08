@@ -64,9 +64,9 @@
   margin-bottom: 8px;
 }
 .ot-key {
-  font-size: 16px;
-  font-weight: 700;
-  color: #2563eb;
+  font-size: 12px;
+  font-weight: 400;
+  color: #6b7280;
 }
 .ot-updated {
   font-size: 11px;
@@ -189,6 +189,72 @@
 .ot-ss-sub {
   font-size: 12px;
   color: #9ca3af;
+}
+.ot-ss-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* 状态节点下展开的阶段 chip */
+.ot-ss-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  padding-left: 28px;
+}
+.sg-chip {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #f3f4f6;
+  color: #9ca3af;
+  border: 1px solid #e5e7eb;
+}
+.sg-chip.done {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+.sg-chip.running {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #93c5fd;
+}
+
+/* 标题区 */
+.ot-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ot-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.ot-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ot-tapd-link {
+  font-size: 13px;
+  color: #2563eb;
+  text-decoration: none;
+  padding: 3px 10px;
+  border: 1px solid #93c5fd;
+  border-radius: 4px;
+  background: #eff6ff;
+  white-space: nowrap;
+}
+.ot-tapd-link:hover {
+  background: #dbeafe;
 }
 
 /* STORY-STATE-MODEL: Story 状态闸卡片(业务层,优先于阶段间闸) */

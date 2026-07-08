@@ -35,6 +35,7 @@ from ..engine.graph import (
     start_story_async,
     recover_orphan_stories,
     resume_ready_interactive_stories,
+    force_stop_story,
 )
 from ..engine.profile_loader import resolve_profile
 from ..engine import planner
@@ -974,6 +975,34 @@ def api_abort_story(story_key: str, req: AbortRequest = None):
     except ValueError as e:
         raise HTTPException(404, str(e))
     return {"ok": True}
+
+
+@app.post("/api/story/{story_key}/emergency-stop")
+def emergency_stop_story(story_key: str):
+    """紧急停止:杀运行中 claude 进程 + 释放 driver guard + 标 paused(可恢复)。
+
+    区别于 ``/abort``(标 aborted,不可恢复):紧急停止是"暂停并清理进程",story 仍可用
+    ``/advance`` 恢复。用于 build 跑飞/死循环烧 token 等需要立即停的场景。
+    force_stop_story bump epoch 让运行中 driver 线程检测到取消自行退出;kill_pty 杀 PTY。
+    """
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+    was_running = force_stop_story(story_key)
+    # 杀该 story 的所有 PTY(运行中的 claude/codex 进程树)
+    try:
+        kill_pty(story_key)
+    except Exception:
+        pass
+    db.update_story(story_key, status="paused", last_error="紧急停止（可恢复）")
+    db.log_event(
+        story_key,
+        s.get("current_stage") or "",
+        "emergency_stop",
+        {"was_running": was_running},
+    )
+    log.warning("[%s] emergency stop: killed PTY, paused (was_running=%s)", story_key, was_running)
+    return {"ok": True, "status": "paused", "was_running": was_running}
 
 
 @app.put("/api/story/{parent_key}/resume")
