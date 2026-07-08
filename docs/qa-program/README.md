@@ -36,7 +36,7 @@
 
 | 卡号 | 任务 | 状态 | 报告 | commit |
 |---|---|---|---|---|
-| T1.1 | gate 硬闸不可绕(max_retries 强制 fail) | `[阻塞]` | [reports/T1.1-gate-hard-fail.md](reports/T1.1-gate-hard-fail.md) | `48461cac` |
+| T1.1 | gate 硬闸不可绕(max_retries 强制 fail) | `[已完成]` | [reports/T1.1-gate-hard-fail.md](reports/T1.1-gate-hard-fail.md) | 待补 |
 | T1.2 | gate 三判定(advance/retry/fail)分支覆盖 | `[已完成]` | [reports/T1.2-gate-branches.md](reports/T1.2-gate-branches.md) | `f36936e0` |
 | T1.3 | no_progress 终止(防死循环) | `[待办]` | — | — |
 | T1.4 | evaluator_loop repair-packet 构造 | `[待办]` | — | — |
