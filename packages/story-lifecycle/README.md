@@ -90,8 +90,11 @@ execute → review → revise → review → pass
 
 - `pass`：无阻塞性问题，推进
 - `revise`：有 high/major 问题，打回修改
-- `no_progress`：连续无改善，自动终止等人工
-- `max_rounds`：达到上限，自动终止等人工
+- `max_retries`：修复轮次超上限（`round_count > max_retries`），硬闸强制 fail 等人工
+
+> ⚠️ 上方列表的 `no_progress`（连续无改善自动终止）/ `max_rounds` 是 LangGraph 时代三角色循环的收敛条件，
+> 已于 cb6f9cd FC 重写后移除（`detect_no_progress` 等 helper 见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §死代码已清）。
+> FC 模式实际靠 `max_retries` 计数兜底（T1.1 已验证），不再做 progress 检测。
 
 FC 模式下，"对抗循环"由 LLM 内化：gate 返回 retry 时，planner 往 action 队列插入新 launch action，由 LLM agent 自行重跑修复（无独立 Python review loop 函数）。收敛靠 gate 硬闸（`round_count > max_retries` 强制 fail）。详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
