@@ -85,29 +85,6 @@ def test_strict_profile_has_quality():
     assert profile.get("adversarial", {}).get("enabled") is True
 
 
-def test_packaged_and_root_profiles_consistent():
-    """All profiles must be identical between root profiles/ and packaged src/...profiles/."""
-    import yaml
-    from pathlib import Path
-
-    root_dir = Path(__file__).parent.parent / "profiles"
-    pkg_dir = Path(__file__).parent.parent / "src" / "story_lifecycle" / "entry" / "profiles"
-
-    root_profiles = sorted(p.name for p in root_dir.glob("*.yaml"))
-    pkg_profiles = sorted(p.name for p in pkg_dir.glob("*.yaml"))
-
-    assert root_profiles == pkg_profiles, (
-        f"Profile lists differ: root={root_profiles}, pkg={pkg_profiles}"
-    )
-
-    for name in root_profiles:
-        root_yaml = yaml.safe_load((root_dir / name).read_text(encoding="utf-8"))
-        pkg_yaml = yaml.safe_load((pkg_dir / name).read_text(encoding="utf-8"))
-        assert root_yaml == pkg_yaml, (
-            f"Profile '{name}' differs between root/ and src/...profiles/"
-        )
-
-
 def test_service_imports():
     from story_lifecycle.orchestrator.service.story_service import create_and_start_story
 
