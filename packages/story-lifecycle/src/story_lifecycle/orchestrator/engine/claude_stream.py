@@ -311,7 +311,12 @@ def supervise_headless_stdout(
 
         def _drain_stderr():
             try:
-                for raw in iter(proc.stderr.readline, b""):
+                # 用固定块读而不是 readline:stderr 可能一次性写大量无换行数据,
+                # readline 会等到 EOF/换行才返回,导致管道满死锁。
+                while True:
+                    raw = proc.stderr.read(4096)
+                    if not raw:
+                        break
                     stderr_tail.append(raw.decode("utf-8", "replace"))
                     # 滚动:总长留 ~8KB,够 retry 诊断看尾部即可,不无限涨内存。
                     while (

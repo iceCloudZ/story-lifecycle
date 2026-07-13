@@ -529,7 +529,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     # 优先级:ctx._lifecycle_state(resume 续用)> DB lifecycle_state > 默认"开发"。
     # 写回 DB + ctx 保证一致。无 story_states 的 profile → lifecycle_state 仍存但
     # driver 不按状态机跑(退化扁平,向后兼容)。
-    lifecycle_state = ctx.get("_lifecycle_state") or story.get("lifecycle_state") or "开发"
+    lifecycle_state = (
+        ctx.get("_lifecycle_state") or story.get("lifecycle_state") or "开发"
+    )
     if ctx.get("_lifecycle_state") != lifecycle_state:
         ctx["_lifecycle_state"] = lifecycle_state
         db.update_story(
@@ -1063,7 +1065,11 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                         story_key,
                                         stage,
                                         "story_state_transition",
-                                        {"from": lifecycle_state, "to": _next_state, "auto": True},
+                                        {
+                                            "from": lifecycle_state,
+                                            "to": _next_state,
+                                            "auto": True,
+                                        },
                                     )
                                     log.info(
                                         "[%s] story state auto-advanced: %s → %s",
@@ -1141,7 +1147,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                     db.update_story(
                                         story_key,
                                         status="paused",
-                                        context_json=json.dumps(ctx, ensure_ascii=False),
+                                        context_json=json.dumps(
+                                            ctx, ensure_ascii=False
+                                        ),
                                     )
                                     db.log_event(
                                         story_key,
