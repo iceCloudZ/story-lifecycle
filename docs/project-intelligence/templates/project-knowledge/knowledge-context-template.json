@@ -1,0 +1,34 @@
+{
+  "story_key": "STORY-12345",
+  "target_stage": "design",
+  "query_basis": {
+    "title": "修复提现失败错误提示",
+    "description_source": "story title / PRD / TAPD"
+  },
+  "search_plan": {
+    "domains": [
+      "order"
+    ],
+    "terms": [
+      "withdraw",
+      "提现",
+      "OrderWithdraw"
+    ],
+    "target_paths": [
+      ".story/knowledge/scenarios/order/",
+      ".story/knowledge/indexes/api-index.md",
+      ".story/knowledge/indexes/bug-risk-index.md"
+    ]
+  },
+  "selected_context": [
+    {
+      "type": "scenario",
+      "id": "order.withdraw",
+      "source": ".story/knowledge/scenarios/order/withdraw.md",
+      "status": "verified",
+      "reason": "story 涉及提现失败提示"
+    }
+  ],
+  "context_packet": ".story/context/STORY-12345/knowledge-context/design.md",
+  "warnings": []
+}

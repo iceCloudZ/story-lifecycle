@@ -1,0 +1,29 @@
+manual_context:
+  product: happycash-ph
+  updated_at: 2026-06-01T00:00:00+08:00
+  updated_by: <name>
+
+implicit_dependencies:
+  - id: aop.auth-token
+    type: spring_aop
+    applies_to:
+      - service: hc-user
+      - api_pattern: /api/v1/**
+    description: Auth token validation is applied by interceptor/aspect.
+    source_refs:
+      - <code-ref>
+    status: verified
+
+dynamic_endpoints:
+  - id: feign.third-party.dynamic-url
+    service: hc-order
+    target: hc-third-party
+    description: Runtime config controls third-party endpoint selection.
+    source_refs:
+      - <config-or-code-ref>
+    status: proposed
+
+notes:
+  - id: manual.note.example
+    description: Add project-specific hidden assumptions here.
+    status: proposed

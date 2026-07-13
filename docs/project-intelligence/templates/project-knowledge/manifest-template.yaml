@@ -1,0 +1,55 @@
+product:
+  code: happycash-ph
+  name: HappyCash Philippines
+  aliases:
+    - HC
+
+knowledge_pack:
+  version: 0.1.0
+  status: draft
+  generated_at: 2026-06-01T00:00:00+08:00
+  generator: story-lifecycle project-knowledge-bootstrap
+
+source:
+  type: local_git_worktree
+  repo_url: ssh://git.company.com/hc/hc-all.git
+  branch: main
+  commit: <commit-sha>
+  dirty: false
+
+repositories:
+  - code: hc-all
+    role: primary_backend_monorepo
+    profiles:
+      - java-spring-microservice
+      - frontend-react-umi
+
+scenario_domains:
+  - code: user
+    name: 用户域
+  - code: credit
+    name: 授信/额度域
+  - code: order
+    name: 订单/借款域
+  - code: repayment
+    name: 还款域
+  - code: message
+    name: 消息域
+  - code: marketing
+    name: 营销/券域
+  - code: operations
+    name: 运营后台域
+
+outputs:
+  scenarios_dir: scenarios
+  indexes_dir: indexes
+  graph_dir: graph
+  playbooks_dir: playbooks
+  reviews_dir: reviews
+
+quality:
+  evidence_required: true
+  allowed_status:
+    - extracted
+    - proposed
+    - verified

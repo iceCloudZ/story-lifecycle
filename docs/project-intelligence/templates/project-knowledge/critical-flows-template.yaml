@@ -1,0 +1,36 @@
+critical_flows:
+  - id: user.register-login
+    name: 注册登录
+    domains: [user, message]
+    must_cover:
+      - scenario
+      - api
+      - table
+      - otp
+      - test_case
+    status: verified
+
+  - id: credit.application
+    name: 授信
+    domains: [user, credit]
+    must_cover:
+      - scenario
+      - api
+      - table
+      - state_machine
+      - bug
+      - test_case
+    status: verified
+
+  - id: order.withdraw
+    name: 提现
+    domains: [order, credit]
+    must_cover:
+      - scenario
+      - api
+      - table
+      - mq
+      - state_machine
+      - bug
+      - test_case
+    status: verified
