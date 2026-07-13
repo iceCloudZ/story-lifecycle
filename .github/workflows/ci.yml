@@ -71,7 +71,7 @@ jobs:
         # story-lifecycle depends on the knowledge package, so contract tests
         # (tests/contracts) are included. Root pyproject testpaths also lists
         # miner/testing, but those are out of scope here until they get CI.
-        run: pytest packages/story-lifecycle/tests tests/contracts -v --timeout=120
+        run: pytest packages/story-lifecycle/tests tests/contracts -v --timeout=120 --durations=20
 
       - name: Coverage (ubuntu/3.12 only — upload artifact)
         # Coverage baseline tracking — NOT a gate yet (baseline 56.1%, target 80%).
@@ -79,7 +79,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
           pytest packages/story-lifecycle/tests tests/contracts \
-            --timeout=120 \
+            --timeout=120 --durations=20 \
             --cov=packages/story-lifecycle/src/story_lifecycle \
             --cov-report=xml:coverage.xml --cov-report=term -q
 
