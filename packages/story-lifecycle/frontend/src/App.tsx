@@ -7,6 +7,7 @@ import QualityDashboard from './pages/QualityDashboard'
 import DiagnosticsPage from './pages/DiagnosticsPage'
 import BugsPage from './pages/BugsPage'
 import DiffPreviewPage from './pages/DiffPreviewPage'
+import ReleaseTrainBoard from './pages/ReleaseTrainBoard'
 import './App.css'
 
 const queryClient = new QueryClient({
@@ -38,6 +39,9 @@ function AppContent() {
           <NavLink to="/bugs" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
             缺陷
           </NavLink>
+          <NavLink to="/release-train" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+            班车看板
+          </NavLink>
         </nav>
       </header>
       <main className="main">
@@ -47,6 +51,7 @@ function AppContent() {
           <Route path="/quality" element={<QualityDashboard />} />
           <Route path="/diagnostics" element={<DiagnosticsPage />} />
           <Route path="/bugs" element={<BugsPage />} />
+          <Route path="/release-train" element={<ReleaseTrainBoard />} />
           <Route path="/diff-preview/:key" element={<DiffPreviewPage />} />
         </Routes>
       </main>

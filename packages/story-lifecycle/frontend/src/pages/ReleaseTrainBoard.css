@@ -1,0 +1,138 @@
+.release-train-board {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.board-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.board-title {
+  margin: 0;
+  font-size: 20px;
+  color: #111827;
+}
+
+.board-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.legend-item {
+  background: #f3f4f6;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.board-add-train {
+  display: flex;
+  gap: 8px;
+}
+
+.board-add-train input {
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  min-width: 160px;
+}
+
+.board-add-train input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.board-swimlanes {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.unassigned-section {
+  background: #fff;
+  border: 1px dashed #d1d5db;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.unassigned-header {
+  font-size: 15px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 12px;
+}
+
+.unassigned-pool {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 80px;
+}
+
+.unassigned-empty {
+  width: 100%;
+  text-align: center;
+  padding: 24px;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.unassigned-card {
+  width: 220px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 10px;
+  cursor: grab;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.unassigned-card:hover {
+  border-color: #2563eb;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.unassigned-card:active {
+  cursor: grabbing;
+}
+
+.unassigned-card-key {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2563eb;
+  margin-bottom: 4px;
+}
+
+.unassigned-card-title {
+  font-size: 13px;
+  color: #1f2937;
+  line-height: 1.35;
+  margin-bottom: 8px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.unassigned-card-state {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  color: #4b5563;
+  background: #e5e7eb;
+}
+
+.board-empty {
+  text-align: center;
+  padding: 40px;
+  color: #9ca3af;
+}

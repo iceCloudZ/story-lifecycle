@@ -31,6 +31,8 @@ export interface Story {
   highSeverityFindings?: number
   // STORY-STATE-MODEL: Story 业务状态(开发/测试/上线),独立第一公民
   lifecycleState?: string | null
+  // 班车看板:story 归属班车(v3.2/v3.3/后台快线/...),NULL=待分配
+  releaseTrain?: string | null
 }
 
 export interface AgentAction {
@@ -289,6 +291,13 @@ export const storyApi = {
   advance: (key: string) => apiAction('PUT', `/api/story/${key}/advance`),
   // STORY-STATE-MODEL: Story 业务状态推进(开发→测试→上线),区别于 /advance(driver resume)
   advanceLifecycle: (key: string) => apiAction('POST', `/api/story/${key}/lifecycle/advance`),
+  // 班车看板:改 story 归属班车(横向拖),train=null 清空回待分配
+  setReleaseTrain: (key: string, train: string | null) =>
+    fetchJSON<{ ok: boolean; releaseTrain: string | null }>(`/api/story/${key}/release-train`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ train }),
+    }),
   skip: (key: string, stage: string) => apiAction('PUT', `/api/story/${key}/skip/${stage}`),
   abort: (key: string) => apiAction('POST', `/api/story/${key}/abort`),
   delete: (key: string) => apiAction('DELETE', `/api/story/${key}`),
