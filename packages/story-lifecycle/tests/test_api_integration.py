@@ -667,6 +667,57 @@ class TestReleaseTrainAPI:
         assert updated["title"] == "更新标题"
 
 
+class TestStateGovernance:
+    """状态治理:is_test 过滤 + lifecycle_state 字段暴露。映射逻辑见 test_sync.py。"""
+
+    def test_is_test_filtered_from_list_by_default(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "SG-REAL-1", title="真实需求", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("SG-REAL-1", intake_state="ready")
+        db.upsert_story(
+            "SG-TEST-1", title="测试数据", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("SG-TEST-1", intake_state="ready", is_test=1)
+        resp = api_client.get("/api/story")
+        keys = [s["storyKey"] for s in resp.json()]
+        assert "SG-REAL-1" in keys
+        assert "SG-TEST-1" not in keys  # is_test=1 默认过滤
+
+    def test_is_test_shown_with_query_flag(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "SG-TEST-2", title="测试数据2", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("SG-TEST-2", intake_state="ready", is_test=1)
+        resp = api_client.get("/api/story?show_test=true")
+        keys = [s["storyKey"] for s in resp.json()]
+        assert "SG-TEST-2" in keys
+
+    def test_is_test_field_exposed_in_serialization(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "SG-SER-1", title="序列化测试", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("SG-SER-1", is_test=1)
+        # 列表序列化
+        resp = api_client.get("/api/story?show_test=true")
+        item = [s for s in resp.json() if s["storyKey"] == "SG-SER-1"][0]
+        assert item["isTest"] is True
+        # 详情序列化
+        detail = api_client.get("/api/story/SG-SER-1").json()
+        assert detail["isTest"] is True
+
+    def test_init_db_idempotent_with_is_test_column(self, isolated_story_home):
+        """S6 回归:init_db() 重复调用不因 is_test 列已存在而报错。"""
+        db.init_db()  # 第一次建表 + 迁移
+        db.init_db()  # 第二次应幂等(列已存在,OperationalError 被 except)
+        db.upsert_story(
+            "SG-IDEM-1", title="幂等迁移", workspace="/tmp", profile="minimal"
+        )
+        # is_test 列可读写(DEFAULT 0)
+        s = db.get_story("SG-IDEM-1")
+        assert s["is_test"] in (0, None)
+
+
 # ---------------------------------------------------------------------------
 # design 逐问澄清 HITL API(runbook 块4/块8):GET /clarify + POST /clarify/answer
 # ---------------------------------------------------------------------------

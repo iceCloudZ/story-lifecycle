@@ -21,7 +21,12 @@ console = Console()
     default=None,
     help="按 TAPD id 拉单个需求/缺陷，绕过 owner/状态过滤（fetch_pending 漏拉时用）",
 )
-def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id):
+@click.option(
+    "--remap-lifecycle",
+    is_flag=True,
+    help="按 profile.tapd_state_map 把 TAPD 状态映射到 lifecycle_state（存量回填配 --status-only 用）",
+)
+def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id, remap_lifecycle):
     """拉取 TAPD 待处理需求/缺陷，同步为本地 story。"""
     from ...infra.db.models import init_db
     from ...sourcing.sources.tapd_source import TapdSource
@@ -86,6 +91,7 @@ def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id):
         workspace=workspace,
         dry_run=dry_run,
         status_only=status_only,
+        remap_lifecycle=remap_lifecycle,
     )
 
     console.print(

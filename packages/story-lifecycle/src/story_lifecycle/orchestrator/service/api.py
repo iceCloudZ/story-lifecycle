@@ -208,6 +208,7 @@ def _serialize_story_summary(s: dict) -> dict:
         "parentKey": s.get("parent_key"),
         "lifecycleState": s.get("lifecycle_state"),
         "releaseTrain": s.get("release_train"),
+        "isTest": bool(s.get("is_test")),
     }
 
 
@@ -614,6 +615,7 @@ def list_stories(
     show_all: bool = False,
     tapd_type: str = "",
     show_completed: bool = False,
+    show_test: bool = False,
 ):
     """List stories with optional filters.
 
@@ -623,6 +625,7 @@ def list_stories(
         show_all: Include completed/failed stories
         tapd_type: Filter by type (story/bug/subtask)
         show_completed: Show completed TAPD stories (default hides resolved/rejected/closed)
+        show_test: Show is_test=1 stories (default hides test/demo data)
     """
     stories = db.list_visible_stories(
         show_all=show_all,
@@ -630,6 +633,7 @@ def list_stories(
         item_type=tapd_type,
         show_completed=show_completed,
         overdue=overdue,
+        show_test=show_test,
     )
 
     return JSONResponse([_serialize_story_summary(s) for s in stories])
@@ -718,6 +722,7 @@ def get_story(story_key: str):
             "subs": sub_list,
             "lifecycleState": s.get("lifecycle_state"),
             "releaseTrain": s.get("release_train"),
+            "isTest": bool(s.get("is_test")),
             # BUG #9:暴露 headless 让前端 ClarifyDialog 据此决定显隐
             # (headless 路径走 MCP clarify→卡片;交互式路径走"终端问人"→不显示卡片)。
             "headless": _story_headless(s),
@@ -1774,6 +1779,7 @@ class SyncRequest(BaseModel):
     status_only: bool = False
     fetch_all: bool = False
     item_type: str = ""  # "bug" | "story" | "requirement" | ""
+    remap_lifecycle: bool = False  # 状态治理:按 tapd_state_map 刷新 lifecycle_state
 
 
 @app.post("/api/sync/tapd")
@@ -1815,6 +1821,7 @@ def api_sync_tapd(req: SyncRequest):
         workspace=workspace,
         dry_run=req.dry_run,
         status_only=req.status_only,
+        remap_lifecycle=req.remap_lifecycle,
     )
 
     # Also pull bugs linked to stories via TAPD get_related_bugs, which catches
@@ -1836,7 +1843,8 @@ def _sync_related_bugs_from_stories(source, item_type_filter: str = "") -> dict:
     if item_type_filter == "bug":
         return result
 
-    stories = db.list_visible_stories(show_all=True, item_type="story")
+    # show_test=True:测试 story 的关联 bug 同步不能因 is_test 过滤而漏。
+    stories = db.list_visible_stories(show_all=True, item_type="story", show_test=True)
     stories = [
         s for s in stories if s.get("source_type") == "tapd" and s.get("source_id")
     ]

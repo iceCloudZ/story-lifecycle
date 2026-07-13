@@ -33,6 +33,8 @@ export interface Story {
   lifecycleState?: string | null
   // 班车看板:story 归属班车(v3.2/v3.3/后台快线/...),NULL=待分配
   releaseTrain?: string | null
+  // 状态治理:测试/demo story 标记,看板默认过滤掉
+  isTest?: boolean | null
   // BUG #9:是否 headless 执行(从 profile execution_mode 推导)。
   // headless→MCP clarify+前端卡片;交互式→终端直接问人(卡片不显示)。
   headless?: boolean

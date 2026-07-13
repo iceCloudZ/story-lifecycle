@@ -40,7 +40,17 @@ export default function ReleaseTrainBoard() {
   })
 
   const boardStories = useMemo(() => {
-    return (stories || []).filter((s) => s.intakeState === 'ready')
+    // 状态治理:只显示已上架(ready)、非测试、且引擎未完结的 story。
+    // - intakeState==='ready':过了 intake 的需求才上车
+    // - !isTest:过滤测试/demo 数据(后端默认也过滤,这里双保险)
+    // - status 非终态:引擎已 completed/failed/aborted/archived 的不上看板
+    const TERMINAL_STATUS = ['completed', 'failed', 'aborted', 'archived']
+    return (stories || []).filter(
+      (s) =>
+        s.intakeState === 'ready' &&
+        !s.isTest &&
+        !(s.status && TERMINAL_STATUS.includes(s.status)),
+    )
   }, [stories])
 
   const trainNames = useMemo(() => {

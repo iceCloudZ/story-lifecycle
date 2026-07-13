@@ -35,6 +35,7 @@ VALID_COLUMNS = frozenset(
         "driver_claim",
         "lifecycle_state",
         "release_train",  # 班车归属(v3.2/v3.3/后台快线/NULL)
+        "is_test",  # 测试/demo story 标记(0=正常,1=测试),看板与列表默认过滤
     }
 )
 
@@ -275,6 +276,12 @@ def init_db():
         # 字符串字段,不建表;NULL 表示待分配。同步时不覆盖(跟 intake_state 同理)。
         try:
             conn.execute("ALTER TABLE story ADD COLUMN release_train TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # is_test:测试/demo story 标记(0=正常,1=测试)。看板与列表默认过滤 is_test=0,
+        # 避免本地跑测试/seed 造的数据污染真实看板。同步默认 0(真实数据)。
+        try:
+            conn.execute("ALTER TABLE story ADD COLUMN is_test INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
             pass
 
@@ -559,6 +566,7 @@ def list_visible_stories(
     item_type: str = "",
     show_completed: bool = False,
     overdue: bool = False,
+    show_test: bool = False,
 ) -> list[dict]:
     """Gather + filter stories for list views.
 
@@ -571,6 +579,7 @@ def list_visible_stories(
     item_type: filter by tapd_type (story/bug/subtask).
     show_completed: keep resolved/rejected/closed TAPD stories (hidden by default).
     overdue: only stories past their deadline.
+    show_test: keep is_test=1 stories (hidden by default to keep worklist clean).
     """
     stories = list_active_stories() + list_candidate_stories()
     # completed (successfully finished) shows by default so done work isn't buried;
@@ -593,6 +602,10 @@ def list_visible_stories(
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         stories = [s for s in stories if s.get("deadline") and s["deadline"][:10] < now]
+    if not show_test:
+        # is_test:0/1/NULL 都按「非测试」处理(not None / not 0 = keep)。
+        # 老行迁移后 DEFAULT 0,新建真实数据 0,仅测试/demo 造的置 1。
+        stories = [s for s in stories if not s.get("is_test")]
     return stories
 
 

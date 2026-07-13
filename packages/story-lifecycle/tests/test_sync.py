@@ -164,6 +164,92 @@ class TestSyncService:
         assert result["updated"] == 0
 
 
+class TestStateMapping:
+    """状态治理:TAPD status → lifecycle_state 映射(tapd_state_map)+ 防回退。
+
+    映射表在 minimal.yaml 的 tapd_state_map 段;防回退沿 story_states 的 next 链判断。
+    """
+
+    def _item(self, item_id, item_type="requirement", status="", title="t"):
+        return SourceItem(
+            id=item_id,
+            source="tapd",
+            item_type=item_type,
+            title=title,
+            description="",
+            status=status,
+            extra={},
+        )
+
+    def test_new_story_closed_maps_to_jiexiang(self, isolated_story_home):
+        """新建 story:TAPD closed → lifecycle_state=结项(从无到有,无防回退)。"""
+        from story_lifecycle.orchestrator.service.sync_service import sync_tapd
+
+        items = [self._item("5001", "requirement", status="closed", title="已关闭需求")]
+        sync_tapd(items, workspace="/tmp/ws")
+        s = db.get_story("tapd-5001")
+        assert s["lifecycle_state"] == "结项"
+
+    def test_new_bug_resolving_maps_to_kaifa(self, isolated_story_home):
+        """新建 bug:TAPD resolving → lifecycle_state=开发(Q2 拍板)。"""
+        from story_lifecycle.orchestrator.service.sync_service import sync_tapd
+
+        items = [self._item("bug_6001", "bug", status="resolving", title="修复中")]
+        sync_tapd(items, workspace="/tmp/ws")
+        s = db.get_story("tapd-bug_6001")
+        assert s["lifecycle_state"] == "开发"
+
+    def test_update_maps_resolved_to_shangxian(self, isolated_story_home):
+        """已有 story(开发态)同步 resolved → 推进到上线。"""
+        from story_lifecycle.orchestrator.service.sync_service import sync_tapd
+
+        db.upsert_story_from_source(
+            source_type="tapd", source_id="5002", title="进行中", tapd_status="progressing"
+        )
+        db.update_story("tapd-5002", lifecycle_state="开发")
+        items = [self._item("5002", "requirement", status="resolved", title="已解决")]
+        sync_tapd(items, workspace="/tmp/ws")
+        assert db.get_story("tapd-5002")["lifecycle_state"] == "上线"
+
+    def test_is_forward_prevents_regression(self, isolated_story_home):
+        """防回退:story 已在'上线',同步映射到'开发'不写(防回退)。"""
+        from story_lifecycle.orchestrator.service.sync_service import sync_tapd
+
+        db.upsert_story_from_source(
+            source_type="tapd", source_id="5003", title="已上线"
+        )
+        db.update_story("tapd-5003", lifecycle_state="上线")
+        # progressing 映射到"开发",但当前是"上线",开发不在上线的 next 链上 → 不写
+        items = [self._item("5003", "requirement", status="progressing", title="更新")]
+        sync_tapd(items, workspace="/tmp/ws")
+        assert db.get_story("tapd-5003")["lifecycle_state"] == "上线"  # 未回退
+
+    def test_unmapped_status_leaves_lifecycle_unchanged(self, isolated_story_home):
+        """未命中映射表的 tapd_status(如 open)不动 lifecycle_state。"""
+        from story_lifecycle.orchestrator.service.sync_service import sync_tapd
+
+        db.upsert_story_from_source(
+            source_type="tapd", source_id="5004", title="新需求"
+        )
+        db.update_story("tapd-5004", lifecycle_state="测试")
+        items = [self._item("5004", "requirement", status="open", title="更新")]
+        sync_tapd(items, workspace="/tmp/ws")
+        assert db.get_story("tapd-5004")["lifecycle_state"] == "测试"  # 未动
+
+    def test_status_only_backfills_lifecycle(self, isolated_story_home):
+        """存量回填:已有 story 重跑同步,走更新分支按映射刷新 lifecycle_state。"""
+        from story_lifecycle.orchestrator.service.sync_service import sync_tapd
+
+        # 模拟存量:tapd_status=closed 但 lifecycle_state 还停在开发(历史未映射)
+        db.upsert_story_from_source(
+            source_type="tapd", source_id="5005", title="存量", tapd_status="closed"
+        )
+        db.update_story("tapd-5005", lifecycle_state="开发")
+        items = [self._item("5005", "requirement", status="closed", title="存量")]
+        sync_tapd(items, workspace="/tmp/ws", status_only=True)
+        assert db.get_story("tapd-5005")["lifecycle_state"] == "结项"
+
+
 class TestTapdSourceFetchAll:
     def test_fetch_all_overrides_status_filter(self):
         from unittest.mock import patch
