@@ -8,6 +8,31 @@ from .tapd_api import TapdApi
 
 log = logging.getLogger(__name__)
 
+# 分页安全阀:单次 fetch_pending 最多翻 50 页(按 limit=200 约 1 万条,limit=20 约 1000 条)。
+# TAPD 不返回 total,靠"返回条数 < limit 判定末页"翻页;若 TAPD 异常持续返回满页,此阀防死循环。
+MAX_PAGES = 50
+
+
+def _paginated(
+    fetcher,
+    base_params: dict,
+    limit: int,
+) -> list[dict]:
+    """翻页拉取 TAPD 列表,直到返回不满一页或触达 MAX_PAGES 安全阀。
+
+    fetcher: 单页拉取函数(params) -> list[dict](原始 TAPD 记录)。
+    base_params: 不含 page/limit 的查询参数(如 status/current_owner)。
+    limit: 每页大小。TAPD 满页(len==limit)→ 继续翻下一页;不满页 → 末页停。
+    """
+    all_rows: list[dict] = []
+    for page in range(1, MAX_PAGES + 1):
+        params = {**base_params, "page": page, "limit": limit}
+        rows = fetcher(params) or []
+        all_rows.extend(rows)
+        if len(rows) < limit:
+            break  # 不满页 = 末页
+    return all_rows
+
 
 class TapdSource(StorySource):
     def __init__(self, config: dict):
@@ -54,14 +79,10 @@ class TapdSource(StorySource):
 
         # Fetch ALL parent stories (unfiltered), then filter by custom_field_25
         for status in statuses:
-            params = {
-                "entity_type": "stories",
-                "limit": 200,
-                "parent_id": "0",
-            }
+            base = {"entity_type": "stories", "parent_id": "0"}
             if status:
-                params["status"] = status
-            raw_list = self._api.get_stories(params)
+                base["status"] = status
+            raw_list = _paginated(self._api.get_stories, base, limit=200)
             for r in raw_list:
                 flat = r.get("Story", r)
                 # Only include stories where user is the backend developer
@@ -76,8 +97,10 @@ class TapdSource(StorySource):
         # Fetch child stories — only user's tasks + test tasks
         for item in list(results):
             try:
-                children = self._api.get_stories(
-                    {"entity_type": "stories", "parent_id": item.id, "limit": 50}
+                children = _paginated(
+                    self._api.get_stories,
+                    {"entity_type": "stories", "parent_id": item.id},
+                    limit=50,
                 )
                 for r in children:
                     flat = r.get("Story", r)
@@ -103,13 +126,12 @@ class TapdSource(StorySource):
         if not statuses or "*" in statuses:
             statuses = [None]  # single pass without status filter
         for status in statuses:
-            params = {
-                "limit": 20,
-                "current_owner": self.owner,
-            }
+            # 分页拉取:之前 limit=20 且不翻页,bug 超过 20 个就会被截断(老 bug 状态永远刷不到)。
+            # 现用 _paginated 满页续翻,limit=200 减少调用次数。
+            base = {"current_owner": self.owner}
             if status:
-                params["status"] = status
-            raw_list = self._api.get_bugs(params)
+                base["status"] = status
+            raw_list = _paginated(self._api.get_bugs, base, limit=200)
             for r in raw_list:
                 flat = r.get("Bug", r)
                 item = self._parse_bug(flat)
