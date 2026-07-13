@@ -290,6 +290,209 @@
 
 ---
 
+## BUG #14 — design prompt 错误禁止 brainstorming skill（与 profile 配置矛盾）
+
+**严重度**：**高**
+**现象**：design 阶段注入的 prompt 里写明「**不要调用 brainstorming skill**（hc-all 重环境发散/context rot，自由探索会卡死）」，但 minimal.yaml 里 design 阶段显式配了 `skill: "/brainstorming"`。CLI 收到两条互相打架的指令——profile 让它调，prompt 又禁它调。
+
+**根因**：历史遗留。后来加了"13 维度 checklist"想做结构化的产品→技术转化，顺手在 prompt 里写了禁令替代 brainstorming 自由探索，但：(1) 没跟产品确认就废了 skill；(2) 忘了同步删 profile 的 `skill` 字段。两边都没改干净，留下矛盾。
+
+**代码引用**：
+- prompt 禁令（要删）：`orchestrator/engine/prompt_sections.py:252`
+  ```python
+  "**不要调用 brainstorming skill**（hc-all 重环境发散/context rot，自由探索会卡死）；"
+  ```
+- docstring 同样表述（要改）：`prompt_sections.py:221、227-228`
+- profile 配置（要保留）：`entry/profiles/minimal.yaml:20` —— `skill: "/brainstorming"`
+- 另外两个 profile 也有同款 skill 字段：`demo.yaml:10`、`strict.yaml:13`
+
+**影响**：design 阶段本应让 CLI 调 brainstorming 做发散，结果被 prompt 显式禁止。维度 checklist 与 brainstorming 本可共存（发散 + 收敛），现在被禁令卡死一边。
+
+**修复方向**（已与产品确认：**要调 brainstorming**）：
+- 删 `prompt_sections.py:252` 的禁令；docstring 221/227 同步改。
+- 维度 checklist 与 brainstorming 共存——brainstorming 做发散，checklist 做收敛/兜底。
+- 不动 profile 的 `skill` 字段。
+
+---
+
+## BUG #15 — 安全 playbook 全量注入，价值存疑 + 可能加重 context rot
+
+**严重度**：中
+**现象**：design 阶段把整个 `security-parameter-trust.md`（Parameter Trust 框架 + 分级表 + 三要素表 + 历史模式表 + §9 要求 + 常见坑）全量塞进 prompt，实测占整段 prompt ~60%。用户实测反馈"没什么作用，都没看懂"。讽刺的是：代码注释本意是防 context rot（`prompt_sections.py:227`），结果全量注入反而可能加重它。
+
+**根因**：`build_design_dimensions_section` 的 playbook 注入只做了 `split("## 怎么用")[0]` 的粗截断（`prompt_sections.py:278`），把"怎么用"章节之前的全部内容（框架/分级/三要素/模式/§9/坑）无差别塞进去。**不区分需求类型**——一个"前端展示组件"的需求和"配置类 CRUD"的需求拿到的是同一份完整安全框架。
+
+**代码引用**：
+- 全量截断逻辑：`orchestrator/engine/prompt_sections.py:278`
+  ```python
+  _snippet = _content.split("## 怎么用")[0]
+  ```
+- 注入位置：`prompt_sections.py:279-283`（`section += "### 安全维度参考..."`）
+- 注入文件：`<workspace>/.story/knowledge/playbooks/security-parameter-trust.md`（实测 59 行，注入约 54 行）
+- failsafe 吞异常：`prompt_sections.py:284`（`except Exception: pass`）——文件不存在不报错，但存在就全塞
+
+**影响**：
+- prompt 体积虚胖（~60% 给了一个维度），挤占真正跟需求相关的上下文。
+- 对低风险需求（纯展示/只读）过度注入，LLM 可能被带偏去过度设计安全校验。
+- 人审 prompt 时读不懂、抓不住重点。
+
+**修复方向**（需产品拍板，有分叉）：
+- A. **触发式注入**：prompt 里只放一句"做安全维度时，读 `<path>`"，让 claude 按需自查文件（agentic RAG 思路，跟 kb.py 一致）。
+- B. **按需求类型条件注入**：`task_type` 命中 admin/CRUD/资金类才注入完整框架；展示/只读类只注入 §9 清单骨架。
+- C. **缩成骨架**：只注入"三步框架 + §9 必填项"，分级表/模式表/坑留给 claude 自查文件。
+
+---
+
+## BUG #16 — task_type 关键词分类顺序错误，"Loan" 类前端需求被误分到 fund-flow
+
+**严重度**：中
+**现象**：story `tapd-1144381896001066924`（标题「【HC】新增Loan Disclosure Statement展示+贷款协议更新」，本质是**前端展示 + 协议更新**）被 `classify_task_type` 分成了 `fund-flow`。实测 DB `context_json.task_type = "fund-flow"`，导致 `kb.py bugs fund-flow` 注入的高风险文件/磁铁指向资金流，跟"前端展示组件"不对路——**知识注入指向错了**。
+
+**根因**：`classify_task_type` 是**首个关键词命中即返回**（`prompt_sections.py:101-102`），而 `TASK_TYPE_KEYWORDS` 列表里 `fund-flow`（含 "loan"/"Loan"，第 50 行）排在 `frontend`（第 83 行）**前面**。标题里的 "Loan" 先命中 fund-flow 就直接返回，**根本没机会走到 frontend**。纯关键词 + 顺序敏感，没有权重/多命中投票。
+
+**代码引用**：
+- 首命中即返回：`orchestrator/engine/prompt_sections.py:99-102`
+  ```python
+  for task_type, kws in TASK_TYPE_KEYWORDS:
+      for kw in kws:
+          if kw.lower() in haystack:
+              return task_type
+  ```
+- fund-flow 关键词含 "loan"：`prompt_sections.py:39-52`（"loan" 在第 50 行）
+- frontend 关键词：`prompt_sections.py:83`（"前端/admin/页面/frontend/protable/proform/组件"）
+- 顺序问题：fund-flow（39）排在 frontend（83）前
+- 调用点（story 创建时实时分类）：`orchestrator/service/story_service.py:140-144`
+  ```python
+  from ..engine.prompt_sections import classify_task_type
+  task_type = classify_task_type(title, description)
+  ```
+
+**数据证据**：标题「...Loan Disclosure Statement展示+贷款协议更新」—— "Loan" 命中 fund-flow；"展示" 本可命中 frontend，但永远轮不到。
+
+**影响**：
+- 知识注入指向错（`kb.py bugs/playbook fund-flow` 拿到资金流知识，而非前端知识）。
+- 影响所有"Loan/放款/还款"字样但同时是前端/展示类的需求——在借贷业务里这类需求不少。
+- task_type 还会流向 `knowledge_provider` 的 bootstrap（项目结构注入），误导扩大。
+
+**修复方向**（已与产品确认 2026-07-13：**关键词方法本身不对,升级为 LLM 分类**）：
+- **落点**：`create_and_start_story`（`story_service.py:140-144`），把 `classify_task_type`（关键词）换成 `call_llm_json`（LLM）。
+- **时机**：点「读取 TAPD」→ `create_story_from_source` → 此时 `item.description` + PRD 都已在手 → 传 LLM 分类 → **纯同步**（阻塞 create 返回几秒,前端可接受）→ 写 `context_json.task_type`。
+- **输入**：title + description（PRD 此时刚 `fetch_prd_content` 落盘,可选喂摘要）。
+- **输出**：13 个受控词汇之一（`TASK_TYPE_KEYWORDS` 的 key,保证下游 `build_kb_tool_section` 认）。
+- **兜底**：LLM 失败/超时 → 回退关键词分类（沿用现有 `except: pass` 防御,不阻塞 story 创建）。
+- **基建**：复用 `sourcing/planner/llm.py:call_llm_json`（decomposer/idea_expander 已在用）。
+- **关键词分类保留**：降级为 LLM 兜底,不删（`classify_task_type` 函数留着）。
+- **竞态**：纯同步无竞态——分类在 `create_and_start_story` 内完成,后续 `start_story_async`（:447）读 task_type 时已就绪。
+- **不做**：不在 TAPD batch sync（`sync_service.py`）加分类——那条路径 story 是 candidate/idle,等 promote 时再分;避免 sync 批处理被 LLM 调用拖慢。
+
+---
+
+## BUG #17 — stage 产出文档不登记进 story_document 表，前端「文档」卡片永远只有 PRD
+
+**严重度**：**高**
+**现象**：design/build/verify 完成后，产出文件（design.md / plan.md / test-report.md）不进 `story_document` 表，前端「文档」卡片永远只显示 intake 时登记的 PRD。实测 story `tapd-1144381896001066924`：design 阶段已成功完成，`design.md`（10KB）产出在证据目录，done JSON 明确写了 `files_changed: ["story/.../design.md"]`，但 `story_document` 表仍只有 1 条 PRD 记录，卡片显示「文档(1)」。
+
+**根因**：**功能缺失（不是代码坏了，是压根没写）**。planner 的 done 消费块能感知 done 文件、读出整个 `done_data`（含 `files_changed`），但感知之后**只用 `summary` 写进 event log，`files_changed` 读进来就扔了**——没有任何代码把它落进 `story_document`。全包只有 PRD 在 intake 时被登记（`story_service.py:150`），design/build/verify 的产出**全都不登记**。
+
+**代码引用**：
+- done 消费块（感知了但不登记）：`orchestrator/engine/planner.py:1026-1032`
+  ```python
+  if done_path.exists():
+      done_data = robust_json_parse(done_path) or {}      # :1031  files_changed 已解析进来
+      db.log_event(story_key, stage, "completed", done_data)  # :1032  只写 event log
+      # ← 缺口：done_data["files_changed"] 之后再没人读
+  ```
+- `files_changed` 唯一被读的地方（只写进自由文本 retrospect.md，不进 DB）：`planner.py:418`
+- PRD 登记点（intake 时，全包唯一的 stage 外登记）：`story_service.py:150` + `api.py:2938`
+- `db.create_document` 定义（幂等 on `(story_key, kind, ref)`）：`infra/db/models.py:1781`
+- **现成但没接进流程的逻辑**：`auto_discovery.py` 的 Scanner（扫 `**/story/**/spec.md`/`research.md`/`plan.md`/`test-report.md`，:141-158）+ Decider（emit `new_documents`，:190-246）+ Handler（`INSERT INTO story_document`，:310-328）—— 只挂在手动接口 `POST /api/story/{key}/context/refresh`（`api.py:1967`），**从未接进 stage 完成流程**。
+- **连带缺口**：design prompt 模板让 claude「使用 `story-context` 工具回写 research/spec 文档引用」（`infra/prompts/design.md:22`），但**这个工具不存在**（`agent_tools.py` 无定义）。claude 只能把路径写进 done JSON，无人接。
+
+**关键事实（答两个澄清）**：
+1. **这步不需要 LLM 介入**——done JSON 里 claude 已写 `files_changed`，planner 做"解析 JSON → 拿路径 → 调 `create_document`"即可，纯确定性。`kind`（文档类型）按 stage 名推导（design→spec/research，build→plan，verify→test_report），也是确定性的。
+2. **done 文件编排有感知**——`planner.py:1031` 读出整个 `done_data`（含 `files_changed`），但感知到之后没动作。**感知有了，动作没接上**，这就是缺的那一步。
+
+**影响**：
+- 前端「文档」卡片永远只有 PRD，用户看不到 design/plan/test-report 产出，失去 stage 产物的可追溯性。
+- done JSON 里 claude 如实写的 `files_changed`/`spec_path` 被白白丢弃。
+- `auto_discovery` 的现成扫描逻辑闲置，只在用户手动点 refresh 时才跑。
+
+**修复方向**（建议，待产品确认）：
+- **落点**：`planner.py:1032`（`db.log_event` 那行）之后，插入一段确定性登记逻辑。
+- **做法（done JSON 驱动，推荐）**：读 `done_data["files_changed"]`，对每个路径调 `db.create_document(story_key, kind, ref=path)`；`kind` 按 stage 推导（design→spec/research，build→plan，verify→test_report）。纯 Python，不调 LLM。
+- **兜底**：若 done JSON 没写 `files_changed`（claude 偶尔漏写），可回退调 `auto_discovery` 扫证据目录。
+- **顺带**：要么实现 `story-context` 工具让 claude 显式回写，要么删掉 `design.md:22` 那条引用（避免 prompt 指向不存在的工具）。
+
+---
+
+## BUG #18 — build 阶段不走 worktree、不建 feature 分支，claude 就地改 master/test
+
+**严重度**：**高**
+**现象**：点「开始实现」进 build 阶段后，claude 在主工作区（`D:\hc-all`）的**当前 checkout 分支**（master/test）上就地改代码，既没创建 git worktree，也没按 `branch_rule` 建 feature 分支。实测 story `tapd-...066924`：hc-config 在 master 上改、hc-order 在 test 上改，均未建分支——违反项目的「feature 分支隔离」纪律。
+
+**根因**：**PRESENT-but-BROKEN**。worktree 引擎（resolver→decider→handler）完整存在且能用，但 planner 的 build 启动路径**从不调它**，claude 的 `cwd` 直接是主工作区。planner 自己的注释承认了这点，并把分支隔离的判断**甩给了 LLM**（prompt 只给 advisory 文本 + 两条示例 git 命令），LLM 实际不会主动建 worktree。`branch_rule` 在 story start 时渲染成字符串存进 `story_project.branch`，但**从没被用来真正 `git branch`/`git worktree`**。
+
+**代码引用**：
+- worktree 引擎完整存在：`orchestrator/workspace/worktree/handler.py:22`（`prepare_worktrees`）+ `:323`（`_create_worktree` 跑 `git worktree add`）+ `:361`（`_derive_worktree_path`）
+- **唯一调用方是手动接口**：`orchestrator/service/api.py:2445-2452`（`POST /api/story/{key}/worktrees/prepare`）—— planner 从不 import/调用 `prepare_worktrees`
+- planner 自承甩给 CLI（问题根源）：`orchestrator/engine/planner.py:1391-1394`
+  ```python
+  # 项目仓库与分支隔离：注入每个绑定仓库的分支/基线/路径，由 CLI 自行判断
+  # 是否需要 worktree 或切分支。后端的 prepare_worktrees 仍是可选的手动 API，
+  # 这里走"让 CLI 判断"的路线。
+  ```
+- claude cwd 永远是主工作区：`planner.py:494`（`workspace = story.get("workspace")`）、`:783`（headless `cwd=workspace`）、`:845`（interactive PTY `cwd=workspace`）、`:960`（retry）
+- build prompt 只给 advisory：`planner.py:1395-1412`（`worktree_section` 只打印分支名 + 两条示例命令，让 claude 自己决定是否隔离）
+- branch_rule 渲染存库但不落地：`workspace/branch_naming.py:74`（`generate_branch_for_story`）+ `api.py:2851-2859`（start 时 `bind_story_project(branch=..., worktree_state="unprepared")`）
+- start 时 workspace 设为主 repo 根（非 worktree）：`api.py:2874-2875`（`_workspace_root_for_project`）
+
+**影响**：
+- claude 直接污染 master/test 分支工作区，未上线代码混入测试汇聚分支（hc-order 的 test）。
+- `branch_rule` 形同虚设——配了 `feature/{author}/{key}_{summary}_{date}` 却从没建出来。
+- 多 story 并发时无隔离，改动互相覆盖。
+- worktree 引擎闲置，只在用户手动点「prepare worktree」时才跑。
+
+**修复方向**（建议，待产品确认）：
+- **落点**：planner build 阶段 launch 前（`planner.py:624-693` 的 `launch` action handler 里），对每个 `db.get_story_projects(story_key)` 里 `worktree_state == "unprepared"` 的项目，调 `prepare_worktrees(story_key)`。
+- **launch cwd 改成 worktree**：`sp["worktree_path"]` 替代 `workspace`（`planner.py:783,845,960`）。
+- **prompt 改成确定性指令**：`worktree_section` 从 advisory 改为"你已在 worktree `<path>` 分支 `<branch>` 上，直接在此改代码"（不再是让 claude 自己判断）。
+- 现成基建：`prepare_worktrees`/`_create_worktree`/`WorktreeState`/decider 全写好且测试过，**只差接进 launch 路径这一步**。
+
+---
+
+## BUG #19 — build 阶段不用 kimi 编码 + ClaudeAdapter 完全忽略 model 参数
+
+**严重度**：**高**
+**现象**：用户预期 build（编码）阶段用 kimi 写代码，实测 minimal profile 跑的是 claude。claude 启动命令不含 `--model` flag，用 claude 自己的默认模型。
+
+**根因**：两个独立问题叠加。
+
+1. **配置错位**：`minimal.yaml:34` build 阶段 `cli: claude`，**不是 kimi**。kimi 只在 `realtest.yaml:28` 配过（`cli: kimi`）。用户的意图"build 用 kimi"对应的是把 minimal 的 build `cli` 改成 `kimi`，但当前配置没这么写。
+2. **ClaudeAdapter 忽略 model**：即使 profile 里写了 `model` 字段，`ClaudeAdapter` 的三个 launch 方法都**丢弃 model 参数，不加 `--model` flag**。`allowed_providers` 列表更是纯 advisory（只喂给 router LLM 的提示文本），**没有任何强制效果**。
+
+**代码引用**：
+- minimal build 用 claude（配置错位）：`entry/profiles/minimal.yaml:34`（`cli: claude`）；对比 `realtest.yaml:28`（`cli: kimi  # 用户确认:编码用 kimi`）
+- ClaudeAdapter 忽略 model：`knowledge/adapters/claude.py:30-31`（`launch_cmd` 返回 `"claude"`）、`:33-58`（`interactive_launch_cmd` 无 `--model`）、`:60-68`（`headless_launch_cmd` 无 `--model`）
+  ```python
+  def launch_cmd(self, model: str) -> str:
+      return "claude"          # model 参数被忽略
+  ```
+- planner 读 model 但下游丢弃：`planner.py:684-693`（`model = cfg.model` → `adapter.interactive_launch_cmd(model=model)`）—— 传了但 adapter 不用
+- allowed_providers 无强制：`orchestrator/engine/router.py:29`（唯一消费点，advisory 文本）；`profile_loader.py:152`（读入 dataclass 后无人校验）
+- kimi 注册为 ShellAdapter：`~/.story-lifecycle/adapters.yaml`（`kimi: {binary: kimi, launch_cmd: kimi, inject_method: stdin}`，**无 model_flag**）；`knowledge/adapters/shell.py:78-81`（ShellAdapter 支持 model_flag，但 kimi 配置没写）
+- get_story_cli_model 默认 sonnet：`story_service.py:173`（`cfg.get("model", "sonnet")`）
+
+**影响**：
+- build 阶段实际跑 claude 默认模型，不是用户想要的 kimi。
+- `allowed_providers` 字段给人"在约束模型选择"的错觉，实际是死的。
+- 即使后续把 build `cli` 改 kimi，kimi 的 `adapters.yaml` 也没配 `model_flag`，照样不传模型。
+
+**修复方向**（建议，待产品确认，两层）：
+- **配置层**：minimal.yaml build 阶段 `cli` 改成 `kimi`（或在 profile 顶层加 `cli: kimi` for build）；kimi 的 `adapters.yaml` 补 `model_flag`（如 `--model`）+ 指定 model。
+- **代码层**：`ClaudeAdapter` 的三个 launch 方法加 `--model` 支持（当 `model` 非空时 `cmd += ["--model", model]`），否则 profile 里写 model 永远不生效。顺带评估 `allowed_providers` 要么做成真约束（launch 前校验），要么从 profile 删掉避免误导。
+
+---
+
 ## 附：bug 之间的依赖关系
 
 ```
@@ -301,6 +504,21 @@
 #8 (PTY 渲染)         — 独立，待验证
 #2 (不跳终端)         — 独立
 #6 (文案)             — 独立
+#14 (禁 brainstorming) — 独立，profile↔prompt 矛盾
+#15 (playbook 全量)    — 独立，prompt 体积/价值
+#16 (task_type 误分)   — 独立，但影响面广(知识注入+bootstrap 都吃 task_type)
+#17 (产出文档不登记)   — 独立，影响所有 stage 的产物可追溯性
+#18 (build 不走 worktree) — 独立，worktree 引擎现成但没接进 launch
+#19 (build 不用 kimi)   — 两层:配置错位(minimal build=claude) + ClaudeAdapter 忽略 model
 ```
 
-**建议评估优先级**：#7、#9（高，影响正确性）→ #4（决定 #1/#5 走向）→ #3/#2/#8 → #6。
+**建议评估优先级**：
+- **高（影响正确性）**：#7、#9、#14（禁 brainstorming 与产品意图直接相反）、#17（stage 产物丢失可追溯性）、#18（build 污染主分支）、#19（build 没用对的编码工具）
+- **中（影响质量/体验）**：#16（知识注入指向错）、#4（决定 #1/#5 走向）、#15（prompt 体积/价值，需产品拍板修复方向）
+- **低/延后**：#3/#2/#8（体验/渲染）、#6（文案）、#1/#5（依赖 #4 决策）
+
+**状态**（2026-07-13 更新）：
+- 已修复（上轮提交 `df3d105e`）：#1、#2、#5、#6、#7、#9、#10 + 终端 UI #11/#12/#13（未单独入此档）
+- 延后：#3（PTY 孤儿，独立评估）、#8（PTY 120 列渲染，待验证）
+- 本轮新增待修：#14、#15、#16、#17、#18、#19
+- **#14、#16、#17 已定调可动手**；**#18、#19 修复方向待确认**（#18 涉及 launch 路径改 cwd + prompt 从 advisory 改确定；#19 涉及配置错位 + ClaudeAdapter 加 model 支持）；#15 修复方向仍有分叉（触发式/按类型/缩骨架）

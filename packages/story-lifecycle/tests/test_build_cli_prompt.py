@@ -53,8 +53,8 @@ class TestNoHeavyBuildCommands:
 
 
 class TestDesignDimensions:
-    """design 阶段注入「维度 checklist + 禁 brainstorming + 高价值维度 playbook」,
-    替代 brainstorming 自由探索(在 hc-all 重环境发散/context rot,见 runbook §7.4)。"""
+    """design 阶段注入「维度 checklist + 高价值维度 playbook」。
+    brainstorming 与 checklist 共存(BUG #14:不再禁止 brainstorming)。"""
 
     def test_design_stage_has_dimension_checklist(self, tmp_path):
         p = _build("design", tmp_path)
@@ -62,10 +62,13 @@ class TestDesignDimensions:
         # 13 维度关键词抽检
         assert "数据模型" in p and "安全" in p and "降级" in p and "接口契约" in p
 
-    def test_design_stage_forbids_brainstorming(self, tmp_path):
+    def test_design_stage_allows_brainstorming(self, tmp_path):
+        """BUG #14: brainstorming 不再被禁止,与 checklist 共存。"""
         p = _build("design", tmp_path)
         assert "brainstorming" in p
-        assert ("不要调用" in p) or ("禁止" in p) or ("不要调" in p)
+        # 不应出现禁止性措辞
+        assert "不要调用 brainstorming" not in p
+        assert "禁止" not in p
 
     def test_design_stage_injects_security_playbook(self, tmp_path):
         # 造假 workspace + security playbook,验注入逻辑(不依赖真实 hc-all)

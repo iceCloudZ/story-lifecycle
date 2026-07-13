@@ -218,14 +218,14 @@ def build_design_dimensions_section(
     *,
     interactive: bool = False,
 ) -> str:
-    """design 阶段注入「设计维度 checklist + 禁 brainstorming + 逐问澄清 + 高价值维度 playbook」。
+    """design 阶段注入「设计维度 checklist + 逐问澄清 + 高价值维度 playbook」。
+
+    与 brainstorming skill 互补:brainstorming 做发散探索,维度 checklist 做收敛/兜底,
+    确保每个维度都被覆盖到(产品→技术转化)。两者共存,不互斥。
 
     ``interactive``:交互式终端路径(``claude "query"``,无 --mcp-config)传 True —— 逐问
     澄清改为「在终端直接问人」(交互式 claude 没 ``mcp__lifecycle__clarify`` 工具,提了会报错)。
     默认 False(自主 headless -p 路径,有 MCP)保留「调 ``mcp__lifecycle__clarify``」。
-
-    替代 brainstorming 自由探索——后者在 hc-all 重环境发散/context rot(见
-    docs/real-story-e2e-runbook.md §7.4)。让 agent 按维度做产品→技术转化。
 
     **逐问澄清(外接 MCP)**:遇关键岔路(不澄清就出不了正确方案)时,调用
     ``mcp__lifecycle__clarify(question, options)`` 工具提问——编排层暴露的 in-process
@@ -249,8 +249,8 @@ def build_design_dimensions_section(
         _clarify = "**调用 `mcp__lifecycle__clarify` 工具**提问（一次一个：question + 2-4 个 options），拿到人答再继续"
     section = (
         "\n## 设计维度 checklist（产品→技术转化框架）\n"
-        "**不要调用 brainstorming skill**（hc-all 重环境发散/context rot，自由探索会卡死）；"
-        "按下面维度逐个做产品→技术转化。**遇关键岔路**（多种选择/信息缺失/资方差异，且不澄清"
+        "可先用 brainstorming skill 做发散探索，再按下面维度逐个收敛做产品→技术转化，"
+        "确保每个维度都覆盖到。**遇关键岔路**（多种选择/信息缺失/资方差异，且不澄清"
         f"就出不了正确方案）时，{_clarify}；**基于已答内容决定下一个问，勿重复问已答过的**。"
         "无歧义的维度直接输出一条决策点（选择 + 理由）到完成协议的 decision_points:\n"
         "1. 现状分析（现有代码/链路） 2. 架构数据流 3. 数据模型（表/字段/索引/历史数据）"

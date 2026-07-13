@@ -431,6 +431,60 @@ def _write_retrospect(workspace: str, story_key: str, actions: list) -> None:
         log.warning("[%s] failed to write retrospect.md: %s", story_key, exc)
 
 
+# stage → story_document.kind 映射(对齐 auto_discovery.py 的约定:
+# design→spec, build→plan, verify→test_report)。不在映射里的 stage 跳过。
+_STAGE_DOC_KIND = {
+    "design": "spec",
+    "build": "plan",
+    "verify": "test_report",
+}
+
+
+def _register_stage_outputs(story_key: str, stage: str, done_data: dict) -> None:
+    """把 stage done 产出的文件登记进 story_document(BUG #17)。
+
+    纯确定性:读 done_data["files_changed"],按 stage 推导 kind,调
+    db.create_document(幂等)。让前端「文档」卡片可追溯 design/plan/test_report。
+
+    - 过滤 .story/done/*.json(done 握手文件本身不算文档)。
+    - files_changed 为空时,也读 done_data 的显式路径字段(spec_path 等)兜底。
+    - stage 不在 _STAGE_DOC_KIND 里则跳过(防御)。
+    """
+    kind = _STAGE_DOC_KIND.get(stage)
+    if not kind:
+        return
+
+    from ...infra.db import models as db  # 延迟 import(避免循环)
+
+    paths: list[str] = []
+    for f in done_data.get("files_changed") or []:
+        if f and ".story/done/" not in f and ".story\\done\\" not in f:
+            paths.append(f)
+    # 兜底:done JSON 的显式路径字段(claude 偶尔不写 files_changed)
+    for key in ("spec_path", "research_path", "plan_path", "test_report_path"):
+        v = done_data.get(key)
+        if isinstance(v, str) and v:
+            paths.append(v)
+
+    for ref in paths:
+        try:
+            db.create_document(
+                story_key,
+                kind,
+                ref=ref,
+                summary="",
+                source="ai",
+                verification_state="unverified",
+            )
+        except Exception:  # noqa: BLE001 — 单个文件登记失败不影响其他
+            log.exception(
+                "[%s] create_document failed for stage=%s ref=%s",
+                story_key,
+                stage,
+                ref,
+            )
+
+
 def _build_verify_history_facts(*, db, failed_adapter, gate_round, retry_limit):
     """层5 回注:查全局决策事件 → reflect playbook → transition ``history_facts``。
 
@@ -643,16 +697,46 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             # 更新当前阶段
             db.update_story(story_key, current_stage=stage)
 
-            # 查项目绑定，拼成分支隔离提示，让 CLI 自行判断是否建 worktree/切分支
+            # BUG #18: build 阶段(改代码)前,自动为每个绑定仓库建 worktree+feature 分支。
+            # design 不需要(只调研不改代码)。prepare_worktrees 幂等(已建走 REUSE)。
+            # 失败不阻断 build——降级到主 workspace(符合现有容错基调)。
+            if stage == "build" and db.get_story_projects(story_key):
+                try:
+                    from ..workspace.worktree.handler import prepare_worktrees
+
+                    prepared = prepare_worktrees(story_key)
+                    created = [r for r in prepared if r.get("action") == "create"]
+                    if created:
+                        log.info(
+                            "[%s] worktrees prepared for build: %s",
+                            story_key,
+                            [r.get("worktree_path") for r in created],
+                        )
+                except Exception:
+                    log.exception(
+                        "[%s] prepare_worktrees failed; build proceeds on main workspace",
+                        story_key,
+                    )
+
+            # 查项目绑定，拼成分支隔离提示
+            # BUG #18: worktree 已建时显示 worktree 路径(让 agent 直接 cd 进去),
+            # 否则降级显示分支/基线(advisory,让 agent 自行判断)。
             project_lines = []
             for sp in db.get_story_projects(story_key):
                 proj = db.get_project(sp["project_id"])
                 if not proj:
                     continue
-                project_lines.append(
-                    f"- 仓库 `{proj['repo_path']}`: 分支 `{sp['branch']}`, "
-                    f"基线 `{sp.get('base_branch', 'main')}`"
-                )
+                wt = sp.get("worktree_path", "")
+                if wt:
+                    project_lines.append(
+                        f"- 仓库 `{proj['repo_path']}` → worktree `{wt}` "
+                        f"(分支 `{sp['branch']}`, 基线 `{sp.get('base_branch', 'main')}`)"
+                    )
+                else:
+                    project_lines.append(
+                        f"- 仓库 `{proj['repo_path']}`: 分支 `{sp['branch']}`, "
+                        f"基线 `{sp.get('base_branch', 'main')}`"
+                    )
             project_section = "\n".join(project_lines)
 
             # 构建 CLI prompt
@@ -1030,6 +1114,16 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         # 等 claude 把 done file 写完整再消费）。
                         done_data = robust_json_parse(done_path) or {}
                         db.log_event(story_key, stage, "completed", done_data)
+                        # BUG #17: 登记 stage 产出文件进 story_document(纯确定性,
+                        # 让前端「文档」卡片可追溯)。失败不阻塞主流程。
+                        try:
+                            _register_stage_outputs(story_key, stage, done_data)
+                        except Exception:
+                            log.exception(
+                                "[%s] register stage outputs failed for %s",
+                                story_key,
+                                stage,
+                            )
                         log.info(
                             f"[{story_key}] Stage {stage} completed: "
                             f"{done_data.get('summary', '')[:100]}"
@@ -1379,20 +1473,35 @@ def _build_cli_prompt(
     # task_type 让 agent 知道查哪个域；kb.py 做精确取数（graph/bugs/playbook）。
     knowledge_section = build_kb_tool_section(story_key, workspace, stage)
 
-    # design 阶段:维度 checklist + 禁 brainstorming + 逐问澄清(调 mcp__lifecycle__clarify)
-    # + 高价值维度 playbook。遇关键岔路 claude 调外接 MCP clarify 工具(见 orchestrator/mcp/),
-    # 人答经它返回,claude 带答继续(context 保留)。详见 memory story-lifecycle-design-hitl。
+    # design 阶段:维度 checklist(brainstorming 发散 + checklist 收敛)+ 逐问澄清
+    # (调 mcp__lifecycle__clarify)+ 高价值维度 playbook。遇关键岔路 claude 调外接 MCP clarify
+    # 工具(见 orchestrator/mcp/),人答经它返回,claude 带答继续(context 保留)。
+    # 详见 memory story-lifecycle-design-hitl。
     dimensions_section = ""
     if stage == "design":
         dimensions_section = build_design_dimensions_section(
             story_key, workspace, stage, interactive=interactive
         )
 
-    # 项目仓库与分支隔离：注入每个绑定仓库的分支/基线/路径，由 CLI 自行判断
-    # 是否需要 worktree 或切分支。后端的 prepare_worktrees 仍是可选的手动 API，
-    # 这里走“让 CLI 判断”的路线。
+    # BUG #18: worktree 已建(build 阶段 prepare_worktrees 跑过)→ 确定性指令:
+    # "直接在 worktree 路径下改代码,不要自己建 worktree 或切分支"。
+    # worktree 未建(design 阶段 / prepare 失败 / 无绑定)→ 降级 advisory(原逻辑)。
+    _has_worktree = "→ worktree" in project_section
     worktree_section = ""
-    if project_section:
+    if project_section and _has_worktree:
+        worktree_section = f"""
+### 项目仓库与分支隔离（worktree 已就绪）
+
+系统已为每个绑定仓库创建好 worktree 和 feature 分支，**请直接在对应 worktree 路径下改代码**：
+
+{project_section}
+
+**不要自己创建 worktree 或切换分支**——隔离环境已由编排层准备完毕。
+直接 `cd` 到上述 worktree 路径，在对应分支上写代码即可。
+
+**硬约束**：若发现 worktree 路径不存在或分支异常，**立即停止**，将错误写入完成协议的 `summary` 字段并把 `status` 设为 `"error"`，不要尝试在主分支或其他分支上继续。
+"""
+    elif project_section:
         worktree_section = f"""
 ### 项目仓库与分支隔离
 
