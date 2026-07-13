@@ -61,7 +61,9 @@ def sync_tapd(
         tapd_map = rp.tapd_state_map
         story_states = rp.story_states
     except Exception:  # noqa: BLE001 — profile 加载失败不应阻断同步
-        log.debug("tapd_state_map unavailable for profile=%s, sync runs unmapped", profile)
+        log.debug(
+            "tapd_state_map unavailable for profile=%s, sync runs unmapped", profile
+        )
 
     result = {"created": 0, "updated": 0, "skipped": 0, "would_create": 0}
     # Workspace is validated upstream (API rejects empty/relative; CLI requires
@@ -74,7 +76,9 @@ def sync_tapd(
         tapd_type = _derive_tapd_type(item)
         # TAPD → lifecycle_state 映射(tapd_type × tapd_status → lifecycle_state)。
         mapped_state = (
-            tapd_map.get(tapd_type, {}).get(item.status) if (tapd_map and item.status) else None
+            tapd_map.get(tapd_type, {}).get(item.status)
+            if (tapd_map and item.status)
+            else None
         )
 
         if dry_run:
