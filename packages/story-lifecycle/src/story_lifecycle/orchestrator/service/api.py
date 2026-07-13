@@ -1032,7 +1032,11 @@ def emergency_stop_story(story_key: str):
         "emergency_stop",
         {"was_running": was_running},
     )
-    log.warning("[%s] emergency stop: killed PTY, paused (was_running=%s)", story_key, was_running)
+    log.warning(
+        "[%s] emergency stop: killed PTY, paused (was_running=%s)",
+        story_key,
+        was_running,
+    )
     return {"ok": True, "status": "paused", "was_running": was_running}
 
 
@@ -2971,7 +2975,9 @@ def api_get_plan(story_key: str):
     # STORY-STATE-MODEL: 组装 Story 业务状态视图(开发/测试/上线)+ 状态闸。
     # storyStates 从 profile.story_states + lifecycle_state + _completed_stages 推导每个
     # 状态的进度(done/进行中/待开始)。前端主进度条用它(替写死阶段)。无 story_states → 空。
-    cur_lifecycle = story.get("lifecycle_state") or ctx.get("_lifecycle_state") or "开发"
+    cur_lifecycle = (
+        story.get("lifecycle_state") or ctx.get("_lifecycle_state") or "开发"
+    )
     story_states_view = []
     try:
         _rp = resolve_profile(story.get("profile", "minimal"))
@@ -2987,8 +2993,7 @@ def api_get_plan(story_key: str):
                 "name": _sname,
                 "stages": _sstages,
                 "current": _sname == cur_lifecycle,
-                "done": bool(_sstages)
-                and _done_count >= len(_sstages),
+                "done": bool(_sstages) and _done_count >= len(_sstages),
                 "done_count": _done_count,
                 "total": len(_sstages),
             }

@@ -348,8 +348,7 @@ class TestBuildCliPromptTranscript:
             done_file="d",
             profile_stages={},
             transcript_section=(
-                "### 历史上下文（来自既往 transcript）\n"
-                "- 曾调研 hc-user 模块"
+                "### 历史上下文（来自既往 transcript）\n- 曾调研 hc-user 模块"
             ),
         )
         assert "历史上下文" in prompt
@@ -623,9 +622,7 @@ class TestReleaseTrainAPI:
         db.upsert_story(
             "RT-EVENT-1", title="班车事件测试", workspace="/tmp", profile="minimal"
         )
-        api_client.put(
-            "/api/story/RT-EVENT-1/release-train", json={"train": "催收线"}
-        )
+        api_client.put("/api/story/RT-EVENT-1/release-train", json={"train": "催收线"})
         events = db.get_story_events("RT-EVENT-1")
         rt_events = [e for e in events if e["event_type"] == "release_train_changed"]
         assert len(rt_events) == 1
@@ -683,11 +680,17 @@ class TestInteractiveStagePrompt:
     """
 
     def test_design_prompt_has_title_prd_protocol_donepath(self, isolated_story_home):
-        from story_lifecycle.orchestrator.service.api import _build_interactive_stage_prompt
+        from story_lifecycle.orchestrator.service.api import (
+            _build_interactive_stage_prompt,
+        )
 
         db.upsert_story(
-            "IP-1", title="借款增加第二紧急联系人", workspace="/tmp/ip-ws",
-            profile="minimal", status="planning", current_stage="design",
+            "IP-1",
+            title="借款增加第二紧急联系人",
+            workspace="/tmp/ip-ws",
+            profile="minimal",
+            status="planning",
+            current_stage="design",
         )
         db.update_context("IP-1", "prd_path", "/tmp/ip-ws/PRD.md")
         story = db.get_story("IP-1")
@@ -700,7 +703,9 @@ class TestInteractiveStagePrompt:
         assert ".story/done/IP-1/design.json" in p  # done 握手路径
 
     def test_non_design_stage_still_builds(self, isolated_story_home):
-        from story_lifecycle.orchestrator.service.api import _build_interactive_stage_prompt
+        from story_lifecycle.orchestrator.service.api import (
+            _build_interactive_stage_prompt,
+        )
 
         db.upsert_story("IP-2", title="t", workspace="/tmp/ip-ws2", profile="minimal")
         p = _build_interactive_stage_prompt(db.get_story("IP-2"), "build")
@@ -729,8 +734,12 @@ class TestClarifyAPI:
         )
         _log_clarify_request(
             "CL-2",
-            {"id": "q1", "question": "存哪?", "header": "存储",
-             "options": ["hc_user", "hc_config"]},
+            {
+                "id": "q1",
+                "question": "存哪?",
+                "header": "存储",
+                "options": ["hc_user", "hc_config"],
+            },
         )
         resp = api_client.get("/api/story/CL-2/clarify")
         assert resp.status_code == 200
@@ -739,7 +748,9 @@ class TestClarifyAPI:
         assert data["question"]["question"] == "存哪?"
         assert data["question"]["options"] == ["hc_user", "hc_config"]
 
-    def test_answer_writes_event_and_clears_pending(self, api_client, isolated_story_home):
+    def test_answer_writes_event_and_clears_pending(
+        self, api_client, isolated_story_home
+    ):
         db.upsert_story(
             "CL-3", title="t", workspace="/tmp", profile="minimal", status="active"
         )
@@ -760,7 +771,5 @@ class TestClarifyAPI:
         db.upsert_story(
             "CL-4", title="t", workspace="/tmp", profile="minimal", status="active"
         )
-        resp = api_client.post(
-            "/api/story/CL-4/clarify/answer", json={"answer": "x"}
-        )
+        resp = api_client.post("/api/story/CL-4/clarify/answer", json={"answer": "x"})
         assert resp.status_code == 404

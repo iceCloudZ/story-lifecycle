@@ -34,7 +34,7 @@ VALID_COLUMNS = frozenset(
         "context_revision",
         "driver_claim",
         "lifecycle_state",
-        "release_train",   # 班车归属(v3.2/v3.3/后台快线/NULL)
+        "release_train",  # 班车归属(v3.2/v3.3/后台快线/NULL)
     }
 )
 
