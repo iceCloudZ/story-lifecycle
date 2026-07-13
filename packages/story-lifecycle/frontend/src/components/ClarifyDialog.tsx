@@ -19,16 +19,20 @@ const RUNNING = new Set(['planning', 'active', 'implementing'])
 export default function ClarifyDialog({
   storyKey,
   status,
+  headless,
 }: {
   storyKey: string
   status: string
+  headless?: boolean
 }) {
   const qc = useQueryClient()
   const [custom, setCustom] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
-  const running = RUNNING.has(status)
+  // BUG #9:交互式路径(headless=false)走"终端直接问人",不走 MCP clarify。
+  // 该路径不轮询 /clarify、不显示卡片(避免空卡片 + 无谓请求)。
+  const running = RUNNING.has(status) && headless !== false
   const { data } = useQuery({
     queryKey: ['clarify', storyKey],
     queryFn: () => clarifyApi.get(storyKey),
@@ -36,6 +40,7 @@ export default function ClarifyDialog({
     refetchInterval: running ? 3000 : false,
   })
 
+  if (!headless) return null
   if (!data?.waiting || !data.question) return null
   const q: ClarifyQuestion = data.question
 

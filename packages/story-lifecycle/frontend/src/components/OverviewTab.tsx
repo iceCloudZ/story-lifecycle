@@ -231,7 +231,7 @@ export default function OverviewTab({
         {detail.status === 'planning' && !isConfirmed && resolvedActions.length > 0 && (
           <>
             <button className="btn btn-primary" onClick={onConfirmPlan}>
-              ✅ 开始 design ({resolvedActions.filter((a) => a.action === 'launch').length} 步)
+              ✅ 确认规划，开始执行
             </button>
             <button className="btn" onClick={onRegeneratePlan}>
               🔄 重新规划

@@ -288,14 +288,21 @@ def run_orchestrator_agent(
                         args = {}
 
                 if name == "plan_step":
+                    _llm_done = args.get("done_file")
+                    if _llm_done:
+                        # schema 已删 done_file,但兼容旧模型仍可能传;忽略并记录(BUG #7)
+                        log.info(
+                            "[%s] ignoring LLM-provided done_file=%r; using canonical path",
+                            story_key,
+                            _llm_done,
+                        )
                     action = {
                         "action": "launch",
                         "adapter": args.get("adapter", "claude"),
                         "stage": args.get("stage", ""),
                         "focus": args.get("focus", ""),
-                        "done_file": args.get(
-                            "done_file",
-                            stage_done_file_rel(story_key, args.get("stage", "")),
+                        "done_file": stage_done_file_rel(
+                            story_key, args.get("stage", "")
                         ),
                     }
                     actions.append(action)
@@ -618,10 +625,20 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             stage = action.get("stage", f"stage_{idx}")
             adapter_name = action.get("adapter", "claude")
             focus = action.get("focus", "")
-            done_file_rel = action.get(
-                "done_file",
-                stage_done_file_rel(story_key, stage),
-            )
+            # done_file 强制规范化:不信任 action 里(可能来自老规划/LLM 自由生成)的值,
+            # 统一用 .story/done/<key>/<stage>.json,杜绝跨 story 撞名(BUG #7)。
+            _action_done = action.get("done_file")
+            done_file_rel = stage_done_file_rel(story_key, stage)
+            if _action_done and _action_done != done_file_rel:
+                log.info(
+                    "[%s] overriding action done_file=%r -> canonical %r",
+                    story_key,
+                    _action_done,
+                    done_file_rel,
+                )
+                action["done_file"] = (
+                    done_file_rel  # 回写规范化值,供下游(prompt/resume)一致
+                )
 
             # 更新当前阶段
             db.update_story(story_key, current_stage=stage)
@@ -653,6 +670,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 project_section=project_section,
                 workspace=workspace,
                 transcript_section=transcript_ctx or "",
+                interactive=not headless,  # BUG #9:交互式路径走"终端直接问人"
             )
 
             # 写入 prompt 文件
@@ -674,11 +692,13 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 else:
                     launch_cmd = adapter.interactive_launch_cmd(model=model)
 
-                # design 阶段 + claude:接外接 MCP clarify 工具(--mcp-config 加载 lifecycle
-                # server)+ 注入 STORY_KEY env(MCP server 经继承读它定位 story DB)。
+                # design 阶段 + claude + headless:接外接 MCP clarify 工具(--mcp-config 加载
+                # lifecycle server)+ 注入 STORY_KEY env(MCP server 经继承读它定位 story DB)。
+                # 仅 headless 路径走 MCP clarify;交互式路径(interactive_pty)走"终端直接问人"
+                # (BUG #9,见 handoff-design-hitl §11 + build_design_dimensions_section)。
                 # 见 orchestrator/mcp/clarify_server.py + memory story-lifecycle-design-hitl。
                 story_env = None
-                if stage == "design" and adapter_name == "claude":
+                if stage == "design" and adapter_name == "claude" and headless:
                     import os as _os
                     import sys as _sys
 
@@ -977,10 +997,31 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         ),
                     )
                     return
-                # 注:design 逐问澄清走外接 MCP(claude 阻塞在 mcp__lifecycle__clarify 调用上,
-                # MCP server 阻塞等人答 → 返回 → claude 继续)。故本 poll loop 无需特殊 clarify
-                # 处理——claude 在等 MCP 返回期间一直 alive、未写 done file,loop 正常等 done。
-                # 待答问题/答案经 DB 事件流转(clarification_request/answer),见 orchestrator/mcp/。
+                # design 逐问澄清:claude 阻塞在 mcp__lifecycle__clarify 调用上等人答,
+                # 此期间不写 done file。若不感知这一阻塞,45min poll_timeout 会把"等人答"
+                # 误判为超时 fail(BUG #10)。检测到 pending clarification → 重置 elapsed,
+                # 让超时只在 claude 真卡死(非澄清)时触发。澄清是有限轮次(prompt 约束 ≤3 轮),
+                # 不会无限重置。
+                try:
+                    from ..mcp.clarify_server import get_pending_clarification
+
+                    if (
+                        get_pending_clarification(
+                            story_key, get_events_fn=db.get_story_events
+                        )
+                        is not None
+                    ):
+                        if elapsed > 0:
+                            log.info(
+                                "[%s] design blocked on clarification; "
+                                "resetting poll timeout clock (was %ds/%ds)",
+                                story_key,
+                                elapsed,
+                                poll_timeout,
+                            )
+                        elapsed = 0
+                except Exception:
+                    pass  # clarify 检测失败不影响主轮询
                 # 检查 done file
                 if done_path.exists():
                     try:

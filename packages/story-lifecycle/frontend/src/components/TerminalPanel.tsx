@@ -196,13 +196,65 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
     termRef.current = term
     fitRef.current = fit
 
-    // Copy selection to clipboard
+    // BUG #11/#12:复制粘贴。xterm 默认不处理 copy/paste,需显式接管。
+    // copy:有选区时 Ctrl+C/Ctrl+Shift+C/Cmd+C → 写剪贴板(clipboard API 不可用则 execCommand 兜底)。
+    // paste:Ctrl+V/Cmd+V → 读剪贴板发 PTY;并在容器挂 paste 事件兜 DOM 粘贴。
+    const writeClipboard = (text: string) => {
+      try {
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(text).catch(() => {})
+        } else {
+          // HTTP 非安全上下文兜底(clipboard API 为 undefined)
+          const ta = document.createElement('textarea')
+          ta.value = text
+          document.body.appendChild(ta)
+          ta.select()
+          try { document.execCommand('copy') } catch { /* ignore */ }
+          document.body.removeChild(ta)
+        }
+      } catch { /* ignore */ }
+    }
+
+    const sendToPty = (text: string) => {
+      if (text && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(text)
+      }
+    }
+
+    // 选区变化自动复制(保留原行为,加 try/catch 防 clipboard undefined 抛错)
     term.onSelectionChange(() => {
       const selection = term.getSelection()
-      if (selection) {
-        navigator.clipboard.writeText(selection).catch(() => {})
-      }
+      if (selection) writeClipboard(selection)
     })
+
+    // 键盘兜底:拦截 copy/paste 快捷键,避免浏览器默认行为干扰终端
+    term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey
+      if (!mod) return true
+      // Copy:Ctrl+C(有选区时)/Ctrl+Shift+C/Cmd+C
+      if ((e.key === 'c' || e.key === 'C') && (e.shiftKey || term.hasSelection())) {
+        const sel = term.getSelection()
+        if (sel) { writeClipboard(sel); return false }
+      }
+      // Paste:Ctrl+V/Ctrl+Shift+V/Cmd+V
+      if (e.key === 'v' || e.key === 'V') {
+        try {
+          navigator.clipboard?.readText?.().then((text) => { if (text) sendToPty(text) })
+          return false
+        } catch { return true }
+      }
+      return true
+    })
+
+    // DOM paste 兜底:在容器直接粘贴(不依赖 xterm helper textarea 获焦)
+    const onPaste = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData('text')
+      if (text) {
+        e.preventDefault()
+        sendToPty(text)
+      }
+    }
+    containerRef.current.addEventListener('paste', onPaste)
 
     // Resize → PTY
     term.onResize(({ cols, rows }) => {
@@ -236,6 +288,7 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
       window.removeEventListener('resize', onResize)
       ro.disconnect()
       cancelAnimationFrame(raf)
+      containerRef.current?.removeEventListener('paste', onPaste)
       onDataDisposableRef.current?.dispose()
       onDataDisposableRef.current = null
       term.dispose()

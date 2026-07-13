@@ -93,8 +93,10 @@ export default function StoryDetailPage() {
   // SSE stream for Agent planning
   useEffect(() => {
     if (detail?.status !== 'planning') return
+    // BUG #5:"start 即规划"(#4 决策保留)下,进 effect 时 actions 应为空(SSE 触发后端规划)。
+    // 仅当规划已完成(actions 非空且 confirmed=false)时不重复建 SSE;否则建连消费流式。
     const existingActions = planData?.actions
-    if (existingActions?.length) return
+    if (existingActions?.length && planData?.confirmed === false) return
     if (planData?.plan_summary && !planData?.actions) return
     if (planTriggeredRef.current) return
     planTriggeredRef.current = true
@@ -109,7 +111,9 @@ export default function StoryDetailPage() {
           setStreamingActions(prev => [...prev, d.action])
         } else if (d.type === 'done') {
           es.close()
+          // BUG #1:规划完成后强制刷新 plan + story detail,让确认按钮立即出现(原需手动 F5)。
           qc.invalidateQueries({ queryKey: ['plan', storyKey] })
+          qc.invalidateQueries({ queryKey: ['story', storyKey] })
         } else if (d.type === 'error') {
           es.close()
         }
@@ -131,7 +135,8 @@ export default function StoryDetailPage() {
     const r = await fetch(`/api/story/${storyKey}/plan/confirm`, { method: 'POST' })
     if (r.ok) {
       refetch()
-      setActiveTab('overview')
+      // BUG #2:确认规划后进入执行,跳到终端让用户看到 claude 实时输出(原误留 overview)。
+      setActiveTab('terminal')
     } else {
       alert(`确认失败: ${(await r.json()).detail || '未知错误'}`)
     }
@@ -202,7 +207,7 @@ export default function StoryDetailPage() {
           onArchive={handleArchive}
         />
         <div className="sdpv2-content">
-          <ClarifyDialog storyKey={storyKey} status={detail.status} />
+          <ClarifyDialog storyKey={storyKey} status={detail.status} headless={detail.headless} />
           {activeTab === 'overview' && (
             <OverviewTab
               storyKey={storyKey}

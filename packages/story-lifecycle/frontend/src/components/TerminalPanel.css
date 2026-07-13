@@ -1,7 +1,10 @@
 .terminal-wrapper {
   display: flex;
   flex-direction: column;
-  height: 400px;
+  /* BUG #13:固定 400px 改为填满父容器,配合 min-height:0 让 flex 子项可收缩。
+     原固定高度在大屏浪费、小屏挤压。flex:1 让终端占满可用高度。 */
+  flex: 1;
+  min-height: 300px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   overflow: hidden;
@@ -76,6 +79,8 @@
   width: 100%;
   flex: 1;
   padding: 4px;
+  /* BUG #13:content-box + width:100% + padding:4px 溢出 8px。border-box 让 padding 含在宽内。 */
+  box-sizing: border-box;
 }
 
 .terminal-empty {

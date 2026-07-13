@@ -653,6 +653,24 @@ def list_bugs(status: str = "", show_all: bool = False):
     return JSONResponse([_serialize_story_summary(s) for s in stories])
 
 
+def _story_headless(s: dict) -> bool:
+    """Story 是否走 headless 执行(从 profile execution_mode 推导)。
+
+    供前端 ClarifyDialog 决策:headless→MCP clarify 卡片;交互式→终端问人(BUG #9)。
+    防御:profile 解析失败 → False(默认交互式)。
+    """
+    if not s:
+        return False
+    try:
+        from ..engine.execution import headless_from_profile
+        from ..engine.profile_loader import resolve_profile
+
+        rp = resolve_profile(s.get("profile", "minimal"))
+        return headless_from_profile(rp)
+    except Exception:
+        return False
+
+
 @app.get("/api/story/{story_key}")
 def get_story(story_key: str):
     s = db.get_story(story_key)
@@ -700,6 +718,9 @@ def get_story(story_key: str):
             "subs": sub_list,
             "lifecycleState": s.get("lifecycle_state"),
             "releaseTrain": s.get("release_train"),
+            # BUG #9:暴露 headless 让前端 ClarifyDialog 据此决定显隐
+            # (headless 路径走 MCP clarify→卡片;交互式路径走"终端问人"→不显示卡片)。
+            "headless": _story_headless(s),
         }
     )
 

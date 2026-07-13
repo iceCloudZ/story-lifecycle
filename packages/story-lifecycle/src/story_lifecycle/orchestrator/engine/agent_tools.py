@@ -28,10 +28,8 @@ ORCHESTRATOR_TOOLS = [
                         "type": "string",
                         "description": "2-3 个关键要点，告诉 CLI 应该关注什么",
                     },
-                    "done_file": {
-                        "type": "string",
-                        "description": "完成信号文件路径（相对于 workspace）",
-                    },
+                    # done_file 不再由 Agent 决定:由 planner 按 story_key+stage 统一规范化
+                    # (.story/done/<key>/<stage>.json),杜绝跨 story 撞名(BUG #7)。
                 },
                 "required": ["adapter", "stage", "focus"],
             },
