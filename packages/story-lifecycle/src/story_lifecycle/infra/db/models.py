@@ -34,6 +34,7 @@ VALID_COLUMNS = frozenset(
         "context_revision",
         "driver_claim",
         "lifecycle_state",
+        "release_train",   # 班车归属(v3.2/v3.3/后台快线/NULL)
     }
 )
 
@@ -268,6 +269,12 @@ def init_db():
             conn.execute(
                 "ALTER TABLE story ADD COLUMN lifecycle_state TEXT DEFAULT '开发'"
             )
+        except sqlite3.OperationalError:
+            pass
+        # 班车看板:release_train = Story 归属班车(v3.2/v3.3/后台快线/...),人手动拖。
+        # 字符串字段,不建表;NULL 表示待分配。同步时不覆盖(跟 intake_state 同理)。
+        try:
+            conn.execute("ALTER TABLE story ADD COLUMN release_train TEXT")
         except sqlite3.OperationalError:
             pass
 

@@ -17,6 +17,9 @@ export interface StorySummary {
   deadline?: string
   owner?: string
   priority?: string
+  // 班车看板
+  releaseTrain?: string | null
+  lifecycleState?: string | null
 }
 
 interface StoryStore {

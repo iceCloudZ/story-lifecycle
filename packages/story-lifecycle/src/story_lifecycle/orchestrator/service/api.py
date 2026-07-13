@@ -77,6 +77,10 @@ class AdvanceRequest(BaseModel):
     description: str = ""
 
 
+class SetReleaseTrainRequest(BaseModel):
+    train: str | None = None
+
+
 class SkipRequest(BaseModel):
     reason: str = ""
 
@@ -203,6 +207,7 @@ def _serialize_story_summary(s: dict) -> dict:
         "sourceId": s.get("source_id"),
         "parentKey": s.get("parent_key"),
         "lifecycleState": s.get("lifecycle_state"),
+        "releaseTrain": s.get("release_train"),
     }
 
 
@@ -694,6 +699,7 @@ def get_story(story_key: str):
             "sourceId": s.get("source_id"),
             "subs": sub_list,
             "lifecycleState": s.get("lifecycle_state"),
+            "releaseTrain": s.get("release_train"),
         }
     )
 
@@ -884,6 +890,31 @@ def advance_lifecycle_state(story_key: str):
 
     start_story_async(story_key)
     return {"ok": True, "lifecycle_state": next_state, "status": "active"}
+
+
+@app.put("/api/story/{story_key}/release-train")
+def set_release_train(story_key: str, req: SetReleaseTrainRequest):
+    """班车看板:人工调整 story 归属的班车(泳道)。只改 release_train,不动 lifecycle_state。
+
+    Body: {"train": "v3.2"} 或 {"train": null}(清空,回待分配区)。
+    """
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+
+    train = req.train
+    if isinstance(train, str):
+        train = train.strip() or None  # 空串归一为 NULL(待分配)
+
+    prev = s.get("release_train")
+    db.update_story(story_key, release_train=train)
+    db.log_event(
+        story_key,
+        s.get("current_stage") or "",
+        "release_train_changed",
+        {"from": prev, "to": train},
+    )
+    return {"ok": True, "releaseTrain": train}
 
 
 @app.put("/api/story/{story_key}/skip/{stage}")

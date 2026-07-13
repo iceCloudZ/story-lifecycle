@@ -4,8 +4,6 @@ Covers: Timeline, Gate History, Loop Trace, Findings, Dependency Graph,
 Patterns, and boundary conditions.
 """
 
-import json
-
 import pytest
 
 from story_lifecycle.infra.db import models as db
@@ -573,6 +571,103 @@ class TestStoryListWithFilters:
         data = resp.json()
         assert data["tapdStatus"] == "progressing"
         assert data["sourceType"] == "tapd"
+
+
+class TestReleaseTrainAPI:
+    """班车看板:release_train 字段 + PUT /release-train 端点。"""
+
+    def test_list_includes_release_train(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "RT-LIST-1", title="班车列表测试", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("RT-LIST-1", release_train="v3.2", intake_state="ready")
+        resp = api_client.get("/api/story")
+        assert resp.status_code == 200
+        items = [s for s in resp.json() if s["storyKey"] == "RT-LIST-1"]
+        assert items, "story should appear in list"
+        assert items[0]["releaseTrain"] == "v3.2"
+
+    def test_detail_includes_release_train(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "RT-DETAIL-1", title="班车详情测试", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("RT-DETAIL-1", release_train="后台快线")
+        resp = api_client.get("/api/story/RT-DETAIL-1")
+        assert resp.status_code == 200
+        assert resp.json()["releaseTrain"] == "后台快线"
+
+    def test_set_release_train(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "RT-SET-1", title="班车拖动测试", workspace="/tmp", profile="minimal"
+        )
+        resp = api_client.put(
+            "/api/story/RT-SET-1/release-train", json={"train": "v3.3"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["releaseTrain"] == "v3.3"
+        assert db.get_story("RT-SET-1")["release_train"] == "v3.3"
+
+    def test_clear_release_train(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "RT-CLEAR-1", title="班车清空测试", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("RT-CLEAR-1", release_train="v3.2")
+        resp = api_client.put(
+            "/api/story/RT-CLEAR-1/release-train", json={"train": None}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["releaseTrain"] is None
+        assert db.get_story("RT-CLEAR-1")["release_train"] is None
+
+    def test_set_release_train_logs_event(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "RT-EVENT-1", title="班车事件测试", workspace="/tmp", profile="minimal"
+        )
+        api_client.put(
+            "/api/story/RT-EVENT-1/release-train", json={"train": "催收线"}
+        )
+        events = db.get_story_events("RT-EVENT-1")
+        rt_events = [e for e in events if e["event_type"] == "release_train_changed"]
+        assert len(rt_events) == 1
+        payload = db.parse_event_payload(rt_events[0])
+        assert payload["to"] == "催收线"
+
+    def test_set_release_train_nonexistent_story(self, api_client, isolated_story_home):
+        resp = api_client.put(
+            "/api/story/NONEXIST/release-train", json={"train": "v3.2"}
+        )
+        assert resp.status_code == 404
+
+    def test_empty_string_treated_as_null(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "RT-EMPTY-1", title="空串归一", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("RT-EMPTY-1", release_train="v3.2")
+        resp = api_client.put(
+            "/api/story/RT-EMPTY-1/release-train", json={"train": "  "}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["releaseTrain"] is None
+        assert db.get_story("RT-EMPTY-1")["release_train"] is None
+
+    def test_upsert_from_source_does_not_overwrite_release_train(
+        self, api_client, isolated_story_home
+    ):
+        story, _ = db.upsert_story_from_source(
+            source_type="tapd",
+            source_id="2001",
+            title="首次同步",
+        )
+        db.update_story(story["story_key"], release_train="v3.2", intake_state="ready")
+        # 再次同步同一来源,release_train 不应被覆盖
+        db.upsert_story_from_source(
+            source_type="tapd",
+            source_id="2001",
+            title="更新标题",
+        )
+        updated = db.get_story(story["story_key"])
+        assert updated["release_train"] == "v3.2"
+        assert updated["title"] == "更新标题"
 
 
 # ---------------------------------------------------------------------------
