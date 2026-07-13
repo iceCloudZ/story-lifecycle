@@ -59,7 +59,7 @@ jobs:
       - name: Install dev tools
         # Root pyproject is a workspace container, not a buildable package —
         # see lint job note. Install dev deps directly.
-        run: pip install "pytest>=8.0" "pytest-asyncio>=0.24.0" "ruff>=0.11.0"
+        run: pip install "pytest>=8.0" "pytest-asyncio>=0.24.0" "pytest-timeout>=0.9.0" "ruff>=0.11.0"
 
       - name: Install story-lifecycle + its deps (editable)
         run: |
@@ -71,7 +71,7 @@ jobs:
         # story-lifecycle depends on the knowledge package, so contract tests
         # (tests/contracts) are included. Root pyproject testpaths also lists
         # miner/testing, but those are out of scope here until they get CI.
-        run: pytest packages/story-lifecycle/tests tests/contracts -v
+        run: pytest packages/story-lifecycle/tests tests/contracts -v --timeout=120
 
       - name: Coverage (ubuntu/3.12 only — upload artifact)
         # Coverage baseline tracking — NOT a gate yet (baseline 56.1%, target 80%).
@@ -79,6 +79,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
           pytest packages/story-lifecycle/tests tests/contracts \
+            --timeout=120 \
             --cov=packages/story-lifecycle/src/story_lifecycle \
             --cov-report=xml:coverage.xml --cov-report=term -q
 
@@ -108,7 +109,7 @@ jobs:
       - name: Install dev tools
         # Root pyproject is a workspace container, not a buildable package —
         # see lint job note. Install dev deps directly.
-        run: pip install "pytest>=8.0" "pytest-asyncio>=0.24.0" "ruff>=0.11.0"
+        run: pip install "pytest>=8.0" "pytest-asyncio>=0.24.0" "pytest-timeout>=0.9.0" "ruff>=0.11.0"
 
       - name: Install story-lifecycle + knowledge (editable)
         run: |
@@ -120,7 +121,7 @@ jobs:
         # broke one of: gate hard-fail / resolver pure-read / SOFT-seam
         # degradation / anchors file contract / infra zero-internal-import /
         # HITL-is-crosscut. See docs/module-architecture/02-modules-overview.md.
-        run: pytest packages/story-lifecycle/tests/invariants/ -v
+        run: pytest packages/story-lifecycle/tests/invariants/ -v --timeout=120
 
   build-check:
     name: Verify build
