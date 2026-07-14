@@ -293,6 +293,42 @@ def serve(host, port):
 
 
 @cli.command()
+@click.argument("story_key")
+def prompts(story_key):
+    """查看某 story 所有 stage 的提示词(复盘用)。
+
+    \b
+    Examples:
+      story prompts tapd-1144381896001066924
+    """
+    init_db()
+    from ...infra.db import models as db
+    from ...infra.story_paths import safe_story_path
+
+    s = db.get_story(story_key)
+    if not s:
+        click.echo(f"Story not found: {story_key}")
+        return
+    workspace = s.get("workspace", "")
+    context_dir = safe_story_path(workspace, ".story", "context", story_key)
+    if not context_dir.exists():
+        click.echo(f"No prompt files found for {story_key} (目录不存在: {context_dir})")
+        return
+    files = sorted(context_dir.glob("prompt_*.md"))
+    if not files:
+        click.echo(f"No prompt files found for {story_key}")
+        return
+    click.echo(f"Story: {story_key} | {len(files)} 个 stage 提示词\n")
+    for f in files:
+        stage = f.stem.replace("prompt_", "")
+        click.echo(f"{'=' * 60}")
+        click.echo(f"  Stage: {stage}  |  {f}")
+        click.echo(f"{'=' * 60}\n")
+        click.echo(f.read_text(encoding="utf-8"))
+        click.echo()
+
+
+@cli.command()
 def demo():
     """Run a simulated lifecycle — no LLM, no AI CLI needed."""
     from .demo import run_demo

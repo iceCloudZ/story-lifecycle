@@ -13,6 +13,9 @@ interface ContextBundle {
   revision: number
 }
 
+interface StagePrompt { stage: string; path: string; content: string }
+interface PromptsResponse { story_key: string; prompts: StagePrompt[] }
+
 export default function ContextTab({ storyKey }: { storyKey: string }) {
   const [copied, setCopied] = useState(false)
   const [copiedTarget, setCopiedTarget] = useState('')
@@ -23,6 +26,15 @@ export default function ContextTab({ storyKey }: { storyKey: string }) {
     queryFn: async () => {
       const r = await fetch(`/api/story/${storyKey}/context`)
       if (!r.ok) throw new Error('load context failed')
+      return r.json()
+    },
+  })
+
+  const { data: promptsData } = useQuery<PromptsResponse>({
+    queryKey: ['prompts', storyKey],
+    queryFn: async () => {
+      const r = await fetch(`/api/story/${storyKey}/prompts`)
+      if (!r.ok) throw new Error('load prompts failed')
       return r.json()
     },
   })
@@ -140,6 +152,29 @@ export default function ContextTab({ storyKey }: { storyKey: string }) {
           </div>
         ))}
       </section>
+
+      {(promptsData?.prompts || []).length > 0 && (
+        <section>
+          <h4>提示词复盘（{(promptsData?.prompts || []).length} 个 stage）</h4>
+          {(promptsData?.prompts || []).map((p) => (
+            <details key={p.stage} className="ctx-prompt-item">
+              <summary>
+                <strong>{p.stage}</strong>
+                <button
+                  className="btn btn-sm"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    copyText(p.content, `prompt-${p.stage}`)
+                  }}
+                >
+                  {copiedTarget === `prompt-${p.stage}` ? '已复制' : '复制'}
+                </button>
+              </summary>
+              <pre className="ctx-prompt-content">{p.content}</pre>
+            </details>
+          ))}
+        </section>
+      )}
 
       <section>
         <h4>DDL（{ddl.length}） · Nacos（{nacos.length}）</h4>

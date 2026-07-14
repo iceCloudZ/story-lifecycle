@@ -2021,6 +2021,34 @@ def api_get_snapshot(story_key: str):
     return {"path": str(snapshot_path), "revision": result["revision"], "content": ""}
 
 
+@app.get("/api/story/{story_key}/prompts")
+def api_get_prompts(story_key: str):
+    """返回该 story 所有 stage 的 prompt 内容(复盘用)。
+
+    提示词已落盘在 .story/context/<key>/prompt_<stage>.md(每次 stage launch
+    时写),原先无查看入口——本端点遍历该目录,把每个 stage 的完整 prompt 拉出来。
+    """
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+    from ...infra.story_paths import safe_story_path
+
+    workspace = s.get("workspace", "")
+    context_dir = safe_story_path(workspace, ".story", "context", story_key)
+    prompts = []
+    if context_dir.exists():
+        for f in sorted(context_dir.glob("prompt_*.md")):
+            stage = f.stem.replace("prompt_", "")
+            prompts.append(
+                {
+                    "stage": stage,
+                    "path": str(f),
+                    "content": f.read_text(encoding="utf-8"),
+                }
+            )
+    return {"story_key": story_key, "prompts": prompts}
+
+
 @app.get("/api/story/{story_key}/context/pack")
 def api_get_context_pack(story_key: str, skill: str = ""):
     """Render a neutral mixed-density context pack for AI injection."""

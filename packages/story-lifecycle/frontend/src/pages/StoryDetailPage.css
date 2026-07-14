@@ -445,6 +445,44 @@
   overflow-wrap: anywhere;
 }
 
+/* 提示词复盘区 */
+.ctx-prompt-item {
+  margin-bottom: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+  overflow: hidden;
+}
+.ctx-prompt-item summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ctx-prompt-item summary::-webkit-details-marker {
+  margin-right: 4px;
+}
+.ctx-prompt-item summary .btn-sm {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+.ctx-prompt-content {
+  margin: 0;
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 500px;
+  overflow-y: auto;
+  background: #ffffff;
+  border-top: 1px solid #e5e7eb;
+  color: #374151;
+}
+
 /* Keep old section styles for compatibility with existing sub-components */
 .sdp-section {
   margin-bottom: 20px;
