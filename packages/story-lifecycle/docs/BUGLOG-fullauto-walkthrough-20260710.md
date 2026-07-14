@@ -493,6 +493,93 @@
 
 ---
 
+## BUG #20 — story_state advance 按钮（"进入测试"）不跳终端 tab，与 #2 同类
+
+**严重度**：**高**
+**现象**：story `tapd-1144381896001066924` build 完成后停在"开发"状态闸(paused),点"完成开发，进入测试"按钮,后端成功 transition(开发→测试)+ verify launch 跑了(start_time 在 transition 后 30 秒),但**前端不跳终端 tab**(停在概览页)。实测:`status=active, current_stage=verify, lifecycle_state=测试, _active_execution={stage:verify}` 全对,但用户看不到 verify 在跑。
+
+**根因**：与 BUG #2 完全同类。`OverviewTab.tsx:153` 的 story_state_gate 按钮 onClick 是裸调:
+```tsx
+onClick={() => storyApi.advanceLifecycle(storyKey)}
+```
+`apiAction`(client.ts:269-276)只做 fetch + 返回 boolean,既不 `setActiveTab('terminal')` 也不 invalidate query。对比 BUG #2 已修的 `handleConfirmPlan`(StoryDetailPage.tsx:134-143),它在成功后做了三件事(`refetch()` + `setActiveTab('terminal')` + 错误 alert),而 advance 路径一件都没做。
+
+**代码引用**：
+- 按钮 + 裸调 handler：`frontend/src/components/OverviewTab.tsx:151-156`
+  ```tsx
+  <button className="btn btn-primary"
+    onClick={() => storyApi.advanceLifecycle(storyKey)}>
+    {storyStateGate?.label || `进入 ${storyStateGate?.to}`} →
+  </button>
+  ```
+- `advanceLifecycle` 只做 fetch：`frontend/src/api/client.ts:298`（`apiAction` → fetch,无后续）
+- `apiAction` 返回 boolean 不做副作用：`client.ts:269-276`
+- 对比 BUG #2 的正确修法(handleConfirmPlan)：`StoryDetailPage.tsx:134-143`
+  ```tsx
+  async function handleConfirmPlan() {
+    const r = await fetch(`/api/story/${storyKey}/plan/confirm`, { method: 'POST' })
+    if (r.ok) {
+      refetch()
+      setActiveTab('terminal')   // ← advance 路径缺这个
+    } else { alert(...) }
+  }
+  ```
+- 全前端仅 1 处 `setActiveTab('terminal')`（BUG #2 修的 handleConfirmPlan）：`StoryDetailPage.tsx:139`
+
+**影响**：
+- 每次跨 story_state(开发→测试→上线)用户点"进入下一状态"后,都看不到终端,误以为没在跑。
+- 加上没有 query invalidation,前端靠 5 秒轮询刷新,卡片状态滞后。
+- BUG #2 只修了"确认规划"一个入口,story_state_gate 这个入口漏了——同一类 bug 蔓延。
+
+**修复方向**（建议）：
+- 把 handler 从 OverviewTab 提到 StoryDetailPage（像 handleConfirmPlan 一样）,通过 prop 传下去（如 `onAdvanceLifecycle`）。
+- 成功后：`refetch()` + `qc.invalidateQueries(['plan', storyKey])` + `qc.invalidateQueries(['sessions', storyKey])` + `setActiveTab('terminal')`。
+- 失败 alert。
+- 顺带审视：所有"启动执行"类按钮(确认规划 / advance stage gate / advance story state)都该统一跳终端——考虑抽一个 `handleStartAndGoTerminal` helper 避免同类 bug 再发（符合 AGENTS.md 架构审查触发器第 3 条"多个入口做相似但不一致的决策"）。
+
+---
+
+## BUG #21 — prompt 注入 PTY 用裸 write(无 bracketed paste)，claude Ink 输入框不提交
+
+**严重度**：**高**
+**现象**：verify 阶段(advance 后重新 spawn 的 PTY),prompt 被黏贴进了 claude 的输入框,但**没按回车执行**——claude 停在输入框含完整 prompt 文本、光标闪烁的状态,不开始干活。实测 story `tapd-...066924` verify 阶段命中。
+
+**根因**：`ensure_agent_pty` 发 prompt 用**裸 PTY write**(`prompt + \r`),没有 bracketed paste 包裹。claude 的 Ink-based 输入框把大段裸 paste(含换行符的多行文本)当作"正在编辑的文本",`\r` 被吞或被多行结构稀释,提交不了。讽刺的是:同文件的 `clean_exit_pty` 发 `/exit` 时**用了 bracketed paste**,注释明确写了原因——"bare PTY writes are treated as a paste by claude's Ink input and never submit (claude-code#15553)"。但发 prompt 时没沿用这个教训。
+
+**代码引用**：
+- prompt 裸 write(根因)：`infra/terminal/pty.py:512-513`
+  ```python
+  if prompt:
+      pty.write(prompt.encode("utf-8") + b"\r")   # ← 裸 write,无 bracketed paste
+  ```
+- 对比:clean_exit_pty 的正确做法：`pty.py:563-565`
+  ```python
+  pty.write(b"\x1b[200~" + b"/exit" + b"\x1b[201~")   # bracketed paste 包裹
+  time.sleep(_CLEAN_EXIT_PASTE_DELAY)                   # 等 paste settle
+  pty.write(b"\r")                                      # 再单独发回车提交
+  ```
+- clean_exit_pty 的注释自承问题：`pty.py:550-553`("bare PTY writes are treated as a paste by claude's Ink input and never submit")
+- planner 调用点(传 prompt 给 ensure_agent_pty)：`planner.py:926-933`
+- api.py 调用点(interactive launch terminal 路径)：`api.py:561`
+- 加重因素:claude readiness_marker `❯` 永不匹配(`claude.py:20`,claude v2.1.195 prompt 是 `>`),`_wait_ready` 等 30 秒超时后才注入——注入时机也偏晚(claude 已完全就绪但等了 30 秒)
+
+**影响**：
+- 每个走 interactive PTY 路径的 stage(design/build/verify),prompt 都可能黏贴进去不执行——用户得手动到终端按回车。
+- 多行 prompt(含 markdown 表格/换行)尤其严重——Ink 把换行当文本不当提交。
+- readiness_marker 不匹配叠加 30 秒空等,体验差。
+
+**修复方向**（建议，与 clean_exit_pty 对齐）：
+- `ensure_agent_pty:512-513` 改成 bracketed paste 注入:
+  ```python
+  if prompt:
+      pty.write(b"\x1b[200~" + prompt.encode("utf-8") + b"\x1b[201~")
+      time.sleep(_CLEAN_EXIT_PASTE_DELAY)   # 复用 clean_exit 的 paste settle 常量
+      pty.write(b"\r")
+  ```
+- 顺带修 readiness_marker:`claude.py:20` 的 `❯` 改成 `>`(或 `r"[>❯]"` 兼容多版本),避免 30 秒空等。
+
+---
+
 ## 附：bug 之间的依赖关系
 
 ```
@@ -510,15 +597,16 @@
 #17 (产出文档不登记)   — 独立，影响所有 stage 的产物可追溯性
 #18 (build 不走 worktree) — 独立，worktree 引擎现成但没接进 launch
 #19 (build 不用 kimi)   — 两层:配置错位(minimal build=claude) + ClaudeAdapter 忽略 model
+#20 (advance 不跳终端) — 与 #2 同类,story_state_gate 入口漏了 setActiveTab
+#21 (prompt 不提交)    — 裸 write 无 bracketed paste,claude Ink 吞掉;clean_exit_pty 已知此坑但 prompt 路径没沿用
 ```
 
 **建议评估优先级**：
-- **高（影响正确性）**：#7、#9、#14（禁 brainstorming 与产品意图直接相反）、#17（stage 产物丢失可追溯性）、#18（build 污染主分支）、#19（build 没用对的编码工具）
+- **高（影响正确性）**：#7、#9、#14（禁 brainstorming 与产品意图直接相反）、#17（stage 产物丢失可追溯性）、#18（build 污染主分支）、#19（build 没用对的编码工具）、#20（advance 不跳终端）、**#21（prompt 不执行,每个 interactive stage 都可能命中）**
 - **中（影响质量/体验）**：#16（知识注入指向错）、#4（决定 #1/#5 走向）、#15（prompt 体积/价值，需产品拍板修复方向）
 - **低/延后**：#3/#2/#8（体验/渲染）、#6（文案）、#1/#5（依赖 #4 决策）
 
-**状态**（2026-07-13 更新）：
-- 已修复（上轮提交 `df3d105e`）：#1、#2、#5、#6、#7、#9、#10 + 终端 UI #11/#12/#13（未单独入此档）
+**状态**（2026-07-14 更新）：
+- 已修复：#1、#2、#5、#6、#7、#9、#10（提交 `df3d105e`）+ #14、#16、#17、#18、#19（提交 `90979d80`）+ 终端 UI #11/#12/#13
 - 延后：#3（PTY 孤儿，独立评估）、#8（PTY 120 列渲染，待验证）
-- 本轮新增待修：#14、#15、#16、#17、#18、#19
-- **#14、#16、#17 已定调可动手**；**#18、#19 修复方向待确认**（#18 涉及 launch 路径改 cwd + prompt 从 advisory 改确定；#19 涉及配置错位 + ClaudeAdapter 加 model 支持）；#15 修复方向仍有分叉（触发式/按类型/缩骨架）
+- 待修：#15（修复方向待拍板）、#20（已定调可动手）、**#21（已定调可动手,与 clean_exit_pty 对齐用 bracketed paste）**

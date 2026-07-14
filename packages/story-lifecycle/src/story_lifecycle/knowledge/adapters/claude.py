@@ -10,14 +10,9 @@ class ClaudeAdapter(BaseAdapter):
     name = "claude"
 
     # Readiness marker for PTY-injection paths (planner's autonomous claude).
-    # NOTE: claude v2.1.195's prompt is ">", not "❯" — this never matches, so
-    # _wait_ready falls through to the readiness_timeout fallback (180s) before
-    # injecting. Acceptable for the autonomous path (no human waiting). The
-    # interactive terminal path (api.py _ensure_story_agent_pty) no longer uses
-    # PTY injection — it seeds the prompt via `claude "query"`
-    # (interactive_launch_cmd), letting claude manage its own readiness. See
-    # docs/handoff-design-hitl.md §10.
-    readiness_marker = r"❯"
+    # BUG #21: 兼容 claude v2.1.195 的 ">" prompt(旧值 "❯" 永不匹配 →
+    # _wait_ready 空等 30s 才注入)。用 alternation 兼容多版本。
+    readiness_marker = r"[>❯]"
 
     def switch_provider(self, provider: str) -> str | None:
         # No-op: provider switching is not supported for the Claude CLI.

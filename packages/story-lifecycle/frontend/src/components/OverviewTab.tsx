@@ -16,11 +16,12 @@ interface Props {
   onAction: (action: ActionButton) => void
   actions: ActionButton[]
   onTabChange: (tabId: string) => void
+  onAdvanceLifecycle: () => void
 }
 
 export default function OverviewTab({
   storyKey, detail, resolvedActions, isConfirmed, planData,
-  onConfirmPlan, onRegeneratePlan, onAction, actions, onTabChange,
+  onConfirmPlan, onRegeneratePlan, onAction, actions, onTabChange, onAdvanceLifecycle,
 }: Props) {
   const { data: stats } = useQuery({
     queryKey: ['stats', storyKey],
@@ -150,7 +151,7 @@ export default function OverviewTab({
           </div>
           <button
             className="btn btn-primary"
-            onClick={() => storyApi.advanceLifecycle(storyKey)}
+            onClick={onAdvanceLifecycle}
           >
             {storyStateGate?.label || `进入 ${storyStateGate?.to}`} →
           </button>
@@ -168,7 +169,12 @@ export default function OverviewTab({
           </div>
           <button
             className="btn btn-primary"
-            onClick={() => storyApi.advance(storyKey)}
+            onClick={async () => {
+              // BUG #20: stage gate advance(PUT /advance = driver resume)成功后也跳终端,
+              // 与 lifecycle advance / confirm plan 统一(所有"启动执行"按钮都跳终端)。
+              const ok = await storyApi.advance(storyKey)
+              if (ok) onTabChange('terminal')
+            }}
           >
             确认推进 → {stageGate?.next_stage}
           </button>

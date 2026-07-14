@@ -510,7 +510,12 @@ def ensure_agent_pty(
         time.sleep(startup_delay)
 
     if prompt:
-        pty.write(prompt.encode("utf-8") + b"\r")
+        # BUG #21: 用 bracketed paste 包裹 + delay + 单独 \r 提交(对齐 clean_exit_pty)。
+        # 裸 write 会被 claude Ink 输入框当 paste 吞掉,大段多行 prompt 的 \r 提交不了
+        # (claude-code#15553)。clean_exit_pty 发 /exit 已用此法, prompt 路径需对齐。
+        pty.write(b"\x1b[200~" + prompt.encode("utf-8") + b"\x1b[201~")
+        time.sleep(_CLEAN_EXIT_PASTE_DELAY)
+        pty.write(b"\r")
     return session_id, pty
 
 

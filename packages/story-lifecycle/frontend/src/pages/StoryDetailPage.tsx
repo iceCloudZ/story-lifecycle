@@ -142,6 +142,20 @@ export default function StoryDetailPage() {
     }
   }
 
+  async function handleAdvanceLifecycle() {
+    // BUG #20: story_state advance(开发→测试→上线)成功后跳终端,与 #2 同类。
+    // 原 OverviewTab 裸调 advanceLifecycle 不跳 tab 不刷新,用户看不到执行。
+    const r = await fetch(`/api/story/${storyKey}/lifecycle/advance`, { method: 'POST' })
+    if (r.ok) {
+      refetch()
+      qc.invalidateQueries({ queryKey: ['plan', storyKey] })
+      qc.invalidateQueries({ queryKey: ['sessions', storyKey] })
+      setActiveTab('terminal')
+    } else {
+      alert(`推进失败: ${(await r.json()).detail || '未知错误'}`)
+    }
+  }
+
   async function handleRegeneratePlan() {
     planTriggeredRef.current = false
     setPlanTriggered(false)
@@ -220,6 +234,7 @@ export default function StoryDetailPage() {
               onAction={handleAction}
               actions={actions}
               onTabChange={setActiveTab}
+              onAdvanceLifecycle={handleAdvanceLifecycle}
             />
           )}
           {activeTab === 'code' && <CodeChangesTab storyKey={storyKey} />}
