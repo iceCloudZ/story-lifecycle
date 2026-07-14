@@ -7,6 +7,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import (
+    Body,
     FastAPI,
     File,
     Form,
@@ -3160,8 +3161,12 @@ async def api_plan_stream(story_key: str):
 
 
 @app.post("/api/story/{story_key}/plan/confirm")
-def api_confirm_plan(story_key: str):
-    """用户确认规划，启动执行。"""
+def api_confirm_plan(story_key: str, body: dict | None = Body(default=None)):
+    """用户确认规划，启动执行。
+
+    可选 body.actions:用户在前端改过的 per-stage adapter 覆盖,格式
+    [{"stage": "design", "adapter": "kimi"}, ...]。覆盖写回 _agent_actions。
+    """
     story = db.get_story(story_key)
     if not story:
         raise HTTPException(status_code=404, detail="story not found")
@@ -3169,6 +3174,19 @@ def api_confirm_plan(story_key: str):
     import json
 
     ctx = json.loads(story.get("context_json") or "{}")
+
+    # 用户在前端改了 adapter 时,覆盖 _agent_actions
+    if body and body.get("actions"):
+        _overrides = {
+            a["stage"]: a.get("adapter")
+            for a in body["actions"]
+            if a.get("stage") and a.get("adapter")
+        }
+        for action in ctx.get("_agent_actions", []):
+            _st = action.get("stage")
+            if _st in _overrides:
+                action["adapter"] = _overrides[_st]
+
     ctx["_plan_confirmed"] = True
 
     db.update_story(

@@ -17,11 +17,13 @@ interface Props {
   actions: ActionButton[]
   onTabChange: (tabId: string) => void
   onAdvanceLifecycle: () => void
+  onActionAdapterChange: (index: number, adapter: string) => void
 }
 
 export default function OverviewTab({
   storyKey, detail, resolvedActions, isConfirmed, planData,
   onConfirmPlan, onRegeneratePlan, onAction, actions, onTabChange, onAdvanceLifecycle,
+  onActionAdapterChange,
 }: Props) {
   const { data: stats } = useQuery({
     queryKey: ['stats', storyKey],
@@ -219,7 +221,13 @@ export default function OverviewTab({
           <h3>🤖 Agent 规划</h3>
           <div className="action-cards">
             {resolvedActions.map((a, i) => (
-              <ActionCard key={i} action={a} index={i} />
+              <ActionCard
+                key={i}
+                action={a}
+                index={i}
+                editable={detail.status === 'planning' && !isConfirmed}
+                onAdapterChange={onActionAdapterChange}
+              />
             ))}
           </div>
         </div>

@@ -125,7 +125,7 @@ def _build_agent_system_prompt(
 
 ## 你的职责
 - 根据需求决定需要执行哪些阶段
-- 每个阶段选择合适的 CLI 工具（claude 或 codex）
+- 每个阶段选择合适的 CLI 工具（claude / codex / kimi），参考 profile 给各阶段配的 CLI 提示
 - 给每个阶段指定 2-3 个关键要点（focus）
 - 规划完成后暂停，等待用户确认
 
@@ -140,7 +140,7 @@ def _build_agent_system_prompt(
 1. 对每个需要执行的阶段，调用 plan_step 工具
 2. 对不需要的阶段（如纯前端需求不需要后端设计），调用 skip_stage
 3. focus 要简洁（2-3 个要点），不要写详细设计
-4. CLI（claude/codex）会自己理解需求并设计方案，你不需要代劳
+4. CLI（claude/codex/kimi）会自己理解需求并设计方案，你不需要代劳
 5. 规划完所有阶段后停止调用工具"""
 
 
@@ -677,7 +677,24 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
 
         if action.get("action") == "launch":
             stage = action.get("stage", f"stage_{idx}")
-            adapter_name = action.get("adapter", "claude")
+            adapter_name = action.get("adapter", "")
+            # profile 兜底:profile 该 stage 配了 cli 时,覆盖 LLM 规划的 adapter
+            # (LLM plan_step enum 可能不含 profile 配的值,如 kimi;用户也可在
+            # 确认前改 adapter,该覆盖在 /plan/confirm 时写回 _agent_actions)。
+            if stage in profile_stages:
+                _cfg_cli = getattr(profile_stages[stage], "cli", "") or ""
+                if _cfg_cli and _cfg_cli != adapter_name:
+                    log.info(
+                        "[%s] stage %s: profile cli=%r overrides action adapter=%r",
+                        story_key,
+                        stage,
+                        _cfg_cli,
+                        adapter_name,
+                    )
+                    adapter_name = _cfg_cli
+                    action["adapter"] = _cfg_cli  # 回写,供下游一致
+            if not adapter_name:
+                adapter_name = "claude"
             focus = action.get("focus", "")
             # done_file 强制规范化:不信任 action 里(可能来自老规划/LLM 自由生成)的值,
             # 统一用 .story/done/<key>/<stage>.json,杜绝跨 story 撞名(BUG #7)。

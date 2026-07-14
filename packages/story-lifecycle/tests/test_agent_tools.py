@@ -44,7 +44,7 @@ class TestToolSchema:
             props = tool["function"]["parameters"]["properties"]
             if "adapter" in props:
                 assert props["adapter"]["type"] == "string"
-                assert props["adapter"]["enum"] == ["claude", "codex"]
+                assert props["adapter"]["enum"] == ["claude", "codex", "kimi"]
 
     def test_plan_step_required_fields(self):
         tool = next(

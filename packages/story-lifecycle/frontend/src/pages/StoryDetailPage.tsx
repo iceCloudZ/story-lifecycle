@@ -125,17 +125,32 @@ export default function StoryDetailPage() {
 
   const resolvedActions: AgentAction[] = streamingActions.length > 0 ? streamingActions : (planData?.actions ?? [])
   const isConfirmed = planData?.confirmed ?? false
+  // per-stage adapter 覆盖:用户在 ActionCard 下拉改过的 adapter(stage→adapter)。
+  // 初始空 = 用 LLM 规划的默认值;改过才有值。confirm 时传给后端覆盖 _agent_actions。
+  const [adapterOverrides, setAdapterOverrides] = useState<Record<number, string>>({})
 
   if (!storyKey) return <div className="loading">无效的 Story Key</div>
   if (!detail) return <div className="loading">加载中...</div>
 
   const actions = ACTIONS[detail.status] || []
 
+  function handleActionAdapterChange(index: number, adapter: string) {
+    setAdapterOverrides(prev => ({ ...prev, [index]: adapter }))
+  }
+
   async function handleConfirmPlan() {
-    const r = await fetch(`/api/story/${storyKey}/plan/confirm`, { method: 'POST' })
+    // 把用户改过的 adapter 跟 resolvedActions 合并,传给后端覆盖 _agent_actions。
+    const actionOverrides = resolvedActions.map((a, i) => ({
+      stage: a.stage,
+      adapter: adapterOverrides[i] ?? a.adapter,
+    }))
+    const r = await fetch(`/api/story/${storyKey}/plan/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actions: actionOverrides }),
+    })
     if (r.ok) {
       refetch()
-      // BUG #2:确认规划后进入执行,跳到终端让用户看到 claude 实时输出(原误留 overview)。
       setActiveTab('terminal')
     } else {
       alert(`确认失败: ${(await r.json()).detail || '未知错误'}`)
@@ -235,6 +250,7 @@ export default function StoryDetailPage() {
               actions={actions}
               onTabChange={setActiveTab}
               onAdvanceLifecycle={handleAdvanceLifecycle}
+              onActionAdapterChange={handleActionAdapterChange}
             />
           )}
           {activeTab === 'code' && <CodeChangesTab storyKey={storyKey} />}
