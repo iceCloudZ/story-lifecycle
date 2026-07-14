@@ -70,16 +70,25 @@ class TestDesignDimensions:
         assert "不要调用 brainstorming" not in p
         assert "禁止" not in p
 
-    def test_design_stage_injects_security_playbook(self, tmp_path):
-        # 造假 workspace + security playbook,验注入逻辑(不依赖真实 hc-all)
+    def test_design_stage_injects_playbook_guides(self, tmp_path):
+        """BUG #15: playbook 改触发式引导(不全量塞框架)。"""
         pb_dir = tmp_path / ".story" / "knowledge" / "playbooks"
         pb_dir.mkdir(parents=True)
         (pb_dir / "security-parameter-trust.md").write_text(
-            "## 框架\nCORE 参数:金额/产品编码/身份/用户标识\n## 怎么用\nagent 注入",
+            "## 框架\n安全内容MARKER\n## 怎么用\nagent 注入",
+            encoding="utf-8",
+        )
+        (pb_dir / "degradation-fallback.md").write_text(
+            "## 框架\n降级内容MARKER\n## 怎么用\nagent 注入",
             encoding="utf-8",
         )
         p = _build("design", tmp_path)
-        assert "CORE" in p  # playbook 片段(怎么用 之前)注入了
+        # 触发式引导:注入引导行(两个 playbook 都引导)
+        assert "安全" in p and "先读" in p
+        assert "降级兼容" in p and "先读" in p
+        # 全量框架内容不应出现在 prompt 里(只在文件里,claude 按需自查)
+        assert "安全内容MARKER" not in p
+        assert "降级内容MARKER" not in p
 
     def test_design_stage_no_playbook_still_has_checklist(self, tmp_path):
         # workspace 无 playbook 时,维度 checklist 仍在(不阻塞)

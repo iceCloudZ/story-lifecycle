@@ -256,14 +256,17 @@ def build_design_dimensions_section(
         "1. 现状分析（现有代码/链路） 2. 架构数据流 3. 数据模型（表/字段/索引/历史数据）"
         " 4. 接口契约（API/Feign/DTO/MQ/幂等） 5. 核心逻辑（算法/状态机/事件接入点）"
         " 6. 一致性并发（对账/锁/事务） 7. 性能容量（缓存/大表/慢查询）"
-        " 8. 降级兼容（灰度/兜底/回滚/新老版本） 9. 边界异常 10. 安全（Parameter Trust）"
+        " 8. 降级兼容（灰度/兜底/回滚/新老版本） 9. 边界异常"
+        " 10. 安全（鉴权/越权/输入校验/配置安全）"
         " 11. 权限 12. 风险回滚 13. 非目标\n"
         "**纪律**：只问真正卡住你的岔路（最多 3 轮）；能从代码/PRD/既有约定推断的，自己决断进 "
         "decision_points，不要问。\n"
     )
 
-    # 高价值维度 playbook 窄注入(MVP: security;存在才注,failsafe)。
-    # 只取「## 怎么用」之前的框架段,避免全文撑爆 prompt(context rot 教训)。
+    # BUG #15: 高价值维度 playbook 改触发式引导(不全量塞框架,避免 prompt 膨胀 +
+    # context rot)。遍历 dimension→playbook 映射,只注入简短引导行,claude 按需自查文件。
+    # 原 MVP 全量塞 security-parameter-trust.md 的框架段(占 prompt ~60%),
+    # 对后端配置类需求(灰度开关)完全不适用(满篇前端参数校验)。
     try:
         from pathlib import Path as _Path
         import os as _os
@@ -272,13 +275,23 @@ def build_design_dimensions_section(
             "STORY_PLAYBOOKS_DIR",
             str(_Path(workspace or ".") / ".story" / "knowledge" / "playbooks"),
         )
-        _sec = _Path(_playbooks_dir) / "security-parameter-trust.md"
-        if _sec.exists():
-            _content = _sec.read_text(encoding="utf-8")
-            _snippet = _content.split("## 怎么用")[0]
+        # dimension → playbook 文件映射(文件存在才引导)
+        _DIMENSION_PLAYBOOKS = {
+            "安全": "security-parameter-trust.md",
+            "降级兼容": "degradation-fallback.md",
+        }
+        _guides = []
+        for _dim, _fname in _DIMENSION_PLAYBOOKS.items():
+            _p = _Path(_playbooks_dir) / _fname
+            if _p.exists():
+                _guides.append(
+                    f"- **{_dim}**:做「{_dim}」维度时,先读 `{_p}`"
+                    " 再做决策(框架 + 历史模式 + 常见坑)"
+                )
+        if _guides:
             section += (
-                "\n### 安全维度参考（历史 spec 蒸馏的高价值知识——做「安全」维度时按此）\n"
-                + _snippet
+                "\n### 高价值维度参考（playbook 按需自查）\n"
+                + "\n".join(_guides)
                 + "\n"
             )
     except Exception:  # noqa: BLE001 — never block prompt rendering
