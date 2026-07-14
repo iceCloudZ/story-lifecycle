@@ -68,8 +68,9 @@ class TestEnsureAgentPtyReadiness:
             "s", ["fake"], "/tmp", "do work",
             readiness_marker=r">", readiness_timeout=1.0,
         )
-        # prompt injected after marker seen
-        assert wrote == [b"do work\r"]
+        # BUG #21: prompt 用 bracketed paste 包裹 + delay + 单独 \r 提交
+        # (对齐 clean_exit_pty;裸 write 会被 claude Ink 吞掉)。
+        assert wrote == [b"\x1b[200~do work\x1b[201~", b"\r"]
 
     def test_legacy_path_still_sleeps_when_no_marker(self, monkeypatch):
         # No marker → fall back to startup_delay (legacy). Smoke: still injects.
@@ -81,4 +82,5 @@ class TestEnsureAgentPtyReadiness:
             lambda *a, **k: ("sid", pty),
         )
         ensure_agent_pty("s", ["fake"], "/tmp", "do work", startup_delay=0)
-        assert wrote == [b"do work\r"]
+        # BUG #21: 无 marker 路径也用 bracketed paste。
+        assert wrote == [b"\x1b[200~do work\x1b[201~", b"\r"]
