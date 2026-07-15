@@ -107,16 +107,12 @@ def classify_task_type(title: str, description: str = "") -> str | None:
 _KB_PY = "D:/github/story-lifecycle/packages/story-miner/scripts/kb.py"
 
 
-def build_kb_tool_section(story_key: str, workspace: str, stage: str) -> str:
-    """Build kb.py tool-guidance (agentic RAG: agent queries on-demand).
+def _get_task_type(story_key: str) -> str | None:
+    """查询 story 的 task_type(从 context_json,fallback 到 story_task_types.json)。
 
-    Replaces the pre-injected knowledge_section in the FULL-AUTO executor path.
-    The agent gets: its task_type + the kb.py CLI + a "must-query-before-coding"
-    nudge. The agent decides when/what to query (semantic by LLM); kb.py does
-    exact fetch (graph/bugs/playbook).
+    供 build_kb_tool_section / build_design_dimensions_section 共用。
     """
     import json as _json
-
     task_type = None
     try:
         from ...infra.db import models as _db
@@ -127,7 +123,6 @@ def build_kb_tool_section(story_key: str, workspace: str, stage: str) -> str:
     except Exception:
         pass
     if not task_type:
-        # Fallback: story_task_types.json（LLM 分类的产物）
         try:
             from pathlib import Path as _Path
 
@@ -147,6 +142,18 @@ def build_kb_tool_section(story_key: str, workspace: str, stage: str) -> str:
                         break
         except Exception:
             pass
+    return task_type
+
+
+def build_kb_tool_section(story_key: str, workspace: str, stage: str) -> str:
+    """Build kb.py tool-guidance (agentic RAG: agent queries on-demand).
+
+    Replaces the pre-injected knowledge_section in the FULL-AUTO executor path.
+    The agent gets: its task_type + the kb.py CLI + a "must-query-before-coding"
+    nudge. The agent decides when/what to query (semantic by LLM); kb.py does
+    exact fetch (graph/bugs/playbook).
+    """
+    task_type = _get_task_type(story_key)
     if not task_type:
         return ""
 
@@ -155,12 +162,14 @@ def build_kb_tool_section(story_key: str, workspace: str, stage: str) -> str:
         f"本 story 归类：`{task_type}`\n\n"
         f"CLI（按需调用，别全查）：\n"
         f"```bash\n"
-        f"python {_KB_PY} graph <service|table>     # 结构：调用方/表/MQ\n"
-        f"python {_KB_PY} bugs {task_type}          # 风险：bug-prone 文件/磁铁\n"
-        f"python {_KB_PY} bugs <file_name>          # 特定文件的 bug 历史\n"
-        f"python {_KB_PY} playbook {task_type}      # 过程：高频文件/命令\n"
+        f"python {_KB_PY} graph <service|table>        # 结构：调用方/表/MQ\n"
+        f"python {_KB_PY} bugs {task_type}             # 风险：bug-prone 文件/磁铁\n"
+        f"python {_KB_PY} bugs <file_name>             # 特定文件的 bug 历史\n"
+        f"python {_KB_PY} playbook {task_type}         # 过程：高频文件/命令\n"
+        f"python {_KB_PY} experience {task_type}       # 经验：历史 adapter/failure/rescue(reflect 沉淀)\n"
         f"```\n\n"
         f"**动手改代码前，先 `python {_KB_PY} bugs {task_type}` 查高风险文件 + 评估回归。**\n"
+        f"**遇 verify 失败或选 adapter 时，先 `python {_KB_PY} experience {task_type}` 查历史经验。**\n"
     )
 
 
@@ -267,6 +276,10 @@ def build_design_dimensions_section(
     # context rot)。遍历 dimension→playbook 映射,只注入简短引导行,claude 按需自查文件。
     # 原 MVP 全量塞 security-parameter-trust.md 的框架段(占 prompt ~60%),
     # 对后端配置类需求(灰度开关)完全不适用(满篇前端参数校验)。
+    #
+    # REFACTOR §5.2.2:分层路由——全局维度 playbook(根目录)+ task_type 特定经验
+    # (子目录,reflect 产出)。防 skill 库相变崩溃(arxiv 2601.04748):模型只看当前
+    # task_type 的子集,不面对全量。
     try:
         from pathlib import Path as _Path
         import os as _os
@@ -275,19 +288,41 @@ def build_design_dimensions_section(
             "STORY_PLAYBOOKS_DIR",
             str(_Path(workspace or ".") / ".story" / "knowledge" / "playbooks"),
         )
-        # dimension → playbook 文件映射(文件存在才引导)
+        _task_type = _get_task_type(story_key)
+        # 全局 dimension → playbook 文件映射(根目录,手写 spec 蒸馏)
         _DIMENSION_PLAYBOOKS = {
             "安全": "security-parameter-trust.md",
             "降级兼容": "degradation-fallback.md",
         }
         _guides = []
         for _dim, _fname in _DIMENSION_PLAYBOOKS.items():
-            _p = _Path(_playbooks_dir) / _fname
-            if _p.exists():
+            _p_global = _Path(_playbooks_dir) / _fname
+            if _p_global.exists():
                 _guides.append(
-                    f"- **{_dim}**:做「{_dim}」维度时,先读 `{_p}`"
+                    f"- **{_dim}**(通用):做「{_dim}」维度时,先读 `{_p_global}`"
                     " 再做决策(框架 + 历史模式 + 常见坑)"
                 )
+            # task_type 特定经验(子目录,reflect 产出,阶段1)
+            if _task_type:
+                _p_task = _Path(_playbooks_dir) / _task_type / _fname
+                if _p_task.exists():
+                    _guides.append(
+                        f"- **{_dim}**(本任务类型历史经验):读 `{_p_task}`"
+                        "(同类任务的实战经验)"
+                    )
+        # reflect 产出的经验维度(adapter-routing / failure-patterns / rescue)
+        if _task_type:
+            _task_dir = _Path(_playbooks_dir) / _task_type
+            if _task_dir.exists():
+                _EXP_DIMENSIONS = {
+                    "adapter-routing.md": "模型路由经验(历史 adapter 成败)",
+                    "failure-patterns.md": "本任务类型高频失败模式",
+                    "rescue.md": "救援经验(缺依赖怎么补)",
+                }
+                for _fname, _desc in _EXP_DIMENSIONS.items():
+                    _p_exp = _task_dir / _fname
+                    if _p_exp.exists():
+                        _guides.append(f"- **{_desc}**:读 `{_p_exp}`")
         if _guides:
             section += (
                 "\n### 高价值维度参考（playbook 按需自查）\n"

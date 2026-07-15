@@ -170,14 +170,42 @@ def cmd_playbook(task_type: str):
     print("\n".join(out) if out else "\n".join(lines[:40]))
 
 
+def cmd_experience(task_type: str):
+    """读 reflect 落库的分层经验(REFACTOR §5.1 产出)。
+
+    路径: <playbooks>/<task_type>/*.md(adapter-routing / failure-patterns / rescue)
+    冷启动期(子目录不存在/为空)→ 提示无经验,不崩。
+    """
+    task_dir = PLAYBOOKS / task_type
+    if not task_dir.exists():
+        print(f"(no experience for {task_type} — 冷启动期,reflect 尚未沉淀)")
+        return
+    files = sorted(task_dir.glob("*.md"))
+    if not files:
+        print(f"(no experience files for {task_type})")
+        return
+    print(f"== experience: {task_type} ({len(files)} files) ==\n")
+    for f in files:
+        text = f.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        print(f"--- {f.name} ({len(lines)} lines) ---")
+        # 经验文件不大,直接全打(reflect 产出按 support 去重,support 累加,不会膨胀)
+        print("\n".join(lines[:60]))
+        if len(lines) > 60:
+            print(f"... ({len(lines) - 60} more lines)")
+        print()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("graph", help="精确/确定性：遍历项目图（service/table/feign/mq）").add_argument("query")
     bp = sub.add_parser("bugs", help="语义/关键词：bug-prone 文件、磁铁、cycle-time")
     bp.add_argument("query", help="task_type(如 credit-limit) 或 文件/类名片段")
-    pp = sub.add_parser("playbook", help="过程知识：该 task_type 的 playbook")
+    pp = sub.add_parser("playbook", help="过程知识：该 task_type 的 playbook(transcript 挖矿产出)")
     pp.add_argument("task_type", choices=TASK_TYPES)
+    ep = sub.add_parser("experience", help="历史经验：reflect 落库的 adapter/failure/rescue 经验")
+    ep.add_argument("task_type", help="task_type(如 credit-limit)")
     args = ap.parse_args()
     if args.cmd == "graph":
         cmd_graph(args.query)
@@ -185,6 +213,8 @@ def main():
         cmd_bugs(args.query)
     elif args.cmd == "playbook":
         cmd_playbook(args.task_type)
+    elif args.cmd == "experience":
+        cmd_experience(args.task_type)
 
 
 if __name__ == "__main__":

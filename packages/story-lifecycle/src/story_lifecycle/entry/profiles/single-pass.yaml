@@ -1,0 +1,44 @@
+# Single-Pass Profile — 单阶段全干(放权 + 飞轮验证)
+#
+# 用途:一个 stage(verify),CLI 自己决定怎么干(放权),跑完写 done 触发:
+#   - unified-gate(质量判断,REFACTOR §5.3)
+#   - reflect 落库飞轮回写(REFACTOR §5.1)
+#   - 下次同 task_type story 读回(分层路由,REFACTOR §5.2)
+#
+# 为什么 stage 名是 verify:
+#   - verify 是唯一触发 unified-gate 的 stage(质量门 + 修复决策)
+#   - verify 是 completed 路径 → 触发 reflect persist
+#   - 单 CLI 长跑自己 design+build+verify 全干(放权给 CLI)
+#
+# execution_mode: interactive_pty(非 headless)
+#   - 用户能看到 CLI 输出,中途可打字介入(提问/纠偏/补充信息)
+#   - 对应"放权但不失控"——CLI 自主发挥,人随时能插手
+#
+# 知识按需调用:所有 stage 都注入 kb.py CLI 引导(build_kb_tool_section),
+#   code agent 用 `python kb.py graph/bugs/playbook/experience` 按需查。
+#   experience 子命令读 reflect 落库的分层经验(REFACTOR §5.1 产出)。
+#
+# 对应设计文档:REFACTOR-orchestrator-three-layer-positioning.md §5.0 试金石
+version: 2
+cli: claude
+execution_mode: interactive_pty
+
+stages:
+  verify:
+    order: 1
+    description: "单阶段全干:调研→设计→实现→验证→交付,自己决定怎么做"
+    confirm: false
+    review: false
+    max_retries: 2
+    expected_outputs:
+      - summary
+      - files_changed
+      - test_report_path
+    next_default: []
+
+quality:
+  enabled: true
+  block_on_open_high_findings: true
+
+adversarial:
+  enabled: false

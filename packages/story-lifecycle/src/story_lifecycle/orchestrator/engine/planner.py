@@ -15,7 +15,6 @@ from pathlib import Path
 from ...infra.llm_client import get_llm, with_story_key
 from ...infra.story_paths import safe_story_path
 from ...infra.paths import stage_done_file_rel
-from .agent_tools import ORCHESTRATOR_TOOLS
 
 log = logging.getLogger("story-lifecycle.planner")
 
@@ -108,8 +107,13 @@ def _build_agent_system_prompt(
     profile_stages: dict | None = None,
     story_title: str = "",
     story_key: str = "",
+    workspace: str = "",
 ) -> str:
-    """构建 Agent 的 system prompt。"""
+    """构建 Agent 的 system prompt。
+
+    REFACTOR §5.2.1:接通死代码 _load_team_knowledge / _load_story_knowledge,
+    让编排器-模型用上跨阶段 + 历史经验的特权视角(信息差护城河)。
+    """
     stages_hint = ""
     if profile_stages:
         lines = []
@@ -121,11 +125,14 @@ def _build_agent_system_prompt(
     else:
         stages_hint = "  - design: 代码调研与方案设计\n  - build: 实施计划与编码实现\n  - verify: 验证与交付证据"
 
-    return f"""你是开发任务编排 Agent。根据需求信息，用工具规划并执行开发流程。
+    # REFACTOR §5.2.1:接通死代码——团队级 + story 级知识
+    team_kb = _load_team_knowledge()
+    story_kb = _load_story_knowledge(workspace, story_key) if workspace else "（无 Story 知识）"
+
+    return f"""你是开发任务编排 Agent。根据需求信息，规划开发流程。
 
 ## 你的职责
-- 根据需求决定需要执行哪些阶段
-- 每个阶段选择合适的 CLI 工具（claude / codex / kimi），参考 profile 给各阶段配的 CLI 提示
+- 根据需求决定需要执行哪些阶段(skip 不需要的)
 - 给每个阶段指定 2-3 个关键要点（focus）
 - 规划完成后暂停，等待用户确认
 
@@ -133,15 +140,20 @@ def _build_agent_system_prompt(
 - Key: {story_key}
 - 标题: {story_title}
 
+## 团队记忆（跨 story 经验，参考但不盲从）
+{team_kb}
+
+## 本 Story 已有知识
+{story_kb}
+
 ## 可用阶段
 {stages_hint}
 
 ## 规则
-1. 对每个需要执行的阶段，调用 plan_step 工具
-2. 对不需要的阶段（如纯前端需求不需要后端设计），调用 skip_stage
-3. focus 要简洁（2-3 个要点），不要写详细设计
-4. CLI（claude/codex/kimi）会自己理解需求并设计方案，你不需要代劳
-5. 规划完所有阶段后停止调用工具"""
+1. 对每个阶段,决定 skip(true)还是执行(false)
+2. 对执行的阶段,给 2-3 个 focus 要点(不要写详细设计)
+3. CLI（claude/codex/kimi）会自己理解需求并设计方案，你不需要代劳
+4. adapter 由 profile 路由,你不需要选"""
 
 
 def _build_agent_user_message(
@@ -176,19 +188,36 @@ def run_orchestrator_agent(
     *,
     on_action=None,
 ) -> dict:
-    """Supervisor Agent 规划循环：生成结构化 action list。
+    """Supervisor Agent 规划:单次 LLM 决定需要哪些阶段 + 各阶段 focus。
 
-    使用 Function Calling 替代文本 JSON 规划。Agent 调用 plan_step/skip_stage
-    工具来声明每个阶段的执行计划。
+    REFACTOR §5.4.1:从 10 轮 FC 循环(plan_step/skip_stage)改为单次 invoke_structured。
+    阶段序列由 profile 定义(接力拓扑不动);模型只决定 skip 哪些 + 每阶段 focus。
+
+    **边界(§5.4.2,护城河不动)**:
+    - adapter 由 profile 的 stage→cli 决定(continue_orchestrator_agent:793 兜底覆盖)
+    - 阶段序列由 profile 定义(design→build→verify)
+    - 人确认闸(api_confirm_plan)保留
+    - 模型只决定"skip 哪些阶段 + 每阶段 focus 要点"
 
     Args:
         story_key: Story 唯一标识
-        on_action: 回调函数，每个 tool_call 时调用，用于 SSE 推送
+        on_action: 回调函数(SSE 推送,保留兼容)
 
     Returns:
         {"status": "planning", "actions": [...]}
     """
     from ...infra.db import models as db
+    from pydantic import BaseModel
+
+    class StagePlan(BaseModel):
+        """单阶段规划:skip 哪些阶段 + 每阶段 focus。adapter 不让模型选。"""
+        stage: str
+        skip: bool = False
+        focus: str = ""
+
+    class PlanResult(BaseModel):
+        """规划结果:阶段列表。"""
+        stages: list[StagePlan]
 
     story = db.get_story(story_key)
     if not story:
@@ -199,7 +228,7 @@ def run_orchestrator_agent(
     workspace = story.get("workspace", "")
     profile_name = story.get("profile", "minimal")
 
-    # 解析 profile 获取阶段列表
+    # 解析 profile 获取阶段列表(adapter 路由来源,模型不参与)
     profile_stages = None
     try:
         from ..engine.profile_loader import resolve_profile
@@ -215,11 +244,11 @@ def run_orchestrator_agent(
     except Exception:
         pass
 
-    # 构建 messages
     system_prompt = _build_agent_system_prompt(
         profile_stages=profile_stages,
         story_title=title,
         story_key=story_key,
+        workspace=workspace,
     )
     user_msg = _build_agent_user_message(
         story_key=story_key,
@@ -229,110 +258,38 @@ def run_orchestrator_agent(
         profile_stages=profile_stages,
     )
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_msg},
-    ]
-
-    # Agent 循环：收集 plan_step / skip_stage 调用
-    actions = []
+    # 单次 LLM 调用(替 10 轮 FC 循环)
     llm = get_llm()
-    max_rounds = 10
+    actions: list[dict] = []
 
-    try:
-        for round_idx in range(max_rounds):
-            resp = llm.invoke_with_tools(
-                messages,
-                ORCHESTRATOR_TOOLS,
-                tool_choice="auto",
-                temperature=0.1,
-                timeout=90,
-            )
-
-            # 记录 assistant 回复
-            assistant_msg = resp["message"].copy()
-            # 确保 tool_calls 是序列化友好的格式
-            if resp["tool_calls"]:
-                serializable_calls = []
-                for tc in resp["tool_calls"]:
-                    fn = tc.get("function", {})
-                    args = fn.get("arguments", {})
-                    if isinstance(args, dict):
-                        args = json.dumps(args, ensure_ascii=False)
-                    serializable_calls.append(
-                        {
-                            "id": tc.get("id", ""),
-                            "type": tc.get("type", "function"),
-                            "function": {
-                                "name": fn.get("name", ""),
-                                "arguments": args,
-                            },
-                        }
-                    )
-                assistant_msg["tool_calls"] = serializable_calls
-            messages.append(assistant_msg)
-
-            tool_calls = resp["tool_calls"]
-            if not tool_calls:
-                # Agent 说完了（没有更多 tool calls）
-                break
-
-            for tc in tool_calls:
-                fn = tc.get("function", {})
-                name = fn.get("name", "")
-                args = fn.get("arguments", {})
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except json.JSONDecodeError:
-                        args = {}
-
-                if name == "plan_step":
-                    _llm_done = args.get("done_file")
-                    if _llm_done:
-                        # schema 已删 done_file,但兼容旧模型仍可能传;忽略并记录(BUG #7)
-                        log.info(
-                            "[%s] ignoring LLM-provided done_file=%r; using canonical path",
-                            story_key,
-                            _llm_done,
-                        )
-                    action = {
+    if llm.api_key and profile_stages:
+        prompt = f"{system_prompt}\n\n{user_msg}"
+        try:
+            result = llm.invoke_structured(prompt, PlanResult, temperature=0.1, timeout=90)
+            # 把 PlanResult 转 action list(adapter 由 profile 决定,不用模型选的)
+            stage_to_cli = {name: cfg["cli"] for name, cfg in profile_stages.items()}
+            for sp in result.stages:
+                if sp.skip:
+                    actions.append({"action": "skip", "stage": sp.stage, "reason": sp.focus or "skipped"})
+                else:
+                    adapter = stage_to_cli.get(sp.stage, "claude")
+                    actions.append({
                         "action": "launch",
-                        "adapter": args.get("adapter", "claude"),
-                        "stage": args.get("stage", ""),
-                        "focus": args.get("focus", ""),
-                        "done_file": stage_done_file_rel(
-                            story_key, args.get("stage", "")
-                        ),
-                    }
-                    actions.append(action)
+                        "adapter": adapter,
+                        "stage": sp.stage,
+                        "focus": sp.focus,
+                        "done_file": stage_done_file_rel(story_key, sp.stage),
+                    })
                     if on_action:
-                        on_action({"type": "action", "action": action})
+                        on_action({"type": "action", "action": actions[-1]})
+        except Exception as exc:
+            log.warning("[%s] structured plan failed, using default actions: %s", story_key, exc)
+            actions = _default_planning_actions(story_key, profile_stages)
+    else:
+        # 无 api_key 或无 profile → fallback:全跑 profile 默认阶段
+        actions = _default_planning_actions(story_key, profile_stages)
 
-                elif name == "skip_stage":
-                    action = {
-                        "action": "skip",
-                        "stage": args.get("stage", ""),
-                        "reason": args.get("reason", ""),
-                    }
-                    actions.append(action)
-                    if on_action:
-                        on_action({"type": "action", "action": action})
-
-                # 喂回 tool result 给 Agent
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.get("id", ""),
-                        "content": json.dumps(
-                            {"status": "recorded"}, ensure_ascii=False
-                        ),
-                    }
-                )
-    except Exception:
-        raise
-
-    # 写入 DB：暂停等用户确认
+    # 写入 DB:暂停等用户确认
     ctx = {}
     try:
         ctx = json.loads(story.get("context_json") or "{}")
@@ -340,9 +297,6 @@ def run_orchestrator_agent(
         pass
     ctx["_agent_actions"] = actions
     ctx["_plan_confirmed"] = False
-    # FC 路径补写 plan_summary：把所有 launch action 的 "stage: focus"
-    # 拼成总览，修复下游 verify gate / repair packet 的 Plan 断链
-    # （ISS-004）。同时让 GET /plan 的 plan_summary UI 字段非空。
     ctx["plan_summary"] = "; ".join(
         f"{a.get('stage', '')}: {a.get('focus', '')}"
         for a in actions
@@ -355,6 +309,23 @@ def run_orchestrator_agent(
     )
 
     return {"status": "planning", "actions": actions}
+
+
+def _default_planning_actions(story_key: str, profile_stages: dict | None) -> list[dict]:
+    """Fallback:LLM 不可用时,全跑 profile 默认阶段(adapter 由 profile cli 决定)。"""
+    if not profile_stages:
+        return []
+    actions = []
+    for name, cfg in profile_stages.items():
+        cli = cfg["cli"] if isinstance(cfg, dict) else getattr(cfg, "cli", "claude")
+        actions.append({
+            "action": "launch",
+            "adapter": cli,
+            "stage": name,
+            "focus": cfg.get("description", "") if isinstance(cfg, dict) else "",
+            "done_file": stage_done_file_rel(story_key, name),
+        })
+    return actions
 
 
 # headless claude/codex 是真实 AI，非确定：偶发 rc!=0 退出（API 抖动/限流/崩溃）
@@ -431,6 +402,45 @@ def _write_retrospect(workspace: str, story_key: str, actions: list) -> None:
         log.warning("[%s] failed to write retrospect.md: %s", story_key, exc)
 
 
+def _persist_playbook_for_story(workspace: str, story_key: str, db) -> None:
+    """story 完成时飞轮回写(REFACTOR §5.1.3)。
+
+    查全局决策事件 → reflect → 按 task_type/dimension 分文件落盘。
+    与 ``_write_retrospect`` 并列,best-effort,只在 completed 路径触发。
+    task_type 为空时跳过(冷启动期可能未分类)。
+    """
+    try:
+        # 从 context_json 取 task_type
+        story = db.get_story(story_key) or {}
+        ctx = json.loads(story.get("context_json") or "{}")
+        task_type = ctx.get("task_type")
+        if not task_type:
+            return
+
+        # 复用 _build_verify_history_facts 的事件查询逻辑
+        raw = db.get_recent_events_by_type(
+            ["recovery_action", "judge_verdict", "transition_decision"], limit=100
+        )
+        events = []
+        for r in raw:
+            try:
+                payload = json.loads(r.get("payload") or "{}")
+            except Exception:
+                payload = {}
+            events.append({
+                "story_key": r.get("story_key", ""),
+                "event_type": r.get("event_type", ""),
+                "payload": payload,
+            })
+
+        from ..learning.reflection import persist_playbook
+        persist_playbook(
+            workspace=workspace, story_key=story_key, events=events, task_type=task_type
+        )
+    except Exception as exc:
+        log.warning("[%s] _persist_playbook_for_story failed: %s", story_key, exc)
+
+
 # stage → story_document.kind 映射(对齐 auto_discovery.py 的约定:
 # design→spec, build→plan, verify→test_report)。不在映射里的 stage 跳过。
 _STAGE_DOC_KIND = {
@@ -438,6 +448,59 @@ _STAGE_DOC_KIND = {
     "build": "plan",
     "verify": "test_report",
 }
+
+
+def _repair_spec_to_action(
+    *, repair_spec: dict, story_key: str, adapter_name: str, round_n: int, reason: str
+) -> dict | None:
+    """REFACTOR §5.3.4:把 unified_gate 的 repair_action spec 转 planner 可 insert 的 action dict。
+
+    替旧 build_repair_action(transition_decision → action)。
+    字段映射:kind(action→kind) / reason / new_adapter(新增,替硬编码轮转) / rescue_stage。
+    """
+    from ...infra.story_paths import safe_segment
+    kind = repair_spec.get("kind", "retry")
+    seg = safe_segment(story_key)
+
+    if kind in ("escalate", "proceed", "skip", None):
+        return None  # caller 标失败
+
+    if kind == "insert_rescue_stage":
+        rescue = repair_spec.get("rescue_stage", "setup_dependency")
+        return {
+            "action": "launch",
+            "stage": rescue,
+            "adapter": adapter_name,
+            "focus": f"rescue stage — {repair_spec.get('reason', reason)}",
+            "done_file": f".story/done/{seg}/{rescue}.json",
+        }
+
+    # retry 或 swap_approach → verify 修复 action
+    if kind == "swap_approach":
+        # 模型指定 new_adapter(基于 playbook),fallback 到硬编码轮转
+        repair_adapter = repair_spec.get("new_adapter") or _next_adapter_fallback(adapter_name)
+    else:
+        repair_adapter = adapter_name
+    return {
+        "action": "launch",
+        "stage": "verify",
+        "adapter": repair_adapter,
+        "focus": f"repair round {round_n} — {repair_spec.get('reason', reason)}",
+        "done_file": f".story/done/{seg}/verify-round{round_n}.json",
+    }
+
+
+def _next_adapter_fallback(current: str) -> str:
+    """模型未指定 new_adapter 时的兜底轮转(与原 _SWAP_ADAPTER_ORDER 一致)。"""
+    order = ("codex", "claude", "kimi")
+    if current not in order:
+        return order[0]
+    return order[(order.index(current) + 1) % len(order)]
+
+
+def gate_spec_reason(repair_spec: dict) -> str:
+    """从 repair_spec 取 reason(给标失败用)。"""
+    return (repair_spec or {}).get("reason", "verify gate escalate")
 
 
 def _register_stage_outputs(story_key: str, stage: str, done_data: dict) -> None:
@@ -1270,6 +1333,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                         lifecycle_state,
                                     )
                                     _write_retrospect(workspace, story_key, actions)
+                                    _persist_playbook_for_story(workspace, story_key, db)
                                     return
                         # 阶段间闸(PLAN-stage-confirm-gate):仅当 Story 状态闸未处理时执行。
                         # stage_cfg.confirm=True 且后面还有未完成 launch action → paused。
@@ -1341,65 +1405,45 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
 
             # Verify-stage quality gate: HIGH findings block and trigger repair round
             if stage == "verify":
-                from ...orchestrator.evaluation.gate import run_verify_gate
-
                 stage_cfg = profile_stages.get(stage)
                 max_retries = (
                     stage_cfg.max_retries if hasattr(stage_cfg, "max_retries") else 2
                 )
                 ctx["last_verify_summary"] = done_data.get("summary", "")
                 ctx["last_done_data"] = (
-                    done_data  # §4.2:喂给 judge_verify_stage(层4 @ gate)
+                    done_data  # §4.2:喂给 unified gate 作 context
                 )
-                gate_result = run_verify_gate(
+                # REFACTOR §5.3:统一 gate(一次 LLM:质量判断 + finding + decision + repair)
+                # 替原 run_verify_gate + decide_transition + build_repair_action 三步。
+                from ..evaluation.unified_gate import run_unified_verify_gate
+
+                gate_result = run_unified_verify_gate(
                     story_key=story_key,
                     stage=stage,
                     workspace=workspace,
                     context=ctx,
                     quality_cfg=quality_cfg,
                     max_retries=max_retries,
+                    done_data=done_data,
+                    adapter_name=adapter_name,
+                    retry_count=ctx.get("_verify_round", 1),
                 )
                 if gate_result["decision"] == "retry":
-                    # 层2 transition(阶段3 接入):decide_transition 决定怎么转,替硬编码 insert。
-                    from .transition import build_repair_action, decide_transition
-
-                    reason_text = str(gate_result.get("reason", "")).lower()
-                    failure_mode = (
-                        "missing_dependency"
-                        if any(
-                            k in reason_text
-                            for k in ("depend", "import", "no module", "no such file")
-                        )
-                        else "quality"
-                    )
-                    # 层5 回注:reflect playbook → history_facts(让 swap_approach 真触发,
-                    # 替硬编码 False)。飞轮:历史"换 adapter 成功"→ 当前同类失败时 decide_transition 选 swap_approach。
-                    history_facts = _build_verify_history_facts(
-                        db=db,
-                        failed_adapter=adapter_name,
-                        gate_round=gate_result.get("round", 1),
-                        retry_limit=gate_result.get("retry_limit", max_retries),
-                    )
-                    if failure_mode == "missing_dependency":
-                        history_facts["missing_dep"] = gate_result.get("reason", "")
-                    transition = decide_transition(
-                        gate_decision={"pass": False, "rework_point": "verify"},
-                        failure_mode=failure_mode,
-                        history_facts=history_facts,
-                    )
-                    db.log_event(story_key, stage, "transition_decision", transition)
-                    repair_action = build_repair_action(
-                        transition_decision=transition,
+                    # unified_gate 的 repair_action 已包含 kind/reason/new_adapter/rescue_stage
+                    repair_spec = gate_result.get("repair_action") or {}
+                    repair_action = _repair_spec_to_action(
+                        repair_spec=repair_spec,
                         story_key=story_key,
-                        gate_result=gate_result,
                         adapter_name=adapter_name,
+                        round_n=gate_result.get("round", 1),
+                        reason=gate_result.get("reason", ""),
                     )
                     if repair_action is None:
-                        # escalate/proceed/skip → 不插 action,标失败(transition 决策已落事件)
+                        # escalate/skip → 不插 action,标失败
                         db.update_story(
                             story_key,
                             status="failed",
-                            last_error=str(transition.get("reason", ""))[:500],
+                            last_error=str(gate_spec_reason(repair_spec))[:500],
                         )
                         return
                     actions.insert(idx + 1, repair_action)
@@ -1409,18 +1453,18 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         context_json=json.dumps(ctx, ensure_ascii=False),
                     )
                     log.info(
-                        "[%s] Verify gate blocked (round %d/%d); transition=%s adapter=%s",
+                        "[%s] Verify gate blocked (round %d/%d); repair=%s adapter=%s",
                         story_key,
-                        gate_result["round"],
-                        gate_result["retry_limit"],
-                        transition["action"],
+                        gate_result.get("round", 1),
+                        gate_result.get("retry_limit", max_retries),
+                        (repair_spec or {}).get("kind", "?"),
                         repair_action.get("adapter", "-"),
                     )
                 elif gate_result["decision"] == "fail":
                     db.update_story(
                         story_key,
                         status="failed",
-                        last_error=gate_result["reason"],
+                        last_error=gate_result.get("reason", "verify gate fail"),
                     )
                     return
 
@@ -1431,6 +1475,8 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     log.info(f"[{story_key}] All stages completed")
     # story 完成时生成 retrospect.md（聚合各 stage done 摘要）
     _write_retrospect(workspace, story_key, actions)
+    # 飞轮回写:reflect → 按 task_type/dimension 落盘(REFACTOR §5.1.3)
+    _persist_playbook_for_story(workspace, story_key, db)
 
 
 def _build_cli_prompt(
