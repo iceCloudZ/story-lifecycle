@@ -2,6 +2,7 @@
 # Default profile: design → build → verify. PRD intake is prepared before AI starts.
 version: 4
 cli: claude
+label: "默认三阶段：设计 → 编码 → 验证，每阶段可人工确认"
 execution_mode: interactive_pty
 author: zzh                                       # 作者标识，进分支名
 branch_rule: "feature/{author}/{story_key}_{summary}_{date}"  # 占位符: {author}/{date}/{summary}/{story_key}/{project}

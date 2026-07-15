@@ -2,6 +2,7 @@
 # 基于 minimal,改 build 用 kimi(用户确认能跑通),开 quality gate(让层4 judge + 层2 transition 真触发)。
 version: 4
 cli: claude
+label: "真 E2E 测试：设计用 claude、编码用 kimi、开质量门"
 execution_mode: interactive_pty          # PTY 双轨:ensure_agent_pty readiness 检测已修 idle(_wait_ready,§7.1 follow-up);design/verify=claude(带 superpowers),build=kimi(执行层)
 author: zzh
 branch_rule: "feature/{author}/{story_key}_{summary}_{date}"

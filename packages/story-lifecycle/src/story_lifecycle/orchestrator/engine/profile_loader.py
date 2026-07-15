@@ -268,12 +268,17 @@ def list_profiles() -> list[dict]:
 
 
 def _extract_description(data: dict) -> str:
-    """从 profile yaml 提取一句话描述(首个注释行或 stages 拼接)。"""
+    """从 profile yaml 提取一句话描述。
+
+    优先读 ``label`` 字段(人写的简述);没有则 fallback 到阶段拼接。
+    """
+    label = data.get("label")
+    if label:
+        return str(label)
     stages = data.get("stages") or {}
     if stages:
         stage_names = list(stages.keys())
-        mode = data.get("execution_mode", "interactive_pty")
-        return f"阶段: {' → '.join(stage_names)} ({mode})"
+        return f"阶段: {' → '.join(stage_names)}"
     return ""
 
 

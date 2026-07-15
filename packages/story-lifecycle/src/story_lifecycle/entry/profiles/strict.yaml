@@ -2,6 +2,7 @@
 # 严格路径：design → build → verify。评审循环内联在阶段里。
 version: 4
 cli: claude
+label: "严格模式：三阶段 + 内联评审循环 + 质量门（sonnet/haiku 分工）"
 execution_mode: interactive_pty
 author: zzh                                       # 作者标识，进分支名
 branch_rule: "feature/{author}/{story_key}_{summary}_{date}"  # 占位符: {author}/{date}/{summary}/{story_key}/{project}

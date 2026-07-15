@@ -2,6 +2,7 @@
 #
 # 用途:一个 stage(verify),CLI 自己决定怎么干(放权),跑完写 done 触发:
 #   - unified-gate(质量判断,REFACTOR §5.3)
+label: "单阶段全干：CLI 自主设计+编码+验证，可中途介入"
 #   - reflect 落库飞轮回写(REFACTOR §5.1)
 #   - 下次同 task_type story 读回(分层路由,REFACTOR §5.2)
 #
