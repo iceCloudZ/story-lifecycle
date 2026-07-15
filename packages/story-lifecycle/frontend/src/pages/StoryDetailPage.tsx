@@ -12,6 +12,7 @@ import QualityGateTab from '../components/QualityGateTab'
 import TerminalTab from '../components/TerminalTab'
 import ContextTab from '../components/ContextTab'
 import BugsTab from '../components/BugsTab'
+import LlmAuditTab from '../components/LlmAuditTab'
 import ClarifyDialog from '../components/ClarifyDialog'
 import './StoryDetailPage.css'
 
@@ -21,6 +22,7 @@ import './StoryDetailPage.css'
 const MODULES = [
   { id: 'overview', icon: '📊', label: '概览' },
   { id: 'bugs', icon: '🐛', label: '缺陷' },
+  { id: 'llm-audit', icon: '🔍', label: 'LLM 审计' },
   { id: 'code', icon: '💻', label: '代码变更' },
   { id: 'test', icon: '🧪', label: '测试' },
 ]
@@ -254,6 +256,7 @@ export default function StoryDetailPage() {
             />
           )}
           {activeTab === 'code' && <CodeChangesTab storyKey={storyKey} />}
+          {activeTab === 'llm-audit' && <LlmAuditTab storyKey={storyKey} />}
           {activeTab === 'loop' && <AdversarialLoopTab storyKey={storyKey} />}
           {activeTab === 'test' && <TestTab storyKey={storyKey} />}
           {activeTab === 'quality' && <QualityGateTab storyKey={storyKey} />}

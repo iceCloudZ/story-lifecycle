@@ -483,6 +483,8 @@ class LLMClient:
                 result.get("usage", {}),
                 int((time.monotonic() - t0) * 1000),
                 model=self.model,
+                req_body=body,
+                resp_body=result,
             )
             return result
         except Exception as exc:
@@ -534,12 +536,20 @@ class LLMClient:
         return None
 
     @staticmethod
-    def _trace(usage: dict, duration_ms: int, *, model: str = "", error: str = ""):
+    def _trace(
+        usage: dict,
+        duration_ms: int,
+        *,
+        model: str = "",
+        error: str = "",
+        req_body: dict | None = None,
+        resp_body: dict | None = None,
+    ):
         try:
-            from .db.models import log_llm_trace
+            from .db.models import log_llm_call, log_llm_trace
 
             story_key = CURRENT_STORY_KEY.get() or ""
-            log_llm_trace(
+            trace_id = log_llm_trace(
                 story_key=story_key,
                 stage="",
                 operation="llm_client",
@@ -550,6 +560,35 @@ class LLMClient:
                 duration_ms=duration_ms,
                 success=not bool(error),
                 error=error,
+            )
+
+            # 失败路径或无响应体时只记指标，不写正文。
+            if error or resp_body is None:
+                return
+
+            # 抽取三类正文：prompt（请求 messages）/ response（content）/ reasoning
+            # （reasoning_content，DeepSeek-reasoner/o1 等才有）。被动捕获：请求侧
+            # 从不主动开 thinking 开关，这里只是模型若返回了思考链就存下来。
+            prompt_text = json.dumps(req_body.get("messages", [])) if req_body else ""
+            response_text = ""
+            reasoning_text = ""
+            tool_calls_json = ""
+            try:
+                msg = resp_body["choices"][0]["message"]
+                response_text = msg.get("content", "") or ""
+                reasoning_text = msg.get("reasoning_content", "") or ""
+                tool_calls = msg.get("tool_calls")
+                if tool_calls:
+                    tool_calls_json = json.dumps(tool_calls, ensure_ascii=False)
+            except (KeyError, IndexError, TypeError):
+                pass
+
+            log_llm_call(
+                trace_id,
+                prompt_text=prompt_text,
+                response_text=response_text,
+                reasoning_text=reasoning_text,
+                tool_calls_json=tool_calls_json,
             )
         except Exception:
             pass

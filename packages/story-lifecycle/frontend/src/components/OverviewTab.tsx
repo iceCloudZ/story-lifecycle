@@ -270,7 +270,7 @@ export default function OverviewTab({
             <div className="ot-stat-num">{stats.code_changes}</div>
             <div className="ot-stat-label">代码变更</div>
           </button>
-          <button className="ot-stat-card" onClick={() => onTabChange('test')}>
+          <button className="ot-stat-card" onClick={() => onTabChange('llm-audit')}>
             <div className="ot-stat-num">{stats.tokens.calls}</div>
             <div className="ot-stat-label">LLM 调用</div>
           </button>

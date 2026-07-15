@@ -159,6 +159,21 @@ def init_db():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_lt_story ON llm_trace(story_key)")
         _backfill_llm_trace_story_keys(conn)
+        # llm_call: prompt/response/reasoning 正文明细，外键挂到 llm_trace(id)。
+        # 主表 llm_trace 保持轻（只指标），审计时 JOIN 本表取正文。ON DELETE CASCADE
+        # 生效（get_conn() 每连接开 PRAGMA foreign_keys=ON）。
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS llm_call (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id INTEGER NOT NULL REFERENCES llm_trace(id) ON DELETE CASCADE,
+                prompt_text TEXT,
+                response_text TEXT,
+                reasoning_text TEXT,
+                tool_calls_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lc_trace ON llm_call(trace_id)")
         # Finding table for quality flywheel
         conn.execute("""
             CREATE TABLE IF NOT EXISTS finding (
@@ -808,14 +823,15 @@ def log_llm_trace(
     duration_ms: int = 0,
     success: bool = True,
     error: str = "",
-):
-    """Record an LLM call trace with token usage."""
+) -> int:
+    """Record an LLM call trace with token usage. Returns the new row id."""
     with _db() as conn:
-        conn.execute(
+        cur = conn.execute(
             """INSERT INTO llm_trace (story_key, stage, operation, model,
                prompt_tokens, completion_tokens, total_tokens,
                duration_ms, success, error)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               RETURNING id""",
             (
                 story_key,
                 stage,
@@ -829,6 +845,53 @@ def log_llm_trace(
                 error,
             ),
         )
+        return cur.fetchone()[0]
+
+
+def log_llm_call(
+    trace_id: int,
+    *,
+    prompt_text: str = "",
+    response_text: str = "",
+    reasoning_text: str = "",
+    tool_calls_json: str = "",
+) -> int:
+    """Record the prompt/response/reasoning body of an LLM call.
+
+    Linked to ``llm_trace`` via ``trace_id`` (ON DELETE CASCADE). Returns the
+    new row id. Callers should keep ``log_llm_trace`` + ``log_llm_call`` paired.
+    """
+    with _db() as conn:
+        cur = conn.execute(
+            """INSERT INTO llm_call
+               (trace_id, prompt_text, response_text, reasoning_text, tool_calls_json)
+               VALUES (?, ?, ?, ?, ?)
+               RETURNING id""",
+            (trace_id, prompt_text, response_text, reasoning_text, tool_calls_json),
+        )
+        return cur.fetchone()[0]
+
+
+def get_story_llm_calls(story_key: str) -> list[dict]:
+    """Return prompt/response/reasoning bodies for a story, ordered by call id.
+
+    JOIN llm_call ↔ llm_trace on trace_id, filter by story_key. Use this for
+    auditing what was asked/answered/thought across an orchestration run.
+    """
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT lc.id, lc.trace_id, lc.prompt_text, lc.response_text,
+                      lc.reasoning_text, lc.tool_calls_json, lc.created_at,
+                      lt.stage, lt.operation, lt.model, lt.prompt_tokens,
+                      lt.completion_tokens, lt.total_tokens, lt.duration_ms,
+                      lt.success, lt.error
+               FROM llm_call lc
+               JOIN llm_trace lt ON lt.id = lc.trace_id
+               WHERE lt.story_key = ?
+               ORDER BY lc.id""",
+            (story_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def _backfill_llm_trace_story_keys(conn) -> None:

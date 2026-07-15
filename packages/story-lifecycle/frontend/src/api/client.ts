@@ -395,3 +395,28 @@ export const sessionApi = {
     return `${proto}//${location.host}/ws/pty/${storyKey}/${sessionId}`
   },
 }
+
+// ---- LLM audit (prompt/response/reasoning 正文审计) ------------------------
+
+export interface LlmCallRow {
+  id: number
+  trace_id: number
+  prompt_text?: string | null
+  response_text?: string | null
+  reasoning_text?: string | null
+  tool_calls_json?: string | null
+  created_at?: string
+  stage?: string
+  operation?: string
+  model?: string
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
+  duration_ms?: number
+  success?: number
+  error?: string | null
+}
+
+export const auditApi = {
+  calls: (key: string) => fetchJSON<{ story_key: string; calls: LlmCallRow[] }>(`/api/story/${key}/llm-calls`),
+}
