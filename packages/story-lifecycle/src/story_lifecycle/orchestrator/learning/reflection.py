@@ -55,12 +55,12 @@ def reflect(*, events: list[dict]) -> dict:
         by_story[e.get("story_key", "")].append(e)
 
     # 三类沉淀的累积器:key → {support, reason(最新)}
-    swap_evidence: Counter = Counter()           # (failed, new) -> support
-    swap_reasons: dict[tuple, str] = {}           # (failed, new) -> 最新 reason
-    stage_failures: Counter = Counter()           # stage -> 连续 retry 次数
-    stage_fail_reasons: dict[str, str] = {}       # stage -> 最新 reason
-    rescue_evidence: Counter = Counter()          # stage -> support
-    rescue_reasons: dict[str, str] = {}           # stage -> 最新 reason
+    swap_evidence: Counter = Counter()  # (failed, new) -> support
+    swap_reasons: dict[tuple, str] = {}  # (failed, new) -> 最新 reason
+    stage_failures: Counter = Counter()  # stage -> 连续 retry 次数
+    stage_fail_reasons: dict[str, str] = {}  # stage -> 最新 reason
+    rescue_evidence: Counter = Counter()  # stage -> support
+    rescue_reasons: dict[str, str] = {}  # stage -> 最新 reason
 
     for _story, evs in by_story.items():
         # 该 story 是否最终 pass(任意 pass 类事件 + payload 里 passed/pass=True)
@@ -76,7 +76,10 @@ def reflect(*, events: list[dict]) -> dict:
             payload = e.get("payload") or {}
 
             # adapter-routing: recovery_action(retry_new_adapter)
-            if etype == "recovery_action" and payload.get("action") == "retry_new_adapter":
+            if (
+                etype == "recovery_action"
+                and payload.get("action") == "retry_new_adapter"
+            ):
                 failed = payload.get("failed_adapter") or payload.get("adapter") or "?"
                 new = payload.get("new_adapter")
                 if not new:
@@ -86,7 +89,10 @@ def reflect(*, events: list[dict]) -> dict:
                 swap_reasons[key] = payload.get("reason", "")  # 存原文(§5.1.1 Q3)
 
             # rescue: recovery_action(insert_rescue_stage)
-            if etype == "recovery_action" and payload.get("action") == "insert_rescue_stage":
+            if (
+                etype == "recovery_action"
+                and payload.get("action") == "insert_rescue_stage"
+            ):
                 stage = payload.get("rescue_stage") or payload.get("stage") or "unknown"
                 rescue_evidence[stage] += 1
                 rescue_reasons[stage] = payload.get("reason", "")
@@ -101,32 +107,41 @@ def reflect(*, events: list[dict]) -> dict:
 
     # adapter-routing 规则
     for (failed, new), cnt in swap_evidence.items():
-        playbook.append({
-            "rule": f"adapter {failed} 失败 → 换 {new} 成功",
-            "dimension": "adapter-routing",
-            "support": cnt,
-            "evidence": swap_reasons.get((failed, new)) or "recovery_action(retry_new_adapter) + 后续 pass",
-        })
+        playbook.append(
+            {
+                "rule": f"adapter {failed} 失败 → 换 {new} 成功",
+                "dimension": "adapter-routing",
+                "support": cnt,
+                "evidence": swap_reasons.get((failed, new))
+                or "recovery_action(retry_new_adapter) + 后续 pass",
+            }
+        )
 
     # failure-pattern 规则(只沉淀反复出现 ≥2 次的)
     for stage, cnt in stage_failures.items():
         if cnt < 2:
             continue  # 单次 retry 不算 pattern
-        playbook.append({
-            "rule": f"stage {stage} 反复失败({cnt} 次)",
-            "dimension": "failure-pattern",
-            "support": cnt,
-            "evidence": stage_fail_reasons.get(stage, ""),
-        })
+        playbook.append(
+            {
+                "rule": f"stage {stage} 反复失败({cnt} 次)",
+                "dimension": "failure-pattern",
+                "support": cnt,
+                "evidence": stage_fail_reasons.get(stage, ""),
+            }
+        )
 
     # rescue 规则
     for stage, cnt in rescue_evidence.items():
-        playbook.append({
-            "rule": f"插救援 stage {stage} 后 pass",
-            "dimension": "rescue",
-            "support": cnt,
-            "evidence": rescue_reasons.get(stage, "recovery_action(insert_rescue_stage) + 后续 pass"),
-        })
+        playbook.append(
+            {
+                "rule": f"插救援 stage {stage} 后 pass",
+                "dimension": "rescue",
+                "support": cnt,
+                "evidence": rescue_reasons.get(
+                    stage, "recovery_action(insert_rescue_stage) + 后续 pass"
+                ),
+            }
+        )
 
     playbook.sort(key=lambda r: -r["support"])
     return {"playbook": playbook, "stats": dict(stats)}
@@ -159,6 +174,7 @@ def write_playbook_file(
         return None
 
     from ...infra.story_paths import safe_story_path
+
     path = safe_story_path(
         workspace, ".story", "knowledge", "playbooks", task_type, fname
     )
@@ -176,7 +192,9 @@ def write_playbook_file(
             rule = entry["rule"]
             if rule in existing:
                 existing[rule]["support"] += entry.get("support", 1)
-                existing[rule]["evidence"] = entry.get("evidence", existing[rule]["evidence"])
+                existing[rule]["evidence"] = entry.get(
+                    "evidence", existing[rule]["evidence"]
+                )
             else:
                 existing[rule] = {
                     "support": entry.get("support", 1),
@@ -199,6 +217,7 @@ def write_playbook_file(
         return str(path.relative_to(workspace))
     except Exception as exc:
         import logging
+
         logging.getLogger("story-lifecycle.reflection").warning(
             "write_playbook_file failed for %s/%s: %s", task_type, dimension, exc
         )
@@ -236,7 +255,9 @@ def _parse_existing_playbook(path: Path, existing: dict[str, dict]) -> None:
         pass  # 解析失败→当空文件处理,不崩
 
 
-def persist_playbook(*, workspace: str, story_key: str, events: list[dict], task_type: str) -> None:
+def persist_playbook(
+    *, workspace: str, story_key: str, events: list[dict], task_type: str
+) -> None:
     """story 完成时调用:reflect → 按 dimension 分文件落盘。
 
     挂在 ``_write_retrospect`` 旁边(planner.py:1272, 1433)。
@@ -257,18 +278,28 @@ def persist_playbook(*, workspace: str, story_key: str, events: list[dict], task
         if not playbook:
             return
         # 按 dimension 分文件写
-        dimensions_seen = {entry.get("dimension") for entry in playbook if entry.get("dimension")}
+        dimensions_seen = {
+            entry.get("dimension") for entry in playbook if entry.get("dimension")
+        }
         for dim in dimensions_seen:
             write_playbook_file(
-                workspace=workspace, task_type=task_type, dimension=dim, playbook=playbook
+                workspace=workspace,
+                task_type=task_type,
+                dimension=dim,
+                playbook=playbook,
             )
         import logging
+
         logging.getLogger("story-lifecycle.reflection").info(
             "[%s] persisted playbook for task_type=%s (%d dimensions, %d rules)",
-            story_key, task_type, len(dimensions_seen), len(playbook),
+            story_key,
+            task_type,
+            len(dimensions_seen),
+            len(playbook),
         )
     except Exception as exc:
         import logging
+
         logging.getLogger("story-lifecycle.reflection").warning(
             "[%s] persist_playbook failed: %s", story_key, exc
         )

@@ -107,8 +107,12 @@ def run_unified_verify_gate(
         "files_changed": done_data.get("files_changed") or [],
         "test_report_path": done_data.get("test_report_path"),
         "open_high_findings": [
-            {"severity": f.get("severity"), "category": f.get("category"),
-             "description": f.get("description"), "location": f.get("location")}
+            {
+                "severity": f.get("severity"),
+                "category": f.get("category"),
+                "description": f.get("description"),
+                "location": f.get("location"),
+            }
             for f in open_findings
         ],
         "history_playbook": history_playbook,
@@ -145,9 +149,7 @@ def run_unified_verify_gate(
 # ---- Fallback(§5.3.3)----
 
 
-def _fallback_gate_decision(
-    evidence: dict, db, story_key: str
-) -> dict:
+def _fallback_gate_decision(evidence: dict, db, story_key: str) -> dict:
     """LLM 不可用时降级。区分两种失败(§5.3.3):
 
     - 检测到 HIGH finding 存在(查 DB)→ escalate 转人(不掩盖质量问题)
@@ -173,7 +175,7 @@ def _fallback_gate_decision(
             "reason": f"HIGH finding 存在({len(open_high)}条),转人审查",
             "repair_action": {
                 "kind": "escalate",
-                "reason": f"HIGH findings: {[f.get('description','')[:80] for f in open_high[:3]]}",
+                "reason": f"HIGH findings: {[f.get('description', '')[:80] for f in open_high[:3]]}",
             },
             "findings": open_high,
         }
@@ -213,8 +215,8 @@ def _build_unified_gate_prompt(evidence: dict) -> str:
         findings_lines = []
         for f in open_high:
             findings_lines.append(
-                f"  - [{f.get('severity','?')}] {f.get('category','?')}: "
-                f"{f.get('description','')} @ {f.get('location','?')}"
+                f"  - [{f.get('severity', '?')}] {f.get('category', '?')}: "
+                f"{f.get('description', '')} @ {f.get('location', '?')}"
             )
         findings_text = "\n**未解决的 HIGH finding:**\n" + "\n".join(findings_lines)
     else:
@@ -226,13 +228,13 @@ def _build_unified_gate_prompt(evidence: dict) -> str:
     return f"""你是 verify 阶段的质量门卫。基于以下证据,一次决策:
 
 ## 证据
-- **Story:** {evidence.get('story_key','')} (task_type: {evidence.get('task_type','未知')})
-- **verify 产出摘要:** {evidence.get('done_summary','（无摘要）')}
+- **Story:** {evidence.get("story_key", "")} (task_type: {evidence.get("task_type", "未知")})
+- **verify 产出摘要:** {evidence.get("done_summary", "（无摘要）")}
 - **变更文件:** {files_text}
 {findings_text}
-- **当前 adapter:** {evidence.get('current_adapter','?')}
-- **可选 adapter:** {', '.join(evidence.get('available_adapters',[]))}
-- **修复轮次:** {evidence.get('retry_count',1)}/{evidence.get('max_retries',2)}
+- **当前 adapter:** {evidence.get("current_adapter", "?")}
+- **可选 adapter:** {", ".join(evidence.get("available_adapters", []))}
+- **修复轮次:** {evidence.get("retry_count", 1)}/{evidence.get("max_retries", 2)}
 
 ## 历史经验(playbook,参考但不盲从)
 {playbook_text}
@@ -279,7 +281,9 @@ def _load_playbook_for_verify(workspace: str, task_type: str) -> str:
     if not task_type:
         return ""
     try:
-        playbooks_dir = Path(workspace) / ".story" / "knowledge" / "playbooks" / task_type
+        playbooks_dir = (
+            Path(workspace) / ".story" / "knowledge" / "playbooks" / task_type
+        )
         if not playbooks_dir.exists():
             return ""
         parts = []
@@ -291,12 +295,16 @@ def _load_playbook_for_verify(workspace: str, task_type: str) -> str:
         return ""
 
 
-def _log_gate_event(db, story_key: str, stage: str, result: dict, findings: list) -> None:
+def _log_gate_event(
+    db, story_key: str, stage: str, result: dict, findings: list
+) -> None:
     """记录 gate_decision 事件(供 reflect 沉淀,§5.1.1 消费)。"""
     try:
         repair = result.get("repair_action") or {}
         db.log_event(
-            story_key, stage, "gate_decision",
+            story_key,
+            stage,
+            "gate_decision",
             {
                 "decision": result.get("decision"),
                 "verdict": result.get("verdict"),

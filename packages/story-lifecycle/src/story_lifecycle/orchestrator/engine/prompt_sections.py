@@ -113,6 +113,7 @@ def _get_task_type(story_key: str) -> str | None:
     供 build_kb_tool_section / build_design_dimensions_section 共用。
     """
     import json as _json
+
     task_type = None
     try:
         from ...infra.db import models as _db

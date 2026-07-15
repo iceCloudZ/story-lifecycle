@@ -127,10 +127,15 @@ def _build_agent_system_prompt(
 
     # REFACTOR §5.2.1:接通死代码——团队级 + story 级知识
     team_kb = _load_team_knowledge()
-    story_kb = _load_story_knowledge(workspace, story_key) if workspace else "（无 Story 知识）"
+    story_kb = (
+        _load_story_knowledge(workspace, story_key)
+        if workspace
+        else "（无 Story 知识）"
+    )
 
     # task_actions:动作目录(帮 LLM 选每个 stage 该干什么)
     from .task_actions import get_action_catalog_for_prompt
+
     action_catalog = get_action_catalog_for_prompt()
 
     return f"""你是开发任务编排 Agent。根据需求信息，规划开发流程。
@@ -220,6 +225,7 @@ def run_orchestrator_agent(
 
     class StagePlan(BaseModel):
         """单阶段规划:skip 哪些阶段 + 每阶段 focus + task_actions + grill。adapter 不让模型选。"""
+
         stage: str
         skip: bool = False
         focus: str = ""
@@ -228,6 +234,7 @@ def run_orchestrator_agent(
 
     class PlanResult(BaseModel):
         """规划结果:阶段列表。"""
+
         stages: list[StagePlan]
 
     story = db.get_story(story_key)
@@ -276,27 +283,39 @@ def run_orchestrator_agent(
     if llm.api_key and profile_stages:
         prompt = f"{system_prompt}\n\n{user_msg}"
         try:
-            result = llm.invoke_structured(prompt, PlanResult, temperature=0.1, timeout=90)
+            result = llm.invoke_structured(
+                prompt, PlanResult, temperature=0.1, timeout=90
+            )
             # 把 PlanResult 转 action list(adapter 由 profile 决定,不用模型选的)
             stage_to_cli = {name: cfg["cli"] for name, cfg in profile_stages.items()}
             for sp in result.stages:
                 if sp.skip:
-                    actions.append({"action": "skip", "stage": sp.stage, "reason": sp.focus or "skipped"})
+                    actions.append(
+                        {
+                            "action": "skip",
+                            "stage": sp.stage,
+                            "reason": sp.focus or "skipped",
+                        }
+                    )
                 else:
                     adapter = stage_to_cli.get(sp.stage, "claude")
-                    actions.append({
-                        "action": "launch",
-                        "adapter": adapter,
-                        "stage": sp.stage,
-                        "focus": sp.focus,
-                        "task_actions": sp.task_actions or [],
-                        "grill": sp.grill,
-                        "done_file": stage_done_file_rel(story_key, sp.stage),
-                    })
+                    actions.append(
+                        {
+                            "action": "launch",
+                            "adapter": adapter,
+                            "stage": sp.stage,
+                            "focus": sp.focus,
+                            "task_actions": sp.task_actions or [],
+                            "grill": sp.grill,
+                            "done_file": stage_done_file_rel(story_key, sp.stage),
+                        }
+                    )
                     if on_action:
                         on_action({"type": "action", "action": actions[-1]})
         except Exception as exc:
-            log.warning("[%s] structured plan failed, using default actions: %s", story_key, exc)
+            log.warning(
+                "[%s] structured plan failed, using default actions: %s", story_key, exc
+            )
             actions = _default_planning_actions(story_key, profile_stages)
     else:
         # 无 api_key 或无 profile → fallback:全跑 profile 默认阶段
@@ -324,9 +343,12 @@ def run_orchestrator_agent(
     return {"status": "planning", "actions": actions}
 
 
-def _default_planning_actions(story_key: str, profile_stages: dict | None) -> list[dict]:
+def _default_planning_actions(
+    story_key: str, profile_stages: dict | None
+) -> list[dict]:
     """Fallback:LLM 不可用时,全跑 profile 默认阶段(adapter 由 profile cli 决定)。"""
     from .task_actions import get_default_task_actions
+
     if not profile_stages:
         return []
     is_single = len(profile_stages) <= 1
@@ -335,15 +357,17 @@ def _default_planning_actions(story_key: str, profile_stages: dict | None) -> li
     actions = []
     for name, cfg in profile_stages.items():
         cli = cfg["cli"] if isinstance(cfg, dict) else getattr(cfg, "cli", "claude")
-        actions.append({
-            "action": "launch",
-            "adapter": cli,
-            "stage": name,
-            "focus": cfg.get("description", "") if isinstance(cfg, dict) else "",
-            "task_actions": get_default_task_actions(name, is_single),
-            "grill": True if is_single else _DEFAULT_GRILL.get(name, False),
-            "done_file": stage_done_file_rel(story_key, name),
-        })
+        actions.append(
+            {
+                "action": "launch",
+                "adapter": cli,
+                "stage": name,
+                "focus": cfg.get("description", "") if isinstance(cfg, dict) else "",
+                "task_actions": get_default_task_actions(name, is_single),
+                "grill": True if is_single else _DEFAULT_GRILL.get(name, False),
+                "done_file": stage_done_file_rel(story_key, name),
+            }
+        )
     return actions
 
 
@@ -446,13 +470,16 @@ def _persist_playbook_for_story(workspace: str, story_key: str, db) -> None:
                 payload = json.loads(r.get("payload") or "{}")
             except Exception:
                 payload = {}
-            events.append({
-                "story_key": r.get("story_key", ""),
-                "event_type": r.get("event_type", ""),
-                "payload": payload,
-            })
+            events.append(
+                {
+                    "story_key": r.get("story_key", ""),
+                    "event_type": r.get("event_type", ""),
+                    "payload": payload,
+                }
+            )
 
         from ..learning.reflection import persist_playbook
+
         persist_playbook(
             workspace=workspace, story_key=story_key, events=events, task_type=task_type
         )
@@ -478,6 +505,7 @@ def _repair_spec_to_action(
     字段映射:kind(action→kind) / reason / new_adapter(新增,替硬编码轮转) / rescue_stage。
     """
     from ...infra.story_paths import safe_segment
+
     kind = repair_spec.get("kind", "retry")
     seg = safe_segment(story_key)
 
@@ -497,7 +525,9 @@ def _repair_spec_to_action(
     # retry 或 swap_approach → verify 修复 action
     if kind == "swap_approach":
         # 模型指定 new_adapter(基于 playbook),fallback 到硬编码轮转
-        repair_adapter = repair_spec.get("new_adapter") or _next_adapter_fallback(adapter_name)
+        repair_adapter = repair_spec.get("new_adapter") or _next_adapter_fallback(
+            adapter_name
+        )
     else:
         repair_adapter = adapter_name
     return {
@@ -884,6 +914,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 # (BUG #9,见 handoff-design-hitl §11)。
                 # 见 orchestrator/mcp/clarify_server.py + memory story-lifecycle-design-hitl。
                 from .task_actions import TASK_ACTIONS as _TA
+
                 _has_interactive = any(
                     _TA.get(a, {}).get("mode") == "interactive"
                     for a in action.get("task_actions", [])
@@ -904,15 +935,22 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         )
                         write_mcp_config(_mcp_cfg, _sys.executable)
                         launch_cmd = list(launch_cmd) + ["--mcp-config", str(_mcp_cfg)]
-                        story_env = {**_os.environ, "STORY_KEY": story_key, "STORY_STAGE": stage}
+                        story_env = {
+                            **_os.environ,
+                            "STORY_KEY": story_key,
+                            "STORY_STAGE": stage,
+                        }
                         log.info(
                             "[%s] stage %s grill clarify MCP wired: --mcp-config=%s STORY_KEY/STORY_STAGE set",
-                            story_key, stage, _mcp_cfg,
+                            story_key,
+                            stage,
+                            _mcp_cfg,
                         )
                     except Exception:
                         log.exception(
                             "[%s] stage %s grill clarify MCP wiring failed (clarify unavailable)",
-                            story_key, stage,
+                            story_key,
+                            stage,
                         )
                 _ctx_markers = (
                     "上下文",
@@ -1361,7 +1399,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                         lifecycle_state,
                                     )
                                     _write_retrospect(workspace, story_key, actions)
-                                    _persist_playbook_for_story(workspace, story_key, db)
+                                    _persist_playbook_for_story(
+                                        workspace, story_key, db
+                                    )
                                     return
                         # 阶段间闸(PLAN-stage-confirm-gate):仅当 Story 状态闸未处理时执行。
                         # stage_cfg.confirm=True 且后面还有未完成 launch action → paused。
@@ -1438,9 +1478,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     stage_cfg.max_retries if hasattr(stage_cfg, "max_retries") else 2
                 )
                 ctx["last_verify_summary"] = done_data.get("summary", "")
-                ctx["last_done_data"] = (
-                    done_data  # §4.2:喂给 unified gate 作 context
-                )
+                ctx["last_done_data"] = done_data  # §4.2:喂给 unified gate 作 context
                 # REFACTOR §5.3:统一 gate(一次 LLM:质量判断 + finding + decision + repair)
                 # 替原 run_verify_gate + decide_transition + build_repair_action 三步。
                 from ..evaluation.unified_gate import run_unified_verify_gate
@@ -1624,6 +1662,7 @@ def _build_cli_prompt(
     # 选了 run_tests → 允许轻量测试;没选 → 禁测试。都禁重构建。
     from .task_actions import _build_exec_constraint as _build_constraint
     from .task_actions import _build_task_list
+
     _task_actions = task_actions or []
     exec_constraint_section = _build_constraint(_task_actions)
     # 任务清单:LLM 选的动作 → prompt 里的有序步骤(按 order 排序)

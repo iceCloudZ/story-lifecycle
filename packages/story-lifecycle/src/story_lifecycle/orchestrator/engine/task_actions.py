@@ -82,8 +82,11 @@ _DEFAULT_TASK_ACTIONS: dict[str, list[str]] = {
 
 # 单 stage profile(single-pass 等)→ 全干
 _DEFAULT_SINGLE_STAGE_ACTIONS: list[str] = [
-    "write_design_doc", "write_code", "run_tests",
-    "accept_review", "write_test_report",
+    "write_design_doc",
+    "write_code",
+    "run_tests",
+    "accept_review",
+    "write_test_report",
 ]
 
 
@@ -119,11 +122,7 @@ def _build_task_list(action_keys: list[str]) -> str:
     items = []
     for i, (key, action) in enumerate(valid, 1):
         items.append(f"{i}. {action['instruction']}")
-    return (
-        "\n### 本阶段任务清单\n"
-        "请按以下顺序完成：\n"
-        + "\n".join(items) + "\n"
-    )
+    return "\n### 本阶段任务清单\n请按以下顺序完成：\n" + "\n".join(items) + "\n"
 
 
 def _build_exec_constraint(action_keys: list[str]) -> str:
@@ -172,7 +171,12 @@ def build_done_protocol(stage: str, done_file: str, action_keys: list[str]) -> s
     """
     expected = get_expected_outputs(action_keys)
     # 基础字段(所有 done 都有)
-    fields = {"stage": stage, "status": "done", "summary": "完成摘要", "files_changed": []}
+    fields = {
+        "stage": stage,
+        "status": "done",
+        "summary": "完成摘要",
+        "files_changed": [],
+    }
     # 动态追加期望字段
     for out_key in expected:
         if out_key not in fields:

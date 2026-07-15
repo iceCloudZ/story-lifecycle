@@ -208,7 +208,9 @@ def list_profiles() -> list[dict]:
     import os as _os
     from pathlib import Path as _Path
 
-    _STORY_HOME = _Path(_os.environ.get("STORY_HOME", str(_Path.home() / ".story-lifecycle")))
+    _STORY_HOME = _Path(
+        _os.environ.get("STORY_HOME", str(_Path.home() / ".story-lifecycle"))
+    )
 
     seen: dict[str, dict] = {}
 
