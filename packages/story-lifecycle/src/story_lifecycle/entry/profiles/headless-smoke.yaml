@@ -1,7 +1,9 @@
 # Headless smoke test profile — design + implement, no expected_outputs
+# hidden: 不在前端 profile 下拉显示(仅供测试用)
 version: 2
 cli: claude
 execution_mode: headless
+hidden: true
 
 stages:
   design:

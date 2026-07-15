@@ -222,6 +222,8 @@ def list_profiles() -> list[dict]:
                 continue  # higher-priority source already found
             try:
                 data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+                if data.get("hidden"):
+                    continue  # hidden profiles not shown in picker
                 stages = list((data.get("stages") or {}).keys())
                 seen[name] = {
                     "name": name,
@@ -248,6 +250,8 @@ def list_profiles() -> list[dict]:
                 continue
             try:
                 data = yaml.safe_load(ref.read_text(encoding="utf-8")) or {}
+                if data.get("hidden"):
+                    continue  # hidden profiles not shown in picker
                 stages = list((data.get("stages") or {}).keys())
                 seen[stem] = {
                     "name": stem,

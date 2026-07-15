@@ -1,7 +1,9 @@
 # Demo profile — planner is fully mocked, no LLM dependency.
+# hidden: 不在前端 profile 下拉显示(仅供 `story demo` 命令用)
 version: 2
 cli: claude
 execution_mode: interactive_pty
+hidden: true
 
 stages:
   design:
