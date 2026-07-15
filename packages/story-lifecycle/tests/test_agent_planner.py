@@ -72,10 +72,11 @@ class TestRunOrchestratorAgent:
 
         # mock invoke_structured 返回一个有 .stages 属性的 PlanResult-like 对象
         class FakeStage:
-            def __init__(self, stage, skip=False, focus=""):
+            def __init__(self, stage, skip=False, focus="", task_actions=None):
                 self.stage = stage
                 self.skip = skip
                 self.focus = focus
+                self.task_actions = task_actions or []
 
         class FakePlanResult:
             def __init__(self, stages):
@@ -125,10 +126,11 @@ class TestRunOrchestratorAgent:
         mock_llm.api_key = "fake"
 
         class FakeStage:
-            def __init__(self, stage, skip=False, focus=""):
+            def __init__(self, stage, skip=False, focus="", task_actions=None):
                 self.stage = stage
                 self.skip = skip
                 self.focus = focus
+                self.task_actions = task_actions or []
 
         class FakePlanResult:
             def __init__(self, stages):

@@ -38,10 +38,11 @@ def _make_mock_llm():
 
     # invoke_structured 返回 PlanResult-like 对象(有 .stages 属性)
     class FakeStage:
-        def __init__(self, stage, skip=False, focus=""):
+        def __init__(self, stage, skip=False, focus="", task_actions=None):
             self.stage = stage
             self.skip = skip
             self.focus = focus
+            self.task_actions = task_actions or []
 
     class FakePlanResult:
         def __init__(self, stages):

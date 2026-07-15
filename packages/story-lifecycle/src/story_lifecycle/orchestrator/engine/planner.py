@@ -129,11 +129,16 @@ def _build_agent_system_prompt(
     team_kb = _load_team_knowledge()
     story_kb = _load_story_knowledge(workspace, story_key) if workspace else "（无 Story 知识）"
 
+    # task_actions:动作目录(帮 LLM 选每个 stage 该干什么)
+    from .task_actions import get_action_catalog_for_prompt
+    action_catalog = get_action_catalog_for_prompt()
+
     return f"""你是开发任务编排 Agent。根据需求信息，规划开发流程。
 
 ## 你的职责
 - 根据需求决定需要执行哪些阶段(skip 不需要的)
 - 给每个阶段指定 2-3 个关键要点（focus）
+- 为每个阶段选 task_actions（该干什么活）
 - 规划完成后暂停，等待用户确认
 
 ## 当前 Story
@@ -149,11 +154,14 @@ def _build_agent_system_prompt(
 ## 可用阶段
 {stages_hint}
 
+{action_catalog}
+
 ## 规则
 1. 对每个阶段,决定 skip(true)还是执行(false)
 2. 对执行的阶段,给 2-3 个 focus 要点(不要写详细设计)
-3. CLI（claude/codex/kimi）会自己理解需求并设计方案，你不需要代劳
-4. adapter 由 profile 路由,你不需要选"""
+3. 为每个执行的阶段选 task_actions(从上面的动作库选,不能自己编)
+4. CLI（claude/codex/kimi）会自己理解需求并设计方案，你不需要代劳
+5. adapter 由 profile 路由,你不需要选"""
 
 
 def _build_agent_user_message(
@@ -210,10 +218,11 @@ def run_orchestrator_agent(
     from pydantic import BaseModel
 
     class StagePlan(BaseModel):
-        """单阶段规划:skip 哪些阶段 + 每阶段 focus。adapter 不让模型选。"""
+        """单阶段规划:skip 哪些阶段 + 每阶段 focus + task_actions。adapter 不让模型选。"""
         stage: str
         skip: bool = False
         focus: str = ""
+        task_actions: list[str] = []
 
     class PlanResult(BaseModel):
         """规划结果:阶段列表。"""
@@ -278,6 +287,7 @@ def run_orchestrator_agent(
                         "adapter": adapter,
                         "stage": sp.stage,
                         "focus": sp.focus,
+                        "task_actions": sp.task_actions or [],
                         "done_file": stage_done_file_rel(story_key, sp.stage),
                     })
                     if on_action:
@@ -313,8 +323,10 @@ def run_orchestrator_agent(
 
 def _default_planning_actions(story_key: str, profile_stages: dict | None) -> list[dict]:
     """Fallback:LLM 不可用时,全跑 profile 默认阶段(adapter 由 profile cli 决定)。"""
+    from .task_actions import get_default_task_actions
     if not profile_stages:
         return []
+    is_single = len(profile_stages) <= 1
     actions = []
     for name, cfg in profile_stages.items():
         cli = cfg["cli"] if isinstance(cfg, dict) else getattr(cfg, "cli", "claude")
@@ -323,6 +335,7 @@ def _default_planning_actions(story_key: str, profile_stages: dict | None) -> li
             "adapter": cli,
             "stage": name,
             "focus": cfg.get("description", "") if isinstance(cfg, dict) else "",
+            "task_actions": get_default_task_actions(name, is_single),
             "done_file": stage_done_file_rel(story_key, name),
         })
     return actions
@@ -835,6 +848,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 workspace=workspace,
                 transcript_section=transcript_ctx or "",
                 interactive=not headless,  # BUG #9:交互式路径走"终端直接问人"
+                task_actions=action.get("task_actions", []),
             )
 
             # 写入 prompt 文件
@@ -1492,6 +1506,7 @@ def _build_cli_prompt(
     workspace: str = "",
     transcript_section: str = "",
     interactive: bool = False,
+    task_actions: list[str] | None = None,
 ) -> str:
     """构建给 CLI 的执行 prompt。
 
@@ -1583,16 +1598,14 @@ def _build_cli_prompt(
 **硬约束**：若 git 操作失败（分支已存在且冲突、无权限、仓库不可写等），**立即停止后续工作**，将错误写入完成协议的 `summary` 字段并把 `status` 设为 `"error"`，不要尝试在错误的分支或主分支上继续。
 """
 
-    # 执行约束（根因 guard，real-run 2026-07-06）：代码阶段 agent（kimi）会自作主张跑
-    # mvn/tsc 自检 -> 大 repo 上耗时>10min 阻塞 -> 永远到不了 done 握手 -> stage 失败。
-    # 显式禁止耗时构建/编译/测试命令，让 agent 专注写代码 + done；编译/测试归后续阶段/CI。
-    exec_constraint_section = (
-        "\n### 执行约束（重要）\n"
-        "本阶段**只写代码/文档 + 写完成协议（done）**。**不要运行**耗时的构建/编译/测试命令"
-        "（`mvn`、`gradle`、`mvnw`、`npm install`、`yarn install`、`tsc`、`jest`、`vitest`、`pytest` 等）"
-        "—— 它们在大型仓库上常阻塞超过 10 分钟，会让你永远写不到 done 握手；"
-        "编译/类型/测试由后续阶段或 CI 负责，语法/类型问题靠阅读判断即可。\n"
-    )
+    # 执行约束:由 task_actions 内容决定(替 _is_single_stage 硬编码)。
+    # 选了 run_tests → 允许轻量测试;没选 → 禁测试。都禁重构建。
+    from .task_actions import _build_exec_constraint as _build_constraint
+    from .task_actions import _build_task_list
+    _task_actions = task_actions or []
+    exec_constraint_section = _build_constraint(_task_actions)
+    # 任务清单:LLM 选的动作 → prompt 里的有序步骤(按 order 排序)
+    task_list_section = _build_task_list(_task_actions)
 
     return f"""## 任务: {stage}
 
@@ -1608,6 +1621,7 @@ def _build_cli_prompt(
 {knowledge_section}
 {dimensions_section}
 {quality_section}
+{task_list_section}
 ### 关键要点
 {focus}
 {worktree_section}

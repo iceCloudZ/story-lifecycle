@@ -2,9 +2,11 @@
 
 Root-cause guard (real-run 2026-07-06): in code-writing stages kimi-code self-verified by
 running ``mvn compile`` + ``tsc --noEmit`` on large Java/Vue repos -> blocked many minutes
--> never reached the done handshake -> stage failed (build/first-verify: no done; design +
-verify-round1 which didn't compile: done written fine). The prompt must explicitly forbid
+-> never reached the done handshake -> stage failed. The prompt must explicitly forbid
 heavy build/compile/test commands so the agent writes code + done instead of blocking.
+
+REFACTOR task_actions: 执行约束现在由 task_actions 内容决定(选了 run_tests 就允许
+轻量测试,没选就禁)。不再按 stage 名硬编码。
 """
 
 import json
@@ -28,28 +30,51 @@ def _build(stage, tmp_path, **kw):
     )
 
 
-class TestNoHeavyBuildCommands:
-    def test_build_stage_forbids_mvn_tsc(self, tmp_path):
-        p = _build("build", tmp_path)
-        # must name the offending tools (kimi ran exactly mvn + tsc) + forbid running them
-        assert "mvn" in p
-        assert "tsc" in p
-        assert ("不要运行" in p) or ("禁止运行" in p) or ("不要执行" in p)
+class TestExecConstraint:
+    """执行约束由 task_actions 决定(替 stage 名硬编码)。"""
 
-    def test_verify_stage_also_forbids(self, tmp_path):
-        p = _build("verify", tmp_path)
-        assert "mvn" in p and "tsc" in p
+    def test_no_task_actions_forbids_tests(self, tmp_path):
+        """无 task_actions → 禁测试(默认只写代码)。"""
+        p = _build("build", tmp_path)
+        assert "mvn" in p
+        assert "不要运行" in p or "不要跑" in p
+
+    def test_with_run_tests_allows_lightweight(self, tmp_path):
+        """选了 run_tests → 允许轻量自检。"""
+        p = _build("verify", tmp_path, task_actions=["write_code", "run_tests"])
+        assert "pytest" in p or "轻量自检" in p
+        assert "mvn" in p  # 重构建仍禁
+
+    def test_without_run_tests_forbids_all_tests(self, tmp_path):
+        """没选 run_tests → 禁所有测试。"""
+        p = _build("design", tmp_path, task_actions=["write_design_doc"])
+        assert "不要运行" in p or "不需要跑测试" in p
 
     def test_done_handshake_still_present(self, tmp_path):
-        # the constraint must not displace the completion protocol
         p = _build("build", tmp_path)
         assert "完成协议" in p
         assert ".story/done/S-1/build.json" in p
 
-    def test_design_stage_also_gets_constraint(self, tmp_path):
-        # unconditional guard (harmless for design — it doesn't compile anyway)
-        p = _build("design", tmp_path)
-        assert "mvn" in p
+
+class TestTaskListSection:
+    """task_actions → 任务清单段(按 order 排序)。"""
+
+    def test_task_list_in_prompt(self, tmp_path):
+        p = _build("verify", tmp_path, task_actions=["write_code", "run_tests"])
+        assert "本阶段任务清单" in p
+        assert "按以下顺序完成" in p
+
+    def test_task_list_sorted_by_order(self, tmp_path):
+        """LLM 返回乱序,Python 按 order 排(write_design_doc 在 write_code 前)。"""
+        p = _build("verify", tmp_path,
+                   task_actions=["write_code", "write_design_doc"])
+        idx_design = p.index("调研现有代码")
+        idx_code = p.index("实现代码改动")
+        assert idx_design < idx_code  # design(order=10) 在 code(order=20) 前
+
+    def test_empty_task_actions_no_task_list(self, tmp_path):
+        p = _build("build", tmp_path, task_actions=[])
+        assert "本阶段任务清单" not in p
 
 
 class TestDesignDimensions:
