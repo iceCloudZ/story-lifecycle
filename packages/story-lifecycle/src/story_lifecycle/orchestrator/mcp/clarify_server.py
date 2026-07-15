@@ -31,10 +31,10 @@ from typing import Callable
 CLARIFY_TOOL = {
     "name": "clarify",
     "description": (
-        "Ask the human a clarifying question when a key ambiguity blocks the design "
+        "Ask the human a clarifying question when a key ambiguity blocks the current task "
         "(multiple choices / missing info / funder差异). Call ONCE per ambiguity, "
-        "with concrete options. The human's answer is returned as text — continue the "
-        "design based on it (do not re-ask answered questions)."
+        "with concrete options. The human's answer is returned as text — continue "
+        "based on it (do not re-ask answered questions)."
     ),
     "inputSchema": {
         "type": "object",
@@ -82,6 +82,7 @@ def handle_clarify_call(
     question: str,
     options: list[str],
     header: str = "",
+    stage: str = "unknown",
     log_event_fn: Callable,
     await_answer_fn: Callable,
     id_factory: Callable[[], str] | None = None,
@@ -91,6 +92,7 @@ def handle_clarify_call(
     Args:
         story_key: 故事 key(运行时从 env STORY_KEY 读)。
         question/options/header: 提问内容(header 缺省取 question)。
+        stage: 当前阶段(运行时从 env STORY_STAGE 读,grill-me 推广用)。
         log_event_fn: ``(story_key, stage, event_type, payload)`` 落事件(注入,可测)。
         await_answer_fn: ``(story_key, request_id, timeout) -> str | None``,阻塞等人答
             (注入;生产用 ``poll_clarify_answer``,测试用 fake)。
@@ -104,13 +106,14 @@ def handle_clarify_call(
     rid = (id_factory or (lambda: uuid.uuid4().hex[:12]))()
     log_event_fn(
         story_key,
-        "design",
+        stage,
         "clarification_request",
         {
             "id": rid,
             "header": header or question,
             "question": question,
             "options": list(options),
+            "stage": stage,
         },
     )
     answer = await_answer_fn(story_key, rid, _ANSWER_TIMEOUT_S)
@@ -191,6 +194,7 @@ def get_pending_clarification(
         "options": list(latest_request.get("options", []) or []),
         "header": latest_request.get("header")
         or str(latest_request.get("question", "")),
+        "stage": latest_request.get("stage", "unknown"),
     }
 
 
@@ -247,6 +251,7 @@ def run_server() -> None:
             pass
 
     story_key = os.environ.get("STORY_KEY", "")
+    story_stage = os.environ.get("STORY_STAGE", "unknown")
     # 延迟 import 避免纯单测时拉起 DB。
     from ...infra.db import models as db
 
@@ -303,6 +308,7 @@ def run_server() -> None:
                     question=str(args.get("question", "")),
                     options=list(args.get("options", []) or []),
                     header=str(args.get("header", "") or ""),
+                    stage=story_stage,
                     log_event_fn=_emit,
                     await_answer_fn=_await,
                 )

@@ -160,8 +160,9 @@ def _build_agent_system_prompt(
 1. 对每个阶段,决定 skip(true)还是执行(false)
 2. 对执行的阶段,给 2-3 个 focus 要点(不要写详细设计)
 3. 为每个执行的阶段选 task_actions(从上面的动作库选,不能自己编)
-4. CLI（claude/codex/kimi）会自己理解需求并设计方案，你不需要代劳
-5. adapter 由 profile 路由,你不需要选"""
+4. 标 grill=true 表示该阶段需要人澄清关键歧义(如复杂设计决策);简单明确的标 false
+5. CLI（claude/codex/kimi）会自己理解需求并设计方案，你不需要代劳
+6. adapter 由 profile 路由,你不需要选"""
 
 
 def _build_agent_user_message(
@@ -218,11 +219,12 @@ def run_orchestrator_agent(
     from pydantic import BaseModel
 
     class StagePlan(BaseModel):
-        """单阶段规划:skip 哪些阶段 + 每阶段 focus + task_actions。adapter 不让模型选。"""
+        """单阶段规划:skip 哪些阶段 + 每阶段 focus + task_actions + grill。adapter 不让模型选。"""
         stage: str
         skip: bool = False
         focus: str = ""
         task_actions: list[str] = []
+        grill: bool = False
 
     class PlanResult(BaseModel):
         """规划结果:阶段列表。"""
@@ -288,6 +290,7 @@ def run_orchestrator_agent(
                         "stage": sp.stage,
                         "focus": sp.focus,
                         "task_actions": sp.task_actions or [],
+                        "grill": sp.grill,
                         "done_file": stage_done_file_rel(story_key, sp.stage),
                     })
                     if on_action:
@@ -327,6 +330,8 @@ def _default_planning_actions(story_key: str, profile_stages: dict | None) -> li
     if not profile_stages:
         return []
     is_single = len(profile_stages) <= 1
+    # 默认 grill:design/单阶段 → True(设计决策需拉扯);build/verify → False
+    _DEFAULT_GRILL = {"design": True, "build": False, "verify": False}
     actions = []
     for name, cfg in profile_stages.items():
         cli = cfg["cli"] if isinstance(cfg, dict) else getattr(cfg, "cli", "claude")
@@ -336,6 +341,7 @@ def _default_planning_actions(story_key: str, profile_stages: dict | None) -> li
             "stage": name,
             "focus": cfg.get("description", "") if isinstance(cfg, dict) else "",
             "task_actions": get_default_task_actions(name, is_single),
+            "grill": True if is_single else _DEFAULT_GRILL.get(name, False),
             "done_file": stage_done_file_rel(story_key, name),
         })
     return actions
@@ -849,6 +855,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 transcript_section=transcript_ctx or "",
                 interactive=not headless,  # BUG #9:交互式路径走"终端直接问人"
                 task_actions=action.get("task_actions", []),
+                grill=action.get("grill", False),
             )
 
             # 写入 prompt 文件
@@ -870,13 +877,21 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 else:
                     launch_cmd = adapter.interactive_launch_cmd(model=model)
 
-                # design 阶段 + claude + headless:接外接 MCP clarify 工具(--mcp-config 加载
-                # lifecycle server)+ 注入 STORY_KEY env(MCP server 经继承读它定位 story DB)。
+                # grill-me:LLM 决定 + mode 兜底。
+                # 当 action.grill=True 且 task_actions 里有 interactive 动作时,接 MCP clarify。
+                # 替原 stage=="design" 硬编码 —— grill 不再绑 design stage。
                 # 仅 headless 路径走 MCP clarify;交互式路径(interactive_pty)走"终端直接问人"
-                # (BUG #9,见 handoff-design-hitl §11 + build_design_dimensions_section)。
+                # (BUG #9,见 handoff-design-hitl §11)。
                 # 见 orchestrator/mcp/clarify_server.py + memory story-lifecycle-design-hitl。
+                from .task_actions import TASK_ACTIONS as _TA
+                _has_interactive = any(
+                    _TA.get(a, {}).get("mode") == "interactive"
+                    for a in action.get("task_actions", [])
+                )
+                _wants_grill = action.get("grill", False) and _has_interactive
+
                 story_env = None
-                if stage == "design" and adapter_name == "claude" and headless:
+                if _wants_grill and adapter_name == "claude" and headless:
                     import os as _os
                     import sys as _sys
 
@@ -889,16 +904,15 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         )
                         write_mcp_config(_mcp_cfg, _sys.executable)
                         launch_cmd = list(launch_cmd) + ["--mcp-config", str(_mcp_cfg)]
-                        story_env = {**_os.environ, "STORY_KEY": story_key}
+                        story_env = {**_os.environ, "STORY_KEY": story_key, "STORY_STAGE": stage}
                         log.info(
-                            "[%s] design clarify MCP wired: --mcp-config=%s STORY_KEY set",
-                            story_key,
-                            _mcp_cfg,
+                            "[%s] stage %s grill clarify MCP wired: --mcp-config=%s STORY_KEY/STORY_STAGE set",
+                            story_key, stage, _mcp_cfg,
                         )
                     except Exception:
                         log.exception(
-                            "[%s] design clarify MCP wiring failed (clarify unavailable)",
-                            story_key,
+                            "[%s] stage %s grill clarify MCP wiring failed (clarify unavailable)",
+                            story_key, stage,
                         )
                 _ctx_markers = (
                     "上下文",
@@ -1507,6 +1521,7 @@ def _build_cli_prompt(
     transcript_section: str = "",
     interactive: bool = False,
     task_actions: list[str] | None = None,
+    grill: bool = False,
 ) -> str:
     """构建给 CLI 的执行 prompt。
 
@@ -1516,6 +1531,7 @@ def _build_cli_prompt(
     from ...infra.story_paths import story_evidence_dir
     from .prompt_sections import (
         build_design_dimensions_section,
+        build_grill_protocol_section,
         build_kb_tool_section,
         build_quality_section,
     )
@@ -1560,6 +1576,12 @@ def _build_cli_prompt(
         dimensions_section = build_design_dimensions_section(
             story_key, workspace, stage, interactive=interactive
         )
+
+    # grill-me:非 design stage 但 grill=True 时,注入通用澄清协议。
+    # design stage 的澄清协议已在 dimensions_section 里(不重复注入)。
+    grill_section = ""
+    if stage != "design" and grill:
+        grill_section = build_grill_protocol_section(interactive=interactive)
 
     # BUG #18: worktree 已建(build 阶段 prepare_worktrees 跑过)→ 确定性指令:
     # "直接在 worktree 路径下改代码,不要自己建 worktree 或切分支"。
@@ -1621,6 +1643,7 @@ def _build_cli_prompt(
 {knowledge_section}
 {dimensions_section}
 {quality_section}
+{grill_section}
 {task_list_section}
 ### 关键要点
 {focus}

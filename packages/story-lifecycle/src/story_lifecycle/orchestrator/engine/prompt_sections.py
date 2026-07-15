@@ -207,6 +207,32 @@ def build_quality_section(story_key: str, stage: str) -> str:
         return ""
 
 
+def build_grill_protocol_section(*, interactive: bool = False) -> str:
+    """通用澄清协议(grill-me):遇关键岔路可提问。
+
+    从 design 专属推广到任意 grill=True 的 stage。
+    design 的维度 checklist 仍 design-only(build_design_dimensions_section);
+    本函数只负责"遇岔路可提问"的协议引导。
+
+    Args:
+        interactive: True=终端直接问人(无 MCP);False=调 mcp__lifecycle__clarify 工具。
+    """
+    if interactive:
+        _clarify = (
+            "**在终端直接问人**（一次一个：question + 2-4 个 options），拿到人答再继续"
+        )
+    else:
+        _clarify = "**调用 `mcp__lifecycle__clarify` 工具**提问（一次一个：question + 2-4 个 options），拿到人答再继续"
+
+    return (
+        "\n## 澄清协议（grill-me）\n"
+        "**遇关键岔路**（多种选择/信息缺失，不澄清就出不了正确方案）时，"
+        f"{_clarify}；**基于已答内容决定下一个问，勿重复问已答过的**。\n"
+        "**纪律**：只问真正卡住你的岔路（最多 3 轮）；"
+        "能从代码/PRD/既有约定推断的，自己决断，不要问。\n"
+    )
+
+
 def build_transcript_section(story_key: str, workspace: str, stage: str) -> str:
     """Return historical transcript context for this story/stage, or ``""``.
 

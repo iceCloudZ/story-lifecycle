@@ -765,6 +765,22 @@ def get_story_stats(story_key: str):
     }
 
 
+@app.get("/api/story/{story_key}/llm-calls")
+def get_story_llm_calls(story_key: str):
+    """Prompt/response/reasoning bodies for every LLM call in a story.
+
+    Audit endpoint: JOINs llm_call (正文) ↔ llm_trace (指标) by trace_id, ordered
+    by call id. Use this to inspect what was asked/answered/thought across an
+    orchestration run. Bodies are stored unconditionally (no config switch).
+    """
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+
+    calls = db.get_story_llm_calls(story_key)
+    return {"story_key": story_key, "calls": calls}
+
+
 @app.get("/api/story/{story_key}/diff")
 def get_story_diff(story_key: str):
     """Return git diff for the story's workspace branch vs its base branch.
@@ -3351,9 +3367,10 @@ def api_clarify_answer(story_key: str, req: ClarifyAnswerRequest):
     if not pending:
         raise HTTPException(status_code=404, detail="No pending clarification")
     rid = req.id or pending.get("id")
+    _req_stage = pending.get("stage", "unknown")
     db.log_event(
         story_key,
-        "design",
+        _req_stage,
         "clarification_answer",
         {"id": rid, "question": pending.get("question"), "answer": req.answer},
     )

@@ -38,11 +38,12 @@ def _make_mock_llm():
     mock_llm.api_key = "fake"
 
     class _FakeStage:
-        def __init__(self, stage, skip=False, focus="", task_actions=None):
+        def __init__(self, stage, skip=False, focus="", task_actions=None, grill=False):
             self.stage = stage
             self.skip = skip
             self.focus = focus
             self.task_actions = task_actions or []
+            self.grill = grill
 
     class _FakePlanResult:
         def __init__(self, stages):
