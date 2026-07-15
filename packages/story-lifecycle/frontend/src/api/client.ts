@@ -249,6 +249,13 @@ export interface WorkspaceOption {
   projects: string[]
 }
 
+export interface ProfileOption {
+  name: string
+  description: string
+  stages: string[]
+  execution_mode: string
+}
+
 export interface Pattern {
   id: string | number
   pattern: string
@@ -282,6 +289,7 @@ export const storyApi = {
   create: (data: { key: string; title?: string; content?: string; profile?: string; workspace?: string; autostart?: boolean }) =>
     fetchJSON<Story>('/api/story', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   workspaces: () => fetchJSON<{ workspaces: WorkspaceOption[] }>('/api/workspaces'),
+  profiles: () => fetchJSON<{ profiles: ProfileOption[] }>('/api/profiles'),
   projects: () => fetchJSON<{ projects: Project[] }>('/api/projects'),
   previewIntake: (data: { source_type?: string; source_id: string; files?: File[] }) => {
     const form = new FormData()

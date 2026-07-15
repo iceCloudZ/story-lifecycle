@@ -2419,6 +2419,14 @@ def api_list_workspaces():
     return {"workspaces": _workspace_options_from_projects(db.list_projects())}
 
 
+@app.get("/api/profiles")
+def api_list_profiles():
+    """List available profiles for the create-story picker."""
+    from ..engine.profile_loader import list_profiles
+
+    return {"profiles": list_profiles()}
+
+
 @app.get("/api/projects")
 def api_list_projects():
     """List all registered projects with fresh availability."""

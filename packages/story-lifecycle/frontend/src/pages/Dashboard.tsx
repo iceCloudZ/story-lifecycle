@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { storyApi, apiAction } from '../api/client'
-import type { Project, WorkspaceOption } from '../api/client'
+import type { Project, WorkspaceOption, ProfileOption } from '../api/client'
 import { useStoryStore, type StorySummary } from '../store/storyStore'
 import './Dashboard.css'
 
@@ -275,7 +275,8 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
   const isNew = !story
   const [key, setKey] = useState('')
   const [title, setTitle] = useState('')
-  const profile = 'minimal'
+  const [profile, setProfile] = useState('minimal')
+  const [profiles, setProfiles] = useState<ProfileOption[]>([])
   const [workspace, setWorkspace] = useState('')
   const [workspaces, setWorkspaces] = useState<WorkspaceOption[]>([])
   const [workspaceLoading, setWorkspaceLoading] = useState(false)
@@ -324,6 +325,16 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
     storyApi.projects()
       .then((data) => { if (alive) setAllProjects(data.projects || []) })
       .catch(() => { /* projects optional; picker just stays empty */ })
+    return () => { alive = false }
+  }, [isNew])
+
+  // Load available profiles once (for the new-story profile picker).
+  useEffect(() => {
+    if (!isNew) return
+    let alive = true
+    storyApi.profiles()
+      .then((data) => { if (alive) setProfiles(data.profiles || []) })
+      .catch(() => { /* profiles optional; picker falls back to minimal */ })
     return () => { alive = false }
   }, [isNew])
 
@@ -452,6 +463,17 @@ function IntakeStartModal({ story, notice, onClose, onConfirm }: {
                 </button>
               </div>
               <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="标题" />
+              <label className="modal-field">
+                <span>流程 Profile</span>
+                <select value={profile} onChange={(e) => setProfile(e.target.value)}>
+                  {profiles.length === 0 && <option value="minimal">minimal(默认)</option>}
+                  {profiles.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name} · {p.description}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="modal-field">
                 <span>工作区 <span className="req">*</span></span>
                 <select

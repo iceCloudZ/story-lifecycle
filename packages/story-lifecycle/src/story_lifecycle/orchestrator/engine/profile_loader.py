@@ -198,6 +198,81 @@ def load_profile(profile_name: str) -> dict:
     return _load_raw(profile_name)
 
 
+def list_profiles() -> list[dict]:
+    """List all available profiles from all search paths.
+
+    Returns ``[{"name", "description", "stages", "execution_mode"}]``.
+    Deduplicated by name (project .story/ overrides STORY_HOME overrides built-in).
+    """
+    import importlib.resources as _ir
+    import os as _os
+    from pathlib import Path as _Path
+
+    _STORY_HOME = _Path(_os.environ.get("STORY_HOME", str(_Path.home() / ".story-lifecycle")))
+
+    seen: dict[str, dict] = {}
+
+    def _scan_dir(base) -> None:
+        profiles_dir = base / "profiles"
+        if not profiles_dir.exists():
+            return
+        for f in sorted(profiles_dir.glob("*.yaml")):
+            name = f.stem
+            if name in seen:
+                continue  # higher-priority source already found
+            try:
+                data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+                stages = list((data.get("stages") or {}).keys())
+                seen[name] = {
+                    "name": name,
+                    "description": _extract_description(data),
+                    "stages": stages,
+                    "execution_mode": data.get("execution_mode", "interactive_pty"),
+                }
+            except Exception:
+                continue
+
+    # Priority order: project .story/ > STORY_HOME > package built-in
+    _scan_dir(Path.cwd() / ".story")
+    _scan_dir(_STORY_HOME)
+
+    # Package built-in
+    try:
+        pkg_dir = _ir.files("story_lifecycle.entry.profiles")
+        for ref in pkg_dir.iterdir():
+            name = ref.name
+            if not name.endswith(".yaml"):
+                continue
+            stem = name[:-5]
+            if stem in seen:
+                continue
+            try:
+                data = yaml.safe_load(ref.read_text(encoding="utf-8")) or {}
+                stages = list((data.get("stages") or {}).keys())
+                seen[stem] = {
+                    "name": stem,
+                    "description": _extract_description(data),
+                    "stages": stages,
+                    "execution_mode": data.get("execution_mode", "interactive_pty"),
+                }
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return list(seen.values())
+
+
+def _extract_description(data: dict) -> str:
+    """从 profile yaml 提取一句话描述(首个注释行或 stages 拼接)。"""
+    stages = data.get("stages") or {}
+    if stages:
+        stage_names = list(stages.keys())
+        mode = data.get("execution_mode", "interactive_pty")
+        return f"阶段: {' → '.join(stage_names)} ({mode})"
+    return ""
+
+
 def get_stage_config(profile_name: str, stage_name: str) -> dict:
     profile = _load_raw(profile_name)
     stages = profile.get("stages", {})
