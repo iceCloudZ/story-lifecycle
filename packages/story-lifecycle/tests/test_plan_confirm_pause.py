@@ -33,34 +33,23 @@ def story(tmp_path):
 
 
 def _make_mock_llm():
-    """Mock LLM that returns one plan_step tool call then stops."""
+    """Mock LLM whose invoke_structured returns a single-design-stage PlanResult."""
     mock_llm = MagicMock()
-    rounds = [
-        [
-            {
-                "id": "call-1",
-                "type": "function",
-                "function": {
-                    "name": "plan_step",
-                    "arguments": {
-                        "stage": "design",
-                        "adapter": "claude",
-                        "focus": "分析 bug 并设计方案",
-                    },
-                },
-            }
-        ],
-        [],
-    ]
+    mock_llm.api_key = "fake"
 
-    def _invoke_with_tools(*args, **kwargs):
-        calls = rounds.pop(0) if rounds else []
-        return {
-            "message": {"role": "assistant", "content": "planning"},
-            "tool_calls": calls,
-        }
+    class _FakeStage:
+        def __init__(self, stage, skip=False, focus=""):
+            self.stage = stage
+            self.skip = skip
+            self.focus = focus
 
-    mock_llm.invoke_with_tools = _invoke_with_tools
+    class _FakePlanResult:
+        def __init__(self, stages):
+            self.stages = stages
+
+    mock_llm.invoke_structured.return_value = _FakePlanResult([
+        _FakeStage("design", skip=False, focus="分析 bug 并设计方案"),
+    ])
     return mock_llm
 
 

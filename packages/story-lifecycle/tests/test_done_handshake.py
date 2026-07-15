@@ -32,31 +32,30 @@ def story(tmp_path):
 
 
 def _make_mock_llm():
-    """Mock LLM that plans a single design stage."""
+    """Mock LLM that plans a single design stage (REFACTOR §5.4: invoke_structured)。"""
     mock_llm = MagicMock()
-    rounds = [
-        [
-            {
-                "id": "call-1",
-                "type": "function",
-                "function": {
-                    "name": "plan_step",
-                    "arguments": {
-                        "stage": "design",
-                        "adapter": "claude",
-                        "focus": "设计方案",
-                    },
-                },
-            }
-        ],
-        [],
-    ]
+    mock_llm.api_key = "fake"
 
+    # invoke_structured 返回 PlanResult-like 对象(有 .stages 属性)
+    class FakeStage:
+        def __init__(self, stage, skip=False, focus=""):
+            self.stage = stage
+            self.skip = skip
+            self.focus = focus
+
+    class FakePlanResult:
+        def __init__(self, stages):
+            self.stages = stages
+
+    mock_llm.invoke_structured.return_value = FakePlanResult([
+        FakeStage("design", skip=False, focus="设计方案"),
+    ])
+
+    # 保留 invoke_with_tools mock(向后兼容,某些测试可能还调)
     def _invoke_with_tools(*args, **kwargs):
-        calls = rounds.pop(0) if rounds else []
         return {
             "message": {"role": "assistant", "content": "planning"},
-            "tool_calls": calls,
+            "tool_calls": [],
         }
 
     mock_llm.invoke_with_tools = _invoke_with_tools

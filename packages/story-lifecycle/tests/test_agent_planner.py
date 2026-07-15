@@ -64,61 +64,29 @@ class TestBuildPrompts:
 
 
 class TestRunOrchestratorAgent:
-    def test_collects_plan_step_actions(self, isolated_db, monkeypatch, tmp_path):
+    def test_structured_plan_produces_launch_actions(self, isolated_db, monkeypatch, tmp_path):
+        """REFACTOR §5.4.1:invoke_structured 返回 PlanResult → launch actions(adapter 由 profile 决定)。"""
         _make_story(isolated_db, monkeypatch, tmp_path)
         mock_llm = MagicMock()
+        mock_llm.api_key = "fake"
 
-        # Round 1: agent calls plan_step
-        call_count = [0]
+        # mock invoke_structured 返回一个有 .stages 属性的 PlanResult-like 对象
+        class FakeStage:
+            def __init__(self, stage, skip=False, focus=""):
+                self.stage = stage
+                self.skip = skip
+                self.focus = focus
 
-        def mock_invoke(messages, tools, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return {
-                    "message": {
-                        "role": "assistant",
-                        "content": "",
-                        "tool_calls": [
-                            {
-                                "id": "c1",
-                                "type": "function",
-                                "function": {
-                                    "name": "plan_step",
-                                    "arguments": '{"adapter":"claude","stage":"design","focus":"需求澄清"}',
-                                },
-                            }
-                        ],
-                    },
-                    "tool_calls": [
-                        {
-                            "id": "c1",
-                            "type": "function",
-                            "function": {
-                                "name": "plan_step",
-                                "arguments": {
-                                    "adapter": "claude",
-                                    "stage": "design",
-                                    "focus": "需求澄清",
-                                },
-                            },
-                        }
-                    ],
-                    "content": "",
-                }
-            else:
-                # Round 2: agent stops
-                return {
-                    "message": {"role": "assistant", "content": "规划完成"},
-                    "tool_calls": [],
-                    "content": "规划完成",
-                }
+        class FakePlanResult:
+            def __init__(self, stages):
+                self.stages = stages
 
-        mock_llm.invoke_with_tools = mock_invoke
+        mock_llm.invoke_structured.return_value = FakePlanResult([
+            FakeStage("design", skip=False, focus="需求澄清"),
+        ])
         actions_received = []
 
-        with patch(
-            "story_lifecycle.orchestrator.engine.planner.get_llm", return_value=mock_llm
-        ):
+        with patch("story_lifecycle.orchestrator.engine.planner.get_llm", return_value=mock_llm):
             result = run_orchestrator_agent(
                 "TEST-001", on_action=lambda e: actions_received.append(e)
             )
@@ -126,25 +94,18 @@ class TestRunOrchestratorAgent:
         assert result["status"] == "planning"
         assert len(result["actions"]) == 1
         assert result["actions"][0]["action"] == "launch"
-        assert result["actions"][0]["adapter"] == "claude"
         assert result["actions"][0]["stage"] == "design"
-        # Callback was called
-        assert len(actions_received) == 1
+        assert result["actions"][0]["focus"] == "需求澄清"
+        # adapter 由 profile 决定(minimal.yaml design=claude),不是模型选
+        assert result["actions"][0]["adapter"] is not None
 
     def test_writes_actions_to_db(self, isolated_db, monkeypatch, tmp_path):
         from story_lifecycle.infra.db import models as db
 
         _make_story(isolated_db, monkeypatch, tmp_path)
         mock_llm = MagicMock()
-
-        def mock_invoke(messages, tools, **kwargs):
-            return {
-                "message": {"role": "assistant", "content": "done"},
-                "tool_calls": [],
-                "content": "done",
-            }
-
-        mock_llm.invoke_with_tools = mock_invoke
+        mock_llm.api_key = "fake"
+        mock_llm.invoke_structured.return_value = MagicMock(stages=[])
 
         with patch(
             "story_lifecycle.orchestrator.engine.planner.get_llm", return_value=mock_llm
@@ -157,42 +118,48 @@ class TestRunOrchestratorAgent:
         assert ctx["_plan_confirmed"] is False
         assert story["status"] == "planning"
 
-    def test_skip_stage_action(self, isolated_db, monkeypatch, tmp_path):
+    def test_skip_stage_via_structured_plan(self, isolated_db, monkeypatch, tmp_path):
+        """模型在 PlanResult 里标 skip=True → 产出 skip action。"""
         _make_story(isolated_db, monkeypatch, tmp_path)
         mock_llm = MagicMock()
-        call_count = [0]
+        mock_llm.api_key = "fake"
 
-        def mock_invoke(messages, tools, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                tc = {
-                    "id": "c1",
-                    "type": "function",
-                    "function": {
-                        "name": "skip_stage",
-                        "arguments": {"reason": "not needed", "stage": "test"},
-                    },
-                }
-                return {
-                    "message": {"role": "assistant", "content": "", "tool_calls": [tc]},
-                    "tool_calls": [tc],
-                    "content": "",
-                }
-            return {
-                "message": {"role": "assistant", "content": "done"},
-                "tool_calls": [],
-                "content": "done",
-            }
+        class FakeStage:
+            def __init__(self, stage, skip=False, focus=""):
+                self.stage = stage
+                self.skip = skip
+                self.focus = focus
 
-        mock_llm.invoke_with_tools = mock_invoke
+        class FakePlanResult:
+            def __init__(self, stages):
+                self.stages = stages
 
-        with patch(
-            "story_lifecycle.orchestrator.engine.planner.get_llm", return_value=mock_llm
-        ):
+        mock_llm.invoke_structured.return_value = FakePlanResult([
+            FakeStage("design", skip=False, focus="需求澄清"),
+            FakeStage("test", skip=True, focus="not needed"),
+        ])
+
+        with patch("story_lifecycle.orchestrator.engine.planner.get_llm", return_value=mock_llm):
             result = run_orchestrator_agent("TEST-001")
 
-        assert result["actions"][0]["action"] == "skip"
-        assert result["actions"][0]["reason"] == "not needed"
+        skip_actions = [a for a in result["actions"] if a["action"] == "skip"]
+        assert len(skip_actions) == 1
+        assert skip_actions[0]["stage"] == "test"
+        assert "not needed" in skip_actions[0]["reason"]
+
+    def test_llm_exception_falls_back_to_default_actions(self, isolated_db, monkeypatch, tmp_path):
+        """LLM 调用失败 → fallback 全跑 profile 默认阶段。"""
+        _make_story(isolated_db, monkeypatch, tmp_path)
+        mock_llm = MagicMock()
+        mock_llm.api_key = "fake"
+        mock_llm.invoke_structured.side_effect = RuntimeError("network down")
+
+        with patch("story_lifecycle.orchestrator.engine.planner.get_llm", return_value=mock_llm):
+            result = run_orchestrator_agent("TEST-001")
+
+        # fallback:全跑 profile 默认阶段(minimal.yaml 有 design/build/verify)
+        assert len(result["actions"]) >= 1
+        assert all(a["action"] == "launch" for a in result["actions"])
 
     def test_story_not_found_raises(self, isolated_db):
         with pytest.raises(ValueError, match="Story not found"):

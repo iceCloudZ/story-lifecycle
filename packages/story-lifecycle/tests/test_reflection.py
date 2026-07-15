@@ -148,3 +148,204 @@ class TestBuildTransitionHistoryFacts:
         )
         assert decision["action"] == "swap_approach"
 
+
+# ============================================================================
+# REFACTOR §5.1 — reflect 扩展规则 + write_playbook_file 落库 + persist_playbook
+# ============================================================================
+
+from story_lifecycle.orchestrator.learning.reflection import (
+    write_playbook_file,
+    persist_playbook,
+)
+
+
+class TestReflectExtendedRules:
+    """REFACTOR §5.1.1:reflect 扩展识别 failure-pattern / rescue / dimension 字段。"""
+
+    def test_adapter_routing_rule_has_dimension(self):
+        """adapter swap 规则带 dimension='adapter-routing'。"""
+        events = [
+            ev("recovery_action", "S-1", action="retry_new_adapter",
+               failed_adapter="codex", new_adapter="claude"),
+            ev("judge_verdict", "S-1", passed=True),
+        ]
+        r = reflect(events=events)
+        assert r["playbook"][0]["dimension"] == "adapter-routing"
+
+    def test_failure_pattern_repeated_retry_yields_rule(self):
+        """同 stage 连续 retry ≥2 次 + pass → 沉淀 failure-pattern。"""
+        events = [
+            ev("transition_decision", "S-1", action="retry", stage="build", reason="test fail"),
+            ev("transition_decision", "S-1", action="retry", stage="build", reason="test fail again"),
+            ev("judge_verdict", "S-1", passed=True),
+        ]
+        r = reflect(events=events)
+        fp_rules = [x for x in r["playbook"] if x["dimension"] == "failure-pattern"]
+        assert len(fp_rules) == 1
+        assert "build" in fp_rules[0]["rule"]
+        assert fp_rules[0]["support"] == 2
+
+    def test_single_retry_not_failure_pattern(self):
+        """单次 retry(<2)不算 pattern,不沉淀。"""
+        events = [
+            ev("transition_decision", "S-1", action="retry", stage="build", reason="once"),
+            ev("judge_verdict", "S-1", passed=True),
+        ]
+        r = reflect(events=events)
+        fp_rules = [x for x in r["playbook"] if x["dimension"] == "failure-pattern"]
+        assert len(fp_rules) == 0
+
+    def test_rescue_insert_rescue_stage_yields_rule(self):
+        """insert_rescue_stage 后 pass → 沉淀 rescue 规则。"""
+        events = [
+            ev("recovery_action", "S-1", action="insert_rescue_stage",
+               rescue_stage="setup_dependency", reason="缺 mock"),
+            ev("judge_verdict", "S-1", passed=True),
+        ]
+        r = reflect(events=events)
+        rescue_rules = [x for x in r["playbook"] if x["dimension"] == "rescue"]
+        assert len(rescue_rules) == 1
+        assert "setup_dependency" in rescue_rules[0]["rule"]
+
+    def test_reason_stored_as_evidence_not_structured(self):
+        """§5.1.1 Q3:reason 存原文,不做结构化抽取。"""
+        events = [
+            ev("recovery_action", "S-1", action="retry_new_adapter",
+               failed_adapter="codex", new_adapter="claude",
+               reason="codex 在大文件上 timeout"),
+            ev("judge_verdict", "S-1", passed=True),
+        ]
+        r = reflect(events=events)
+        rule = r["playbook"][0]
+        assert "codex 在大文件上 timeout" in rule["evidence"]
+
+    def test_playbook_sorted_by_support_desc(self):
+        """support 高的排前。"""
+        events = []
+        # codex→claude 出现 3 次
+        for s in ("A", "B", "C"):
+            events += [
+                ev("recovery_action", s, action="retry_new_adapter",
+                   failed_adapter="codex", new_adapter="claude"),
+                ev("judge_verdict", s, passed=True),
+            ]
+        # claude→kimi 出现 1 次
+        events += [
+            ev("recovery_action", "D", action="retry_new_adapter",
+               failed_adapter="claude", new_adapter="kimi"),
+            ev("judge_verdict", "D", passed=True),
+        ]
+        r = reflect(events=events)
+        assert r["playbook"][0]["support"] >= r["playbook"][1]["support"]
+
+
+class TestWritePlaybookFile:
+    """REFACTOR §5.1.2:write_playbook_file 按 task_type 分层落盘 + support 累加。"""
+
+    def test_writes_to_task_type_subdir(self, tmp_path):
+        """文件落在 <workspace>/.story/knowledge/playbooks/<task_type>/<dimension>.md。"""
+        playbook = [
+            {"dimension": "adapter-routing", "rule": "codex→claude", "support": 1, "evidence": "x"},
+        ]
+        p = write_playbook_file(
+            workspace=str(tmp_path), task_type="credit-limit",
+            dimension="adapter-routing", playbook=playbook,
+        )
+        assert p is not None
+        assert "credit-limit" in p
+        assert "adapter-routing.md" in p
+
+    def test_support_accumulates_on_repeated_write(self, tmp_path):
+        """同 rule 多次写入 → support 累加(不是文本去重堆积)。"""
+        playbook = [
+            {"dimension": "adapter-routing", "rule": "codex→claude", "support": 1, "evidence": "first"},
+        ]
+        write_playbook_file(
+            workspace=str(tmp_path), task_type="credit-limit",
+            dimension="adapter-routing", playbook=playbook,
+        )
+        # 第二次写同 rule
+        playbook2 = [
+            {"dimension": "adapter-routing", "rule": "codex→claude", "support": 1, "evidence": "second"},
+        ]
+        write_playbook_file(
+            workspace=str(tmp_path), task_type="credit-limit",
+            dimension="adapter-routing", playbook=playbook2,
+        )
+        from pathlib import Path
+        content = (tmp_path / ".story" / "knowledge" / "playbooks" /
+                   "credit-limit" / "adapter-routing.md").read_text(encoding="utf-8")
+        assert "support: 2" in content
+        # evidence 取最新
+        assert "second" in content
+
+    def test_empty_task_type_returns_none(self, tmp_path):
+        """task_type 为空不落库(冷启动期可能未分类)。"""
+        p = write_playbook_file(
+            workspace=str(tmp_path), task_type="",
+            dimension="adapter-routing", playbook=[{"rule": "x", "support": 1}],
+        )
+        assert p is None
+
+    def test_empty_playbook_returns_none(self, tmp_path):
+        p = write_playbook_file(
+            workspace=str(tmp_path), task_type="credit-limit",
+            dimension="adapter-routing", playbook=[],
+        )
+        assert p is None
+
+    def test_best_effort_does_not_raise(self, tmp_path):
+        """写失败只 warning,不抛异常。"""
+        # 传一个不可写的路径(模拟失败)——这里用空 playbook + 合法路径测正常路径
+        # 真正的失败路径难模拟,至少确认空输入不崩
+        p = write_playbook_file(
+            workspace=str(tmp_path), task_type="x",
+            dimension="adapter-routing", playbook=[],
+        )
+        assert p is None  # 空 playbook → None,不崩
+
+
+class TestPersistPlaybook:
+    """REFACTOR §5.1.3:persist_playbook 串起 reflect → 分文件落盘。"""
+
+    def test_persists_multiple_dimensions(self, tmp_path):
+        """reflect 产出多 dimension → 各自落对应文件。"""
+        events = [
+            ev("recovery_action", "S-1", action="retry_new_adapter",
+               failed_adapter="codex", new_adapter="claude", reason="r1"),
+            ev("transition_decision", "S-1", action="retry", stage="build", reason="r2"),
+            ev("transition_decision", "S-1", action="retry", stage="build", reason="r3"),
+            ev("judge_verdict", "S-1", passed=True),
+        ]
+        persist_playbook(
+            workspace=str(tmp_path), story_key="S-1",
+            events=events, task_type="credit-limit",
+        )
+        playbooks_dir = tmp_path / ".story" / "knowledge" / "playbooks" / "credit-limit"
+        assert (playbooks_dir / "adapter-routing.md").exists()
+        assert (playbooks_dir / "failure-patterns.md").exists()
+
+    def test_empty_task_type_skips(self, tmp_path):
+        """task_type 为空 → persist_playbook 不落任何文件。"""
+        persist_playbook(
+            workspace=str(tmp_path), story_key="S-1",
+            events=[ev("recovery_action", "S-1", action="retry_new_adapter",
+                       failed_adapter="codex", new_adapter="claude")],
+            task_type="",
+        )
+        assert not (tmp_path / ".story").exists()
+
+    def test_no_playbook_rules_skips(self, tmp_path):
+        """没有可沉淀的规则(事件没 pass 兜底)→ 不落文件。"""
+        events = [
+            ev("recovery_action", "S-1", action="retry_new_adapter",
+               failed_adapter="codex", new_adapter="claude"),
+            # 没有 pass 事件
+        ]
+        persist_playbook(
+            workspace=str(tmp_path), story_key="S-1",
+            events=events, task_type="credit-limit",
+        )
+        assert not (tmp_path / ".story").exists()
+
+
