@@ -1,0 +1,25 @@
+# Default source profile — 通用默认状态机(手建 story / NULL source / 未注册 source 用)。
+#
+# SOURCE-DRIVEN-MODEL: source_type 为 None/空/未注册的 story(如 /api/story 手建、
+# 本地测试)走这套默认状态机,保证所有 story 展示逻辑统一 —— 都有 4 节点主进度条,
+# 不会出现「有的 story 有进度条有的没有」。
+#
+# 内容 = tapd.yaml 的 story_states 部分,但不含 state_map(手建 story 没有外部状态可映射)。
+
+story_states:
+  开发:
+    stages: [design, build]
+    next: 测试
+    confirm: {type: ui_button, label: "完成开发，进入测试"}
+  测试:
+    stages: [verify]
+    next: 上线
+    confirm: {type: config, key: auto_advance_test}
+  上线:
+    stages: []
+    next: 结项
+    confirm: {type: none}
+  结项:
+    stages: []
+    next: null
+    confirm: {type: none}

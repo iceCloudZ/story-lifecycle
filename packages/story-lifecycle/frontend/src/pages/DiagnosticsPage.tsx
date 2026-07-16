@@ -1,14 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { storyApi } from '../api/client'
+import { useStories } from '../hooks/useStories'
 import './DiagnosticsPage.css'
 
 export default function DiagnosticsPage() {
-  const { data: stories } = useQuery({
-    queryKey: ['stories'],
-    queryFn: storyApi.list,
-  })
+  const { stories } = useStories()
 
-  const failedStories = (stories ?? []).filter((s) =>
+  const failedStories = stories.filter((s) =>
     s.status === 'failed' || s.status === 'blocked'
   )
 

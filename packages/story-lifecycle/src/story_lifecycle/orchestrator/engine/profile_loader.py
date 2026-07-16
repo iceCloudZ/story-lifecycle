@@ -54,13 +54,8 @@ class ResolvedProfile:
     quality: dict = field(default_factory=dict)
     adversarial: dict = field(default_factory=dict)
     reviewers: dict = field(default_factory=dict)
-    # STORY-STATE-MODEL: Story 业务状态机定义(开发/测试/上线...)。每个状态含
-    # stages(本状态要跑的阶段)、next(下一状态)、confirm(转移闸类型)。无该段 → 空
-    # dict,driver 退化成扁平阶段行为(向后兼容 realtest/swebench 等 profile)。
-    story_states: dict = field(default_factory=dict)
-    # TAPD 状态 → lifecycle_state 映射(sync_service 同步时自动写 lifecycle_state)。
-    # key = tapd_type(story/bug/subtask),value = {tapd_status: lifecycle_state}。
-    tapd_state_map: dict = field(default_factory=dict)
+    # SOURCE-DRIVEN-MODEL: story_states/tapd_state_map 已迁到 source 维度
+    # (sourcing/source_loader.py)。profile 现在只管「阶段怎么执行」(stages/CLI/quality)。
     raw: dict = field(default_factory=dict)
 
     def stage(self, stage_name: str) -> StageConfig:
@@ -84,8 +79,6 @@ class ResolvedProfile:
             "quality": self.quality,
             "adversarial": self.adversarial,
             "reviewers": self.reviewers,
-            "story_states": self.story_states,
-            "tapd_state_map": self.tapd_state_map,
         }
 
     @classmethod
@@ -119,8 +112,6 @@ class ResolvedProfile:
             quality=data.get("quality", {}),
             adversarial=data.get("adversarial", {}),
             reviewers=data.get("reviewers", {}),
-            story_states=data.get("story_states", {}),
-            tapd_state_map=data.get("tapd_state_map", {}),
         )
 
 
@@ -184,8 +175,6 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
         quality=raw.get("quality", {}),
         adversarial=raw.get("adversarial", {}),
         reviewers=raw.get("reviewers", {}),
-        story_states=raw.get("story_states", {}),
-        tapd_state_map=raw.get("tapd_state_map", {}),
         raw=raw,
     )
 

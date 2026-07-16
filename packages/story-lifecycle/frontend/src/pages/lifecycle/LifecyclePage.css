@@ -1,0 +1,37 @@
+/* 生命周期列表页(待启动/开发中/测试上线/已结项)共用样式 */
+
+.lifecycle-page {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.lifecycle-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.lifecycle-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.lifecycle-header .story-count {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+/* 视图切换(列表 / 班车看板) */
+.lifecycle-header .view-switch {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.lifecycle-header .view-switch .tab-btn {
+  padding: 4px 12px;
+  font-size: 13px;
+}

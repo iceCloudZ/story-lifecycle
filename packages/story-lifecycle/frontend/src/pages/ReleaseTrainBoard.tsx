@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { storyApi, type Story } from '../api/client'
+import { useQueryClient } from '@tanstack/react-query'
+import { storyApi } from '../api/client'
+import { useStories } from '../hooks/useStories'
+import type { StorySummary } from '../store/storyStore'
 import Swimlane from '../components/Swimlane'
 import './ReleaseTrainBoard.css'
 
@@ -33,11 +35,7 @@ export default function ReleaseTrainBoard() {
   const [customTrains, setCustomTrains] = useState<string[]>(() => loadCustomTrains())
   const [newTrain, setNewTrain] = useState('')
 
-  const { data: stories, isLoading } = useQuery({
-    queryKey: ['stories'],
-    queryFn: storyApi.list,
-    refetchInterval: 10000,
-  })
+  const { stories, isLoading } = useStories()
 
   const boardStories = useMemo(() => {
     // 状态治理:只显示已上架(ready)、非测试、且引擎未完结的 story。
@@ -63,8 +61,8 @@ export default function ReleaseTrainBoard() {
   }, [boardStories, customTrains])
 
   const grouped = useMemo(() => {
-    const byTrain: Record<string, Story[]> = {}
-    const unassigned: Story[] = []
+    const byTrain: Record<string, StorySummary[]> = {}
+    const unassigned: StorySummary[] = []
     for (const s of boardStories) {
       if (s.releaseTrain) {
         byTrain[s.releaseTrain] = byTrain[s.releaseTrain] || []
@@ -100,8 +98,8 @@ export default function ReleaseTrainBoard() {
     setNewTrain('')
   }
 
-  function groupByState(items: Story[]) {
-    const map: Record<string, Story[]> = {}
+  function groupByState(items: StorySummary[]) {
+    const map: Record<string, StorySummary[]> = {}
     for (const state of LIFECYCLE_STATES) map[state] = []
     for (const s of items) {
       const state = s.lifecycleState || '开发'
@@ -111,7 +109,7 @@ export default function ReleaseTrainBoard() {
     return map
   }
 
-  function wipCount(items: Story[]) {
+  function wipCount(items: StorySummary[]) {
     return items.filter((s) => {
       const state = s.lifecycleState || '开发'
       return state === '开发' || state === '测试'
@@ -200,7 +198,7 @@ function UnassignedCard({
   onClick,
   onDropToUnassigned,
 }: {
-  story: Story
+  story: StorySummary
   onClick: () => void
   onDropToUnassigned: (draggedKey: string) => void
 }) {

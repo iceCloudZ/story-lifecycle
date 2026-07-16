@@ -1,20 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
+import { type BugSummary } from '../api/client'
 import './BugsPage.css'
-
-interface BugSummary {
-  storyKey: string
-  title?: string
-  status?: string
-  tapdStatus?: string
-  priority?: string
-  owner?: string
-  deadline?: string
-  tapdUrl?: string
-  updatedAt?: string
-  parentKey?: string
-}
 
 const statusLabel: Record<string, string> = {
   idle: '未开始',

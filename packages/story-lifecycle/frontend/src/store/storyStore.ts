@@ -20,6 +20,7 @@ export interface StorySummary {
   // 班车看板
   releaseTrain?: string | null
   lifecycleState?: string | null
+  isTest?: boolean | null
 }
 
 interface StoryStore {

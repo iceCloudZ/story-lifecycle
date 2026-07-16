@@ -6,25 +6,23 @@ import type { AgentAction, ActionButton } from '../api/client'
 import StorySidebar from '../components/StorySidebar'
 import OverviewTab from '../components/OverviewTab'
 import CodeChangesTab from '../components/CodeChangesTab'
-import AdversarialLoopTab from '../components/AdversarialLoopTab'
 import TestTab from '../components/TestTab'
-import QualityGateTab from '../components/QualityGateTab'
 import TerminalTab from '../components/TerminalTab'
-import ContextTab from '../components/ContextTab'
 import BugsTab from '../components/BugsTab'
 import LlmAuditTab from '../components/LlmAuditTab'
 import ClarifyDialog from '../components/ClarifyDialog'
 import './StoryDetailPage.css'
 
-// Visible modules for the semi-automatic workflow. Legacy modules (loop,
-// quality, terminal, context) are kept renderable below so direct URLs still
-// work, but they are hidden from the sidebar.
+// Visible modules for the semi-automatic workflow. Terminal 放回 sidebar:
+// handleConfirmPlan / handleAdvanceLifecycle 都 setActiveTab('terminal'),
+// 必须让用户能从 sidebar 够得到它。loop/quality/context 已移除渲染分支。
 const MODULES = [
   { id: 'overview', icon: '📊', label: '概览' },
-  { id: 'bugs', icon: '🐛', label: '缺陷' },
-  { id: 'llm-audit', icon: '🔍', label: 'LLM 审计' },
-  { id: 'code', icon: '💻', label: '代码变更' },
+  { id: 'terminal', icon: '💻', label: '终端' },
+  { id: 'code', icon: '📦', label: '代码变更' },
   { id: 'test', icon: '🧪', label: '测试' },
+  { id: 'llm-audit', icon: '🔍', label: 'LLM 审计' },
+  { id: 'bugs', icon: '🐛', label: '缺陷' },
 ]
 
 const ACTIONS: Record<string, ActionButton[]> = {
@@ -257,11 +255,8 @@ export default function StoryDetailPage() {
           )}
           {activeTab === 'code' && <CodeChangesTab storyKey={storyKey} />}
           {activeTab === 'llm-audit' && <LlmAuditTab storyKey={storyKey} />}
-          {activeTab === 'loop' && <AdversarialLoopTab storyKey={storyKey} />}
           {activeTab === 'test' && <TestTab storyKey={storyKey} />}
-          {activeTab === 'quality' && <QualityGateTab storyKey={storyKey} />}
           {activeTab === 'bugs' && <BugsTab storyKey={storyKey} />}
-          {activeTab === 'context' && <ContextTab storyKey={storyKey} />}
           {activeTab === 'terminal' && (
             <TerminalTab storyKey={storyKey} status={detail.status} />
           )}

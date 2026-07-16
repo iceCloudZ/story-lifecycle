@@ -1,20 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { storyApi, apiAction } from '../api/client'
 import type { Project, WorkspaceOption, ProfileOption } from '../api/client'
 import { useStoryStore, type StorySummary } from '../store/storyStore'
+import { useStories } from '../hooks/useStories'
+import StoryCard, { type StoryCardAction } from '../components/StoryCard'
 import './Dashboard.css'
-
-const STATUS_LABELS: Record<string, string> = {
-  active: '运行中',
-  paused: '已暂停',
-  blocked: '已阻塞',
-  completed: '已完成',
-  failed: '已失败',
-  aborted: '已终止',
-  waiting_subtasks: '等待子任务',
-}
 
 const TAPD_STATUS: Record<string, string> = {
   status_2: '待开发',
@@ -43,37 +35,16 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
   subtask: { label: '子任务', color: '#7c3aed' },
 }
 
-const STAGES = ['design', 'implement', 'test'] as const
-
-const CARD_ACTIONS: Record<string, { label: string; method: string; suffix: string; confirm?: string }[]> = {
-  active: [
-    { label: '跳过', method: 'PUT', suffix: '/skip/{stage}' },
-    { label: '终止', method: 'POST', suffix: '/abort', confirm: '确定终止？' },
-  ],
-  paused: [{ label: '继续', method: 'PUT', suffix: '/advance' }],
-  blocked: [{ label: '重试', method: 'PUT', suffix: '/advance' }],
-  failed: [{ label: '删除', method: 'DELETE', suffix: '', confirm: '确定删除？' }],
-  completed: [{ label: '删除', method: 'DELETE', suffix: '', confirm: '确定删除？' }],
-  aborted: [{ label: '删除', method: 'DELETE', suffix: '', confirm: '确定删除？' }],
-}
-
 export default function Dashboard() {
   const navigate = useNavigate()
-  const { stories, connected } = useStoryStore()
+  const { connected } = useStoryStore()
+  const { stories: allStories } = useStories()
   const [tab, setTab] = useState<'tapd' | 'story' | 'calendar' | 'project'>('tapd')
   const [intakeModal, setIntakeModal] = useState<{ story?: StorySummary } | null>(null)
   const [intakeNotice, setIntakeNotice] = useState<StartNotice | null>(null)
   const [showProjectForm, setShowProjectForm] = useState(false)
   const [projectCount, setProjectCount] = useState(0)
   const qc = useQueryClient()
-
-  const { data: fullList } = useQuery({
-    queryKey: ['stories'],
-    queryFn: storyApi.list,
-    initialData: stories,
-    refetchInterval: 10000,
-  })
-  const allStories = fullList ?? []
 
   // TAPD 全集：日历视图仍需子任务数据，保留所有 TAPD 来源
   const tapdStories = allStories.filter((s) => s.tapdType)
@@ -82,7 +53,7 @@ export default function Dashboard() {
   // 我的 Story tab: 所有已激活的 story，不区分来源（TAPD/飞书/手工创建）
   const myStories = allStories.filter((s) => s.intakeState === 'ready')
 
-  async function handleCardAction(s: StorySummary, action: (typeof CARD_ACTIONS[string])[0]) {
+  async function handleCardAction(s: StorySummary, action: StoryCardAction) {
     if (action.confirm && !window.confirm(action.confirm)) return
     let url = `/api/story/${s.storyKey}`
     if (action.suffix === '/skip/{stage}') {
@@ -930,55 +901,6 @@ function CalendarView({ stories }: { stories: StorySummary[] }) {
             </div>
           )
         })}
-      </div>
-    </div>
-  )
-}
-
-// ---- Local story card ----
-
-function StoryCard({ story, onAction }: {
-  story: StorySummary
-  onAction: (action: (typeof CARD_ACTIONS[string])[0]) => void
-}) {
-  const navigate = useNavigate()
-  const stageIndex = STAGES.indexOf(story.currentStage as (typeof STAGES)[number])
-  const progress = stageIndex >= 0 ? ((stageIndex + 1) / STAGES.length) * 100 : 0
-  const actions = CARD_ACTIONS[story.status] || []
-
-  return (
-    <div className="story-card-v2">
-      <div className="card-top" onClick={() => navigate(`/story/${story.storyKey}`)}>
-        <span className="card-key">{story.storyKey}</span>
-        <span className={`badge badge-${story.status}`}>
-          {STATUS_LABELS[story.status] || story.status}
-        </span>
-      </div>
-      <div className="card-title" onClick={() => navigate(`/story/${story.storyKey}`)}>
-        {story.title || '(未命名)'}
-      </div>
-      <div className="card-progress" onClick={() => navigate(`/story/${story.storyKey}`)}>
-        <div className="progress-bar">
-          <div className="progress-fill" style={{ width: `${progress}%` }} />
-        </div>
-        <span className="progress-label">
-          {STAGES.map((s, i) => (
-            <span key={s} className={i <= stageIndex ? 'stage-done' : 'stage-pending'}>{s}</span>
-          ))}
-        </span>
-      </div>
-      <div className="card-footer">
-        {story.executionCount > 0 && (
-          <span className="card-meta">重试: {story.executionCount}</span>
-        )}
-        {actions.length > 0 && (
-          <div className="card-actions" onClick={(e) => e.stopPropagation()}>
-            {actions.map((a) => (
-              <button key={a.label} className={`btn btn-sm ${a.method === 'DELETE' ? 'btn-danger' : ''}`}
-                onClick={() => onAction(a)}>{a.label}</button>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   )

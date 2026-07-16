@@ -4,7 +4,11 @@ Story 状态(开发/测试/上线)是独立第一公民。driver 跑完一个状
 按该状态 confirm 规则转移:ui_button→paused+`_story_state_gate`;config(auto)→
 自动推进 lifecycle_state;none→推进;终态→completed。Story 状态闸优先于阶段间闸。
 
-用 headless 路径 mock(Popen / done file)。构造带 story_states 的 ResolvedProfile。
+SOURCE-DRIVEN-MODEL: story_states 按 source_type 解析(sourcing/source_loader),
+不再绑在 profile。测试通过 patch resolve_source_profile 注入自定义状态机,
+patch resolve_profile 注入阶段配置(两者正交)。
+
+用 headless 路径 mock(Popen / done file)。
 """
 
 from __future__ import annotations
@@ -22,10 +26,16 @@ from story_lifecycle.orchestrator.engine.profile_loader import (
     StageConfig,
     resolve_profile,
 )
+from story_lifecycle.sourcing.source_loader import (
+    SourceProfile,
+    resolve_source_profile,
+)
 
 
 @pytest.fixture
 def story(tmp_path):
+    # SOURCE-DRIVEN-MODEL: source_type 通过 patch resolve_source_profile 注入测试
+    # 状态机,故 create_story 不必带 source_type(planner 读的是 patch 后的返回值)。
     return db.create_story(
         story_key="STORY-SSM-1",
         title="测试 Story 状态机",
@@ -46,10 +56,11 @@ def _set_actions(story, actions):
     )
 
 
-def _profile_with_story_states(story_states, confirm_map=None):
-    """构造 ResolvedProfile:headless,design/build 两 stage,带 story_states。
+def _profile(confirm_map=None):
+    """构造 ResolvedProfile:headless,design/build 两 stage(阶段执行配置)。
 
     confirm_map: per-stage confirm (阶段间闸),默认全 False(让 Story 状态闸不被阶段闸抢)。
+    SOURCE-DRIVEN-MODEL: profile 不再带 story_states(已迁到 source 维度)。
     """
     confirm_map = confirm_map or {}
     stages = {
@@ -67,8 +78,12 @@ def _profile_with_story_states(story_states, confirm_map=None):
         cli="claude",
         execution_mode="headless",
         stages=stages,
-        story_states=story_states,
     )
+
+
+def _source_profile(story_states):
+    """构造 SourceProfile:带 story_states(业务状态机定义)。"""
+    return SourceProfile(source_type="tapd", story_states=story_states)
 
 
 def _mock_proc():
@@ -115,7 +130,10 @@ def test_story_state_gate_pauses_when_state_stages_done(story, tmp_path):
         "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
     ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"), patch(
         "story_lifecycle.orchestrator.engine.profile_loader.resolve_profile",
-        return_value=_profile_with_story_states(states),
+        return_value=_profile(),
+    ), patch(
+        "story_lifecycle.sourcing.source_loader.resolve_source_profile",
+        return_value=_source_profile(states),
     ):
         continue_orchestrator_agent(story["story_key"], headless=True)
 
@@ -171,7 +189,10 @@ def test_story_state_auto_advances_on_config(story, tmp_path):
         "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
     ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"), patch(
         "story_lifecycle.orchestrator.engine.profile_loader.resolve_profile",
-        return_value=_profile_with_story_states(states),
+        return_value=_profile(),
+    ), patch(
+        "story_lifecycle.sourcing.source_loader.resolve_source_profile",
+        return_value=_source_profile(states),
     ):
         continue_orchestrator_agent(story["story_key"], headless=True)
 
@@ -208,7 +229,10 @@ def test_terminal_state_completes_story(story, tmp_path):
         "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
     ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"), patch(
         "story_lifecycle.orchestrator.engine.profile_loader.resolve_profile",
-        return_value=_profile_with_story_states(states),
+        return_value=_profile(),
+    ), patch(
+        "story_lifecycle.sourcing.source_loader.resolve_source_profile",
+        return_value=_source_profile(states),
     ):
         continue_orchestrator_agent(story["story_key"], headless=True)
 
@@ -254,7 +278,10 @@ def test_story_state_gate_takes_priority_over_stage_gate(story, tmp_path):
         "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
     ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"), patch(
         "story_lifecycle.orchestrator.engine.profile_loader.resolve_profile",
-        return_value=_profile_with_story_states(states, {"build": True}),
+        return_value=_profile({"build": True}),
+    ), patch(
+        "story_lifecycle.sourcing.source_loader.resolve_source_profile",
+        return_value=_source_profile(states),
     ):
         continue_orchestrator_agent(story["story_key"], headless=True)
 
@@ -290,7 +317,10 @@ def test_no_story_states_falls_back_to_flat(story, tmp_path):
         "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
     ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"), patch(
         "story_lifecycle.orchestrator.engine.profile_loader.resolve_profile",
-        return_value=_profile_with_story_states({}, {"design": True}),
+        return_value=_profile({"design": True}),
+    ), patch(
+        "story_lifecycle.sourcing.source_loader.resolve_source_profile",
+        return_value=_source_profile({}),
     ):
         continue_orchestrator_agent(story["story_key"], headless=True)
 
@@ -302,35 +332,49 @@ def test_no_story_states_falls_back_to_flat(story, tmp_path):
     assert updated["status"] == "paused"
 
 
-# ---- profile_loader 解析 story_states 段 ----
+# ---- source_loader 解析 story_states 段(SOURCE-DRIVEN-MODEL) ----
 
 
-def test_minimal_profile_has_story_states():
-    """minimal.yaml 应解析出 story_states(开发/测试/上线 三态)。"""
-    rp = resolve_profile("minimal")
-    assert rp.story_states, "minimal profile 应含 story_states 段"
-    assert "开发" in rp.story_states
-    assert "测试" in rp.story_states
-    assert "上线" in rp.story_states
-    dev = rp.story_states["开发"]
+def test_tapd_source_profile_has_story_states():
+    """tapd.yaml 应解析出 story_states(开发/测试/上线/结项 四态)。"""
+    sp = resolve_source_profile("tapd")
+    assert sp.story_states, "tapd source profile 应含 story_states 段"
+    assert "开发" in sp.story_states
+    assert "测试" in sp.story_states
+    assert "上线" in sp.story_states
+    dev = sp.story_states["开发"]
     assert dev["stages"] == ["design", "build"]
     assert dev["next"] == "测试"
 
 
-def test_profile_without_story_states_defaults_empty():
-    """realtest 等无 story_states → 解析成空 dict(向后兼容)。"""
-    rp = resolve_profile("realtest")
-    assert rp.story_states == {}
+def test_default_source_profile_fallback_for_null_source():
+    """source_type=None/空/未注册 → 回落 default.yaml(通用四状态机)。"""
+    for st in (None, "", "manual", "swebench", "nonexistent"):
+        sp = resolve_source_profile(st)
+        assert sp.story_states, f"source={st!r} 应回落 default 四状态机"
+        assert "开发" in sp.story_states
 
 
-def test_resolved_profile_roundtrip_story_states():
-    """to_dict / from_dict 透传 story_states(StoryState 持久化用)。"""
-    states = {"开发": {"stages": ["design"], "next": "测试", "confirm": {"type": "none"}}}
-    rp = ResolvedProfile(name="x", stages={}, story_states=states)
+def test_github_source_profile_is_empty_shell():
+    """github source profile 是空壳(story_states 为空,走阶段进度)。"""
+    sp = resolve_source_profile("github")
+    assert sp.story_states == {}
+
+
+def test_resolved_profile_no_longer_has_story_states():
+    """SOURCE-DRIVEN-MODEL: ResolvedProfile 已移除 story_states/tapd_state_map 字段。"""
+    import dataclasses
+
+    field_names = {f.name for f in dataclasses.fields(ResolvedProfile)}
+    assert "story_states" not in field_names
+    assert "tapd_state_map" not in field_names
+    # to_dict / from_dict roundtrip 不再含这两个键
+    rp = resolve_profile("minimal")
     d = rp.to_dict()
-    assert d["story_states"] == states
+    assert "story_states" not in d
+    assert "tapd_state_map" not in d
     rp2 = ResolvedProfile.from_dict(d)
-    assert rp2.story_states == states
+    assert not hasattr(rp2, "story_states")
 
 
 # ---- /lifecycle/advance 端点 ----

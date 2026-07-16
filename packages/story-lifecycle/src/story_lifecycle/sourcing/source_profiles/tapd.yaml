@@ -1,0 +1,55 @@
+# TAPD source profile — Story 业务状态机 + TAPD 状态映射。
+#
+# SOURCE-DRIVEN-MODEL: 这两段原先绑死在 profile(minimal.yaml),但它们驱动的是
+# source 级行为(TAPD 状态如何映射到业务状态机),换 profile 就丢生命周期定义。
+# 迁到 source 维度后,profile 只管「阶段怎么执行」,source 管「状态拓扑从哪来」。
+#
+# story_states.stages 里的 stage 名(design/build/verify)引用的是 profile.stages —
+# source 定义状态拓扑,profile 定义阶段执行,配套使用。
+
+# Story 业务状态机(第一公民,独立于阶段)。每个状态「拥有」一组 stages(execute),
+# 全 done 后按 confirm 规则转移到 next 状态。driver 跑完一个状态的所有 stages →
+# 查 confirm → 转/停。与阶段间 confirm 闸并存,Story 状态闸优先。
+#   confirm.type:
+#     ui_button — paused 等人点「进入下一状态」(前端 /lifecycle/advance)
+#     config    — 看 key 指定的全局配置,值 true 则自动转移(无人值守)
+#     none      — 无条件转移
+story_states:
+  开发:
+    stages: [design, build]        # 开发状态跑这两个阶段
+    next: 测试
+    confirm: {type: ui_button, label: "完成开发，进入测试"}
+  测试:
+    stages: [verify]
+    next: 上线
+    confirm: {type: config, key: auto_advance_test}   # 默认未配=手动, 配 true 自动
+  上线:
+    stages: []                     # minimal 无上线阶段;等车/待发布占位
+    next: 结项
+    confirm: {type: none}
+  结项:
+    stages: []                     # 真终态(TAPD closed 映射到此);next=null
+    next: null
+    confirm: {type: none}
+
+# TAPD 状态 → 本地 lifecycle_state 映射(同步 sync_service 按此自动写 lifecycle_state)。
+# 仅当映射结果相对当前 lifecycle_state 是「前进」才写(防回退,见 _is_forward)。
+# 未命中的 tapd_status 不动 lifecycle_state。map key = tapd_type(story/bug/subtask)。
+#   story 需求态: open/progressing/reopened
+#   bug 缺陷态:   new/reopened/assigned/resolving
+#   终态(共用):   resolved/rejected/closed
+state_map:
+  story:
+    progressing: 开发             # 进行中 → 开发
+    resolved: 上线                # 已解决 → 上线(等车/待发布)
+    closed: 结项                  # 关闭 → 结项(真终态)
+    rejected: 结项                # 被拒也算完结
+  bug:
+    assigned: 开发
+    resolving: 开发               # 修复中 → 开发
+    resolved: 上线
+    closed: 结项
+  subtask:                        # 子任务按 story 规则
+    progressing: 开发
+    resolved: 上线
+    closed: 结项

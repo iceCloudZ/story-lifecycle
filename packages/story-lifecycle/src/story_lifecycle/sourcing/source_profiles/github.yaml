@@ -1,0 +1,8 @@
+# GitHub source profile — 空壳占位。
+#
+# SOURCE-DRIVEN-MODEL: 本轮只迁 tapd。github story 走阶段进度(story_states 为空),
+# 不做状态机。TODO 待 github 同步逻辑完善后,补 story_states + state_map
+# (github 的 open/closed/draft 等 status → lifecycle_state 映射)。
+
+story_states: {}
+state_map: {}

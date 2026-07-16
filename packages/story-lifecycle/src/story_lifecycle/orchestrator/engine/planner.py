@@ -730,13 +730,23 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     # 解析 profile 用于生成 prompt 和质量门禁配置
     profile_stages = {}
     quality_cfg = {}
-    story_states = {}  # STORY-STATE-MODEL: Story 业务状态机定义(开发/测试/...)
     rp = None
     try:
         rp = resolve_profile(profile_name)
         profile_stages = {name: cfg for name, cfg in rp.stages.items()}
         quality_cfg = rp.quality or {}
-        story_states = rp.story_states or {}
+    except Exception:
+        pass
+    # SOURCE-DRIVEN-MODEL: Story 业务状态机(开发/测试/...)按 source_type 解析,不再从
+    # profile 读。source 定义状态拓扑,profile 定义阶段执行。无 source / 未注册 →
+    # default.yaml(通用四状态机);source 配置 story_states 为空 → driver 退化扁平阶段。
+    story_states = {}
+    try:
+        from ...sourcing.source_loader import resolve_source_profile
+
+        story_states = resolve_source_profile(
+            story.get("source_type")
+        ).story_states or {}
     except Exception:
         pass
     # STORY-STATE-MODEL: 初始化 lifecycle_state(Story 业务状态,独立第一公民)。

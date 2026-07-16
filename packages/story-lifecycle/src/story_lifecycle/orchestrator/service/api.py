@@ -927,9 +927,11 @@ def advance_lifecycle_state(story_key: str):
     )
 
     # next 状态有无 stages 决定是继续跑还是终态完成
+    # SOURCE-DRIVEN-MODEL: story_states 按 source_type 查(不再从 profile 读)。
     try:
-        rp = resolve_profile(s.get("profile", "minimal"))
-        states = rp.story_states or {}
+        from ...sourcing.source_loader import resolve_source_profile
+
+        states = resolve_source_profile(s.get("source_type")).story_states or {}
     except Exception:
         states = {}
     next_def = states.get(next_state) or {}
@@ -1805,7 +1807,6 @@ class SyncRequest(BaseModel):
     status_only: bool = False
     fetch_all: bool = False
     item_type: str = ""  # "bug" | "story" | "requirement" | ""
-    remap_lifecycle: bool = False  # 状态治理:按 tapd_state_map 刷新 lifecycle_state
 
 
 @app.post("/api/sync/tapd")
@@ -1847,7 +1848,6 @@ def api_sync_tapd(req: SyncRequest):
         workspace=workspace,
         dry_run=req.dry_run,
         status_only=req.status_only,
-        remap_lifecycle=req.remap_lifecycle,
     )
 
     # Also pull bugs linked to stories via TAPD get_related_bugs, which catches
@@ -3064,15 +3064,18 @@ def api_get_plan(story_key: str):
     stage_gate = ctx.get("_stage_gate")
 
     # STORY-STATE-MODEL: 组装 Story 业务状态视图(开发/测试/上线)+ 状态闸。
-    # storyStates 从 profile.story_states + lifecycle_state + _completed_stages 推导每个
-    # 状态的进度(done/进行中/待开始)。前端主进度条用它(替写死阶段)。无 story_states → 空。
+    # storyStates 从 source profile.story_states + lifecycle_state + _completed_stages
+    # 推导每个状态的进度(done/进行中/待开始)。前端主进度条用它。无 story_states → 空。
+    # SOURCE-DRIVEN-MODEL: 按 source_type 查(不再从 profile 读);无 source → default 四状态。
     cur_lifecycle = (
         story.get("lifecycle_state") or ctx.get("_lifecycle_state") or "开发"
     )
     story_states_view = []
     try:
-        _rp = resolve_profile(story.get("profile", "minimal"))
-        _states_cfg = _rp.story_states or {}
+        from ...sourcing.source_loader import resolve_source_profile
+
+        _sp = resolve_source_profile(story.get("source_type"))
+        _states_cfg = _sp.story_states or {}
     except Exception:
         _states_cfg = {}
     for _sname, _sdef in _states_cfg.items():

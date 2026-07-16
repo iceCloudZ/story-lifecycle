@@ -40,6 +40,20 @@ export interface Story {
   headless?: boolean
 }
 
+// Bug 列表项(BugsPage 列表 + Story 详情 BugsTab 共用,替掉两处重复定义)。
+export interface BugSummary {
+  storyKey: string
+  title?: string
+  status?: string
+  tapdStatus?: string
+  priority?: string
+  owner?: string
+  deadline?: string
+  tapdUrl?: string
+  updatedAt?: string
+  parentKey?: string
+}
+
 export interface AgentAction {
   action: 'launch' | 'skip'
   adapter?: string
