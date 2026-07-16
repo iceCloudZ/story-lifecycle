@@ -288,6 +288,10 @@ def run_orchestrator_agent(
             )
             # 把 PlanResult 转 action list(adapter 由 profile 决定,不用模型选的)
             stage_to_cli = {name: cfg["cli"] for name, cfg in profile_stages.items()}
+            # single-pass 保底:LLM 路径下也要保证全干语义(见 _default_planning_actions
+            # 对 single-pass 的处理)。LLM 漏选 run_tests / 没给 grill=True 时补上,
+            # 否则 single-pass verify 会拿到禁测试约束 + 无任务清单 + 无 grill 段。
+            is_single = len(profile_stages) <= 1
             for sp in result.stages:
                 if sp.skip:
                     actions.append(
@@ -305,8 +309,10 @@ def run_orchestrator_agent(
                             "adapter": adapter,
                             "stage": sp.stage,
                             "focus": sp.focus,
-                            "task_actions": sp.task_actions or [],
-                            "grill": sp.grill,
+                            "task_actions": _ensure_single_pass_actions(
+                                sp.task_actions, is_single
+                            ),
+                            "grill": _resolve_single_pass_grill(sp.grill, is_single),
                             "done_file": stage_done_file_rel(story_key, sp.stage),
                         }
                     )
@@ -341,6 +347,41 @@ def run_orchestrator_agent(
     )
 
     return {"status": "planning", "actions": actions}
+
+
+def _ensure_single_pass_actions(
+    task_actions: list[str] | None, is_single: bool
+) -> list[str]:
+    """LLM 规划路径的 single-pass 保底:动作清单缺关键动作时补上。
+
+    fallback 路径(_default_planning_actions)对 single-pass 直接用
+    _DEFAULT_SINGLE_STAGE_ACTIONS(含 run_tests),但 LLM 路径完全放权给模型——
+    模型可能漏选 run_tests,导致 _build_exec_constraint 产出"禁测试"约束、
+    _build_task_list 不出现任务清单段。single-pass 是单 CLI 全干,没有后续阶段
+    替它兜底测试,所以必须保底 run_tests。
+
+    多阶段(is_single=False)直通,不动 LLM 的选择。
+    """
+    actions = list(task_actions or [])
+    if not is_single:
+        return actions
+    if "run_tests" not in actions:
+        actions.append("run_tests")
+    return actions
+
+
+def _resolve_single_pass_grill(grill: bool | None, is_single: bool) -> bool:
+    """LLM 规划路径的 single-pass 保底:grill 缺省(None)时保底 True。
+
+    single-pass verify 是单 CLI 全干(含设计),PRD 岔路(信息缺失/多选)需澄清协议
+    兜底——fallback 路径对 single-pass 默认 grill=True(:367),LLM 路径也应对齐。
+    LLM 显式给 False 时尊重(它判断无岔路);给 None(没想清楚)时保底 True。
+
+    多阶段(is_single=False)直通 LLM 的选择(None 视为 False)。
+    """
+    if not is_single:
+        return bool(grill)
+    return True if grill is None else bool(grill)
 
 
 def _default_planning_actions(
@@ -886,6 +927,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 interactive=not headless,  # BUG #9:交互式路径走"终端直接问人"
                 task_actions=action.get("task_actions", []),
                 grill=action.get("grill", False),
+                is_single_stage=len(profile_stages) <= 1,
             )
 
             # 写入 prompt 文件
@@ -1560,6 +1602,7 @@ def _build_cli_prompt(
     interactive: bool = False,
     task_actions: list[str] | None = None,
     grill: bool = False,
+    is_single_stage: bool = False,
 ) -> str:
     """构建给 CLI 的执行 prompt。
 
@@ -1617,8 +1660,11 @@ def _build_cli_prompt(
 
     # grill-me:非 design stage 但 grill=True 时,注入通用澄清协议。
     # design stage 的澄清协议已在 dimensions_section 里(不重复注入)。
+    # single-pass 的 stage 名虽叫 verify,但本质含设计、没有后续阶段兜底澄清,
+    # 所以 is_single_stage 时也允许 grill 段(此时 dimensions_section 为空,
+    # 不会与 design 维度段内的澄清协议重复)。
     grill_section = ""
-    if stage != "design" and grill:
+    if grill and (stage != "design" or is_single_stage):
         grill_section = build_grill_protocol_section(interactive=interactive)
 
     # BUG #18: worktree 已建(build 阶段 prepare_worktrees 跑过)→ 确定性指令:
@@ -1662,11 +1708,16 @@ def _build_cli_prompt(
     # 选了 run_tests → 允许轻量测试;没选 → 禁测试。都禁重构建。
     from .task_actions import _build_exec_constraint as _build_constraint
     from .task_actions import _build_task_list
+    from .task_actions import build_done_protocol
 
     _task_actions = task_actions or []
     exec_constraint_section = _build_constraint(_task_actions)
     # 任务清单:LLM 选的动作 → prompt 里的有序步骤(按 order 排序)
     task_list_section = _build_task_list(_task_actions)
+    # 完成协议:动态字段(选了 write_test_report → test_report_path;write_design_doc
+    # → spec_path)。一鱼两吃:task_actions 既驱动任务清单,又驱动 done 协议字段,
+    # 让 CLI 提前知道要交什么(否则 done 校验无源失败)。
+    done_protocol_section = build_done_protocol(stage, done_file, _task_actions)
 
     return f"""## 任务: {stage}
 
@@ -1688,11 +1739,7 @@ def _build_cli_prompt(
 {focus}
 {worktree_section}
 {exec_constraint_section}
-### 完成协议
-完成后必须写入文件 `{done_file}`，内容为 JSON:
-{{"stage": "{stage}", "status": "done", "summary": "完成摘要", "files_changed": []}}
-
-注意：JSON 必须是纯 JSON，不要包裹在 markdown 代码块中。"""
+{done_protocol_section}"""
 
 
 @with_story_key()

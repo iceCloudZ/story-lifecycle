@@ -9,25 +9,24 @@ REFACTOR task_actions: 执行约束现在由 task_actions 内容决定(选了 ru
 轻量测试,没选就禁)。不再按 stage 名硬编码。
 """
 
-import json
-
 from story_lifecycle.orchestrator.engine.planner import _build_cli_prompt
 
 
 def _build(stage, tmp_path, **kw):
-    return _build_cli_prompt(
-        story_key="S-1",
-        title="t",
-        stage=stage,
-        focus="impl the feature",
-        done_file=f".story/done/S-1/{stage}.json",
-        profile_stages={},
-        prd_path="",
-        project_section="",
-        workspace=str(tmp_path),
-        transcript_section="",
-        **kw,
-    )
+    defaults = {
+        "story_key": "S-1",
+        "title": "t",
+        "stage": stage,
+        "focus": "impl the feature",
+        "done_file": f".story/done/S-1/{stage}.json",
+        "profile_stages": {},
+        "prd_path": "",
+        "project_section": "",
+        "workspace": str(tmp_path),
+        "transcript_section": "",
+    }
+    defaults.update(kw)  # kw 覆盖默认(允许定制 profile_stages 等)
+    return _build_cli_prompt(**defaults)
 
 
 class TestExecConstraint:
@@ -136,3 +135,120 @@ class TestDesignDimensions:
         assert "clarify_request.json" not in p  # 侧文件协议已移除
         # 触发条件:遇关键歧义才问(非无脑问)
         assert "歧义" in p or "岔路" in p
+
+
+class TestSinglePassVerifyPrompt:
+    """single-pass verify prompt 修复回归(真实全链路 tapd-...1066752 暴露)。
+
+    三层根因:
+    1. LLM 规划路径缺 single-pass 保底 → task_actions 漏 run_tests → 任务清单段丢
+       + 禁测试约束(与 single-pass 全干语义矛盾)。
+    2. 完成协议写死 4 字段 → CLI 不知道要交 test_report_path(done 校验无源失败)。
+    3. grill 段 gate 对 single-pass verify 关闭 → PRD 岔路无澄清协议兜底。
+    """
+
+    def test_single_pass_verify_has_full_guidance(self, tmp_path):
+        """single-pass verify(profile 单 stage + task_actions 含 run_tests)拿到全引导:
+        任务清单 + 允许自检 + 动态完成协议(含 test_report_path) + grill 澄清协议。"""
+        p = _build(
+            "verify",
+            tmp_path,
+            task_actions=[
+                "write_design_doc",
+                "write_code",
+                "run_tests",
+                "accept_review",
+                "write_test_report",
+            ],
+            grill=True,
+            is_single_stage=True,
+            profile_stages={"verify": {"cli": "claude"}},
+        )
+        # 任务清单段在
+        assert "本阶段任务清单" in p
+        # 允许轻量自检(不是禁测试)
+        assert "轻量自检" in p or "pytest" in p
+        # 动态完成协议含 test_report_path(选了 write_test_report)
+        assert "test_report_path" in p
+        # grill 澄清协议段在
+        assert "grill-me" in p or "澄清协议" in p
+
+    def test_single_pass_grill_even_when_stage_is_verify(self, tmp_path):
+        """grill 段对 single-pass verify 开放(原本 gate `stage != "design"` 把它关了)。
+
+        多阶段 verify 仍由 grill 标志位控制(不会因本改动泄漏)。
+        """
+        # single-pass verify + grill=True → 有 grill 段
+        p_single = _build(
+            "verify",
+            tmp_path,
+            grill=True,
+            is_single_stage=True,
+            profile_stages={"verify": {"cli": "claude"}},
+        )
+        assert "grill-me" in p_single or "澄清协议" in p_single
+        # 多阶段 verify + grill=False → 无 grill 段(防过度放开)
+        p_multi = _build(
+            "verify",
+            tmp_path,
+            grill=False,
+            is_single_stage=False,
+            profile_stages={"design": {"cli": "claude"}, "verify": {"cli": "claude"}},
+        )
+        assert "grill-me" not in p_multi
+        assert "澄清协议" not in p_multi
+
+    def test_done_protocol_dynamic_fields_by_task_actions(self, tmp_path):
+        """完成协议字段随 task_actions 动态(改动 2):选 write_design_doc → spec_path;
+        选 write_test_report → test_report_path;都不选 → 只基础 4 字段。"""
+        # 选了 write_design_doc + write_test_report
+        p_full = _build(
+            "verify",
+            tmp_path,
+            task_actions=["write_design_doc", "write_test_report"],
+        )
+        assert "spec_path" in p_full
+        assert "test_report_path" in p_full
+        # 都不选 → 只基础字段(spec_path/test_report_path 不出现)
+        p_bare = _build("verify", tmp_path, task_actions=["write_code"])
+        assert "spec_path" not in p_bare
+        assert "test_report_path" not in p_bare
+        # 基础字段始终在
+        assert "完成协议" in p_bare
+        assert "files_changed" in p_bare
+
+
+class TestSinglePassPlanningFallback:
+    """LLM 规划路径的 single-pass 保底(改动 1):helper 函数级别锁定。
+
+    LLM 漏选 run_tests / 没给 grill 时,helper 补上——对齐 fallback 路径的语义。
+    """
+
+    def test_ensure_single_pass_actions_adds_run_tests(self):
+        from story_lifecycle.orchestrator.engine.planner import (
+            _ensure_single_pass_actions,
+        )
+
+        # single-pass 且漏 run_tests → 补上
+        out = _ensure_single_pass_actions(["write_code"], is_single=True)
+        assert "run_tests" in out
+        # 已含 run_tests → 不重复
+        out2 = _ensure_single_pass_actions(
+            ["write_code", "run_tests"], is_single=True
+        )
+        assert out2.count("run_tests") == 1
+        # 多阶段 → 直通,不补
+        out3 = _ensure_single_pass_actions(["write_code"], is_single=False)
+        assert "run_tests" not in out3
+
+    def test_resolve_single_pass_grill_defaults_true(self):
+        from story_lifecycle.orchestrator.engine.planner import (
+            _resolve_single_pass_grill,
+        )
+
+        # single-pass + None → 保底 True(LLM 没想清楚时兜底)
+        assert _resolve_single_pass_grill(None, is_single=True) is True
+        # single-pass + 显式 False → 尊重(False)
+        assert _resolve_single_pass_grill(False, is_single=True) is False
+        # 多阶段 + None → False(不兜底)
+        assert _resolve_single_pass_grill(None, is_single=False) is False
