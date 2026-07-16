@@ -430,6 +430,12 @@ def _build_interactive_stage_prompt(story: dict, stage: str) -> str:
         transcript_section = get_transcript_context(story_key, workspace, stage) or ""
     except Exception:
         pass
+    # 交互终端路径不经过 LLM 规划,用 fallback 默认动作 + single-pass 保底:
+    # 否则 task_actions 为空 → 任务清单段缺失 + 禁测试约束 + 完成协议只 4 字段。
+    from ..engine.task_actions import get_default_task_actions
+
+    _is_single = len(profile_stages) <= 1
+    _default_actions = get_default_task_actions(stage, _is_single)
     return planner._build_cli_prompt(
         story_key=story_key,
         title=story.get("title", ""),
@@ -442,6 +448,9 @@ def _build_interactive_stage_prompt(story: dict, stage: str) -> str:
         workspace=workspace,
         transcript_section=transcript_section,
         interactive=True,  # 交互式 claude("query",无 MCP):逐问澄清改「终端问人」
+        task_actions=_default_actions,
+        grill=True if _is_single else False,  # single-pass 默认 grill(对齐 fallback)
+        is_single_stage=_is_single,
     )
 
 
