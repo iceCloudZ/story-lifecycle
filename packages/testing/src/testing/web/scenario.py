@@ -870,10 +870,52 @@ def _advance_gate(
             )
         return _advance_gate_via_api(api, story_key, result)
 
-    time.sleep(2.0)
+    # VERIFY the click actually advanced the story (status flipped out of
+    # paused). Without this, a click that landed on the wrong element (e.g. a
+    # "重新规划" button whose prefix also matched, or a no-op click during a
+    # rescue-induced re-render) would be recorded as success and the driver
+    # would loop until the stuck timeout — wasting minutes and obscuring the
+    # real failure. Retry the whole click+verify a few times before giving up.
+    advanced = False
+    for verify_attempt in range(4):
+        time.sleep(2.5)
+        try:
+            cur_status = api.story_status(story_key)
+        except Exception:
+            cur_status = "?"
+        if cur_status != "paused":
+            advanced = True
+            break
+        # still paused — the click didn't land. Re-navigate (page may be in a
+        # stale/rescue-re-rendered state) and try clicking once more.
+        log.warning(
+            "[%s] advance click didn't flip status (still paused, attempt %d); "
+            "re-navigating + retrying",
+            story_key, verify_attempt + 1,
+        )
+        try:
+            webbridge.navigate(f"{result.server.base_url}/story/{story_key}")
+            time.sleep(2.5)
+            for kind, val in candidates:
+                dom_kw = {"exact": val} if kind == "exact" else {"contains": val}
+                if webbridge.click_dom_button(**dom_kw):
+                    clicked = f"{clicked} (retry {verify_attempt+1} dom)"
+                    break
+        except WebBridgeError:
+            pass
+
     result.stage_gate_clicks.append(clicked)
-    log.info("SPA advance clicked for %s: %s", story_key, clicked)
-    return True
+    if advanced:
+        log.info("SPA advance clicked for %s: %s (status flipped)", story_key, clicked)
+        return True
+    # Click ran but story stayed paused — surface as a clear failure instead of
+    # letting the driver spin to the stuck timeout.
+    if strict_ui:
+        raise ScenarioError(
+            f"SPA advance button was clicked ({clicked}) but story stayed paused "
+            f"— button may be the wrong target or backend gate didn't clear"
+        )
+    return False
 
 
 def _advance_gate_via_api(
