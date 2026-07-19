@@ -12,7 +12,8 @@ import logging
 import os
 import re
 import time
-from typing import TypeVar, Type
+from typing import TypeVar, Type, get_args, get_origin, Union
+from types import UnionType
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -20,6 +21,77 @@ from pydantic import BaseModel, ValidationError
 log = logging.getLogger("story-lifecycle.llm")
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def _construct_recursive(schema: Type[T], data) -> T:
+    """Best-effort coercion mirroring the old ``model_construct`` fallback but
+    recursion-safe.
+
+    Plain ``model_construct(**filtered_data)`` leaves list-of-BaseModel fields
+    holding raw dicts when strict validation failed, so callers accessing
+    ``sp.skip`` hit ``'dict' object has no attribute 'skip'``. This walks each
+    declared field: if it is a nested BaseModel (direct, Optional, or
+    list[BaseModel]) it recursively coerces the dict(s) into the sub-model via
+    ``model_validate`` first (preferred) then ``model_construct``. Unknown keys
+    in ``data`` are dropped, as before.
+    """
+    if not isinstance(data, dict):
+        return schema.model_validate(data)
+
+    coerced: dict = {}
+    for name, finfo in schema.model_fields.items():
+        if name not in data:
+            continue
+        value = data[name]
+        coerced[name] = _coerce_field(finfo.annotation, value)
+    return schema.model_construct(**coerced)
+
+
+def _coerce_field(annotation, value):
+    """Coerce ``value`` to match ``annotation`` when it involves BaseModel(s).
+
+    Handles: a BaseModel directly, ``Optional[BaseModel]``, ``list[BaseModel]``.
+    Non-model annotations (str/int/list[str]/...) pass through unchanged.
+    """
+    if value is None:
+        return None
+
+    sub = _extract_basemodel(annotation)
+    if sub is not None:
+        return _coerce_one(sub, value)
+
+    # list[BaseModel]?
+    if get_origin(annotation) in (list, tuple, set):
+        (elem,) = get_args(annotation) or (None,)
+        elem_sub = _extract_basemodel(elem)
+        if elem_sub is not None and isinstance(value, list):
+            return [_coerce_one(elem_sub, v) for v in value]
+    return value
+
+
+def _extract_basemodel(annotation):
+    """Return the BaseModel subclass in ``annotation`` (unwrap Optional/Union), or None."""
+    if annotation is None:
+        return None
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    # Optional[X] / X | Y / Union[X, Y] → unwrap, find a BaseModel member
+    origin = get_origin(annotation)
+    if origin in (Union, UnionType):
+        for arg in get_args(annotation):
+            if isinstance(arg, type) and issubclass(arg, BaseModel):
+                return arg
+    return None
+
+
+def _coerce_one(sub: Type[BaseModel], value):
+    """Validate one sub-model; fall back to recursive construct on failure."""
+    if isinstance(value, sub):
+        return value
+    try:
+        return sub.model_validate(value)
+    except (ValidationError, Exception):
+        return _construct_recursive(sub, value)
 
 # Propagate the current story key from orchestrators down to the low-level
 # LLM client so token usage can be attributed to the right story.
@@ -278,30 +350,51 @@ class LLMClient:
         temperature: float = 0.1,
         timeout: int = 90,
         max_tokens: int | None = None,
+        max_parse_retries: int = 1,
     ) -> T:
         """Call LLM, parse and validate against a Pydantic model.
 
-        Falls back to manual field extraction if strict validation fails.
+        Falls back to manual field extracting if strict validation fails.
+        On JSON parse failure, retries once with a correction nudge (many LLMs
+        ignore a "JSON only" instruction on the first call but comply on retry).
         """
-        content = self.invoke(
-            prompt,
-            system=system,
-            temperature=temperature,
-            timeout=timeout,
-            max_tokens=max_tokens,
+        correction = (
+            "\n\n你上一次的回答不是合法 JSON（无法解析）。请重新回答，"
+            "只输出一个 JSON 对象，第一个字符必须是 {，不要任何 markdown、"
+            "表格、解释、寒暄或代码块标记。"
         )
-        data = self._parse_json(content)
-        if data is None:
+        last_content = ""
+        for attempt in range(max_parse_retries + 1):
+            current_prompt = prompt if attempt == 0 else prompt + correction + f"\n\n上次返回（错误示范，不要这样）：\n{last_content[:800]}"
+            content = self.invoke(
+                current_prompt,
+                system=system,
+                temperature=temperature,
+                timeout=timeout,
+                max_tokens=max_tokens,
+            )
+            last_content = content
+            data = self._parse_json(content)
+            if data is not None:
+                break
+            log.warning(
+                "invoke_structured: JSON parse failed (attempt %d/%d), will retry",
+                attempt + 1, max_parse_retries + 1,
+            )
+        else:
             raise ValueError(
-                f"Cannot parse LLM response as JSON. First 500 chars: {content[:500]!r}"
+                f"Cannot parse LLM response as JSON after {max_parse_retries + 1} attempts. "
+                f"First 500 chars: {last_content[:500]!r}"
             )
         try:
             return schema.model_validate(data)
         except ValidationError:
-            # Best-effort: coerce with partial data
-            return schema.model_construct(
-                **{k: v for k, v in data.items() if k in schema.model_fields}
-            )
+            # Best-effort: coerce with partial data. model_construct bypasses
+            # validation, so without recursion a list-of-BaseModel field keeps
+            # raw dicts (callers then hit `'dict' object has no attribute ...`).
+            # Recursively coerce nested sub-models so downstream attribute
+            # access stays valid even when strict validation fails on some field.
+            return _construct_recursive(schema, data)
 
     def stream(
         self,

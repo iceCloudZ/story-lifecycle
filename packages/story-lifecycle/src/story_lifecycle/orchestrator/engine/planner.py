@@ -167,7 +167,15 @@ def _build_agent_system_prompt(
 3. 为每个执行的阶段选 task_actions(从上面的动作库选,不能自己编)
 4. 标 grill=true 表示该阶段需要人澄清关键歧义(如复杂设计决策);简单明确的标 false
 5. CLI（claude/codex/kimi）会自己理解需求并设计方案，你不需要代劳
-6. adapter 由 profile 路由,你不需要选"""
+6. adapter 由 profile 路由,你不需要选
+
+## 输出格式（关键）
+必须**只**输出一个 JSON 对象，不要任何 markdown、表格、解释文字、代码块标记。
+schema:
+{{"stages":[{{"stage":"<阶段名>","skip":<true|false>,"focus":"<要点，多条用分号>","task_actions":["<动作1>","<动作2>"],"grill":<true|false>}}]}}
+- 每个 profile 里的阶段都要出现在 stages 里（skip 的也要列出，skip=true）
+- focus/task_actions 用中文
+- 直接输出 JSON，第一个字符必须是 {{，不要有 ```json 或任何前缀"""
 
 
 def _build_agent_user_message(
@@ -292,28 +300,40 @@ def run_orchestrator_agent(
             # 对 single-pass 的处理)。LLM 漏选 run_tests / 没给 grill=True 时补上,
             # 否则 single-pass verify 会拿到禁测试约束 + 无任务清单 + 无 grill 段。
             is_single = len(profile_stages) <= 1
-            for sp in result.stages:
-                if sp.skip:
+            # Defensive: invoke_structured's fallback coerce may leave fields
+            # unset (e.g. LLM returned 'name' instead of 'stage'), so access
+            # via getattr with sane defaults rather than letting AttributeError
+            # sink the whole structured plan to _default_planning_actions.
+            profile_stage_names = list(profile_stages.keys())
+            for idx, sp in enumerate(result.stages):
+                stage_name = getattr(sp, "stage", None) or (
+                    profile_stage_names[idx] if idx < len(profile_stage_names) else f"stage{idx}"
+                )
+                skip = bool(getattr(sp, "skip", False))
+                focus = getattr(sp, "focus", "") or ""
+                if skip:
                     actions.append(
                         {
                             "action": "skip",
-                            "stage": sp.stage,
-                            "reason": sp.focus or "skipped",
+                            "stage": stage_name,
+                            "reason": focus or "skipped",
                         }
                     )
                 else:
-                    adapter = stage_to_cli.get(sp.stage, "claude")
+                    adapter = stage_to_cli.get(stage_name, "claude")
                     actions.append(
                         {
                             "action": "launch",
                             "adapter": adapter,
-                            "stage": sp.stage,
-                            "focus": sp.focus,
+                            "stage": stage_name,
+                            "focus": focus,
                             "task_actions": _ensure_single_pass_actions(
-                                sp.task_actions, is_single
+                                getattr(sp, "task_actions", None), is_single
                             ),
-                            "grill": _resolve_single_pass_grill(sp.grill, is_single),
-                            "done_file": stage_done_file_rel(story_key, sp.stage),
+                            "grill": _resolve_single_pass_grill(
+                                getattr(sp, "grill", None), is_single
+                            ),
+                            "done_file": stage_done_file_rel(story_key, stage_name),
                         }
                     )
                     if on_action:
@@ -1212,6 +1232,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     and headless_proc.poll() is not None
                     and not done_path.exists()
                 ):
+
                     rc = headless_proc.returncode
                     stderr_tail, stdout_tail = "", b""
                     try:
@@ -1276,6 +1297,34 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         last_error=(
                             f"Stage {stage}: claude exited (rc={rc}) without done file "
                             f"after {HEADLESS_MAX_ATTEMPTS} attempts"
+                        ),
+                    )
+                    return
+                # PTY（interactive_pty 路径）：kimi/codex 若已退出却没写 done file，
+                # 同样提前失败——否则进程死后 poll 循环只能傻等满 45min（且若残留
+                # 输出被误判为 pending clarification，elapsed 会被反复重置，永不超时，
+                # story 僵尸在 active）。对称 headless 的 1230 检查，但不重试（PTY
+                # 重启重，交给 decide_recovery/rescue_story 层统一换 adapter 恢复）。
+                # 容错：进程刚 spawn 时 alive 短暂为 False（启动握手期），给 30s 宽限。
+                if (
+                    _agent_pty is not None
+                    and elapsed > 30
+                    and not _agent_pty.alive
+                    and not done_path.exists()
+                ):
+                    log.warning(
+                        "[%s] PTY %s exited without done file for stage=%s; "
+                        "marking failed (rescue layer will retry)",
+                        story_key,
+                        adapter_name,
+                        stage,
+                    )
+                    db.update_story(
+                        story_key,
+                        status="failed",
+                        last_error=(
+                            f"Stage {stage}: {adapter_name} PTY process exited "
+                            f"without writing done file"
                         ),
                     )
                     return

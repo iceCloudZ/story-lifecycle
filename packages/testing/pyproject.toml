@@ -30,6 +30,10 @@ dependencies = [
     # story-miner:    transcripts.db sessions/story_id linkage assertions
     # knowledge:      unified knowledge layer (optional, for linked-knowledge asserts)
     "pyyaml>=6.0",
+    # WebBridge E2E (testing.web): httpx comes transitively via story-lifecycle;
+    # these two are specific to the web client layer (SSE streaming, WS events).
+    "httpx-sse>=0.4",
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]

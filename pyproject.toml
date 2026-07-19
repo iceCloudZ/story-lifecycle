@@ -44,7 +44,8 @@ pythonpath = [
     "packages/testing/src",
 ]
 markers = [
-    "real_e2e: real-AI end-to-end (slow/costly; skipped by default, run with `pytest -m real_e2e`)",
+    "real_e2e: real-AI end-to-end over the in-process harness (slow/costly; skipped by default, run with `pytest -m real_e2e`)",
+    "real_web_e2e: real-AI end-to-end over the real HTTP/WebSocket/SSE surface + browser via WebBridge (slow/costly; needs WebBridge daemon + browser extension; run with `pytest -m real_web_e2e`)",
 ]
 
 [tool.coverage.run]
