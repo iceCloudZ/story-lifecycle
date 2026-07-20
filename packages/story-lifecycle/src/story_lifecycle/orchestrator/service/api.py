@@ -366,14 +366,33 @@ def api_spawn_session(story_key: str, req: SpawnSessionRequest = None):
         raise HTTPException(400, "Invalid workspace")
 
     req = req or SpawnSessionRequest()
-    adapter = get_adapter(req.adapter or "claude")
+    # adapter 来源(req 显式传 > _agent_actions[当前 stage] > profile > claude):
+    # 前端 TerminalTab 默认传空,这里走 resolver 拿用户在 plan UI 选的 adapter。
+    # 老逻辑硬编码 "claude" → 用户在 plan 改 kimi,点启动终端还是 claude,不一致。
+    if req.adapter:
+        adapter_name = req.adapter
+    else:
+        import json as _json
+
+        _ctx = {}
+        try:
+            _ctx = _json.loads(s.get("context_json") or "{}")
+        except (ValueError, TypeError):
+            pass
+        _stage = s.get("current_stage", "design") or "design"
+        _action = next(
+            (a for a in (_ctx.get("_agent_actions") or []) if a.get("stage") == _stage),
+            None,
+        )
+        from ..engine.planner import resolve_stage_adapter
+
+        adapter_name = resolve_stage_adapter(s, _stage, action=_action)
+    adapter = get_adapter(adapter_name)
     model = req.model or "sonnet"
     # 启动(NEW)或续上(RESUME)—— 同 _ensure_story_agent_pty 路径(claude "query" seed /
     # claude --resume <uuid>)。前端「启动终端」走这个端点。
     command, is_resume = _build_stage_launch_cmd(s, adapter, model)
-    session_id, _ = spawn_pty(
-        story_key, command, workspace, purpose=req.adapter or "claude"
-    )
+    session_id, _ = spawn_pty(story_key, command, workspace, purpose=adapter_name)
     return {"session_id": session_id, "ok": True, "resumed": is_resume}
 
 

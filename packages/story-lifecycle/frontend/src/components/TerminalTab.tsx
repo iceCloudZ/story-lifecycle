@@ -40,10 +40,12 @@ export default function TerminalTab({ storyKey }: Props) {
   }, [fetchSessions])
 
   async function handleSpawn() {
+    // adapter 留空 → 后端 resolve_stage_adapter 从 _agent_actions 拿用户在 plan UI
+    // 选的 adapter(老逻辑硬编码 claude,导致 plan 改 kimi 这里还 spawn claude)。
     const r = await fetch(`/api/story/${storyKey}/sessions/spawn`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ adapter: 'claude', model: '' }),
+      body: JSON.stringify({ adapter: '', model: '' }),
     })
     if (r.ok) {
       const data = await r.json()
