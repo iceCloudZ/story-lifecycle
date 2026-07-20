@@ -482,6 +482,64 @@ def init_db():
             "WHERE worktree_path LIKE '_pending_%'"
         )
 
+        # 5. story_doc / story_doc_version / story_doc_fts
+        # Versioned business docs (PRD/spec/plan/research/test_report/...). DB is
+        # the single source of truth (full content + history + change reason);
+        # a local .md file mirrors the latest version as a read-only cache so
+        # code agents read files (not DB) and execution doesn't depend on DB.
+        # doc_type is an open string (no whitelist) — custom types allowed.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS story_doc (
+                story_key       TEXT NOT NULL,
+                doc_type        TEXT NOT NULL,
+                title           TEXT NOT NULL DEFAULT '',
+                current_version INTEGER NOT NULL DEFAULT 1,
+                latest_content  TEXT NOT NULL DEFAULT '',
+                local_path      TEXT NOT NULL DEFAULT '',
+                updated_by      TEXT NOT NULL DEFAULT '',
+                updated_at      TEXT NOT NULL,
+                PRIMARY KEY (story_key, doc_type),
+                FOREIGN KEY (story_key) REFERENCES story(story_key) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sd2_story ON story_doc(story_key)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS story_doc_version (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                story_key       TEXT NOT NULL,
+                doc_type        TEXT NOT NULL,
+                version         INTEGER NOT NULL,
+                content         TEXT NOT NULL,
+                change_reason   TEXT NOT NULL DEFAULT '',
+                author          TEXT NOT NULL DEFAULT '',
+                created_at      TEXT NOT NULL,
+                UNIQUE (story_key, doc_type, version),
+                FOREIGN KEY (story_key) REFERENCES story(story_key) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sdv_story_doc ON story_doc_version(story_key, doc_type, version)"
+        )
+        # FTS5 full-text index over the latest version of every doc (rebuilt from
+        # story_doc on each upsert). unicode61 tokenizer handles CJK adequately.
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS story_doc_fts USING fts5(
+                story_key UNINDEXED,
+                doc_type  UNINDEXED,
+                title,
+                content,
+                tokenize = 'unicode61'
+            )
+            """
+        )
+
 
 # -------- CRUD helpers --------
 
@@ -2135,3 +2193,177 @@ def update_delivery_artifact(artifact_id: int, **kwargs) -> None:
     values = list(kwargs.values()) + [artifact_id]
     with _db() as conn:
         conn.execute(f"UPDATE story_delivery_artifact SET {sets} WHERE id = ?", values)
+
+
+# ---------------------------------------------------------------------------
+# story_doc / story_doc_version — versioned business docs
+# DB is the single source of truth; a local .md file mirrors the latest
+# version as a read-only cache (synced by the API layer on save). doc_type is
+# an open string — prd / spec / plan / research / test_report / custom.
+# ---------------------------------------------------------------------------
+
+
+def upsert_story_doc(
+    story_key: str,
+    doc_type: str,
+    content: str,
+    change_reason: str,
+    author: str = "user",
+    title: str = "",
+) -> int:
+    """Save a new version of a doc. Returns the new version number.
+
+    Writes the version row, updates story_doc.latest_content/current_version,
+    and refreshes the FTS5 index (delete+reinsert so search sees latest).
+    Idempotent across story/doc_type — each call is a new version.
+    """
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT current_version, title FROM story_doc WHERE story_key=? AND doc_type=?",
+            (story_key, doc_type),
+        ).fetchone()
+        if row:
+            next_v = int(row["current_version"]) + 1
+            # preserve existing title if caller didn't supply one
+            if not title:
+                title = row["title"] or ""
+        else:
+            next_v = 1
+        conn.execute(
+            """INSERT INTO story_doc_version
+               (story_key, doc_type, version, content, change_reason, author, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (story_key, doc_type, next_v, content, change_reason, author, now),
+        )
+        conn.execute(
+            """INSERT INTO story_doc
+               (story_key, doc_type, title, current_version, latest_content, local_path, updated_by, updated_at)
+               VALUES (?, ?, ?, ?, ?, '', ?, ?)
+               ON CONFLICT(story_key, doc_type) DO UPDATE SET
+                 title = excluded.title,
+                 current_version = excluded.current_version,
+                 latest_content = excluded.latest_content,
+                 updated_by = excluded.updated_by,
+                 updated_at = excluded.updated_at""",
+            (story_key, doc_type, title, next_v, content, author, now),
+        )
+        # FTS5: refresh latest-content index (delete old + insert new for this doc)
+        conn.execute(
+            "DELETE FROM story_doc_fts WHERE story_key=? AND doc_type=?",
+            (story_key, doc_type),
+        )
+        conn.execute(
+            "INSERT INTO story_doc_fts (story_key, doc_type, title, content) VALUES (?, ?, ?, ?)",
+            (story_key, doc_type, title, content),
+        )
+    return next_v
+
+
+def set_story_doc_local_path(story_key: str, doc_type: str, local_path: str) -> None:
+    """Record where the local-cache .md lives (set by the API layer after sync)."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        conn.execute(
+            "UPDATE story_doc SET local_path=?, updated_at=? WHERE story_key=? AND doc_type=?",
+            (local_path, now, story_key, doc_type),
+        )
+
+
+def get_story_doc(story_key: str, doc_type: str) -> dict | None:
+    """Latest version of a doc: content + version + title + updated_at."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT story_key, doc_type, title, current_version, latest_content, "
+            "local_path, updated_by, updated_at FROM story_doc "
+            "WHERE story_key=? AND doc_type=?",
+            (story_key, doc_type),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_story_doc_version(
+    story_key: str, doc_type: str, version: int
+) -> dict | None:
+    """Read a specific historical version (full content)."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT story_key, doc_type, version, content, change_reason, author, created_at "
+            "FROM story_doc_version WHERE story_key=? AND doc_type=? AND version=?",
+            (story_key, doc_type, version),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_story_doc_versions(story_key: str, doc_type: str) -> list[dict]:
+    """Version list (no full content) — newest first."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT story_key, doc_type, version, change_reason, author, created_at "
+            "FROM story_doc_version WHERE story_key=? AND doc_type=? "
+            "ORDER BY version DESC",
+            (story_key, doc_type),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_story_docs(story_key: str) -> list[dict]:
+    """All doc_types for a story (no full content) — for the docs tab list."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT story_key, doc_type, title, current_version, updated_by, updated_at, local_path "
+            "FROM story_doc WHERE story_key=? ORDER BY doc_type",
+            (story_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def rollback_story_doc(
+    story_key: str, doc_type: str, version: int, reason: str, author: str = "user"
+) -> int:
+    """Roll back by writing the content of `version` as a NEW version.
+    History is preserved (the old versions stay). Returns the new version number.
+    """
+    old = get_story_doc_version(story_key, doc_type, version)
+    if not old:
+        raise ValueError(
+            f"cannot rollback: version {version} of {doc_type} not found for {story_key}"
+        )
+    return upsert_story_doc(
+        story_key,
+        doc_type,
+        old["content"],
+        change_reason=reason or f"回滚到 v{version}",
+        author=author,
+    )
+
+
+def search_docs(
+    query: str,
+    *,
+    doc_type: str | None = None,
+    story_key: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """FTS5 full-text search across all docs' latest content. Returns ranked hits
+    with a snippet of the match. Query is FTS5 syntax; bare words are fine for
+    CJK (unicode61 tokenizer)."""
+    # escape double quotes in the query for the MATCH phrase
+    q = '"' + query.replace('"', '""') + '"'
+    sql = (
+        "SELECT f.story_key, f.doc_type, f.title, "
+        "snippet(story_doc_fts, 3, '[', ']', '...', 24) AS snippet, "
+        "rank FROM story_doc_fts f WHERE story_doc_fts MATCH ?"
+    )
+    args: list = [q]
+    if doc_type:
+        sql += " AND f.doc_type = ?"
+        args.append(doc_type)
+    if story_key:
+        sql += " AND f.story_key = ?"
+        args.append(story_key)
+    sql += " ORDER BY rank LIMIT ?"
+    args.append(limit)
+    with _db() as conn:
+        rows = conn.execute(sql, args).fetchall()
+    return [dict(r) for r in rows]

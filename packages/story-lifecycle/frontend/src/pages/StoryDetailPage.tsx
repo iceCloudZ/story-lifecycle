@@ -10,6 +10,7 @@ import TestTab from '../components/TestTab'
 import TerminalTab from '../components/TerminalTab'
 import BugsTab from '../components/BugsTab'
 import LlmAuditTab from '../components/LlmAuditTab'
+import DocsTab from '../components/DocsTab'
 import ClarifyDialog from '../components/ClarifyDialog'
 import './StoryDetailPage.css'
 
@@ -21,6 +22,7 @@ const MODULES = [
   { id: 'terminal', icon: '💻', label: '终端' },
   { id: 'code', icon: '📦', label: '代码变更' },
   { id: 'test', icon: '🧪', label: '测试' },
+  { id: 'docs', icon: '📄', label: '文档' },
   { id: 'llm-audit', icon: '🔍', label: 'LLM 审计' },
   { id: 'bugs', icon: '🐛', label: '缺陷' },
 ]
@@ -256,6 +258,7 @@ export default function StoryDetailPage() {
           {activeTab === 'code' && <CodeChangesTab storyKey={storyKey} />}
           {activeTab === 'llm-audit' && <LlmAuditTab storyKey={storyKey} />}
           {activeTab === 'test' && <TestTab storyKey={storyKey} />}
+          {activeTab === 'docs' && <DocsTab storyKey={storyKey} />}
           {activeTab === 'bugs' && <BugsTab storyKey={storyKey} />}
           {activeTab === 'terminal' && (
             <TerminalTab storyKey={storyKey} status={detail.status} />

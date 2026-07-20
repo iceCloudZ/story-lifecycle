@@ -656,6 +656,30 @@ def _register_stage_outputs(story_key: str, stage: str, done_data: dict) -> None
                 stage,
                 ref,
             )
+        # Version the AI-produced doc into story_doc (best-effort, non-blocking):
+        # read the file's full content and write it as a new version with
+        # author='ai'. This lets users diff/roll back AI stage outputs in the
+        # docs UI alongside human-edited docs.
+        try:
+            from pathlib import Path
+
+            ref_p = Path(ref)
+            if not ref_p.is_absolute():
+                ref_p = Path(workspace) / ref_p
+            if ref_p.exists() and ref_p.stat().st_size > 0:
+                content = ref_p.read_text(encoding="utf-8", errors="replace")
+                db.upsert_story_doc(
+                    story_key,
+                    kind,
+                    content,
+                    change_reason=f"AI {stage} 阶段产出",
+                    author="ai",
+                )
+        except Exception:  # noqa: BLE001 — versioning is best-effort
+            log.debug(
+                "[%s] story_doc versioning skipped for stage=%s ref=%s",
+                story_key, stage, ref,
+            )
 
 
 def _build_verify_history_facts(*, db, failed_adapter, gate_round, retry_limit):
@@ -950,7 +974,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 focus=focus,
                 done_file=done_file_rel,
                 profile_stages=profile_stages,
-                prd_path=ctx.get("prd_path", ""),
+                prd_path=_resolve_prd_for_exec(story_key, workspace, title, ctx.get("prd_path", "")),
                 project_section=project_section,
                 workspace=workspace,
                 transcript_section=transcript_ctx or "",
@@ -1644,6 +1668,25 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     _write_retrospect(workspace, story_key, actions)
     # 飞轮回写:reflect → 按 task_type/dimension 落盘(REFACTOR §5.1.3)
     _persist_playbook_for_story(workspace, story_key, db)
+
+
+def _resolve_prd_for_exec(
+    story_key: str, workspace: str, title: str, legacy_path: str = ""
+) -> str:
+    """Resolve the PRD path for execution through the versioned-doc cache layer.
+
+    If the doc exists in story_doc (versioned), verify/rebuild the local .md
+    cache; else fall back to the legacy ctx['prd_path']. Any error falls back
+    to legacy_path — execution must never break on doc-cache issues.
+    """
+    try:
+        from ...infra.doc_sync import get_doc_for_execution
+
+        return get_doc_for_execution(
+            story_key, "prd", workspace, title, legacy_path=legacy_path
+        )
+    except Exception:
+        return legacy_path
 
 
 def _build_cli_prompt(

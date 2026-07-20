@@ -443,7 +443,9 @@ def _build_interactive_stage_prompt(story: dict, stage: str) -> str:
         focus=focus,
         done_file=stage_done_file_rel(story_key, stage),
         profile_stages=profile_stages,
-        prd_path=ctx.get("prd_path", ""),
+        prd_path=planner._resolve_prd_for_exec(
+            story_key, workspace, story.get("title", ""), ctx.get("prd_path", "")
+        ),
         project_section="\n".join(project_lines),
         workspace=workspace,
         transcript_section=transcript_section,
@@ -2629,6 +2631,155 @@ def api_update_delivery(story_key: str, artifact_id: int, req: UpdateDeliveryReq
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     return db.get_delivery_artifact(artifact_id)
+
+
+# -------- Versioned docs endpoints (story_doc / story_doc_version) --------
+# DB is the source of truth for business docs (prd/spec/plan/research/...).
+# The API layer syncs the latest version to a local .md cache on save so code
+# agents read files (not DB) and execution stays independent of DB availability.
+
+
+class SaveDocRequest(BaseModel):
+    content: str
+    change_reason: str  # required — every save must say why
+    author: str = "user"
+    title: str = ""
+
+
+class RollbackDocRequest(BaseModel):
+    reason: str
+    author: str = "user"
+
+
+@app.get("/api/story/{story_key}/docs")
+def api_list_story_docs(story_key: str):
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    return {"docs": db.list_story_docs(story_key)}
+
+
+@app.get("/api/story/{story_key}/docs/{doc_type}")
+def api_get_story_doc(story_key: str, doc_type: str):
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    doc = db.get_story_doc(story_key, doc_type)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"doc not found: {doc_type}")
+    return doc
+
+
+@app.put("/api/story/{story_key}/docs/{doc_type}")
+def api_save_story_doc(story_key: str, doc_type: str, req: SaveDocRequest):
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    if not req.content.strip():
+        raise HTTPException(status_code=400, detail="content must not be empty")
+    if not req.change_reason.strip():
+        raise HTTPException(status_code=400, detail="change_reason is required")
+    version = db.upsert_story_doc(
+        story_key, doc_type, req.content, req.change_reason, req.author, req.title
+    )
+    # sync to local .md cache (best-effort; workspace/title from story row)
+    try:
+        story = db.get_story(story_key) or {}
+        workspace = story.get("workspace") or ""
+        title = story.get("title") or req.title or ""
+        if workspace:
+            from ...infra.doc_sync import sync_doc_to_local
+
+            sync_doc_to_local(story_key, doc_type, req.content, version, workspace, title)
+            # for prd, also update context_json.prd_path so the execution layer
+            # and existing /plan endpoints keep working
+            if doc_type == "prd":
+                from ...infra.story_paths import story_doc_path
+
+                prd_path = story_doc_path(workspace, story_key, doc_type, title)
+                db.update_context(story_key, "prd_path", str(prd_path))
+                db.bump_context_revision(story_key)
+    except Exception as exc:  # local sync failure is non-fatal (DB is truth)
+        log.warning("doc local-sync failed for %s/%s: %s", story_key, doc_type, exc)
+    return db.get_story_doc(story_key, doc_type)
+
+
+@app.get("/api/story/{story_key}/docs/{doc_type}/versions")
+def api_list_doc_versions(story_key: str, doc_type: str):
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    return {"versions": db.list_story_doc_versions(story_key, doc_type)}
+
+
+@app.get("/api/story/{story_key}/docs/{doc_type}/versions/{version}")
+def api_get_doc_version(story_key: str, doc_type: str, version: int):
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    row = db.get_story_doc_version(story_key, doc_type, version)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"version {version} not found")
+    return row
+
+
+@app.get("/api/story/{story_key}/docs/{doc_type}/diff")
+def api_diff_doc_versions(story_key: str, doc_type: str, a: int, b: int):
+    """Unified diff between version a and version b (b is the 'new' side)."""
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    va = db.get_story_doc_version(story_key, doc_type, a)
+    vb = db.get_story_doc_version(story_key, doc_type, b)
+    if not va or not vb:
+        missing = "a" if not va else "b"
+        raise HTTPException(status_code=404, detail=f"version {missing} not found")
+    import difflib
+
+    diff = "".join(
+        difflib.unified_diff(
+            (va["content"] or "").splitlines(keepends=True),
+            (vb["content"] or "").splitlines(keepends=True),
+            fromfile=f"v{a}",
+            tofile=f"v{b}",
+        )
+    )
+    return {"diff": diff, "a": a, "b": b}
+
+
+@app.post("/api/story/{story_key}/docs/{doc_type}/rollback/{version}")
+def api_rollback_doc(
+    story_key: str, doc_type: str, version: int, req: RollbackDocRequest
+):
+    if not db.get_story(story_key):
+        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
+    if not req.reason.strip():
+        raise HTTPException(status_code=400, detail="reason is required")
+    try:
+        new_v = db.rollback_story_doc(
+            story_key, doc_type, version, req.reason, req.author
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    # sync rolled-back content to local cache
+    try:
+        story = db.get_story(story_key) or {}
+        workspace = story.get("workspace") or ""
+        title = story.get("title") or ""
+        if workspace:
+            from ...infra.doc_sync import sync_doc_to_local
+
+            doc = db.get_story_doc(story_key, doc_type) or {}
+            sync_doc_to_local(
+                story_key, doc_type, doc.get("latest_content", ""), new_v, workspace, title
+            )
+    except Exception as exc:
+        log.warning("doc rollback local-sync failed: %s", exc)
+    return db.get_story_doc(story_key, doc_type)
+
+
+@app.get("/api/docs/search")
+def api_search_docs(q: str, type: str = "", story: str = ""):
+    if not q.strip():
+        return {"results": []}
+    hits = db.search_docs(
+        q, doc_type=(type or None), story_key=(story or None)
+    )
+    return {"query": q, "results": hits}
 
 
 # -------- Lifecycle endpoints --------

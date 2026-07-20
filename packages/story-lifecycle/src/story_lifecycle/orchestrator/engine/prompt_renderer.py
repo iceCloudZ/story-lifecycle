@@ -321,7 +321,25 @@ Story: {state["story_key"]}
             repair_content = rp_file.read_text(encoding="utf-8")
             repair_section = f"## Repair Packet（修复上下文）\n\n{repair_content}"
 
-    has_prd = bool(ctx.get("prd_path"))
+    # Resolve the PRD path through the versioned-doc cache layer: if the doc
+    # exists in story_doc (versioned), verify/rebuild the local .md cache; else
+    # fall back to the legacy ctx['prd_path']. Either way `resolved_prd_path`
+    # points at a .md file the code agent will cat.
+    _legacy_prd = ctx.get("prd_path", "")
+    resolved_prd_path = _legacy_prd
+    try:
+        from ...infra.doc_sync import get_doc_for_execution
+
+        resolved_prd_path = get_doc_for_execution(
+            state["story_key"],
+            "prd",
+            state.get("workspace", "") or str(Path.cwd()),
+            state.get("title", ""),
+            legacy_path=_legacy_prd,
+        )
+    except Exception:
+        pass  # fall back to legacy path; execution must not break on doc-cache errors
+    has_prd = bool(resolved_prd_path)
     story_dir = str(
         story_evidence_dir(
             state.get("workspace", "") or str(Path.cwd()),
@@ -349,9 +367,9 @@ Story: {state["story_key"]}
         "{story_key}": state["story_key"],
         "{title}": state.get("title", ""),
         "{story_dir}": story_dir,
-        "{prd_path}": ctx.get("prd_path", ""),
+        "{prd_path}": resolved_prd_path,
         "{prd_path_section}": (
-            f"- PRD 文件: {ctx['prd_path']}\n  请读取该文件了解需求详情。"
+            f"- PRD 文件: {resolved_prd_path}\n  请读取该文件了解需求详情。"
             if has_prd
             else ""
         ),

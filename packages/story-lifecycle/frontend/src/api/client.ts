@@ -434,3 +434,92 @@ export interface LlmCallRow {
 export const auditApi = {
   calls: (key: string) => fetchJSON<{ story_key: string; calls: LlmCallRow[] }>(`/api/story/${key}/llm-calls`),
 }
+
+// ---- Versioned docs (story_doc / story_doc_version) ----
+// doc_type is an open string: 'prd' | 'spec' | 'plan' | 'research' | custom.
+
+export interface DocListItem {
+  story_key: string
+  doc_type: string
+  title: string
+  current_version: number
+  updated_by: string
+  updated_at: string
+  local_path?: string
+}
+
+export interface DocContent {
+  story_key: string
+  doc_type: string
+  title: string
+  current_version: number
+  latest_content: string
+  local_path: string
+  updated_by: string
+  updated_at: string
+}
+
+export interface DocVersionSummary {
+  story_key: string
+  doc_type: string
+  version: number
+  change_reason: string
+  author: string
+  created_at: string
+}
+
+export interface DocVersionContent {
+  story_key: string
+  doc_type: string
+  version: number
+  content: string
+  change_reason: string
+  author: string
+  created_at: string
+}
+
+export interface DocSearchHit {
+  story_key: string
+  doc_type: string
+  title: string
+  snippet: string
+  rank: number
+}
+
+export const docApi = {
+  list: (key: string) =>
+    fetchJSON<{ docs: DocListItem[] }>(`/api/story/${key}/docs`),
+  getDoc: (key: string, type: string) =>
+    fetchJSON<DocContent>(`/api/story/${key}/docs/${type}`),
+  saveDoc: (
+    key: string,
+    type: string,
+    content: string,
+    changeReason: string,
+    title = '',
+    author = 'user',
+  ) =>
+    fetchJSON<DocContent>(`/api/story/${key}/docs/${type}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, change_reason: changeReason, title, author }),
+    }),
+  listVersions: (key: string, type: string) =>
+    fetchJSON<{ versions: DocVersionSummary[] }>(`/api/story/${key}/docs/${type}/versions`),
+  getVersion: (key: string, type: string, version: number) =>
+    fetchJSON<DocVersionContent>(`/api/story/${key}/docs/${type}/versions/${version}`),
+  diff: (key: string, type: string, a: number, b: number) =>
+    fetchJSON<{ diff: string; a: number; b: number }>(
+      `/api/story/${key}/docs/${type}/diff?a=${a}&b=${b}`,
+    ),
+  rollback: (key: string, type: string, version: number, reason: string, author = 'user') =>
+    fetchJSON<DocContent>(`/api/story/${key}/docs/${type}/rollback/${version}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason, author }),
+    }),
+  search: (q: string, type = '', story = '') =>
+    fetchJSON<{ query: string; results: DocSearchHit[] }>(
+      `/api/docs/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ''}${story ? `&story=${story}` : ''}`,
+    ),
+}

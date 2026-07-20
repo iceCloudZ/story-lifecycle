@@ -57,6 +57,40 @@ def story_prd_path(workspace: str | Path, story_key: str, title: str = "") -> Pa
     return story_evidence_dir(workspace, story_key, title) / "PRD.md"
 
 
+# Filename convention per doc_type. PRD keeps its historical "PRD.md" name so
+# existing code that greps for PRD.md still works; other types use lowercase.
+_DOC_FILENAMES: dict[str, str] = {
+    "prd": "PRD.md",
+    "spec": "spec.md",
+    "plan": "plan.md",
+    "research": "research.md",
+    "test_report": "test-report.md",
+    "bugfix-report": "bugfix-report.md",
+    "delivery": "delivery.md",
+}
+
+
+def doc_filename(doc_type: str) -> str:
+    """Canonical .md filename for a doc_type (prd→PRD.md, custom→{type}.md)."""
+    return _DOC_FILENAMES.get(doc_type, f"{doc_type}.md")
+
+
+def story_doc_path(
+    workspace: str | Path, story_key: str, doc_type: str, title: str = ""
+) -> Path:
+    """Path to the local-cache .md file for a versioned doc."""
+    return story_evidence_dir(workspace, story_key, title) / doc_filename(doc_type)
+
+
+def story_doc_meta_path(
+    workspace: str | Path, story_key: str, doc_type: str, title: str = ""
+) -> Path:
+    """Path to the .meta sidecar (version + hash) that lives next to the .md."""
+    return story_doc_path(workspace, story_key, doc_type, title).with_name(
+        doc_filename(doc_type) + ".meta"
+    )
+
+
 def _safe_segment(value: str) -> str:
     # Whitelist word chars, dot, hyphen, underscore; replace others with "-".
     # Strip only trailing/leading hyphens and underscores — keep dots so that

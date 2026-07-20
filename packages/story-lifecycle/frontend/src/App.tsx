@@ -9,6 +9,7 @@ import DonePage from './pages/lifecycle/DonePage'
 import QualityDashboard from './pages/QualityDashboard'
 import DiagnosticsPage from './pages/DiagnosticsPage'
 import BugsPage from './pages/BugsPage'
+import DocSearchPage from './pages/DocSearchPage'
 import './App.css'
 
 const queryClient = new QueryClient({
@@ -54,6 +55,9 @@ function AppContent() {
           <NavLink to="/diagnostics" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
             诊断
           </NavLink>
+          <NavLink to="/docs/search" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+            文档搜索
+          </NavLink>
         </nav>
       </header>
       <main className="main">
@@ -66,6 +70,7 @@ function AppContent() {
           <Route path="/quality" element={<QualityDashboard />} />
           <Route path="/diagnostics" element={<DiagnosticsPage />} />
           <Route path="/bugs" element={<BugsPage />} />
+          <Route path="/docs/search" element={<DocSearchPage />} />
         </Routes>
       </main>
     </div>
