@@ -125,31 +125,54 @@ export default function StoryDetailPage() {
     return () => es.close()
   }, [detail?.status, planData, storyKey, qc])
 
-  const resolvedActions: AgentAction[] = streamingActions.length > 0 ? streamingActions : (planData?.actions ?? [])
   const isConfirmed = planData?.confirmed ?? false
-  // per-stage adapter 覆盖:用户在 ActionCard 下拉改过的 adapter(stage→adapter)。
-  // 初始空 = 用 LLM 规划的默认值;改过才有值。confirm 时传给后端覆盖 _agent_actions。
+  // resolvedActions = streaming(规划中实时) / planData.actions(已落 DB) +
+  // 本地 adapterOverrides(乐观更新:PATCH 成功到 DB 前 UI 先翻)。
+  const baseActions: AgentAction[] = streamingActions.length > 0 ? streamingActions : (planData?.actions ?? [])
   const [adapterOverrides, setAdapterOverrides] = useState<Record<number, string>>({})
+  const resolvedActions: AgentAction[] = baseActions.map((a, i) =>
+    adapterOverrides[i] ? { ...a, adapter: adapterOverrides[i] } : a
+  )
 
   if (!storyKey) return <div className="loading">无效的 Story Key</div>
   if (!detail) return <div className="loading">加载中...</div>
 
   const actions = ACTIONS[detail.status] || []
 
+  // 下拉即改即生效:onChange 立即 PATCH 到 DB,本地乐观翻 UI。
+  // PATCH 成功后 invalidate plan query,DB 回的 actions 会覆盖本地 overrides
+  // (值一致,无缝);失败则弹错并保持原值(下一次 onChange 会再覆盖)。
   function handleActionAdapterChange(index: number, adapter: string) {
+    const stage = baseActions[index]?.stage
+    if (!stage) return
+    // 乐观更新:UI 先翻
     setAdapterOverrides(prev => ({ ...prev, [index]: adapter }))
+    planApi
+      .updateAdapter(storyKey, stage, adapter)
+      .then(() => {
+        // DB 已是最新,拉一次 plan 让 query cache 同步(下次 invalidate 时
+        // baseActions 会带新 adapter,本地 overrides 自然失效)
+        qc.invalidateQueries({ queryKey: ['plan', storyKey] })
+      })
+      .catch(async (e) => {
+        // 回滚乐观更新
+        setAdapterOverrides(prev => {
+          const next = { ...prev }
+          delete next[index]
+          return next
+        })
+        const detail = e instanceof Error ? e.message : String(e)
+        alert(`CLI 类型更新失败: ${detail}`)
+      })
   }
 
   async function handleConfirmPlan() {
-    // 把用户改过的 adapter 跟 resolvedActions 合并,传给后端覆盖 _agent_actions。
-    const actionOverrides = resolvedActions.map((a, i) => ({
-      stage: a.stage,
-      adapter: adapterOverrides[i] ?? a.adapter,
-    }))
+    // adapter 已经在每次下拉时通过 PATCH 落到 DB 了,confirm 不用再传 actions。
+    // 这里只负责翻状态 + 启动执行。
     const r = await fetch(`/api/story/${storyKey}/plan/confirm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ actions: actionOverrides }),
+      body: JSON.stringify({}),
     })
     if (r.ok) {
       refetch()

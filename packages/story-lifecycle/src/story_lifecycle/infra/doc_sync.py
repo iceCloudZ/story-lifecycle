@@ -102,6 +102,77 @@ def rebuild_local_from_db(
     )
 
 
+def register_doc_dual_write(
+    story_key: str,
+    doc_type: str,
+    ref: str,
+    *,
+    content: str | None = None,
+    change_reason: str,
+    author: str,
+    workspace: str = "",
+    summary: str = "",
+    source: str = "system",
+    verification_state: str = "verified",
+) -> None:
+    """Single entry point that writes BOTH doc tables.
+
+    All paths that register a business doc (intake PRD, AI stage outputs, agent
+    backfill) MUST go through here — otherwise the old ``story_document`` table
+    and the new ``story_doc`` versioning table drift out of sync, and the docs
+    UI shows stale data.
+
+    - Always writes ``story_document`` (legacy ref-based row, used by ContextTab
+      and the execution-layer prompt path lookup).
+    - Also writes ``story_doc`` (full-content versioned row, used by the docs
+      UI / search / diff / rollback). If ``content`` is None, reads the file at
+      ``ref`` (resolved against ``workspace`` if relative).
+    - Both writes are best-effort and independent — a failure on one table must
+      not block the other (matches the tolerance of the existing call sites).
+
+    Caller is responsible for resolving ``workspace`` when ``ref`` is relative
+    and content is None; pass it explicitly so we don't re-query the story.
+    """
+    # 1. legacy ref row — always attempted
+    try:
+        db.create_document(
+            story_key,
+            doc_type,
+            ref=ref,
+            summary=summary,
+            source=source,
+            verification_state=verification_state,
+        )
+    except Exception as exc:  # noqa: BLE001 — registration must not throw
+        log.debug(
+            "create_document failed (non-fatal) for %s/%s ref=%s: %s",
+            story_key,
+            doc_type,
+            ref,
+            exc,
+        )
+
+    # 2. versioned content row — best-effort, file body required
+    try:
+        body = content
+        if body is None:
+            ref_p = Path(ref)
+            if not ref_p.is_absolute() and workspace:
+                ref_p = Path(workspace) / ref_p
+            if ref_p.exists() and ref_p.stat().st_size > 0:
+                body = ref_p.read_text(encoding="utf-8", errors="replace")
+        if body:
+            db.upsert_story_doc(story_key, doc_type, body, change_reason, author)
+    except Exception as exc:  # noqa: BLE001 — versioning is best-effort
+        log.debug(
+            "upsert_story_doc failed (non-fatal) for %s/%s ref=%s: %s",
+            story_key,
+            doc_type,
+            ref,
+            exc,
+        )
+
+
 def get_doc_for_execution(
     story_key: str,
     doc_type: str,

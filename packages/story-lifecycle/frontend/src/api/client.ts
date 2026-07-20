@@ -357,6 +357,15 @@ export const planApi = {
   streamUrl: (key: string) => `/api/story/${key}/plan/stream`,
   confirm: (key: string) => apiAction('POST', `/api/story/${key}/plan/confirm`),
   regenerate: (key: string) => fetchJSON<Plan>(`/api/story/${key}/plan/regenerate`, { method: 'POST' }),
+  updateAdapter: (key: string, stage: string, adapter: string) =>
+    fetchJSON<{ ok: boolean; stage: string; adapter: string }>(
+      `/api/story/${key}/plan/actions/${encodeURIComponent(stage)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adapter }),
+      },
+    ),
   answer: (key: string, answer: string) =>
     fetchJSON<Record<string, unknown>>(`/api/story/${key}/answer`, {
       method: 'POST',

@@ -2259,7 +2259,8 @@ class AddDocumentRequest(BaseModel):
 @app.post("/api/story/{story_key}/context/documents")
 def api_add_document(story_key: str, req: AddDocumentRequest):
     """Add a document (prd/spec/plan) — agent backfill."""
-    if not db.get_story(story_key):
+    story = db.get_story(story_key)
+    if not story:
         raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
     doc = db.create_document(
         story_key,
@@ -2270,6 +2271,25 @@ def api_add_document(story_key: str, req: AddDocumentRequest):
         evidence_ref=req.evidence_ref,
         source="agent",
     )
+    # Dual-write: also version the body into story_doc so the docs UI sees
+    # agent-backfilled docs. Best-effort; if req.ref points to a real file we
+    # read it, otherwise we skip versioning (legacy ref-only row remains).
+    try:
+        from ...infra.doc_sync import register_doc_dual_write
+
+        register_doc_dual_write(
+            story_key,
+            req.kind,
+            req.ref,
+            change_reason=f"Agent 回填: {req.summary or req.kind}",
+            author="agent",
+            workspace=story.get("workspace") or "",
+            summary=req.summary,
+            source="agent",
+            verification_state="unverified",
+        )
+    except Exception as exc:  # noqa: BLE001 — versioning is best-effort
+        log.debug("[%s] doc backfill dual-write skipped: %s", story_key, exc)
     db.bump_context_revision(story_key)
     return doc
 
@@ -3161,6 +3181,27 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
                 source="system",
                 verification_state="verified",
             )
+        # Dual-write: also version the PRD body into story_doc so the docs UI
+        # (version history / diff / search) sees intake-created PRDs. Goes
+        # through the shared helper to keep both tables in sync — same path
+        # the AI stage outputs and the web editor use.
+        try:
+            from ...infra.doc_sync import register_doc_dual_write
+
+            register_doc_dual_write(
+                story_key,
+                "prd",
+                str(prd_file),
+                content=prd_content,
+                change_reason="Intake PRD 初始导入",
+                author="system",
+                workspace=workspace,
+                summary="Intake PRD",
+                source="system",
+                verification_state="verified",
+            )
+        except Exception as exc:  # noqa: BLE001 — versioning is best-effort
+            log.debug("[%s] PRD dual-write skipped: %s", story_key, exc)
         db.bump_context_revision(story_key)
 
         db.update_story(story_key, intake_state="ready", status="planning")
@@ -3389,6 +3430,48 @@ def api_confirm_plan(story_key: str, body: dict | None = Body(default=None)):
 
     start_story_async(story_key)
     return {"ok": True, "story_key": story_key}
+
+
+class UpdateActionAdapterRequest(BaseModel):
+    adapter: str
+
+
+@app.patch("/api/story/{story_key}/plan/actions/{stage}")
+def api_update_action_adapter(
+    story_key: str, stage: str, req: UpdateActionAdapterRequest
+):
+    """改某个 stage 的 CLI 类型,立即落 DB,不启动执行。
+
+    替代「下拉改了只存前端 state、确认规划时才生效」的旧行为 —— 现在
+    下拉 onChange 直接调这个端点,改完再刷新 plan query 就能看到回写。
+    只在 planning 阶段允许(已确认/执行中改 adapter 没意义,执行已经按
+    原adapter 跑起来了)。
+    """
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(status_code=404, detail="story not found")
+    if story.get("status") != "planning":
+        raise HTTPException(
+            status_code=409,
+            detail=f"can only change adapter in planning state, current: {story.get('status')}",
+        )
+    if req.adapter not in ("claude", "codex", "kimi"):
+        raise HTTPException(status_code=400, detail=f"unknown adapter: {req.adapter}")
+
+    import json
+
+    ctx = json.loads(story.get("context_json") or "{}")
+    actions = ctx.get("_agent_actions") or []
+    matched = False
+    for action in actions:
+        if action.get("stage") == stage:
+            action["adapter"] = req.adapter
+            matched = True
+    if not matched:
+        raise HTTPException(status_code=404, detail=f"stage not found in plan: {stage}")
+
+    db.update_story(story_key, context_json=json.dumps(ctx, ensure_ascii=False))
+    return {"ok": True, "stage": stage, "adapter": req.adapter}
 
 
 @app.post("/api/story/{story_key}/plan/regenerate")

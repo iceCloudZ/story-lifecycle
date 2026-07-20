@@ -191,6 +191,26 @@ def create_and_start_story(
             source="system",
             verification_state="verified",
         )
+        # Dual-write PRD body into the versioned story_doc table, so the docs
+        # UI sees PRDs created via the TUI/server entry path too. Best-effort;
+        # matches api_start_story and planner._register_stage_outputs.
+        try:
+            from ...infra.doc_sync import register_doc_dual_write
+
+            register_doc_dual_write(
+                story_key,
+                "prd",
+                prd_path,
+                content=prd_content,
+                change_reason="Intake PRD 初始导入",
+                author="system",
+                workspace=ws,
+                summary="Intake PRD",
+                source="system",
+                verification_state="verified",
+            )
+        except Exception:  # noqa: BLE001 — versioning is best-effort
+            pass
 
     return story_key
 

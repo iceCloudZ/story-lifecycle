@@ -642,47 +642,27 @@ def _register_stage_outputs(story_key: str, stage: str, done_data: dict) -> None
             paths.append(v)
 
     for ref in paths:
+        # Unified dual-write: legacy story_document (ref) + new story_doc
+        # (full content versioned). Both are best-effort; going through the
+        # shared helper keeps the two tables in sync (see doc_sync).
+        _story_row = db.get_story(story_key) or {}
+        _ws = _story_row.get("workspace") or ""
         try:
-            db.create_document(
+            from ...infra.doc_sync import register_doc_dual_write
+
+            register_doc_dual_write(
                 story_key,
                 kind,
-                ref=ref,
-                summary="",
+                ref,
+                change_reason=f"AI {stage} 阶段产出",
+                author="ai",
+                workspace=_ws,
                 source="ai",
                 verification_state="unverified",
             )
         except Exception:  # noqa: BLE001 — 单个文件登记失败不影响其他
-            log.exception(
-                "[%s] create_document failed for stage=%s ref=%s",
-                story_key,
-                stage,
-                ref,
-            )
-        # Version the AI-produced doc into story_doc (best-effort, non-blocking):
-        # read the file's full content and write it as a new version with
-        # author='ai'. This lets users diff/roll back AI stage outputs in the
-        # docs UI alongside human-edited docs.
-        try:
-            from pathlib import Path
-
-            ref_p = Path(ref)
-            if not ref_p.is_absolute():
-                _story_row = db.get_story(story_key) or {}
-                _ws = _story_row.get("workspace") or ""
-                if _ws:
-                    ref_p = Path(_ws) / ref_p
-            if ref_p.exists() and ref_p.stat().st_size > 0:
-                content = ref_p.read_text(encoding="utf-8", errors="replace")
-                db.upsert_story_doc(
-                    story_key,
-                    kind,
-                    content,
-                    change_reason=f"AI {stage} 阶段产出",
-                    author="ai",
-                )
-        except Exception:  # noqa: BLE001 — versioning is best-effort
             log.debug(
-                "[%s] story_doc versioning skipped for stage=%s ref=%s",
+                "[%s] doc dual-write failed for stage=%s ref=%s",
                 story_key,
                 stage,
                 ref,
