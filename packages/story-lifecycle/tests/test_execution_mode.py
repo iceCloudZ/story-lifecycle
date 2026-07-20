@@ -57,13 +57,22 @@ def test_terminal_spawn_starts_profile_agent_not_shell(
     isolated_story_home, tmp_path, monkeypatch
 ):
     import story_lifecycle.orchestrator.service.api as api
+    from story_lifecycle.knowledge.adapters.base import SessionSpec
 
     db.upsert_story("TERM-1", workspace=str(tmp_path), profile="minimal")
     calls = []
 
     class FakeAdapter:
-        def interactive_launch_cmd(self, model, prompt="", session_id="", session_name="", resume=False):
-            return ["claude-test"]
+        # The spawner asks the adapter for a SessionSpec (command + how the
+        # prompt is delivered). FakeAdapter fakes claude-style: command baked.
+        def start_session(
+            self, model, prompt="", session_id="", session_name="", resume=False
+        ):
+            return SessionSpec(
+                command=["claude-test"],
+                pty_prompt="",
+                readiness_marker=None,
+            )
 
     monkeypatch.setattr(api, "get_adapter", lambda name: FakeAdapter(), raising=False)
     monkeypatch.setattr(

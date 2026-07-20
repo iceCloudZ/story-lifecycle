@@ -562,52 +562,72 @@ def _build_stage_launch_cmd(story: dict, adapter, model: str) -> tuple[list[str]
 def _spawn_story_agent_pty(
     story: dict, adapter, model: str
 ) -> tuple[str, object, bool]:
-    """Spawn the story's agent PTY, adapter-aware prompt delivery.
+    """Spawn the story's agent PTY from an adapter SessionSpec.
 
-    Two prompt-delivery strategies, picked by ``adapter.prompts_via_pty``:
-      - False (claude-style, default): prompt goes INTO the launch command
-        (``claude "query"`` / ``claude --resume <uuid> "<continue>"``) via
-        ``_build_stage_launch_cmd``. PTY injection is OFF (``prompt=""``,
-        ``readiness_marker=None``) — claude's own startup handles readiness.
-      - True (ShellAdapter / kimi / codex): base ``interactive_launch_cmd``
-        drops the prompt arg, so we deliver the seed via PTY injection with
-        the adapter's ``readiness_marker`` (kimi: "Welcome to Kimi Code") —
-        polls PTY output until the marker shows, THEN paste the seed. Without
-        a marker, falls back to the legacy fixed startup_delay.
+    Single, adapter-agnostic contract: ask the adapter how it wants the
+    session started (``start_session`` returns a SessionSpec with command +
+    prompt delivery strategy), then spawn mechanically:
+      spawn spec.command → wait spec.readiness_marker → paste spec.pty_prompt.
 
-    Returns ``(session_id, pty, is_resume)``. Both ``api_spawn_session`` and
-    ``_ensure_story_agent_pty`` go through here so the two spawn paths can't
-    drift on prompt delivery (the prior bug: kimi spawned empty because the
-    sessions/spawn path used ``spawn_pty`` which never injects).
+    No branching on adapter type. claude bakes prompt into command (pty_prompt
+    empty); kimi/codex use PTY paste after readiness_marker. Both adapters
+    express that via the spec; this helper just executes it.
+
+    Both ``api_spawn_session`` and ``_ensure_story_agent_pty`` go through here
+    so the two spawn paths can't drift on prompt delivery (the prior bug:
+    sessions/spawn used ``spawn_pty`` which never injects → empty kimi session).
     """
-    workspace = story.get("workspace", "")
-    if not getattr(adapter, "prompts_via_pty", False):
-        # claude "query" seed: prompt baked into cmd, no PTY injection.
-        command, is_resume = _build_stage_launch_cmd(story, adapter, model)
-        session_id, pty = ensure_agent_pty(
-            story["story_key"],
-            command,
-            workspace,
-            "",
-            readiness_marker=None,
-            startup_delay=0,
-        )
-        return session_id, pty, is_resume
+    import json as _json
+    import uuid as _uuid
 
-    # ShellAdapter / other: prompt delivered via PTY injection after readiness.
-    # interactive_launch_cmd ignores the prompt arg, so command has no seed;
-    # we inject it once the readiness_marker fires (or after startup_delay).
-    command, _ = _build_stage_launch_cmd(story, adapter, model)
-    seed = _build_stage_launch_prompt(story)
-    session_id, pty = ensure_agent_pty(
-        story["story_key"],
-        command,
-        workspace,
-        seed,
-        readiness_marker=getattr(adapter, "readiness_marker", None),
-        startup_delay=2.0,
+    from ...infra.story_paths import safe_story_path
+
+    workspace = story.get("workspace", "")
+    story_key = story["story_key"]
+    stage = story.get("current_stage", "design") or "design"
+    # session-persistence marker (claude --session-id / --resume). Idempotent:
+    # if the marker exists, we're resuming; else new session.
+    session_uuid = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"{story_key}:{stage}"))
+    session_name = f"{story_key}-{stage}"
+    marker = (
+        safe_story_path(workspace, ".story", "context", story_key)
+        / f"session_{stage}.json"
     )
-    return session_id, pty, False
+    is_resume = marker.exists()
+    seed = _build_stage_launch_prompt(story)
+    spec = adapter.start_session(
+        model,
+        prompt=seed
+        if not is_resume
+        else "继续上次的任务,完成后按完成协议写入 done 文件。",
+        session_id=session_uuid,
+        session_name=session_name,
+        resume=is_resume,
+    )
+    session_id, pty = ensure_agent_pty(
+        story_key,
+        spec.command,
+        workspace,
+        spec.pty_prompt,
+        readiness_marker=spec.readiness_marker,
+        startup_delay=0
+        if spec.readiness_marker is None and not spec.pty_prompt
+        else 2.0,
+    )
+    # write session marker for NEW sessions (so next spawn resumes)
+    if not is_resume:
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(
+                _json.dumps(
+                    {"session_id": session_uuid, "name": session_name, "stage": stage},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+    return session_id, pty, is_resume
 
 
 def _ensure_story_agent_pty(story: dict) -> dict:

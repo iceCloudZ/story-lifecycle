@@ -47,12 +47,6 @@ class ShellAdapter(BaseAdapter):
           inject_method: stdin
     """
 
-    # Shell-driven CLIs (kimi/codex/aider/...) can't take the seed prompt as a
-    # launch arg the way claude "query" does — base interactive_launch_cmd
-    # ignores the prompt. The spawner must paste the prompt via PTY after the
-    # readiness_marker fires. See BaseAdapter.prompts_via_pty.
-    prompts_via_pty = True
-
     def __init__(self, config: dict[str, Any] | None = None, name: str = "shell"):
         self._config = config or {}
         self._name = name

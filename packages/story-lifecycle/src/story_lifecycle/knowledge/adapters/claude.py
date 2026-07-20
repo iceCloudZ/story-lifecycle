@@ -1,6 +1,6 @@
 """Claude Code adapter."""
 
-from .base import BaseAdapter
+from .base import BaseAdapter, SessionSpec
 from ...infra.terminal.platform_ops import resolve_executable
 
 
@@ -33,13 +33,15 @@ class ClaudeAdapter(BaseAdapter):
         session_name: str = "",
         resume: bool = False,
     ) -> list[str]:
+        # Deprecated: use start_session() — it returns a SessionSpec that makes
+        # the prompt-delivery strategy explicit. Kept for backward compat with
+        # tests that assert on the raw command.
         # `claude "query"` opens the interactive TUI with the prompt as the
         # initial user message (auto-submitted — claude manages its own readiness,
         # no PTY injection / readiness guessing). Session persistence:
         #   NEW    → claude --session-id <uuid> --name <name> "<prompt>"
         #   RESUME → claude --resume <uuid> "<prompt>"   (loads transcript, continues)
         # Both must run with the same cwd — --resume lookup is cwd-scoped.
-        # See api._build_stage_launch_cmd + docs/handoff-design-hitl.md §11.
         cmd = [resolve_executable("claude")]
         if resume and session_id:
             cmd += ["--resume", session_id]
@@ -51,6 +53,31 @@ class ClaudeAdapter(BaseAdapter):
         if prompt:
             cmd.append(prompt)
         return cmd
+
+    def start_session(
+        self,
+        model: str,
+        prompt: str = "",
+        session_id: str = "",
+        session_name: str = "",
+        resume: bool = False,
+    ) -> SessionSpec:
+        # Claude bakes the seed prompt into the launch command itself
+        # (`claude "query"`), so the spawner must NOT do PTY injection —
+        # claude manages its own readiness. Return a spec that says so.
+        return SessionSpec(
+            command=self.interactive_launch_cmd(
+                model,
+                prompt=prompt,
+                session_id=session_id,
+                session_name=session_name,
+                resume=resume,
+            ),
+            pty_prompt="",  # already in command
+            readiness_marker=None,  # claude "query" self-manages readiness
+            session_id=session_id,
+            resume=resume,
+        )
 
     def headless_launch_cmd(self, model: str, prompt: str) -> list[str] | None:
         return [

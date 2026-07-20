@@ -982,8 +982,16 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     model = cfg.model if hasattr(cfg, "model") else ""
                 if headless:
                     launch_cmd = adapter.headless_launch_cmd(model=model, prompt="")
+                    # headless 路径不走 PTY 注入(走 done-file 轮询);spec 用不上。
+                    _session_spec = None
                 else:
-                    launch_cmd = adapter.interactive_launch_cmd(model=model)
+                    # 交互式:走 adapter.start_session 拿统一的 SessionSpec。
+                    # prompt/resume/session_id 在 spec 里,下游 ensure_agent_pty
+                    # 按 spec.pty_prompt + spec.readiness_marker 注入,不再分支。
+                    _session_spec = adapter.start_session(
+                        model=model, prompt=cli_prompt
+                    )
+                    launch_cmd = _session_spec.command
 
                 # grill-me:LLM 决定 + mode 兜底。
                 # 当 action.grill=True 且 task_actions 里有 interactive 动作时,接 MCP clarify。
@@ -1147,12 +1155,16 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         stage,
                     )
                 else:
+                    # spec 驱动:prompt 和 readiness_marker 都从 adapter.start_session
+                    # 的返回值拿(adapter 自己声明 prompt 怎么传,见 SessionSpec)。
                     _pty_session, _agent_pty = ensure_agent_pty(
                         story_key,
                         launch_cmd,
                         workspace,
-                        cli_prompt,  # prompt 作为第 4 个参数注入到 PTY
-                        readiness_marker=getattr(adapter, "readiness_marker", None),
+                        _session_spec.pty_prompt if _session_spec else "",
+                        readiness_marker=(
+                            _session_spec.readiness_marker if _session_spec else None
+                        ),
                         env=story_env,
                     )
                     log.info("[%s] PTY session started for stage=%s", story_key, stage)

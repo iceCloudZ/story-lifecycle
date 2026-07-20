@@ -5,7 +5,38 @@ import json
 import os
 import shlex
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime, timezone
+
+
+@dataclass
+class SessionSpec:
+    """Everything a spawner needs to start an agent session.
+
+    Adapters return this from ``start_session``. The spawner's contract is
+    fixed regardless of CLI:
+
+      1. spawn ``command`` in a PTY with cwd=workspace
+      2. if ``readiness_marker`` is set, poll PTY output until it matches
+         (or readiness_timeout) — else fall back to a short startup_delay
+      3. if ``pty_prompt`` is non-empty, paste it into the PTY
+
+    How the seed prompt reaches the agent is the adapter's business, not the
+    spawner's. Two strategies, both expressed via the same spec:
+      - prompt baked into ``command`` (e.g. ``claude "query"``):
+        ``pty_prompt=""``, ``readiness_marker=None``
+      - prompt delivered via PTY paste after readiness (kimi/codex):
+        ``pty_prompt=<seed>``, ``readiness_marker=<CLI's ready banner>``
+    """
+
+    command: list[str]
+    pty_prompt: str = ""
+    readiness_marker: str | None = None
+    # Optional session-persistence metadata (for adapters that support
+    # --session-id / --resume). Spawner does not interpret these; they're
+    # returned in the spec so api code can record them if it cares.
+    session_id: str = ""
+    resume: bool = False
 
 
 class BaseAdapter(ABC):
@@ -18,15 +49,36 @@ class BaseAdapter(ABC):
     # sleep. Subclasses override with their CLI's input-prompt regex.
     readiness_marker: str | None = None
 
-    # How this adapter wants the seed prompt delivered at spawn:
-    #   False (default, claude-style) → prompt baked into interactive_launch_cmd
-    #     (e.g. `claude "query"`). PTY injection is OFF.
-    #   True (ShellAdapter / kimi / codex) → interactive_launch_cmd ignores the
-    #     prompt arg; the spawner pastes the seed via PTY after readiness_marker.
-    # Lets the spawner branch on intent without isinstance() checks against
-    # concrete adapter classes (the prior bug: kimi's base interactive_launch_cmd
-    # silently dropped the prompt → empty kimi session).
-    prompts_via_pty: bool = False
+    def start_session(
+        self,
+        model: str,
+        prompt: str = "",
+        session_id: str = "",
+        session_name: str = "",
+        resume: bool = False,
+    ) -> SessionSpec:
+        """Build a SessionSpec for spawning an interactive agent session.
+
+        This is the canonical entry point for "spawn an agent on a task".
+        Spawners (api + planner) call this and follow the spec mechanically —
+        they do NOT branch on adapter type.
+
+        Default implementation: the prompt is delivered via PTY paste after
+        readiness_marker. Subclasses whose CLI takes the prompt as a launch
+        argument (claude ``"query"``) override this to bake the prompt into
+        ``command`` and leave ``pty_prompt`` empty.
+
+        Adapters that need richer session-persistence flags (--session-id /
+        --resume) override to populate ``command`` accordingly.
+        """
+        command = shlex.split(self.launch_cmd(model), posix=os.name != "nt")
+        return SessionSpec(
+            command=command,
+            pty_prompt=prompt,
+            readiness_marker=self.readiness_marker,
+            session_id=session_id,
+            resume=resume,
+        )
 
     @abstractmethod
     def switch_provider(self, provider: str) -> str | None:
