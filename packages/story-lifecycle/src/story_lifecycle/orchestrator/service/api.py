@@ -30,7 +30,6 @@ from ...infra.terminal.pty import (
     ensure_agent_pty,
     kill_pty,
     list_pty_sessions,
-    spawn_pty,
 )
 from ..engine.graph import (
     start_story_async,
@@ -389,10 +388,9 @@ def api_spawn_session(story_key: str, req: SpawnSessionRequest = None):
         adapter_name = resolve_stage_adapter(s, _stage, action=_action)
     adapter = get_adapter(adapter_name)
     model = req.model or "sonnet"
-    # 启动(NEW)或续上(RESUME)—— 同 _ensure_story_agent_pty 路径(claude "query" seed /
-    # claude --resume <uuid>)。前端「启动终端」走这个端点。
-    command, is_resume = _build_stage_launch_cmd(s, adapter, model)
-    session_id, _ = spawn_pty(story_key, command, workspace, purpose=adapter_name)
+    # adapter-aware spawn:claude 走 prompt-in-cmd,kimi/codex 走 PTY 注入。
+    # 老逻辑直接 spawn_pty(command),对 kimi 来说 command 不带 prompt → 空会话。
+    session_id, _, is_resume = _spawn_story_agent_pty(s, adapter, model)
     return {"session_id": session_id, "ok": True, "resumed": is_resume}
 
 
@@ -561,6 +559,57 @@ def _build_stage_launch_cmd(story: dict, adapter, model: str) -> tuple[list[str]
     return cmd, False
 
 
+def _spawn_story_agent_pty(
+    story: dict, adapter, model: str
+) -> tuple[str, object, bool]:
+    """Spawn the story's agent PTY, adapter-aware prompt delivery.
+
+    Two prompt-delivery strategies, picked by ``adapter.prompts_via_pty``:
+      - False (claude-style, default): prompt goes INTO the launch command
+        (``claude "query"`` / ``claude --resume <uuid> "<continue>"``) via
+        ``_build_stage_launch_cmd``. PTY injection is OFF (``prompt=""``,
+        ``readiness_marker=None``) — claude's own startup handles readiness.
+      - True (ShellAdapter / kimi / codex): base ``interactive_launch_cmd``
+        drops the prompt arg, so we deliver the seed via PTY injection with
+        the adapter's ``readiness_marker`` (kimi: "Welcome to Kimi Code") —
+        polls PTY output until the marker shows, THEN paste the seed. Without
+        a marker, falls back to the legacy fixed startup_delay.
+
+    Returns ``(session_id, pty, is_resume)``. Both ``api_spawn_session`` and
+    ``_ensure_story_agent_pty`` go through here so the two spawn paths can't
+    drift on prompt delivery (the prior bug: kimi spawned empty because the
+    sessions/spawn path used ``spawn_pty`` which never injects).
+    """
+    workspace = story.get("workspace", "")
+    if not getattr(adapter, "prompts_via_pty", False):
+        # claude "query" seed: prompt baked into cmd, no PTY injection.
+        command, is_resume = _build_stage_launch_cmd(story, adapter, model)
+        session_id, pty = ensure_agent_pty(
+            story["story_key"],
+            command,
+            workspace,
+            "",
+            readiness_marker=None,
+            startup_delay=0,
+        )
+        return session_id, pty, is_resume
+
+    # ShellAdapter / other: prompt delivered via PTY injection after readiness.
+    # interactive_launch_cmd ignores the prompt arg, so command has no seed;
+    # we inject it once the readiness_marker fires (or after startup_delay).
+    command, _ = _build_stage_launch_cmd(story, adapter, model)
+    seed = _build_stage_launch_prompt(story)
+    session_id, pty = ensure_agent_pty(
+        story["story_key"],
+        command,
+        workspace,
+        seed,
+        readiness_marker=getattr(adapter, "readiness_marker", None),
+        startup_delay=2.0,
+    )
+    return session_id, pty, False
+
+
 def _ensure_story_agent_pty(story: dict) -> dict:
     workspace = story.get("workspace", "")
     if not workspace or not Path(workspace).exists():
@@ -602,17 +651,9 @@ def _ensure_story_agent_pty(story: dict) -> dict:
         }
 
     adapter = get_adapter(adapter_name)
-    # 启动(NEW)或续上(RESUME):claude "query" seed / claude --resume <uuid>。
-    # claude 自己管 readiness,不用 PTY 注入。见 _build_stage_launch_cmd + handoff §11。
-    command, is_resume = _build_stage_launch_cmd(story, adapter, model)
-    session_id, pty = ensure_agent_pty(
-        story["story_key"],
-        command,
-        workspace,
-        "",  # 不内部注入 —— prompt 已在 launch cmd 里
-        readiness_marker=None,  # claude "query"/--resume 自己管 readiness
-        startup_delay=0,
-    )
+    # adapter-aware spawn:claude prompt-in-cmd,kimi/codex 走 PTY 注入 +
+    # readiness_marker。统一走 _spawn_story_agent_pty,两条 spawn 路径不再分叉。
+    session_id, _, is_resume = _spawn_story_agent_pty(story, adapter, model)
     return {
         "ok": True,
         "reused": False,

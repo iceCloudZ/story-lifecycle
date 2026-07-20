@@ -18,6 +18,16 @@ class BaseAdapter(ABC):
     # sleep. Subclasses override with their CLI's input-prompt regex.
     readiness_marker: str | None = None
 
+    # How this adapter wants the seed prompt delivered at spawn:
+    #   False (default, claude-style) → prompt baked into interactive_launch_cmd
+    #     (e.g. `claude "query"`). PTY injection is OFF.
+    #   True (ShellAdapter / kimi / codex) → interactive_launch_cmd ignores the
+    #     prompt arg; the spawner pastes the seed via PTY after readiness_marker.
+    # Lets the spawner branch on intent without isinstance() checks against
+    # concrete adapter classes (the prior bug: kimi's base interactive_launch_cmd
+    # silently dropped the prompt → empty kimi session).
+    prompts_via_pty: bool = False
+
     @abstractmethod
     def switch_provider(self, provider: str) -> str | None:
         """Return the shell command to switch provider, or None if not needed."""
