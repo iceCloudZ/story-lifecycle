@@ -9,6 +9,7 @@ Entry-layer helpers that *interpret* config (wizard, env loading, sub-types)
 remain in `cli/setup.py`; they re-import these primitives from here.
 """
 
+import os
 from pathlib import Path
 
 import yaml
@@ -43,3 +44,24 @@ def save_config(config: dict):
         yaml.dump(merged, default_flow_style=False, allow_unicode=True),
         encoding="utf-8",
     )
+
+
+def get_worktrees_root() -> Path:
+    """Resolve the per-story workspace root (where D:/worktrees/<slug>/ lives).
+
+    Priority: config.yaml `worktrees_root` → env STORY_WORKTREES_ROOT →
+    platform default (``D:/worktrees`` on Windows, ``~/worktrees`` elsewhere).
+
+    The directory itself is NOT created here — callers mkdir on demand.
+    Per-story workspaces are subdirectories: ``<root>/<slug>/``. The planning
+    LLM picks the ``slug`` (title-derived kebab-case); the orchestrator mkdirs
+    it and points the code agent's cwd there.
+    """
+    cfg = get_config()
+    raw = cfg.get("worktrees_root") or os.environ.get("STORY_WORKTREES_ROOT") or ""
+    if raw:
+        return Path(raw).expanduser()
+    # platform default
+    if os.name == "nt":
+        return Path("D:/worktrees")
+    return Path.home() / "worktrees"

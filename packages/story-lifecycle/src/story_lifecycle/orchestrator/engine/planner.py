@@ -102,6 +102,49 @@ def compress_context(workspace: str, story_key: str, current_stage: str) -> str 
 # ══════════════════════════════════════════════════════════════════
 
 
+def _sanitize_workspace_slug(slug: str) -> str:
+    """Normalize an LLM-produced workspace slug to a safe directory name.
+
+    Forces kebab-case-ish lowercase ASCII + digits + ``-_.``. Strips path
+    separators (no traversal: the slug becomes ONE path segment under
+    worktrees_root, never a nested path). Empty → "".
+    """
+    import re
+
+    s = (slug or "").strip()
+    if not s:
+        return ""
+    # Drop anything that isn't a-z 0-9 - _ . (one path segment, no slashes)
+    s = re.sub(r"[^a-z0-9\-_.]+", "-", s.lower())
+    s = re.sub(r"-{2,}", "-", s).strip("-_.")
+    # Cap length so we don't blow Windows MAX_PATH in deep nested scenarios.
+    return s[:60]
+
+
+def _prepare_story_workspace(story_key: str, slug: str) -> str:
+    """mkdir the per-story workspace at <worktrees_root>/<slug>/.
+
+    Called after the planning LLM returns ``workspace_slug``. Idempotent:
+    existing dir is fine. Returns the absolute path as str, or "" if slug
+    is empty/invalid (story has no isolated workspace → spawn uses main
+    workspace). Failures (permission, disk) are logged + return "" so
+    planning never blocks on workspace prep.
+    """
+    safe = _sanitize_workspace_slug(slug)
+    if not safe:
+        return ""
+    try:
+        from ...infra.config import get_worktrees_root
+
+        root = get_worktrees_root()
+        ws_path = root / safe
+        ws_path.mkdir(parents=True, exist_ok=True)
+        return str(ws_path)
+    except Exception as exc:  # noqa: BLE001 — planning must not block on fs
+        log.warning("[%s] workspace prep failed for slug=%r: %s", story_key, slug, exc)
+        return ""
+
+
 def _build_agent_system_prompt(
     *,
     profile_stages: dict | None = None,
@@ -144,6 +187,7 @@ def _build_agent_system_prompt(
 - 根据需求决定需要执行哪些阶段(skip 不需要的)
 - 给每个阶段指定 2-3 个关键要点（focus）
 - 为每个阶段选 task_actions（该干什么活）
+- 给本 story 起一个独立的 workspace_slug(工作空间目录名)
 - 规划完成后暂停，等待用户确认
 
 ## 当前 Story
@@ -168,13 +212,21 @@ def _build_agent_system_prompt(
 4. 标 grill=true 表示该阶段需要人澄清关键歧义(如复杂设计决策);简单明确的标 false
 5. CLI（claude/codex/kimi）会自己理解需求并设计方案，你不需要代劳
 6. adapter 由 profile 路由,你不需要选
+7. **workspace_slug**：为这个 story 起一个独立的隔离工作空间目录名。
+   - 从标题提炼：小写英文 + 数字 + 连字符(kebab-case)，10-40 字符
+   - 例：「MGM活动限制用户当前的app版本」→ `mgm-app-version-limit`
+   - 例：「优化订单导出查询性能」→ `order-export-perf`
+   - 后端会建空目录 <worktrees_root>/<slug>/ 作为 code agent 的 cwd
+   - agent 自己把要改的项目 `git worktree add` 进去,在这里干活
+   - 纯调研/不改代码的 story 才留空字符串 ""
 
 ## 输出格式（关键）
 必须**只**输出一个 JSON 对象，不要任何 markdown、表格、解释文字、代码块标记。
 schema:
-{{"stages":[{{"stage":"<阶段名>","skip":<true|false>,"focus":"<要点，多条用分号>","task_actions":["<动作1>","<动作2>"],"grill":<true|false>}}]}}
+{{"stages":[{{"stage":"<阶段名>","skip":<true|false>,"focus":"<要点，多条用分号>","task_actions":["<动作1>","<动作2>"],"grill":<true|false>}}],"workspace_slug":"<kebab-case 目录名>"}}
 - 每个 profile 里的阶段都要出现在 stages 里（skip 的也要列出，skip=true）
 - focus/task_actions 用中文
+- workspace_slug 用 kebab-case 英文(标题简写)
 - 直接输出 JSON，第一个字符必须是 {{，不要有 ```json 或任何前缀"""
 
 
@@ -241,9 +293,16 @@ def run_orchestrator_agent(
         grill: bool = False
 
     class PlanResult(BaseModel):
-        """规划结果:阶段列表。"""
+        """规划结果:阶段列表 + 工作空间 slug。
+
+        workspace_slug(标题简写,kebab-case):规划 LLM 决定的 per-story 隔离
+        工作空间目录名,后端会在 <worktrees_root>/<slug>/ 建空目录,作为 code
+        agent 的 cwd。agent 自己把要改的项目 git worktree add 进来。空字符串
+        = 不需要独立工作空间(如纯调研 story),code agent 用主 workspace。
+        """
 
         stages: list[StagePlan]
+        workspace_slug: str = ""
 
     story = db.get_story(story_key)
     if not story:
@@ -287,6 +346,7 @@ def run_orchestrator_agent(
     # 单次 LLM 调用(替 10 轮 FC 循环)
     llm = get_llm()
     actions: list[dict] = []
+    workspace_path = ""  # LLM 路径会填,fallback 路径留空(用主 workspace)
 
     if llm.api_key and profile_stages:
         prompt = f"{system_prompt}\n\n{user_msg}"
@@ -294,6 +354,18 @@ def run_orchestrator_agent(
             result = llm.invoke_structured(
                 prompt, PlanResult, temperature=0.1, timeout=90
             )
+            # 规划 LLM 决定的 per-story 工作空间 slug → mkdir + 存 ctx。
+            # LLM 只决定 slug(标题简写),建目录是后端的事(无副作用、可重放)。
+            # 失败/无 slug → workspace_path 留空,后续 spawn 退回主 workspace。
+            workspace_slug = (getattr(result, "workspace_slug", "") or "").strip()
+            workspace_path = _prepare_story_workspace(story_key, workspace_slug)
+            if workspace_path:
+                log.info(
+                    "[%s] workspace prepared: %s (slug=%r)",
+                    story_key,
+                    workspace_path,
+                    workspace_slug,
+                )
             # 把 PlanResult 转 action list(adapter 由 profile 决定,不用模型选的)
             stage_to_cli = {name: cfg["cli"] for name, cfg in profile_stages.items()}
             # single-pass 保底:LLM 路径下也要保证全干语义(见 _default_planning_actions
@@ -357,6 +429,9 @@ def run_orchestrator_agent(
         pass
     ctx["_agent_actions"] = actions
     ctx["_plan_confirmed"] = False
+    # 落规划期建好的工作空间路径(无则保留原值/清空),供后续 spawn + prompt 用。
+    if workspace_path:
+        ctx["workspace_path"] = workspace_path
     ctx["plan_summary"] = "; ".join(
         f"{a.get('stage', '')}: {a.get('focus', '')}"
         for a in actions
@@ -959,6 +1034,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 ),
                 project_section=project_section,
                 workspace=workspace,
+                workspace_path=ctx.get("workspace_path", ""),
                 transcript_section=transcript_ctx or "",
                 interactive=not headless,  # BUG #9:交互式路径走"终端直接问人"
                 task_actions=action.get("task_actions", []),
@@ -1067,6 +1143,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 headless_proc = None
                 _agent_pty = None  # interactive 分支才赋值(见 else);此处初始化让 done 块两类分支都能安全引用
                 _stderr_tail = []  # headless stderr 排空 holder(kimi 叙述/claude 日志 → 防 PIPE 死锁 + retry 诊断)
+                # spawn cwd:ctx.workspace_path(规划 LLM 决定的隔离空间)优先,
+                # 退回主 workspace。code agent 在隔离空间里 worktree add 项目进来。
+                _spawn_cwd = ctx.get("workspace_path") or workspace
                 if headless:
                     import subprocess as _sp
 
@@ -1096,7 +1175,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     try:
                         headless_proc = _sp.Popen(
                             launch_cmd,
-                            cwd=workspace,
+                            cwd=_spawn_cwd,
                             stdin=_sp.PIPE,
                             stdout=_sp.PIPE,
                             stderr=_sp.PIPE,
@@ -1157,10 +1236,12 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 else:
                     # spec 驱动:prompt 和 readiness_marker 都从 adapter.start_session
                     # 的返回值拿(adapter 自己声明 prompt 怎么传,见 SessionSpec)。
+                    # cwd 用 ctx.workspace_path(规划 LLM 决定的隔离空间),没有则退回主 ws。
+                    _spawn_cwd = ctx.get("workspace_path") or workspace
                     _pty_session, _agent_pty = ensure_agent_pty(
                         story_key,
                         launch_cmd,
-                        workspace,
+                        _spawn_cwd,
                         _session_spec.pty_prompt if _session_spec else "",
                         readiness_marker=(
                             _session_spec.readiness_marker if _session_spec else None
@@ -1277,7 +1358,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         try:
                             headless_proc = _sp.Popen(
                                 launch_cmd,
-                                cwd=workspace,
+                                cwd=_spawn_cwd,
                                 stdin=_sp.PIPE,
                                 stdout=_sp.PIPE,
                                 stderr=_sp.PIPE,
@@ -1748,6 +1829,7 @@ def _build_cli_prompt(
     prd_path: str = "",
     project_section: str = "",
     workspace: str = "",
+    workspace_path: str = "",
     transcript_section: str = "",
     interactive: bool = False,
     task_actions: list[str] | None = None,
@@ -1852,6 +1934,30 @@ def _build_cli_prompt(
 - 方式 B（在主仓库切分支）： `git -C <repo_path> checkout -b <分支> <基线>`（已有则 `git -C <repo_path> checkout <分支>`）
 
 **硬约束**：若 git 操作失败（分支已存在且冲突、无权限、仓库不可写等），**立即停止后续工作**，将错误写入完成协议的 `summary` 字段并把 `status` 设为 `"error"`，不要尝试在错误的分支或主分支上继续。
+"""
+    elif workspace_path:
+        # 规划 LLM 决定的 per-story 隔离工作空间(无项目绑定场景):后端建了空目录,
+        # agent 自己把要改的项目 worktree add 进来。主 workspace(ws,如 D:/hc-all)下
+        # 有多个独立项目仓库,agent 凭需求自己判断要改哪个 → 把那个项目 worktree 进来。
+        worktree_section = f"""
+### 工作空间
+
+本 story 的隔离工作空间已建好(空目录)：`{workspace_path}`
+
+**这是你的工作目录(cwd)**。请把本次改动涉及的项目仓库 `git worktree add` 进来,在隔离分支上改代码：
+
+```bash
+# 例:判断要改 hc-config,基于 main 切 feature 分支并加进工作空间
+cd {workspace_path}
+git -C {workspace or "<主工作区>"}/hc-config worktree add -b feature/{story_key} ./hc-config main
+cd ./hc-config
+```
+
+**判断方法**：先读 PRD 了解需求,扫主工作区下的项目目录(每个子目录都是独立 git 仓库),凭需求决定要改哪个。可以 worktree add 多个(跨服务改动)。
+
+**不要**直接在主工作区的项目里改 —— 必须先 worktree add 到 `{workspace_path}` 下,在 feature 分支上改。
+
+**硬约束**：若 git worktree add 失败(分支冲突、仓库不可写),立即停止,把错误写入完成协议的 `summary` + `status="error"`,不要在主分支继续。
 """
 
     # 执行约束:由 task_actions 内容决定(替 _is_single_stage 硬编码)。

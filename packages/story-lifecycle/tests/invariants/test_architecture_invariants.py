@@ -161,7 +161,10 @@ class TestInfraZeroInternalImport:
     )
     def test_only_stdlib_plus_explicit_third_party(self, rel_path, extra_allowed):
         """指定 infra 文件只能 import stdlib + 显式允许的第三方包。"""
-        stdlib_ok = {"__future__", "pathlib", "yaml", "json", "re"}
+        # stdlib modules infra leaf files may use. Kept tight on purpose —
+        # widening requires architectural justification (infra = leaf, no
+        # heavyweight deps). os added for env-var lookups (STORY_WORKTREES_ROOT).
+        stdlib_ok = {"__future__", "pathlib", "yaml", "json", "re", "os"}
         root = Path(__file__).resolve().parents[2]
         path = root / rel_path
         imports = self._parse_imports(path)

@@ -465,6 +465,7 @@ def _build_interactive_stage_prompt(story: dict, stage: str) -> str:
         ),
         project_section="\n".join(project_lines),
         workspace=workspace,
+        workspace_path=ctx.get("workspace_path", ""),
         transcript_section=transcript_section,
         interactive=True,  # 交互式 claude("query",无 MCP):逐问澄清改「终端问人」
         task_actions=_default_actions,
@@ -585,6 +586,14 @@ def _spawn_story_agent_pty(
     workspace = story.get("workspace", "")
     story_key = story["story_key"]
     stage = story.get("current_stage", "design") or "design"
+    # agent 的 cwd:优先 workspace_path(规划 LLM 决定的隔离空间 D:/worktrees/<slug>/),
+    # 没有则退回主 workspace。code agent 在隔离空间里自己 worktree add 项目进来。
+    _ctx_spawn = {}
+    try:
+        _ctx_spawn = _json.loads(story.get("context_json") or "{}")
+    except (ValueError, TypeError):
+        pass
+    spawn_cwd = _ctx_spawn.get("workspace_path") or workspace
     # session-persistence marker (claude --session-id / --resume). Idempotent:
     # if the marker exists, we're resuming; else new session.
     session_uuid = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"{story_key}:{stage}"))
@@ -607,7 +616,7 @@ def _spawn_story_agent_pty(
     session_id, pty = ensure_agent_pty(
         story_key,
         spec.command,
-        workspace,
+        spawn_cwd,
         spec.pty_prompt,
         readiness_marker=spec.readiness_marker,
         startup_delay=0
