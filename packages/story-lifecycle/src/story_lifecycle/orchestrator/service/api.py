@@ -549,8 +549,24 @@ def _ensure_story_agent_pty(story: dict) -> dict:
 
     profile = resolve_profile(story.get("profile", "minimal"))
     stage = story.get("current_stage", "design") or "design"
+    # adapter 来源:优先 _agent_actions[当前 stage].adapter(用户在 plan UI 改的),
+    # profile cli 仅兜底。两条 spawn 路径(这里 + continue_orchestrator_agent)
+    # 必须用同一个 resolver,否则 UI 改 kimi 这里还跑 claude。
+    import json as _json
+
+    _ctx = {}
+    try:
+        _ctx = _json.loads(story.get("context_json") or "{}")
+    except (ValueError, TypeError):
+        pass
+    _action = next(
+        (a for a in (_ctx.get("_agent_actions") or []) if a.get("stage") == stage),
+        None,
+    )
+    from ..engine.planner import resolve_stage_adapter
+
+    adapter_name = resolve_stage_adapter(story, stage, profile=profile, action=_action)
     stage_cfg = profile.stage(stage)
-    adapter_name = stage_cfg.cli or profile.cli or "claude"
     model = stage_cfg.model or profile.model or "sonnet"
     existing = get_pty(story["story_key"])
     reused = bool(existing and existing.alive and existing.purpose == "agent")

@@ -871,24 +871,17 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
 
         if action.get("action") == "launch":
             stage = action.get("stage", f"stage_{idx}")
-            adapter_name = action.get("adapter", "")
-            # profile 兜底:profile 该 stage 配了 cli 时,覆盖 LLM 规划的 adapter
-            # (LLM plan_step enum 可能不含 profile 配的值,如 kimi;用户也可在
-            # 确认前改 adapter,该覆盖在 /plan/confirm 时写回 _agent_actions)。
-            if stage in profile_stages:
-                _cfg_cli = getattr(profile_stages[stage], "cli", "") or ""
-                if _cfg_cli and _cfg_cli != adapter_name:
-                    log.info(
-                        "[%s] stage %s: profile cli=%r overrides action adapter=%r",
-                        story_key,
-                        stage,
-                        _cfg_cli,
-                        adapter_name,
-                    )
-                    adapter_name = _cfg_cli
-                    action["adapter"] = _cfg_cli  # 回写,供下游一致
-            if not adapter_name:
-                adapter_name = "claude"
+            # adapter 来源:action("adapter") > profile stage cli > profile cli > claude。
+            # 用户在 plan UI 改 adapter(PATCH /plan/actions/{stage})直接写 _agent_actions,
+            # 那里是权威 —— profile cli 不再覆盖用户选择(老逻辑会静默盖回去,导致
+            # UI 选 kimi 执行还是 claude)。resolve_stage_adapter 是唯一权威 resolver,
+            # _ensure_story_agent_pty 也调它,两条 spawn 路径保持一致。
+            adapter_name = resolve_stage_adapter(
+                story, stage, profile=rp, action=action
+            )
+            if adapter_name != (action.get("adapter") or ""):
+                # resolver 兜底了(profile cli)→ 回写保持下游一致
+                action["adapter"] = adapter_name
             focus = action.get("focus", "")
             # done_file 强制规范化:不信任 action 里(可能来自老规划/LLM 自由生成)的值,
             # 统一用 .story/done/<key>/<stage>.json,杜绝跨 story 撞名(BUG #7)。
@@ -1675,6 +1668,61 @@ def _resolve_prd_for_exec(
         )
     except Exception:
         return legacy_path
+
+
+def resolve_stage_adapter(
+    story: dict, stage: str, profile=None, action: dict | None = None
+) -> str:
+    """Canonical resolver: which adapter (claude/codex/kimi) runs this stage?
+
+    Precedence (user intent wins over profile defaults):
+      1. ``action["adapter"]`` if non-empty — the LLM-planned or user-override
+         value (user changes it via the plan UI PATCH endpoint, which writes
+         straight into ``context_json._agent_actions[stage].adapter``). This
+         is the authoritative source once a plan exists.
+      2. ``profile.stages[stage].cli`` — the profile's static default. Only
+         used as a fallback when the action has no adapter set (e.g. legacy
+         stories predating _agent_actions, or a freshly regenerated plan
+         before the LLM has filled it in).
+      3. ``profile.cli`` — profile-level default.
+      4. ``"claude"`` — last-resort fallback.
+
+    The profile is NO LONGER allowed to override ``_agent_actions``: the old
+    behavior (profile cli silently overwrote the user's UI choice at spawn
+    time) made the plan UI dropdown a no-op. Profile cli is now strictly a
+    fallback. ``profile`` may be None (caller doesn't have it); we load it
+    from the story row in that case.
+    """
+    if profile is None:
+        try:
+            from .profile_loader import resolve_profile
+
+            profile = resolve_profile(story.get("profile", "minimal"))
+        except Exception:  # noqa: BLE001 — profile resolve must not block spawn
+            profile = None
+
+    # 1. action adapter (authoritative post-plan / post-user-edit)
+    if action is not None:
+        _a = (action.get("adapter") or "").strip()
+        if _a:
+            return _a
+
+    # 2-3. profile fallbacks
+    if profile is not None:
+        try:
+            stage_cfg = profile.stage(stage) if hasattr(profile, "stage") else None
+        except Exception:  # noqa: BLE001
+            stage_cfg = None
+        if stage_cfg is not None:
+            _cli = (getattr(stage_cfg, "cli", "") or "").strip()
+            if _cli:
+                return _cli
+        _pcli = (getattr(profile, "cli", "") or "").strip()
+        if _pcli:
+            return _pcli
+
+    # 4. last resort
+    return "claude"
 
 
 def _build_cli_prompt(
