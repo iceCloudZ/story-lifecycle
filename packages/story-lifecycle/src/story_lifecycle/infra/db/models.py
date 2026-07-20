@@ -504,9 +504,7 @@ def init_db():
             )
             """
         )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_sd2_story ON story_doc(story_key)"
-        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sd2_story ON story_doc(story_key)")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS story_doc_version (
@@ -2282,9 +2280,7 @@ def get_story_doc(story_key: str, doc_type: str) -> dict | None:
     return dict(row) if row else None
 
 
-def get_story_doc_version(
-    story_key: str, doc_type: str, version: int
-) -> dict | None:
+def get_story_doc_version(story_key: str, doc_type: str, version: int) -> dict | None:
     """Read a specific historical version (full content)."""
     with _db() as conn:
         row = conn.execute(

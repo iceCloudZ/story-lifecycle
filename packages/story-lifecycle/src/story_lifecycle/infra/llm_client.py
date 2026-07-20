@@ -93,6 +93,7 @@ def _coerce_one(sub: Type[BaseModel], value):
     except (ValidationError, Exception):
         return _construct_recursive(sub, value)
 
+
 # Propagate the current story key from orchestrators down to the low-level
 # LLM client so token usage can be attributed to the right story.
 CURRENT_STORY_KEY: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -365,7 +366,13 @@ class LLMClient:
         )
         last_content = ""
         for attempt in range(max_parse_retries + 1):
-            current_prompt = prompt if attempt == 0 else prompt + correction + f"\n\n上次返回（错误示范，不要这样）：\n{last_content[:800]}"
+            current_prompt = (
+                prompt
+                if attempt == 0
+                else prompt
+                + correction
+                + f"\n\n上次返回（错误示范，不要这样）：\n{last_content[:800]}"
+            )
             content = self.invoke(
                 current_prompt,
                 system=system,
@@ -379,7 +386,8 @@ class LLMClient:
                 break
             log.warning(
                 "invoke_structured: JSON parse failed (attempt %d/%d), will retry",
-                attempt + 1, max_parse_retries + 1,
+                attempt + 1,
+                max_parse_retries + 1,
             )
         else:
             raise ValueError(

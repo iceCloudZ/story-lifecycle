@@ -307,7 +307,9 @@ def run_orchestrator_agent(
             profile_stage_names = list(profile_stages.keys())
             for idx, sp in enumerate(result.stages):
                 stage_name = getattr(sp, "stage", None) or (
-                    profile_stage_names[idx] if idx < len(profile_stage_names) else f"stage{idx}"
+                    profile_stage_names[idx]
+                    if idx < len(profile_stage_names)
+                    else f"stage{idx}"
                 )
                 skip = bool(getattr(sp, "skip", False))
                 focus = getattr(sp, "focus", "") or ""
@@ -681,7 +683,9 @@ def _register_stage_outputs(story_key: str, stage: str, done_data: dict) -> None
         except Exception:  # noqa: BLE001 — versioning is best-effort
             log.debug(
                 "[%s] story_doc versioning skipped for stage=%s ref=%s",
-                story_key, stage, ref,
+                story_key,
+                stage,
+                ref,
             )
 
 
@@ -791,9 +795,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     try:
         from ...sourcing.source_loader import resolve_source_profile
 
-        story_states = resolve_source_profile(
-            story.get("source_type")
-        ).story_states or {}
+        story_states = (
+            resolve_source_profile(story.get("source_type")).story_states or {}
+        )
     except Exception:
         pass
     # STORY-STATE-MODEL: 初始化 lifecycle_state(Story 业务状态,独立第一公民)。
@@ -977,7 +981,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 focus=focus,
                 done_file=done_file_rel,
                 profile_stages=profile_stages,
-                prd_path=_resolve_prd_for_exec(story_key, workspace, title, ctx.get("prd_path", "")),
+                prd_path=_resolve_prd_for_exec(
+                    story_key, workspace, title, ctx.get("prd_path", "")
+                ),
                 project_section=project_section,
                 workspace=workspace,
                 transcript_section=transcript_ctx or "",
@@ -1259,7 +1265,6 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     and headless_proc.poll() is not None
                     and not done_path.exists()
                 ):
-
                     rc = headless_proc.returncode
                     stderr_tail, stdout_tail = "", b""
                     try:

@@ -2687,7 +2687,9 @@ def api_save_story_doc(story_key: str, doc_type: str, req: SaveDocRequest):
         if workspace:
             from ...infra.doc_sync import sync_doc_to_local
 
-            sync_doc_to_local(story_key, doc_type, req.content, version, workspace, title)
+            sync_doc_to_local(
+                story_key, doc_type, req.content, version, workspace, title
+            )
             # for prd, also update context_json.prd_path so the execution layer
             # and existing /plan endpoints keep working
             if doc_type == "prd":
@@ -2765,7 +2767,12 @@ def api_rollback_doc(
 
             doc = db.get_story_doc(story_key, doc_type) or {}
             sync_doc_to_local(
-                story_key, doc_type, doc.get("latest_content", ""), new_v, workspace, title
+                story_key,
+                doc_type,
+                doc.get("latest_content", ""),
+                new_v,
+                workspace,
+                title,
             )
     except Exception as exc:
         log.warning("doc rollback local-sync failed: %s", exc)
@@ -2776,9 +2783,7 @@ def api_rollback_doc(
 def api_search_docs(q: str, type: str = "", story: str = ""):
     if not q.strip():
         return {"results": []}
-    hits = db.search_docs(
-        q, doc_type=(type or None), story_key=(story or None)
-    )
+    hits = db.search_docs(q, doc_type=(type or None), story_key=(story or None))
     return {"query": q, "results": hits}
 
 
