@@ -665,7 +665,10 @@ def _register_stage_outputs(story_key: str, stage: str, done_data: dict) -> None
 
             ref_p = Path(ref)
             if not ref_p.is_absolute():
-                ref_p = Path(workspace) / ref_p
+                _story_row = db.get_story(story_key) or {}
+                _ws = _story_row.get("workspace") or ""
+                if _ws:
+                    ref_p = Path(_ws) / ref_p
             if ref_p.exists() and ref_p.stat().st_size > 0:
                 content = ref_p.read_text(encoding="utf-8", errors="replace")
                 db.upsert_story_doc(
