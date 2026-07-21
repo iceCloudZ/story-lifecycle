@@ -794,6 +794,20 @@ def _story_headless(s: dict) -> bool:
 
 @app.get("/api/story/{story_key}")
 def get_story(story_key: str):
+    # Passive done-file reconciliation: if the CLI finished a stage while no
+    # driver was watching (emergency-stop / crash / interactive manual run),
+    # consume the orphan done file + advance state before returning. No-op
+    # when the driver is live or nothing's orphaned. Means just opening the
+    # detail page is enough to unstick a story whose CLI self-completed.
+    try:
+        from ..engine.graph import consume_orphan_done
+
+        if consume_orphan_done(story_key):
+            # state changed → refetch so the response reflects the new status
+            db.bump_context_revision(story_key)
+    except Exception:  # noqa: BLE001 — never let reconcile break GET
+        log.exception("[%s] consume_orphan_done failed in GET /story", story_key)
+
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")

@@ -813,14 +813,98 @@ def claim_story_driver(story_key: str, token: str) -> bool:
     ``_running_stories`` dict can't see other processes (each python process has
     its own), so without this a second driver double-drives the same story
     (real-run 2026-07-06: event_log events appeared ×2).
+
+    Dead-PID recovery: if the existing claim's PID is no longer alive (process
+    crashed / was emergency-stopped / machine rebooted), the claim is stale and
+    a new caller is allowed to seize it. Without this, a crashed driver's claim
+    locks the story forever (real-run 2026-07-20: emergency_stop killed driver
+    but driver_claim stayed → next confirm failed CAS → story stuck).
+    Token format ``<pid>:<epoch>`` (see graph.start_story_async).
     """
     with _db() as conn:
+        # fast path: free claim
         cur = conn.execute(
             "UPDATE story SET driver_claim = ? WHERE story_key = ? "
             "AND driver_claim IS NULL",
             (token, story_key),
         )
-        return cur.rowcount == 1
+        if cur.rowcount == 1:
+            return True
+        # slow path: existing claim — is its PID dead? If so, seize.
+        row = conn.execute(
+            "SELECT driver_claim FROM story WHERE story_key = ?",
+            (story_key,),
+        ).fetchone()
+        existing = (row or [None])[0]
+        if not existing:
+            return False  # row vanished (story deleted between calls)
+        if not _driver_pid_alive(existing):
+            cur = conn.execute(
+                "UPDATE story SET driver_claim = ? "
+                "WHERE story_key = ? AND driver_claim = ?",
+                (token, story_key, existing),
+            )
+            return cur.rowcount == 1
+        return False
+
+
+def _driver_pid_alive(token: str) -> bool:
+    """Check if the PID encoded in a driver_claim token is still running.
+
+    Token format: ``<pid>:<epoch>``. Returns False if the PID is gone, the
+    token is malformed, or the check is unsupported on this platform.
+
+    Platform notes:
+      - POSIX: ``os.kill(pid, 0)`` raises ``ProcessLookupError`` when the PID
+        doesn't exist (and ``PermissionError`` when it exists but is not ours
+        — treat as alive).
+      - Windows: ``os.kill`` with signal 0 throws ``OSError: WinError 87``
+        regardless of liveness, so use ``OpenProcess`` via ctypes — succeeds
+        for live PIDs, fails (returns NULL) for dead ones.
+    """
+    import os
+
+    try:
+        pid = int(str(token).split(":", 1)[0])
+    except (ValueError, AttributeError):
+        return True  # malformed → don't seize (safer than guessing)
+    if pid <= 0:
+        return True  # sentinel / missing → don't seize
+
+    if os.name == "nt":
+        # Windows: OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION=0x1000, FALSE, pid).
+        # Returns NULL (0) if the process doesn't exist; nonzero handle if alive.
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.windll.kernel32
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.OpenProcess.argtypes = (
+                wintypes.DWORD,
+                wintypes.BOOL,
+                wintypes.DWORD,
+            )
+            SYNCHRONIZE = 0x00100000
+            handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+            if not handle:
+                return False  # dead — GetLastError() usually ERROR_INVALID_PARAMETER
+            kernel32.CloseHandle(handle)
+            return True
+        except Exception:
+            # ctypes failure → can't tell, don't seize (safe default)
+            return True
+
+    # POSIX: use signal-0 probe.
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # PID exists but not ours — still alive
+    except OSError:
+        return True  # unsupported / unknown — don't seize
 
 
 def release_story_driver(story_key: str, token: str) -> None:

@@ -368,6 +368,114 @@ def find_ready_interactive_stories() -> list[str]:
     return ready
 
 
+def consume_orphan_done(story_key: str) -> bool:
+    """Detect and consume done files written while no driver was watching.
+
+    Scenario this fixes: user emergency-stops the driver (or it crashes), but
+    the CLI keeps running in its PTY and finishes the stage — writing
+    ``.story/done/<key>/<stage>.json``. Without a driver polling, the done file
+    sits there orphaned and the story stays stuck in paused/planning forever.
+
+    Called from GET /api/story/{key} (every detail-page load) as a passive
+    reconciliation: if there's a done file for the current stage that hasn't
+    been claimed into ``_completed_stages``, claim it + write the completed
+    event + advance the story state. No-op if the driver is actively running
+    (driver's own poll loop owns that case) or nothing's orphaned.
+
+    Returns True if any done file was consumed (caller may want to refetch).
+    """
+    # Don't compete with a live driver — its poll loop handles done files.
+    if is_story_running(story_key):
+        return False
+    # Also defer if driver_claim is held by a live PID (cross-process driver
+    # active in another serve instance).
+    story = db.get_story(story_key)
+    if not story:
+        return False
+    existing_claim = story.get("driver_claim")
+    if existing_claim and db._driver_pid_alive(existing_claim):
+        return False
+
+    try:
+        ctx = json.loads(story.get("context_json") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return False
+    workspace = story.get("workspace", "")
+    if not workspace:
+        return False
+
+    # Don't touch already-finished stories.
+    if story.get("status") in ("completed", "failed", "aborted"):
+        return False
+
+    actions = ctx.get("_agent_actions") or []
+    completed_stages = list(ctx.get("_completed_stages") or [])
+    changed = False
+
+    from ...infra.json_helpers import robust_json_parse
+    from ...infra.paths import stage_done_file_rel
+
+    for action in actions:
+        if action.get("action") != "launch":
+            continue
+        stage = action.get("stage")
+        if not stage or stage in completed_stages:
+            continue
+        done_rel = action.get("done_file") or stage_done_file_rel(story_key, stage)
+        done_path = Path(workspace) / done_rel
+        if not done_path.exists():
+            continue
+        # Orphan done found — claim it.
+        try:
+            done_data = robust_json_parse(done_path) or {}
+        except Exception:
+            done_data = {}
+        completed_stages.append(stage)
+        db.log_event(story_key, stage, "completed", done_data)
+        # Register stage outputs (story_document + story_doc versioning), same
+        # as the driver's poll loop does. Best-effort.
+        try:
+            planner._register_stage_outputs(story_key, stage, done_data)
+        except Exception:
+            log.exception(
+                "[%s] register_stage_outputs failed during orphan consume for %s",
+                story_key,
+                stage,
+            )
+        log.info(
+            "[%s] consumed orphan done file for stage=%s (driver was not running)",
+            story_key,
+            stage,
+        )
+        changed = True
+
+    if not changed:
+        return False
+
+    ctx["_completed_stages"] = completed_stages
+    # If every launch stage is now done, the story is complete. Mirror what
+    # the driver's poll loop does at end-of-actions.
+    launch_stages = [
+        a.get("stage")
+        for a in actions
+        if a.get("action") == "launch" and a.get("stage")
+    ]
+    all_done = launch_stages and all(s in completed_stages for s in launch_stages)
+    if all_done:
+        db.update_story(
+            story_key,
+            context_json=json.dumps(ctx, ensure_ascii=False),
+            status="completed",
+        )
+        log.info("[%s] all stages done via orphan consume → completed", story_key)
+    else:
+        db.update_story(
+            story_key,
+            context_json=json.dumps(ctx, ensure_ascii=False),
+        )
+    return True
+
+
 def order_ready_stories(story_keys: list[str]) -> list[str]:
     """层5 scheduler:把 ready story 按 decide_schedule(优先级+就绪+FIFO)排序。
 
