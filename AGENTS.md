@@ -113,6 +113,64 @@ Trigger checklist:
 
 If three or more answers are yes, pause implementation and design the state model first.
 
+## Domain conventions (story-lifecycle)
+
+These are durable design contracts — not implementation details. Changing them requires reading the linked commits and updating tests + docs together. Each came from a real incident; the contract is the fix.
+
+### Adapter prompt delivery — `SessionSpec` + `start_session`
+
+How an AI CLI (claude/codex/kimi) receives its seed prompt is the **adapter's** business, not the spawner's. All spawn paths (`continue_orchestrator_agent`, `_spawn_story_agent_pty`, `api_spawn_session`) go through one contract:
+
+- `BaseAdapter.start_session(model, prompt, session_id, ...) -> SessionSpec`
+- `SessionSpec` carries `command` + `pty_prompt` + `readiness_marker`
+- ClaudeAdapter bakes the prompt into `command` (`claude "query"`), `pty_prompt=""`, `readiness_marker=None`
+- ShellAdapter (kimi/codex) returns bare `command`, `pty_prompt=<seed>`, `readiness_marker=<CLI's ready banner>`
+- Spawners do NOT branch on adapter type — they read the spec and execute mechanically
+
+**Anti-pattern**: adding a `prompts_via_pty`/`isinstance(adapter, ClaudeAdapter)` branch in a spawner. That drifts again — happened twice before this contract landed. See commits `a32a00f6`, `c90474c5`.
+
+### Per-story workspace — `worktrees_root` + LLM-decided slug
+
+Code agents run in an isolated per-story workspace, not the main monorepo:
+
+- Planning LLM returns `workspace_slug` in `PlanResult` (kebab-case title abbreviation, e.g. `mgm-app-version-limit`)
+- Backend `mkdir <worktrees_root>/<slug>/` (default `D:/worktrees` on Windows, `~/worktrees` elsewhere; overridable via `config.yaml` `worktrees_root` or env `STORY_WORKTREES_ROOT`)
+- `_build_cli_prompt` writes a `### 工作空间` section: agent's cwd is the workspace, it does `git worktree add` for each project it needs to touch
+- Spawn `cwd = ctx.workspace_path`, not the main workspace
+
+**LLM decides the slug, backend builds the dir** (no side effects in the model call — replayable). The agent decides *which projects* to bring in (it's closest to the need). See commit `8ddc3501`.
+
+### Driver lifecycle — dead-PID recovery + passive done-file consumption
+
+Two invariants that must hold, both learned from a stuck-story incident (commit `56583154`):
+
+1. **A dead driver must not lock the story forever.** `claim_story_driver` checks `_driver_pid_alive(token)` before failing CAS — if the holding PID is gone, a new driver may seize. Windows uses `OpenProcess(SYNCHRONIZE)` via ctypes (`os.kill(pid, 0)` returns `WinError 87` regardless of liveness — do not use it). POSIX uses `os.kill(pid, 0)`.
+2. **A CLI that self-completes while no driver is watching must still advance state.** `consume_orphan_done(story_key)` scans for done files not in `_completed_stages` and claims them. Triggered from `GET /api/story/{key}` — opening the detail page unsticks a story whose CLI finished after an emergency-stop. No-op when a driver is live (its poll loop owns that case) or the story is finished.
+
+**Hard rule**: the driver assumes "CLI lifecycle ⊆ driver lifecycle". Any path that breaks this (interactive manual run, emergency-stop, crash) must have a reconciliation entry. `consume_orphan_done` is that entry; don't add a second one.
+
+### `task_actions` drives stage semantics — not stage name, not prompt keywords
+
+Stage constraints (what the agent may/may not do) come from the **structured `task_actions` list**, never from keyword-matching the assembled prompt text:
+
+- `_build_exec_constraint(action_keys)` branches on `task_actions` content:
+  - only `write_design_doc` (and no code/tests) → **no code edits** (design is investigation only)
+  - contains `run_tests` → lightweight tests allowed (covers verify: `[run_tests, accept_review, write_test_report]` has no `write_code` but does write test code)
+  - `write_code` without `run_tests` → write code, no tests
+- All branches forbid heavy builds (mvn/gradle/yarn install).
+
+**Anti-pattern**: judging stage semantics by grepping the prompt for "写代码"/"Edit"/"Write". Keyword matching misclassifies negations, synonyms, and API names. Use the structured field. See commits `bcabcc43`, `88b02033` — the second was a bug in the first found via the offline analysis export.
+
+### Offline prompt analysis — no real-time prompt judge LLM
+
+Prompt quality is **not** judged by an LLM at spawn time. Real-time judges waste tokens, misjudge structured conditions, and false-positive-block normal stories. Instead:
+
+- `GET /api/analysis/prompts?status=&stage=&profile=&since=&limit=` exports `(prompt + outcome + events + llm_calls)` tuples per (story, stage), one row per assembled-prompt-and-its-result
+- An external AI (or human) analyzes correlations offline (which prompt patterns correlate with failures / retries / long durations) and feeds findings back into template changes
+- This module is `orchestrator/observability/prompt_export.py`
+
+**Outcome gates stay LLM-judged** (`unified_gate.py` — judges *results*, not prompts): result quality is fuzzy, prompt template correctness is structural. Don't conflate them.
+
 ## Conventions
 
 - **Chinese content**: story-lifecycle's stage templates and prompts are in Chinese — maintain this when editing.
