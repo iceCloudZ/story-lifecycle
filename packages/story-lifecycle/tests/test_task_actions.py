@@ -90,11 +90,21 @@ class TestBuildExecConstraint:
         assert "不要运行" in c or "不需要跑测试" in c
 
     def test_design_stage_no_code_forbids_writing_code(self):
-        """design 阶段(write_design_doc, 无 write_code)→ 禁写代码。"""
+        """design 阶段(只有 write_design_doc)→ 禁写代码。"""
         c = _build_exec_constraint(["write_design_doc"])
         # 必须明确禁止 Edit/Write 源文件,否则 design 阶段会动手改代码
         assert "不要" in c and ("Edit" in c or "Write" in c or "源文件" in c)
         assert "mvn" in c  # 同时禁构建
+
+    def test_verify_without_write_code_still_allows_tests(self):
+        """verify 阶段 task_actions=[run_tests, accept_review, write_test_report]
+        没有 write_code,但要写测试代码 + 跑测试 → 不该禁写代码,允许轻量测试。"""
+        c = _build_exec_constraint(
+            ["run_tests", "accept_review", "write_test_report"]
+        )
+        # 允许轻量测试,不该说"不要 Edit/Write 源文件"
+        assert "轻量自检" in c or "pytest" in c
+        assert "Edit" not in c and "源文件" not in c
 
     def test_write_code_without_tests_allows_writing_code(self):
         """build 阶段(write_code 无 run_tests)→ 允许写代码,禁测试。"""

@@ -128,16 +128,24 @@ def _build_task_list(action_keys: list[str]) -> str:
 def _build_exec_constraint(action_keys: list[str]) -> str:
     """根据 task_actions 内容决定执行约束(替 _is_single_stage 硬编码)。
 
-    三种语义:
-      - 无 write_code(design/纯调研)→ **不写代码**,只产出设计文档/调研报告。
-        老 prompt 不分 stage 一律说"只写代码" → design 阶段误让 agent 写代码。
-      - 有 write_code + 有 run_tests → 允许跑轻量测试。
-      - 有 write_code + 无 run_tests → 只写代码不跑测试。
+    三种语义(按动作集合判,不靠 stage 名):
+      - 纯调研(只有 write_design_doc,无 write_code 也无 run_tests)→ 禁写代码。
+        design 阶段常是这种 → 老 prompt 说"只写代码"误导 agent 动手。
+      - 含 run_tests → 允许跑轻量测试(write_code+run_tests / 只 run_tests+review+report
+        的 verify 都算,verify 要写测试代码 + 跑测试)。
+      - 含 write_code 但无 run_tests → 写代码不跑测试。
     都禁重构建。
+
+    注意:不能简单按 "有 write_code" 判断 —— verify 的 task_actions
+    [run_tests, accept_review, write_test_report] 没有 write_code,但实际要
+    动代码(写测试 + 改 bug)。所以禁写代码的判据是"只 design_doc 且无 code 无 test"。
     """
     has_code = "write_code" in action_keys
     has_tests = "run_tests" in action_keys
-    if not has_code:
+    has_only_design = (
+        "write_design_doc" in action_keys and not has_code and not has_tests
+    )
+    if has_only_design:
         # 纯调研/设计阶段(design):只读代码 + 产出方案,不动手改代码。
         return (
             "\n### 执行约束\n"
