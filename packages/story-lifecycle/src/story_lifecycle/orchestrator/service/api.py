@@ -2168,6 +2168,45 @@ def api_get_snapshot(story_key: str):
     return {"path": str(snapshot_path), "revision": result["revision"], "content": ""}
 
 
+@app.get("/api/analysis/prompts")
+def api_export_prompt_analysis(
+    status: str = "completed",
+    stage: str = "",
+    profile: str = "",
+    since: str = "",
+    limit: int = 50,
+):
+    """Export (prompt + outcome + llm_calls + events) tuples for offline
+    prompt-quality analysis by an external AI.
+
+    Returns one row per (story, stage) — the unit at which a prompt is
+    assembled and a result is produced. Lets an external analyzer correlate
+    prompt patterns with stage failures / retries / long durations, then feed
+    findings back into template changes (offline, not real-time judge).
+
+    Query params:
+      - status: completed/failed/aborted/active/paused/all (default completed)
+      - stage: design/build/verify/all (default all)
+      - profile: single-pass/minimal/.../all (default all)
+      - since: ISO datetime lower bound (default 30 days ago)
+      - limit: 1-200 (default 50)
+    """
+    from ..observability.prompt_export import export_prompt_analysis
+
+    # Clamp limit into a sane range.
+    limit = max(1, min(200, int(limit or 50)))
+    try:
+        return export_prompt_analysis(
+            status=status,
+            stage=stage,
+            profile=profile,
+            since=since,
+            limit=limit,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.get("/api/story/{story_key}/prompts")
 def api_get_prompts(story_key: str):
     """返回该 story 所有 stage 的 prompt 内容(复盘用)。

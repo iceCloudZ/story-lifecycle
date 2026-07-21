@@ -66,7 +66,15 @@ class TestBuildTaskList:
 
 
 class TestBuildExecConstraint:
-    """执行约束由 task_actions 内容决定。"""
+    """执行约束由 task_actions 内容决定。
+
+    三态(2026-07-21 修):
+      - 无 write_code(design/纯调研)→ 禁写代码 + 禁构建/测试
+      - write_code + run_tests → 允许轻量测试 + 禁重构建
+      - write_code 无 run_tests → 写代码不跑测试 + 禁重构建
+    老逻辑只看 run_tests → design(write_design_doc) 被错判成"写代码"阶段,
+    prompt 文字明说"本阶段只写代码/文档"误导 agent 在 design 动手改代码。
+    """
 
     def test_with_run_tests_allows_lightweight(self):
         c = _build_exec_constraint(["write_code", "run_tests"])
@@ -80,6 +88,19 @@ class TestBuildExecConstraint:
     def test_empty_actions_forbids(self):
         c = _build_exec_constraint([])
         assert "不要运行" in c or "不需要跑测试" in c
+
+    def test_design_stage_no_code_forbids_writing_code(self):
+        """design 阶段(write_design_doc, 无 write_code)→ 禁写代码。"""
+        c = _build_exec_constraint(["write_design_doc"])
+        # 必须明确禁止 Edit/Write 源文件,否则 design 阶段会动手改代码
+        assert "不要" in c and ("Edit" in c or "Write" in c or "源文件" in c)
+        assert "mvn" in c  # 同时禁构建
+
+    def test_write_code_without_tests_allows_writing_code(self):
+        """build 阶段(write_code 无 run_tests)→ 允许写代码,禁测试。"""
+        c = _build_exec_constraint(["write_code"])
+        assert "只写代码" in c  # 明确允许写代码
+        assert "不要运行" in c  # 但禁构建/测试
 
 
 class TestExpectedOutputs:

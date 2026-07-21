@@ -128,11 +128,25 @@ def _build_task_list(action_keys: list[str]) -> str:
 def _build_exec_constraint(action_keys: list[str]) -> str:
     """根据 task_actions 内容决定执行约束(替 _is_single_stage 硬编码)。
 
-    选了 run_tests → 允许跑轻量测试。
-    没选 → 只写代码,不需要跑测试。
+    三种语义:
+      - 无 write_code(design/纯调研)→ **不写代码**,只产出设计文档/调研报告。
+        老 prompt 不分 stage 一律说"只写代码" → design 阶段误让 agent 写代码。
+      - 有 write_code + 有 run_tests → 允许跑轻量测试。
+      - 有 write_code + 无 run_tests → 只写代码不跑测试。
     都禁重构建。
     """
+    has_code = "write_code" in action_keys
     has_tests = "run_tests" in action_keys
+    if not has_code:
+        # 纯调研/设计阶段(design):只读代码 + 产出方案,不动手改代码。
+        return (
+            "\n### 执行约束\n"
+            "本阶段**只调研 + 产出设计文档**,不要写/改任何代码。"
+            "可以读代码、查依赖(kb.py)、画数据流,但**不要 Edit/Write 任何源文件**"
+            "(只写 spec/research 这类设计产出文件)。"
+            "**不要运行**任何构建/测试命令(mvn/gradle/pytest 等)——"
+            "它们在大型仓库上常阻塞超 10 分钟。\n"
+        )
     if has_tests:
         return (
             "\n### 执行约束\n"
