@@ -14,10 +14,12 @@ log = logging.getLogger(__name__)
 
 LIFECYCLE_LABEL_PREFIX = "lifecycle:"
 
+# STATUS-CQRS-REFACTOR: 4 态映射(active/paused/completed/failed)。
+# 原 blocked/started(implementing)合并:active→implementing label,paused→paused label。
 STATUS_MAP = {
     "completed": ("close", "lifecycle:done"),
-    "started": ("label", "lifecycle:implementing"),
-    "blocked": ("label", "lifecycle:blocked"),
+    "active": ("label", "lifecycle:implementing"),
+    "failed": ("label", "lifecycle:failed"),
     "paused": ("label", "lifecycle:paused"),
 }
 

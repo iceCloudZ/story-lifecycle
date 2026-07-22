@@ -150,10 +150,11 @@ class TapdSource(StorySource):
         return self._parse_story(flat) if flat else None
 
     def sync_status(self, item_id: str, status: str):
+        # STATUS-CQRS-REFACTOR: 4 态合并后映射(blocked→paused, aborted→failed)。
         TAPD_STATUS_MAP = {
             "completed": "done",
-            "blocked": "reopen",
-            "aborted": "postponed",
+            "paused": "reopen",
+            "failed": "postponed",
         }
         tapd_status = TAPD_STATUS_MAP.get(status)
         if not tapd_status:

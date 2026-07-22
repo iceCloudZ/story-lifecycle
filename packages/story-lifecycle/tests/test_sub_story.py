@@ -84,9 +84,12 @@ def test_create_sub_story(tmp_path):
         assert ctx["spec_path"] == ".story/context/FEAT-001/spec.md"
         assert ctx["sub_description"] == "Fix login blank page"
 
-        # Parent moved to waiting_subtasks
+        # Parent moved to paused with _pause_reason=waiting_subtasks
+        # (waiting_subtasks 合并进 paused,子原因记 ctx._pause_reason)。
         parent = m.get_story("FEAT-001")
-        assert parent["status"] == "waiting_subtasks"
+        assert parent["status"] == "paused"
+        parent_ctx = json.loads(parent["context_json"] or "{}")
+        assert parent_ctx.get("_pause_reason") == "waiting_subtasks"
     finally:
         m.get_db_path = original
 
@@ -104,14 +107,19 @@ def test_abort_sub_story(tmp_path):
             subtask_index=0,
         )
         m.update_story("FEAT-002-sub-1", sub_type="bug-fix")
-        m.update_story("FEAT-002", status="waiting_subtasks")
+        m.update_story(
+            "FEAT-002",
+            status="paused",
+            context_json='{"_pause_reason": "waiting_subtasks"}',
+        )
 
         from story_lifecycle.orchestrator.service.story_service import abort_story
 
         abort_story("FEAT-002-sub-1", "User abort")
 
         child = m.get_story("FEAT-002-sub-1")
-        assert child["status"] == "aborted"
+        # aborted 合并进 failed(不可恢复失败终态)。
+        assert child["status"] == "failed"
         assert child["last_error"] == "User abort"
     finally:
         m.get_db_path = original
@@ -129,7 +137,11 @@ def test_resume_parent(tmp_path):
             parent_key="FEAT-003",
             subtask_index=0,
         )
-        m.update_story("FEAT-003", status="waiting_subtasks")
+        m.update_story(
+            "FEAT-003",
+            status="paused",
+            context_json='{"_pause_reason": "waiting_subtasks"}',
+        )
         m.update_story("FEAT-003-sub-1", status="active")
 
         from story_lifecycle.orchestrator.service.story_service import resume_parent
@@ -157,7 +169,11 @@ def test_resume_parent_abort_subs(tmp_path):
             parent_key="FEAT-004",
             subtask_index=0,
         )
-        m.update_story("FEAT-004", status="waiting_subtasks")
+        m.update_story(
+            "FEAT-004",
+            status="paused",
+            context_json='{"_pause_reason": "waiting_subtasks"}',
+        )
         m.update_story("FEAT-004-sub-1", status="active")
 
         from story_lifecycle.orchestrator.service.story_service import resume_parent
@@ -165,7 +181,8 @@ def test_resume_parent_abort_subs(tmp_path):
         resume_parent("FEAT-004", strategy="abort_subs")
 
         child = m.get_story("FEAT-004-sub-1")
-        assert child["status"] == "aborted"
+        # aborted 合并进 failed(不可恢复失败终态)。
+        assert child["status"] == "failed"
     finally:
         m.get_db_path = original
 
@@ -221,9 +238,12 @@ def test_api_create_sub_story(tmp_path):
         assert data["storyKey"] == "API-001-sub-1"
         assert data["subType"] == "bug-fix"
 
-        # Parent should be waiting_subtasks
+        # Parent should be paused with _pause_reason=waiting_subtasks
+        # (waiting_subtasks 合并进 paused)。
         parent = m.get_story("API-001")
-        assert parent["status"] == "waiting_subtasks"
+        assert parent["status"] == "paused"
+        parent_ctx = json.loads(parent["context_json"] or "{}")
+        assert parent_ctx.get("_pause_reason") == "waiting_subtasks"
     finally:
         m.get_db_path = original
 
@@ -243,7 +263,8 @@ def test_api_abort_story(tmp_path):
         assert resp.status_code == 200
 
         s = m.get_story("API-002")
-        assert s["status"] == "aborted"
+        # aborted 合并进 failed(不可恢复失败终态)。
+        assert s["status"] == "failed"
     finally:
         m.get_db_path = original
 
@@ -260,7 +281,11 @@ def test_api_resume_parent(tmp_path):
             parent_key="API-003",
             subtask_index=0,
         )
-        m.update_story("API-003", status="waiting_subtasks")
+        m.update_story(
+            "API-003",
+            status="paused",
+            context_json='{"_pause_reason": "waiting_subtasks"}',
+        )
 
         from fastapi.testclient import TestClient
         from story_lifecycle.orchestrator.service.api import app

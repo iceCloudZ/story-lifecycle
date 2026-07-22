@@ -39,6 +39,11 @@ from ..engine.graph import (
 )
 from ..engine.profile_loader import resolve_profile
 from ..engine import planner
+from ...sourcing.state_machine import (
+    activate as sm_activate,
+    mark_completed as sm_mark_completed,
+    pause as sm_pause,
+)
 
 
 log = logging.getLogger("story-lifecycle.api")
@@ -995,7 +1000,7 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
                 story_key,
                 context_json=_json.dumps(_ctx, ensure_ascii=False),
             )
-        db.update_story(story_key, status="active")
+        sm_activate(story_key)
         start_story_async(story_key)
         return {"ok": True, "status": "resumed"}
 
@@ -1049,12 +1054,7 @@ def advance_lifecycle_state(story_key: str):
     # (start_idx 跳过 _completed_stages 已含的)。
     ctx.pop("_story_state_gate", None)
     ctx["_lifecycle_state"] = next_state
-    db.update_story(
-        story_key,
-        lifecycle_state=next_state,
-        status="active",
-        context_json=_json.dumps(ctx, ensure_ascii=False),
-    )
+    sm_activate(story_key, lifecycle_state=next_state, ctx_updates=ctx)
     db.log_event(
         story_key,
         s.get("current_stage") or "",
@@ -1075,7 +1075,7 @@ def advance_lifecycle_state(story_key: str):
 
     if not next_stages:
         # 终态:无阶段可跑 → 整个 story 完成
-        db.update_story(story_key, status="completed")
+        sm_mark_completed(story_key)
         return {"ok": True, "lifecycle_state": next_state, "status": "completed"}
 
     start_story_async(story_key)
@@ -1115,7 +1115,7 @@ def skip_stage(story_key: str, stage: str, req: SkipRequest = None):
 
     reason = req.reason if req else "Manual skip"
     db.log_stage(story_key, stage, "skip", reason)
-    db.update_story(story_key, status="active")
+    sm_activate(story_key)
 
     # Recover: re-submit to thread pool
     start_story_async(story_key)
@@ -1127,9 +1127,10 @@ def fail_story(story_key: str, req: SkipRequest = None):
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")
-    db.update_story(
-        story_key, status="blocked", last_error=req.reason if req else "Manual fail"
-    )
+    # blocked 合并进 paused;走 story_service.fail_story(写 pause_reason=manual_fail)
+    from .story_service import fail_story as _fail
+
+    _fail(story_key, req.reason if req else "Manual fail")
     return {"ok": True}
 
 
@@ -1150,14 +1151,16 @@ def archive_story(story_key: str):
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")
-    db.update_story(story_key, status="archived", lifecycle_state="结项")
+    # archived 移出 status:归档 = 引擎完成 + 业务结项(lifecycle_state=结项)。
+    sm_mark_completed(story_key)
+    db.update_story(story_key, lifecycle_state="结项")
     db.log_stage(
         story_key,
         s.get("current_stage", ""),
         "archive",
         "User archived story after release",
     )
-    return {"ok": True, "status": "archived"}
+    return {"ok": True, "status": "completed"}
 
 
 @app.post("/api/story/{parent_key}/sub")
@@ -1215,7 +1218,7 @@ def emergency_stop_story(story_key: str):
         kill_pty(story_key)
     except Exception:
         pass
-    db.update_story(story_key, status="paused", last_error="紧急停止（可恢复）")
+    sm_pause(story_key, error="紧急停止（可恢复）")
     db.log_event(
         story_key,
         s.get("current_stage") or "",
@@ -3306,8 +3309,9 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
 
     try:
         if intake_state == "candidate":
-            # Promote candidate to ready + planning
-            db.update_story(story_key, intake_state="ready", status="planning")
+            # Promote candidate to ready. planning 移出 status(归 lifecycle_state=待启动);
+            # /start 后引擎开始跑规划,算 active。
+            db.update_story(story_key, intake_state="ready", status="active")
 
         # Project binding is optional during Intake. In monorepos, the selected
         # implementation modules (for example hc-order or hc-limit under hc-all) are
@@ -3377,7 +3381,7 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
             log.debug("[%s] PRD dual-write skipped: %s", story_key, exc)
         db.bump_context_revision(story_key)
 
-        db.update_story(story_key, intake_state="ready", status="planning")
+        db.update_story(story_key, intake_state="ready", status="active")
     except HTTPException:
         raise
     except Exception as exc:
@@ -3595,13 +3599,7 @@ def api_confirm_plan(story_key: str, body: dict | None = Body(default=None)):
 
     ctx["_plan_confirmed"] = True
 
-    db.update_story(
-        story_key,
-        context_json=json.dumps(ctx, ensure_ascii=False),
-        status="active",
-        # 确认规划 = 业务上进入开发态(TABS-LIFECYCLE-STATE:待启动→开发中的推进点)。
-        lifecycle_state="开发",
-    )
+    sm_activate(story_key, ctx_updates=ctx, lifecycle_state="开发")
 
     start_story_async(story_key)
     return {"ok": True, "story_key": story_key}
@@ -3625,10 +3623,12 @@ def api_update_action_adapter(
     story = db.get_story(story_key)
     if not story:
         raise HTTPException(status_code=404, detail="story not found")
-    if story.get("status") != "planning":
+    # planning 移出 status:adapter 只在「待启动」(未确认规划)阶段允许改,
+    # 判 lifecycle_state 而非 status。
+    if story.get("lifecycle_state") != "待启动":
         raise HTTPException(
             status_code=409,
-            detail=f"can only change adapter in planning state, current: {story.get('status')}",
+            detail=f"can only change adapter before plan confirm (lifecycle_state={story.get('lifecycle_state')})",
         )
     if req.adapter not in ("claude", "codex", "kimi"):
         raise HTTPException(status_code=400, detail=f"unknown adapter: {req.adapter}")
@@ -3662,11 +3662,7 @@ def api_regenerate_plan(story_key: str):
     ctx = json.loads(story.get("context_json") or "{}")
     ctx.pop("_agent_actions", None)
     ctx["_plan_confirmed"] = False
-    db.update_story(
-        story_key,
-        context_json=json.dumps(ctx, ensure_ascii=False),
-        status="planning",
-    )
+    sm_activate(story_key, ctx_updates=ctx)
 
     # 重新触发 Agent 规划
     try:
@@ -3851,9 +3847,14 @@ async def api_clarify_stream(story_key: str):
             # 状态变化推送
             yield f"data: {json.dumps({'type': 'status', 'status': status}, ensure_ascii=False)}\n\n"
             # 终态:design 已离开 awaiting-clarify 且无新事件 → 收尾
-            if status not in ("awaiting-clarify", "active", "implementing", "planning"):
+            # 4 态合并后:active/implementing 都归 active;planning 移出 status。
+            # "还活着"的状态 = awaiting-clarify / active(paused 在这收尾吗?不——
+            # paused 也要等,但 SSE 场景里 status 来自 stage 执行流,paused 时
+            # driver 已退出,这里收尾是对的)。
+            if status not in ("awaiting-clarify", "active", "paused"):
                 idle += 1
-                if idle > 2 or status in ("completed", "failed"):
+                from ...sourcing.execution_status import is_terminal
+                if idle > 2 or is_terminal(status):
                     yield f"data: {json.dumps({'type': 'done', 'status': status}, ensure_ascii=False)}\n\n"
                     return
             else:

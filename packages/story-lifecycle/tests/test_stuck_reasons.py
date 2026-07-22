@@ -66,12 +66,17 @@ class TestMissingConfig:
 
 class TestStoryBlocked:
     def test_blocked_status(self):
+        # blocked 合并进 paused;子原因 manual_fail 写 ctx._pause_reason。
         with patch(
             "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
-                _story(status="blocked"), False, None, _no_exit(), True
+                _story(status="paused", context_json='{"_pause_reason": "manual_fail"}'),
+                False,
+                None,
+                _no_exit(),
+                True,
             )
         assert result["code"] == "story_blocked"
         assert result["severity"] == "error"
@@ -79,12 +84,20 @@ class TestStoryBlocked:
 
 class TestWaitingSubtasks:
     def test_waiting_subtasks_status(self):
+        # waiting_subtasks 合并进 paused;子原因 waiting_subtasks 写 ctx._pause_reason。
         with patch(
             "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
-                _story(status="waiting_subtasks"), False, None, _no_exit(), True
+                _story(
+                    status="paused",
+                    context_json='{"_pause_reason": "waiting_subtasks"}',
+                ),
+                False,
+                None,
+                _no_exit(),
+                True,
             )
         assert result["code"] == "waiting_subtasks"
         assert result["severity"] == "info"
@@ -254,13 +267,20 @@ class TestPriorityOrder:
     """Verify that earlier reasons take priority over later ones."""
 
     def test_blocked_over_gate(self):
-        """blocked status takes priority over paused checks."""
+        """blocked(manual_fail pause_reason)takes priority over gate checks."""
         with patch(
             "story_lifecycle.orchestrator.observability.debug_packet._check_llm_configured",
             return_value=True,
         ):
             result = _explain_stuck_reason(
-                _story(status="blocked"), False, None, _no_exit(), True
+                _story(
+                    status="paused",
+                    context_json='{"_pause_reason": "manual_fail"}',
+                ),
+                False,
+                None,
+                _no_exit(),
+                True,
             )
         assert result["code"] == "story_blocked"
 

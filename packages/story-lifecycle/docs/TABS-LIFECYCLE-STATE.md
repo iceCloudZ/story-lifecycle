@@ -183,3 +183,75 @@ lifecycle_state 写入:
 不写 lifecycle_state(确认合理):
   api.py:3310,3380     /start 只写 status=planning(story 还在待启动)
 ```
+
+---
+
+## 第 7 轮:CQRS 重构 + 4 值合并 + list SQL 修 bug
+
+### 背景
+
+第 6 轮把 tab 判据改纯 lifecycle_state 后,发现三个遗留问题:
+1. 引擎 `status` 有 11 个值,其中 7 个冗余(分属不同维度或可合并)
+2. 22 个 `db.update_story(status=)` 裸写入点散落各处,副作用(last_error 截断/log/清 gate)不一致
+3. `list_visible_stories` 按 status 过滤,与前端按 lifecycle_state 过滤冲突 → 双重过滤 bug(failed/archived story 被后端 SQL 丢弃)
+
+参照 `docs/grok-build-reference.md` §2.2(CQRS 三分)+ 业界共识(workflow engine 用收口 mutation,非转移表)。
+
+### 改动总览
+
+#### 三字段的新边界
+```
+status (引擎执行态, 4 值):     active / paused / completed / failed
+lifecycle_state (业务状态, 5 值): 待启动 / 开发 / 测试 / 上线 / 结项
+intake_state (intake 流程):    candidate / ready
+```
+
+#### 新建 5 个模块(sourcing/)
+
+| 模块 | 职责 | 对应 grok §2.2 |
+|---|---|---|
+| `execution_status.py` | ExecutionStatus enum + normalize_status + 集合常量 | state.rs |
+| `lifecycle_state.py` | LifecycleState enum + resolve_lifecycle_state | state.rs |
+| `state_queries.py` | CQRS 读侧纯函数(is_terminal/should_auto_advance/...) | queries.rs |
+| `state_mutations.py` | CQRS 写侧事件(decide_state_transition → Event) | mutations.rs + events.rs |
+| `state_machine.py` | **status 变更唯一收口**(mark_failed/activate/pause/mark_completed) | mutations.rs |
+
+#### 4 值合并(implementing→active, blocked/waiting→paused, aborted→failed)
+
+- 22 个裸 `db.update_story(status=)` 全部替换为 4 个 mutation 函数调用
+- 副作用收口:last_error 统一截断 500、pause_reason 统一写 ctx、清 gate 统一处理
+- 3 个硬碰撞分支点重写:
+  - `resume_parent`:读 ctx._pause_reason 鉴别"等子任务暂停" vs "手动暂停"
+  - `debug_packet`:paused 内部按 _pause_reason 分诊断码(waiting_subtasks/story_blocked/gate_blocked)
+  - `_check_parent_auto_resume`:summary "aborted" 桶 re-key 为 "failed"
+
+#### 移除 planning/idle/archived 出 status
+
+- planning → lifecycle_state='待启动' 判据(api.py adapter 守卫改判 lifecycle)
+- idle → intake_state=candidate 表达(models.py/sync 默认值改 active)
+- archived → lifecycle_state=结项 表达(归档端点写 completed + 结项)
+
+#### list SQL 双重过滤 bug 修复(models.py)
+
+- `list_active_stories`: `WHERE lifecycle_state IN ('待启动','开发','测试','上线')`(原按 status)
+- `list_completed_stories`: `WHERE lifecycle_state = '结项'`(原按 status)
+- 修掉了 failed/archived story 被后端 SQL 丢弃的 bug
+
+#### 前端 badge 简化(StoryCard.tsx)
+
+- STATUS_LABELS 4 态:运行中/等待中/已完成/异常
+- normalizeStatus 归一函数(与后端对称)
+- CARD_ACTIONS:failed 加「重试」、completed 去掉「删除」
+
+### 验证
+
+- `pytest`: 1158 passed(5 失败全是 clarify_mcp/consult_cli 环境问题,改动前就存在)
+- `ruff check`: 全过
+- 新增 `test_execution_status.py`(22 测试)+ `test_state_queries.py`(20 测试)
+
+### 设计模式选择理由(搜索 + grok 文档)
+
+- **status 维度用收口 mutation**(非转移表):业界共识(Temporal 社区 / workflowengine.io)—
+  workflow engine(动作完成触发下一步)不适合纯转移表(事件类型会从 4 膨胀到 15+)
+- **lifecycle_state 维度用拓扑 + 事件**:已有 story_states YAML next 链(声明式拓扑),
+  state_queries 读拓扑 + state_mutations 产事件,planner 收事件后持久化

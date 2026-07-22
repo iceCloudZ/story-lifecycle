@@ -247,14 +247,15 @@ class TestGetPlan:
 class TestArchive:
     def test_archive_sets_lifecycle_done(self, client, tmp_path, monkeypatch):
         """归档端点应同步写 lifecycle_state=结项(TABS-LIFECYCLE-STATE: 已结项 tab 纯按
-        lifecycle_state 判,不再靠 status=archived 兜底)。"""
+        lifecycle_state 判)。archived 移出 status → 归档写 status=completed +
+        lifecycle_state=结项。"""
         _create_story(client)
         resp = client.put("/api/story/TEST-001/archive")
 
         assert resp.status_code == 200
-        assert resp.json()["status"] == "archived"
+        assert resp.json()["status"] == "completed"
         updated = db.get_story("TEST-001")
-        assert updated["status"] == "archived"
+        assert updated["status"] == "completed"
         assert updated["lifecycle_state"] == "结项"
 
     def test_404_for_missing_story(self, client):

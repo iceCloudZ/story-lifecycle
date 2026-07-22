@@ -140,7 +140,7 @@ def sync_tapd(
                 tapd_url=item.extra.get("url", ""),
                 tapd_type=tapd_type,
                 intake_state="candidate",
-                status="idle",
+                status="active",
                 parent_key=parent_key,
             )
             # 状态治理:新建 story 按映射写初始 lifecycle_state(无防回退问题,从无到有)。

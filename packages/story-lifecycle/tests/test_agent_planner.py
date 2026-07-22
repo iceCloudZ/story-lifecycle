@@ -118,7 +118,9 @@ class TestRunOrchestratorAgent:
         ctx = json.loads(story["context_json"])
         assert "_agent_actions" in ctx
         assert ctx["_plan_confirmed"] is False
-        assert story["status"] == "planning"
+        # planning 移出 status:规划期间引擎在跑规划 LLM,DB status=active
+        # (lifecycle_state 才驱动「待启动」tab)。
+        assert story["status"] == "active"
 
     def test_skip_stage_via_structured_plan(self, isolated_db, monkeypatch, tmp_path):
         """模型在 PlanResult 里标 skip=True → 产出 skip action。"""

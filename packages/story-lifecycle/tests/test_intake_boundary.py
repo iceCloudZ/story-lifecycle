@@ -14,7 +14,9 @@ class TestCandidateRejection:
         )
         assert created
         assert story["intake_state"] == "candidate"
-        assert story["status"] == "idle"
+        # idle 移出 status:candidate 的"未启动"由 intake_state=candidate 表达,
+        # status 用 active(candidate 被 intake_state 过滤挡在四 tab 外)。
+        assert story["status"] == "active"
 
     def test_start_story_async_rejects_candidate(
         self, isolated_story_home, monkeypatch

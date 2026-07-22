@@ -146,7 +146,8 @@ class TestContextAPI:
         data = resp.json()
         assert data["ok"] is True
         story = db.get_story(key)
-        assert story["status"] == "planning"
+        # planning 移出 status:/start 后引擎开始跑规划,DB status=active。
+        assert story["status"] == "active"
 
     def test_intake_preview_prefills_story_from_source(
         self, client, isolated_story_home, monkeypatch
@@ -305,7 +306,8 @@ class TestContextAPI:
         assert resp.status_code == 200
         story = db.get_story("tapd-1234")
         assert story["intake_state"] == "ready"
-        assert story["status"] == "planning"
+        # planning 移出 status:/start 后引擎开始跑规划,DB status=active。
+        assert story["status"] == "active"
         import json as _json
 
         ctx = _json.loads(story["context_json"] or "{}")

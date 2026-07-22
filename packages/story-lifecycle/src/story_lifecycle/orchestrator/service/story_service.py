@@ -7,6 +7,11 @@ from pathlib import Path
 
 from ...infra.db import models as db
 from ...infra.story_paths import assert_within_workspace, safe_segment, story_prd_path
+from ...sourcing.state_machine import (
+    activate as sm_activate,
+    mark_failed as sm_mark_failed,
+    pause as sm_pause,
+)
 from ..nodes import load_profile, get_stage_config
 
 MAX_CONTEXT_SIZE = 1 * 1024 * 1024  # 1MB
@@ -235,15 +240,18 @@ def get_story_cli_model(story_key: str) -> dict:
 
 
 def fail_story(story_key: str, reason: str = "Manual fail"):
-    """Mark a story as blocked."""
-    db.update_story(story_key, status="blocked", last_error=reason)
+    """Mark a story as paused (manual fail). Blocked 合并进 paused。
+
+    子原因(manual_fail)写 ctx._pause_reason,debug_packet 用它鉴别诊断码。
+    """
+    sm_pause(story_key, reason="manual_fail", error=reason)
     db.log_stage(story_key, "", "fail", reason)
 
 
 def skip_stage(story_key: str, stage: str, reason: str = "Manual skip"):
     """Skip a story's current stage."""
     db.log_stage(story_key, stage, "skip", reason)
-    db.update_story(story_key, status="active")
+    sm_activate(story_key)
 
 
 def delete_story(story_key: str):
@@ -316,20 +324,23 @@ def create_sub_story(
         db.update_story(story_key, sub_type=sub_type)
     db.log_stage(story_key, "", "create_sub", f"type={sub_type}, from={parent_key}")
 
-    # Parent status transition
+    # Parent status transition: waiting_subtasks 合并进 paused,子原因记 ctx。
     if parent["status"] == "active":
-        db.update_story(parent_key, status="waiting_subtasks")
+        sm_pause(parent_key, reason="waiting_subtasks")
 
     return story_key
 
 
 def abort_story(story_key: str, reason: str = "User abort"):
-    """Abort a story. Aborted stories don't count as 'completed'."""
+    """Abort a story. aborted 合并进 failed(都是不可恢复失败终态)。
+
+    原 aborted 的"手动终止"语义保留在 last_error 里。
+    """
     s = db.get_story(story_key)
     if not s:
         raise ValueError(f"Story not found: {story_key}")
 
-    db.update_story(story_key, status="aborted", last_error=reason)
+    sm_mark_failed(story_key, reason)
     db.log_stage(story_key, "", "abort", reason)
 
     # If this is a sub-story, check if parent can resume
@@ -338,38 +349,40 @@ def abort_story(story_key: str, reason: str = "User abort"):
 
 
 def resume_parent(parent_key: str, strategy: str = "pause_subs"):
-    """Resume a parent from waiting_subtasks. Handles unfinished subs."""
+    """Resume a parent paused for subtasks. waiting_subtasks 合并进 paused 后,
+    靠 ctx._pause_reason 鉴别(不用 status 值)。"""
     parent = db.get_story(parent_key)
     if not parent:
         raise ValueError(f"Parent story not found: {parent_key}")
-    if parent["status"] != "waiting_subtasks":
-        raise ValueError("父故事不在等待子故事状态")
+    _ctx = _json.loads(parent.get("context_json") or "{}")
+    if _ctx.get("_pause_reason") != "waiting_subtasks":
+        raise ValueError("父故事不在等待子任务状态")
 
     subs = db.get_sub_stories(parent_key)
-    active_subs = [s for s in subs if s["status"] in ("active", "paused", "blocked")]
+    active_subs = [s for s in subs if s["status"] in ("active", "paused")]
 
     if strategy == "pause_subs":
         for sub in active_subs:
-            db.update_story(sub["story_key"], status="paused")
+            sm_pause(sub["story_key"])
             db.log_stage(sub["story_key"], "", "pause", "父故事恢复，子故事被暂停")
     elif strategy == "abort_subs":
         for sub in active_subs:
             abort_story(sub["story_key"], "父故事恢复，子故事被中止")
 
-    db.update_story(parent_key, status="active")
+    sm_activate(parent_key, clear_pause_reason=True)
     db.log_stage(parent_key, "", "resume", "手动恢复")
 
 
 def _check_parent_auto_resume(parent_key: str):
     """Check if all subs are done; if so, resume parent automatically."""
     subs = db.get_sub_stories(parent_key)
-    terminal = {"completed", "aborted", "blocked"}
-    unfinished = [s for s in subs if s["status"] not in terminal]
+    # 4 态合并后:终态 = completed/failed(aborted→failed,blocked→paused 非终态)。
+    from ...sourcing.execution_status import TERMINAL_STATUSES
+
+    unfinished = [s for s in subs if s["status"] not in TERMINAL_STATUSES]
 
     if not unfinished:
-        import json as _json
-
-        db.update_story(parent_key, status="active")
+        sm_activate(parent_key, clear_pause_reason=True)
         summary = {
             "total": len(subs),
             "completed": [
@@ -377,10 +390,11 @@ def _check_parent_auto_resume(parent_key: str):
                 for s in subs
                 if s["status"] == "completed"
             ],
-            "aborted": [
+            # aborted 合并进 failed;桶 key 跟着改,否则永远空。
+            "failed": [
                 {"story_key": s["story_key"], "type": s.get("sub_type")}
                 for s in subs
-                if s["status"] == "aborted"
+                if s["status"] == "failed"
             ],
         }
         db.update_context(
@@ -449,7 +463,7 @@ def create_story_from_source(
                     error=f"父需求导入失败: {parent_result.error or parent_result.status}",
                 )
             # Mark auto-imported parent as paused with import marker
-            db.update_story(parent_result.story_key, status="paused")
+            sm_pause(parent_result.story_key)
             db.update_context(parent_result.story_key, "source_import_only", "true")
             result.parent_key = parent_result.story_key
 

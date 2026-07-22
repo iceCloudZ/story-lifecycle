@@ -15,6 +15,12 @@ from pathlib import Path
 from ...infra.llm_client import get_llm, with_story_key
 from ...infra.story_paths import safe_story_path
 from ...infra.paths import stage_done_file_rel
+from ...sourcing.state_machine import (
+    activate as sm_activate,
+    mark_completed as sm_mark_completed,
+    mark_failed as sm_mark_failed,
+    pause as sm_pause,
+)
 
 log = logging.getLogger("story-lifecycle.planner")
 
@@ -437,11 +443,10 @@ def run_orchestrator_agent(
         for a in actions
         if a.get("action") == "launch"
     )
-    db.update_story(
-        story_key,
-        context_json=json.dumps(ctx, ensure_ascii=False),
-        status="planning",
-    )
+    # planning 移出 status:规划期间 lifecycle_state 在「待启动」(未确认规划),
+    # 引擎在跑规划 LLM 算 active。返回值的 "status":"planning" 是给 SSE 调用方
+    # 的信号(表示规划完成),不是 DB status — 保留。
+    sm_activate(story_key, ctx_updates=ctx)
 
     return {"status": "planning", "actions": actions}
 
@@ -817,7 +822,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     actions = ctx.get("_agent_actions", [])
     if not actions:
         log.warning(f"No actions found for {story_key}")
-        db.update_story(story_key, status="failed", last_error="No actions to execute")
+        sm_mark_failed(story_key, "No actions to execute")
         return
 
     # 更新状态为执行中
@@ -827,11 +832,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     ctx.pop("_stage_gate", None)
     # STORY-STATE-MODEL: 同理清 Story 状态闸标记(/lifecycle/advance 推进后重进)。
     ctx.pop("_story_state_gate", None)
-    db.update_story(
-        story_key,
-        context_json=json.dumps(ctx, ensure_ascii=False),
-        status="active",
-    )
+    sm_activate(story_key, ctx_updates=ctx)
 
     # 解析 profile 用于生成 prompt 和质量门禁配置
     profile_stages = {}
@@ -1205,10 +1206,8 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         headless_proc.stdin.write(cli_prompt.encode("utf-8"))
                         headless_proc.stdin.close()
                     except Exception as exc:
-                        db.update_story(
-                            story_key,
-                            status="failed",
-                            last_error=f"Stage {stage} headless spawn failed: {exc}",
+                        sm_mark_failed(
+                            story_key, f"Stage {stage} headless spawn failed: {exc}"
                         )
                         return
                     # §4.1 层1 supervisor(headless):daemon 线程消费 stdout —— 双重价值:
@@ -1322,11 +1321,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 log.error(
                     f"[{story_key}] Failed to launch {adapter_name} for {stage}: {exc}"
                 )
-                db.update_story(
-                    story_key,
-                    status="failed",
-                    last_error=f"CLI launch failed for {stage}: {exc}",
-                )
+                sm_mark_failed(story_key, f"CLI launch failed for {stage}: {exc}")
                 return
 
             # 更新执行上下文
@@ -1393,10 +1388,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             headless_proc.stdin.write(cli_prompt.encode("utf-8"))
                             headless_proc.stdin.close()
                         except Exception as exc:
-                            db.update_story(
+                            sm_mark_failed(
                                 story_key,
-                                status="failed",
-                                last_error=f"Stage {stage}: headless retry spawn failed: {exc}",
+                                f"Stage {stage}: headless retry spawn failed: {exc}",
                             )
                             return
                         log.info(
@@ -1415,10 +1409,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         HEADLESS_MAX_ATTEMPTS,
                         stdout_tail,
                     )
-                    db.update_story(
+                    sm_mark_failed(
                         story_key,
-                        status="failed",
-                        last_error=(
+                        (
                             f"Stage {stage}: claude exited (rc={rc}) without done file "
                             f"after {HEADLESS_MAX_ATTEMPTS} attempts"
                         ),
@@ -1443,10 +1436,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         adapter_name,
                         stage,
                     )
-                    db.update_story(
+                    sm_mark_failed(
                         story_key,
-                        status="failed",
-                        last_error=(
+                        (
                             f"Stage {stage}: {adapter_name} PTY process exited "
                             f"without writing done file"
                         ),
@@ -1594,13 +1586,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                             "label", f"进入{_next_state}"
                                         ),
                                     }
-                                    db.update_story(
-                                        story_key,
-                                        status="paused",
-                                        context_json=json.dumps(
-                                            ctx, ensure_ascii=False
-                                        ),
-                                    )
+                                    sm_pause(story_key, ctx_updates=ctx)
                                     db.log_event(
                                         story_key,
                                         stage,
@@ -1617,7 +1603,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                     return  # 释放 driver;点「进入下一状态」→ /lifecycle/advance
                                 elif not _next_state:
                                     # 终态:所有 Story 状态跑完 → 整个 story 完成
-                                    db.update_story(story_key, status="completed")
+                                    sm_mark_completed(story_key)
                                     log.info(
                                         "[%s] reached terminal story state %s (all done)",
                                         story_key,
@@ -1653,13 +1639,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                         "next_stage": _next_stage,
                                         "awaiting_confirm": True,
                                     }
-                                    db.update_story(
-                                        story_key,
-                                        status="paused",
-                                        context_json=json.dumps(
-                                            ctx, ensure_ascii=False
-                                        ),
-                                    )
+                                    sm_pause(story_key, ctx_updates=ctx)
                                     db.log_event(
                                         story_key,
                                         stage,
@@ -1689,11 +1669,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 log.warning(
                     f"[{story_key}] Stage {stage} timed out after {poll_timeout}s"
                 )
-                db.update_story(
-                    story_key,
-                    status="failed",
-                    last_error=f"Stage {stage} timed out",
-                )
+                sm_mark_failed(story_key, f"Stage {stage} timed out")
                 return
 
             # Verify-stage quality gate: HIGH findings block and trigger repair round
@@ -1731,11 +1707,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     )
                     if repair_action is None:
                         # escalate/skip → 不插 action,标失败
-                        db.update_story(
-                            story_key,
-                            status="failed",
-                            last_error=str(gate_spec_reason(repair_spec))[:500],
-                        )
+                        sm_mark_failed(story_key, str(gate_spec_reason(repair_spec)))
                         return
                     actions.insert(idx + 1, repair_action)
                     ctx["_agent_actions"] = actions
@@ -1752,17 +1724,13 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         repair_action.get("adapter", "-"),
                     )
                 elif gate_result["decision"] == "fail":
-                    db.update_story(
-                        story_key,
-                        status="failed",
-                        last_error=gate_result.get("reason", "verify gate fail"),
-                    )
+                    sm_mark_failed(story_key, gate_result.get("reason", "verify gate fail"))
                     return
 
         idx += 1
 
     # 所有 action 执行完毕
-    db.update_story(story_key, status="completed")
+    sm_mark_completed(story_key)
     log.info(f"[{story_key}] All stages completed")
     # story 完成时生成 retrospect.md（聚合各 stage done 摘要）
     _write_retrospect(workspace, story_key, actions)

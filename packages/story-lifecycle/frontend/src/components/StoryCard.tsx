@@ -4,25 +4,47 @@ import type { StorySummary } from '../store/storyStore'
 /**
  * StoryCard — 从 Dashboard 抽出的可复用 story 卡片。
  *
- * 4 个生命周期列表页 + Dashboard 共用。卡片含:key/status badge、标题、阶段进度条
- * (次要 hint)、重试计数、状态相关动作按钮(跳过/继续/删除...)。
+ * 4 个生命周期列表页 + Dashboard 共用。卡片含:标题/引擎 status badge、阶段进度条
+ * (次要 hint)、重试计数、状态相关动作按钮(跳过/继续/重试/删除...)。
  *
- * 注:进度条目前仍按固定 STAGES 算(历史 design/implement/test)。主进度(业务状态
- * 开发/测试/上线/结项)在详情页 OverviewTab 展示,卡片只给快速 hint。
+ * STATUS-CQRS-REFACTOR: badge 按 4 核心态(active/paused/completed/failed)展示,
+ * 旧值(implementing/blocked/waiting_subtasks/aborted)经 normalizeStatus 归一。
+ * 卡片所在 tab 由 lifecycleState 决定(业务状态),badge 显示 status(引擎执行态)。
  */
 
+/**
+ * 旧 status 值 → 4 核心态归一(与后端 normalize_status 对称)。
+ * 老数据可能还存旧值,展示时归一。
+ */
+function normalizeStatus(s: string | undefined | null): string {
+  if (!s) return ''
+  return (
+    {
+      implementing: 'active',
+      blocked: 'paused',
+      waiting_subtasks: 'paused',
+      aborted: 'failed',
+    }[s] ?? s
+  )
+}
+
+/** 4 核心态的展示标签(业界 CI 三分类:运行中/等待/终态)。 */
 export const STATUS_LABELS: Record<string, string> = {
   active: '运行中',
-  paused: '已暂停',
-  blocked: '已阻塞',
+  paused: '等待中',
   completed: '已完成',
-  failed: '已失败',
-  aborted: '已终止',
-  waiting_subtasks: '等待子任务',
+  failed: '异常',
 }
 
 const STAGES = ['design', 'build', 'verify'] as const
 
+/**
+ * 卡片动作按钮(按归一后的 4 态驱动)。
+ * - active: 跳过/终止(引擎在跑)
+ * - paused: 继续(含原 blocked/waiting_subtasks 合并)
+ * - failed: 重试(加重试,删除降为次要 — 失败不等于废弃)
+ * - completed: 无按钮(进详情页确认下一阶段,不是废弃)
+ */
 export const CARD_ACTIONS: Record<
   string,
   { label: string; method: string; suffix: string; confirm?: string }[]
@@ -32,10 +54,10 @@ export const CARD_ACTIONS: Record<
     { label: '终止', method: 'POST', suffix: '/abort', confirm: '确定终止？' },
   ],
   paused: [{ label: '继续', method: 'PUT', suffix: '/advance' }],
-  blocked: [{ label: '重试', method: 'PUT', suffix: '/advance' }],
-  failed: [{ label: '删除', method: 'DELETE', suffix: '', confirm: '确定删除？' }],
-  completed: [{ label: '删除', method: 'DELETE', suffix: '', confirm: '确定删除？' }],
-  aborted: [{ label: '删除', method: 'DELETE', suffix: '', confirm: '确定删除？' }],
+  failed: [
+    { label: '重试', method: 'PUT', suffix: '/advance' },
+    { label: '删除', method: 'DELETE', suffix: '', confirm: '确定删除？' },
+  ],
 }
 
 export interface StoryCardAction {
@@ -55,14 +77,15 @@ export default function StoryCard({
   const navigate = useNavigate()
   const stageIndex = STAGES.indexOf(story.currentStage as (typeof STAGES)[number])
   const progress = stageIndex >= 0 ? ((stageIndex + 1) / STAGES.length) * 100 : 0
-  const actions = CARD_ACTIONS[story.status] || []
+  const normalizedStatus = normalizeStatus(story.status)
+  const actions = CARD_ACTIONS[normalizedStatus] || []
 
   return (
     <div className="story-card-v2">
       <div className="card-top" onClick={() => navigate(`/story/${story.storyKey}`)}>
         <span className="card-title">{story.title || '(未命名)'}</span>
-        <span className={`badge badge-${story.status}`}>
-          {STATUS_LABELS[story.status] || story.status}
+        <span className={`badge badge-${normalizedStatus}`}>
+          {STATUS_LABELS[normalizedStatus] || normalizedStatus}
         </span>
       </div>
       <div className="card-progress" onClick={() => navigate(`/story/${story.storyKey}`)}>

@@ -86,29 +86,29 @@ def _explain_stuck_reason(
             "message": "LLM 配置缺失，请运行 story setup",
         }
 
-    # 2. story_blocked
-    if status == "blocked":
-        return {
-            "code": "story_blocked",
-            "severity": "error",
-            "message": "Story 已阻塞，需要人工恢复或失败处理",
-        }
+    # 2-4. paused 的子原因鉴别(4 态合并后 blocked/waiting_subtasks/paused 都进 paused)。
+    # status 归一:老数据可能还存 blocked/waiting_subtasks,normalize 后统一判 paused。
+    from ...sourcing.execution_status import normalize_status
 
-    # 3. waiting_subtasks
-    if status == "waiting_subtasks":
-        return {
-            "code": "waiting_subtasks",
-            "severity": "info",
-            "message": "父 Story 正在等待子任务完成",
-        }
-
-    # 4. gate_blocked
-    if status == "paused":
+    if normalize_status(status) == "paused":
         ctx = {}
         try:
             ctx = json.loads(story.get("context_json") or "{}")
         except Exception:
             pass
+        reason = ctx.get("_pause_reason", "")
+        if reason == "waiting_subtasks":
+            return {
+                "code": "waiting_subtasks",
+                "severity": "info",
+                "message": "父 Story 正在等待子任务完成",
+            }
+        if reason == "manual_fail":
+            return {
+                "code": "story_blocked",
+                "severity": "error",
+                "message": "Story 已阻塞，需要人工恢复或失败处理",
+            }
         if ctx.get("last_gate_decision_id"):
             return {
                 "code": "gate_blocked",

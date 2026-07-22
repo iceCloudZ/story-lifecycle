@@ -14,6 +14,12 @@ from filelock import FileLock, Timeout
 
 from . import planner
 from ...infra.db import models as db
+from ...sourcing.state_machine import (
+    activate as sm_activate,
+    mark_failed as sm_mark_failed,
+    mark_completed as sm_mark_completed,
+    pause as sm_pause,
+)
 
 log = logging.getLogger("story-lifecycle.graph")
 
@@ -205,9 +211,7 @@ def run_story(story_key: str, epoch: int = 0, claim_token: str = ""):
                 )
                 # 异常回写(0d-D):不标 failed 则崩溃 story 永远卡 active。
                 try:
-                    db.update_story(
-                        story_key, status="failed", last_error=str(exc)[:500]
-                    )
+                    sm_mark_failed(story_key, str(exc))
                 except Exception:
                     log.exception("failed to mark story %s as failed", story_key)
                 # 层3 recovery:决策救法 + 落 recovery_action 事件(审计 + 层5 反思数据源)
@@ -245,13 +249,9 @@ def run_story(story_key: str, epoch: int = 0, claim_token: str = ""):
                 if not rescue.get("scheduled"):
                     break  # 超 _agent_actions 不匹配 / 超上限 → 停(story 已 failed)
                 try:
-                    db.update_story(
-                        story_key,
-                        context_json=_json.dumps(prior_ctx, ensure_ascii=False),
-                        status="implementing",
-                    )
+                    sm_activate(story_key, ctx_updates=prior_ctx)
                 except Exception:
-                    db.update_story(story_key, status="implementing")
+                    sm_activate(story_key)
                 log.info(
                     "[%s] rescue: retry stage %s with %s (attempt %d/%d)",
                     story_key,
@@ -404,8 +404,10 @@ def consume_orphan_done(story_key: str) -> bool:
     if not workspace:
         return False
 
-    # Don't touch already-finished stories.
-    if story.get("status") in ("completed", "failed", "aborted"):
+    # Don't touch already-finished stories. 4 态合并后终态 = completed/failed。
+    from ...sourcing.execution_status import is_terminal
+
+    if is_terminal(story.get("status")):
         return False
 
     actions = ctx.get("_agent_actions") or []
@@ -462,11 +464,7 @@ def consume_orphan_done(story_key: str) -> bool:
     ]
     all_done = launch_stages and all(s in completed_stages for s in launch_stages)
     if all_done:
-        db.update_story(
-            story_key,
-            context_json=json.dumps(ctx, ensure_ascii=False),
-            status="completed",
-        )
+        sm_mark_completed(story_key, ctx_updates=ctx)
         log.info("[%s] all stages done via orphan consume → completed", story_key)
     else:
         db.update_story(
@@ -519,5 +517,5 @@ def recover_orphan_stories():
         if story.get("status") == "active" and story.get("intake_state") == "ready"
     ]
     for s in stories:
-        db.update_story(s["story_key"], status="paused")
+        sm_pause(s["story_key"])
     return len(stories)

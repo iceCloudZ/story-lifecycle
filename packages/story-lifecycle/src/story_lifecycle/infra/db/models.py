@@ -601,9 +601,13 @@ def find_by_source_id(source_type: str, source_id: str) -> dict | None:
 
 
 def list_active_stories() -> list[dict]:
+    # TABS-LIFECYCLE-STATE: 改 lifecycle_state 驱动(原按 status IN (...) 过滤有双重
+    # 过滤 bug — failed/paused 的开发态 story 被后端 SQL 丢掉,前端 tab 看不到)。
+    # 非结项状态(待启动/开发/测试/上线)且已激活(ready)的 story 都算 active。
     with _db() as conn:
         rows = conn.execute(
-            """SELECT * FROM story WHERE status IN ('active', 'paused', 'blocked', 'waiting_subtasks', 'planning')
+            """SELECT * FROM story
+               WHERE lifecycle_state IN ('待启动', '开发', '测试', '上线')
                AND intake_state = 'ready'
                ORDER BY updated_at DESC"""
         ).fetchall()
@@ -621,9 +625,11 @@ def list_candidate_stories() -> list[dict]:
 
 
 def list_completed_stories(limit: int = 20) -> list[dict]:
+    # TABS-LIFECYCLE-STATE: 改 lifecycle_state 驱动。结项 = lifecycle_state='结项'
+    # (原按 status IN ('completed','failed','aborted','archived') 过滤)。
     with _db() as conn:
         rows = conn.execute(
-            "SELECT * FROM story WHERE status IN ('completed', 'failed', 'aborted', 'archived') ORDER BY updated_at DESC LIMIT ?",
+            "SELECT * FROM story WHERE lifecycle_state = '结项' ORDER BY updated_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -648,21 +654,16 @@ def list_visible_stories(
     API included, and COMPLETED_STATES was hardcoded in both places.
 
     show_all: include failed/aborted/archived stories (completed shows by default).
-    status: filter by lifecycle status (active/paused/blocked/planning/...).
+    status: filter by engine status (active/paused/completed/failed).
     item_type: filter by tapd_type (story/bug/subtask).
     show_completed: keep resolved/rejected/closed TAPD stories (hidden by default).
     overdue: only stories past their deadline.
     show_test: keep is_test=1 stories (hidden by default to keep worklist clean).
     """
     stories = list_active_stories() + list_candidate_stories()
-    # completed (successfully finished) shows by default so done work isn't buried;
-    # failed/aborted/archived only appear with show_all to keep the worklist focused.
-    completed_pool = list_completed_stories(limit=100)
-    stories = stories + [s for s in completed_pool if s.get("status") == "completed"]
-    if show_all:
-        stories = stories + [
-            s for s in completed_pool if s.get("status") != "completed"
-        ]
+    # TABS-LIFECYCLE-STATE: 结项 story 全部显示(原按 status 分两档的逻辑已过时 —
+    # 4 值合并 + lifecycle 驱动后,结项 = lifecycle_state='结项',不再按 status 区分)。
+    stories = stories + list_completed_stories(limit=100)
 
     if status:
         stories = [s for s in stories if s["status"] == status]
@@ -717,9 +718,14 @@ def list_unlinked_bugs() -> list[dict]:
 
 
 def get_pending_parents() -> list[dict]:
+    # waiting_subtasks 合并进 paused:用 status='paused' + ctx._pause_reason 鉴别。
+    # SQL LIKE 粗筛(避免逐行 json.loads),调用方 resume_parent 会精确校验 ctx。
     with _db() as conn:
         rows = conn.execute(
-            "SELECT * FROM story WHERE status = 'waiting_subtasks'"
+            """SELECT * FROM story
+               WHERE status = 'paused'
+               AND context_json LIKE '%_pause_reason%'
+               AND context_json LIKE '%waiting_subtasks%'"""
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -1270,7 +1276,10 @@ def upsert_story_from_source(
     workspace: str = "",
     profile: str = "minimal",
     current_stage: str = "design",
-    status: str = "idle",
+    # idle 移出 status:candidate 的"未启动"由 intake_state=candidate 表达,
+    # status 用 active(DB DEFAULT 一致)。candidate 被 list_visible_stories 的
+    # intake_state 过滤挡在四 tab 外(在 /tapd 页),status 值不参与 tab 判据。
+    status: str = "active",
     intake_state: str = "candidate",
     deadline: str = "",
     priority: str = "",

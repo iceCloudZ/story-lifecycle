@@ -102,12 +102,14 @@ class TestSyncStatus:
         mock_cli.add_label.assert_called_with(1, "lifecycle:done")
 
     def test_started_adds_label(self, source, mock_cli):
-        source.sync_status("1", "started")
+        # STATUS-CQRS: "started" 映射现走 "active" key
+        source.sync_status("1", "active")
         mock_cli.add_label.assert_called_with(1, "lifecycle:implementing")
 
     def test_blocked_adds_label(self, source, mock_cli):
-        source.sync_status("1", "blocked")
-        mock_cli.add_label.assert_called_with(1, "lifecycle:blocked")
+        # STATUS-CQRS: blocked→paused 合并;"failed" 映射到 lifecycle:failed label
+        source.sync_status("1", "failed")
+        mock_cli.add_label.assert_called_with(1, "lifecycle:failed")
 
     def test_unknown_status_is_noop(self, source, mock_cli):
         source.sync_status("1", "unknown_status")

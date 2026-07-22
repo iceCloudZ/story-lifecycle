@@ -7,6 +7,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Protocol
 
+from ..sourcing.execution_status import TERMINAL_STATUSES as _FINISHED_STATUSES
+
 
 # ---------------------------------------------------------------------------
 # Layer 1: .done helpers
@@ -123,8 +125,7 @@ class TtydSessionBackend:
 # ---------------------------------------------------------------------------
 # Layer 3: Action decider — story status driven, graph/session deferred
 # ---------------------------------------------------------------------------
-
-_FINISHED_STATUSES = frozenset({"completed", "failed", "aborted"})
+# _FINISHED_STATUSES 从顶部 import(4 态合并后:终态 = completed/failed)。
 
 
 class CliExitState(Enum):

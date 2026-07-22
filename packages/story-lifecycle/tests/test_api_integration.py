@@ -218,7 +218,8 @@ class TestStartStoryWorkspace:
         s = db.get_story("CAND-001")
         assert s["workspace"] == str(repo.resolve())
         assert s["intake_state"] == "ready"
-        assert s["status"] == "planning"
+        # planning 移出 status:/start 后引擎开始跑规划,DB status=active。
+        assert s["status"] == "active"
 
     def test_start_requires_content(self, api_client, isolated_story_home, tmp_path):
         """开始开发必须填写 story 内容/PRD。"""
@@ -294,7 +295,9 @@ class TestStartStoryWorkspace:
         assert resp.status_code == 200
         story = db.get_story("MANUAL-001")
         assert story["workspace"] == str(repo)
-        assert story["status"] == "planning"
+        # planning 移出 status:/start 后引擎开始跑规划,DB status=active
+        # (lifecycle_state 才驱动「待启动」tab)。
+        assert story["status"] == "active"
         assert story["intake_state"] == "ready"
 
 

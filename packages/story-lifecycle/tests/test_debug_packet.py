@@ -94,7 +94,12 @@ class TestStuckReasons:
 
         ws = str(tmp_path)
         create_story("TEST-BLK", "Blocked", ws)
-        update_story("TEST-BLK", status="blocked")
+        # blocked 合并进 paused;子原因 manual_fail 写 ctx._pause_reason。
+        update_story(
+            "TEST-BLK",
+            status="paused",
+            context_json='{"_pause_reason": "manual_fail"}',
+        )
         (tmp_path / ".story" / "done" / "TEST-BLK").mkdir(parents=True, exist_ok=True)
 
         packet = build_debug_packet("TEST-BLK")
