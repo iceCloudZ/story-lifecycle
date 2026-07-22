@@ -173,6 +173,7 @@ Prompt quality is **not** judged by an LLM at spawn time. Real-time judges waste
 
 ## Conventions
 
+- **Commit when done（改完就提交）**: 每完成一轮改动就立即 `git commit`，不要攒着。这个仓库常有多个 agent 会话并行工作，未提交的改动随时可能被另一个会话的 `git checkout -- .` 之类操作冲掉（真实发生过）。提交时注意：只暂存本次任务相关的文件，别把其他会话进行中的改动（如他人未提交的 `api.py`）卷进来；`git push` 仍需用户明确要求才执行。
 - **Chinese content**: story-lifecycle's stage templates and prompts are in Chinese — maintain this when editing.
 - **No ORM**: DB access uses raw SQL (`db/models.py`), zero ORM.
 - **Editable installs**: packages are always editable-installed from `packages/`; never build wheels for local dev.
