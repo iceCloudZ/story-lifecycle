@@ -15,7 +15,7 @@ import './Dashboard.css'
  */
 export default function Dashboard() {
   const { connected } = useStoryStore()
-  const { stories: allStories } = useStories()
+  const { stories: allStories, isLoading } = useStories()
   const { intakeModal, intakeNotice, openIntake, closeIntake, handleIntakeConfirm } = useIntakeStart()
   const qc = useQueryClient()
 
@@ -50,10 +50,14 @@ export default function Dashboard() {
 
       <div className="story-grid">
         {myStories.length === 0 ? (
-          <div className="empty-state">
-            <p>暂无活跃的 Story</p>
-            <p className="hint">在「TAPD 需求」页点击「开始开发」或使用 <code>story create KEY</code> 创建</p>
-          </div>
+          isLoading ? (
+            <div className="empty-state"><p>加载中…</p></div>
+          ) : (
+            <div className="empty-state">
+              <p>暂无活跃的 Story</p>
+              <p className="hint">在「TAPD 需求」页点击「开始开发」或使用 <code>story create KEY</code> 创建</p>
+            </div>
+          )
         ) : (
           myStories.map((s) => (
             <StoryCard key={s.storyKey} story={s} onAction={(a) => handleCardAction(s, a)} />

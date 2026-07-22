@@ -10,7 +10,7 @@ import './LifecyclePage.css'
  * 生命周期终态:TAPD closed 映射到结项,或手动归档。只读历史 + 可删除。
  */
 export default function DonePage() {
-  const { stories: allStories } = useStories()
+  const { stories: allStories, isLoading } = useStories()
   const doneStories = allStories.filter((s) => s.lifecycleState === '结项')
 
   return (
@@ -22,6 +22,7 @@ export default function DonePage() {
       <StoryGrid
         stories={doneStories}
         emptyHint="还没有已结项的 Story。"
+        loading={isLoading}
       />
     </div>
   )

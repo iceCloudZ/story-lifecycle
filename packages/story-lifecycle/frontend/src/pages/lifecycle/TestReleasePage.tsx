@@ -9,7 +9,7 @@ import './LifecyclePage.css'
  * 班车看板(ReleaseTrainBoard,按 release_train 泳道)已拆为独立页面 /release-train。
  */
 export default function TestReleasePage() {
-  const { stories: allStories } = useStories()
+  const { stories: allStories, isLoading } = useStories()
   const trStories = allStories.filter(
     (s) => s.lifecycleState === '测试' || s.lifecycleState === '上线'
   )
@@ -23,6 +23,7 @@ export default function TestReleasePage() {
       <StoryGrid
         stories={trStories}
         emptyHint="没有测试/上线中的 Story。开发完成后会自动进入测试。"
+        loading={isLoading}
       />
     </div>
   )

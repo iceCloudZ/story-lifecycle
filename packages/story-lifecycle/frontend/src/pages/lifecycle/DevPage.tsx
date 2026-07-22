@@ -10,7 +10,7 @@ import './LifecyclePage.css'
  * (或 paused/blocked 等恢复 — 这些是引擎 status,不影响业务 tab 归属)。
  */
 export default function DevPage() {
-  const { stories: allStories } = useStories()
+  const { stories: allStories, isLoading } = useStories()
   const devStories = allStories.filter((s) => s.lifecycleState === '开发')
 
   return (
@@ -22,6 +22,7 @@ export default function DevPage() {
       <StoryGrid
         stories={devStories}
         emptyHint="没有开发中的 Story。在「待启动」页点击开始开发。"
+        loading={isLoading}
       />
     </div>
   )

@@ -12,9 +12,11 @@ import StoryCard, { type StoryCardAction } from './StoryCard'
 export default function StoryGrid({
   stories,
   emptyHint,
+  loading,
 }: {
   stories: StorySummary[]
   emptyHint?: string
+  loading?: boolean
 }) {
   const qc = useQueryClient()
 
@@ -31,6 +33,10 @@ export default function StoryGrid({
   }
 
   if (stories.length === 0) {
+    // 首屏 fetch 未回来时显示加载中,避免闪一下「暂无 Story」空态
+    if (loading) {
+      return <div className="empty-state"><p>加载中…</p></div>
+    }
     return (
       <div className="empty-state">
         <p>暂无 Story</p>
