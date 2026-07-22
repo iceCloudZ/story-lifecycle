@@ -260,7 +260,7 @@ def build_consult_protocol_section(*, interactive: bool = False) -> str:
         "# 1. 先把上下文写文件(避免命令行转义问题)\n"
         "#    .story/consult/req-<简述>.md —— 你试过什么、当前代码现状、相关 snippet\n"
         "# 2. 调 consult\n"
-        "story consult --question \"<具体问题>\" "
+        'story consult --question "<具体问题>" '
         "--context-file .story/consult/req-<简述>.md --urgency high\n"
         "```\n\n"
         "- urgency=high(撞墙/阻塞):**前台**跑,Bash timeout 设 480000ms 以上。\n"

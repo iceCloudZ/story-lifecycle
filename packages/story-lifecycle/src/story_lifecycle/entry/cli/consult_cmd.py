@@ -116,9 +116,7 @@ def run_consult_cli(
 
 @click.command("consult")
 @click.option("--question", required=True, help="具体问题")
-@click.option(
-    "--context", default="", help="上下文(长文本建议用 --context-file)"
-)
+@click.option("--context", default="", help="上下文(长文本建议用 --context-file)")
 @click.option(
     "--context-file",
     "context_file",
@@ -141,6 +139,7 @@ def consult_cmd(question, context, context_file, urgency):
     # 测试缝(DESIGN §8.2):fake 模式跳过真 LLM + 真 spawn,事件仍正常落
     fake = os.environ.get("STORY_CONSULT_FAKE")
     if fake:
+
         def _orch_fn(**kw):
             return {
                 "advice": fake,
@@ -151,6 +150,7 @@ def consult_cmd(question, context, context_file, urgency):
                 "spawn_results": [],
             }
     else:
+
         def _orch_fn(**kw):
             from ...orchestrator.engine.consult_orchestrator import (
                 run_consult_orchestrator,

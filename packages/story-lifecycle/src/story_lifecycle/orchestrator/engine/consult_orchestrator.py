@@ -355,9 +355,7 @@ def _fallback_advice(
         findings_lines.append(f"- [{sr.get('adapter', '?')}] {summary}")
         if rec:
             findings_lines.append(f"  建议: {rec}")
-    advice = (
-        f"(consult 降级综合,置信低 — {reason})\n" + "\n".join(findings_lines)
-    )
+    advice = f"(consult 降级综合,置信低 — {reason})\n" + "\n".join(findings_lines)
     return {
         "advice": advice,
         "confidence": "low",

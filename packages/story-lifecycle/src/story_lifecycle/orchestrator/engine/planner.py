@@ -1077,9 +1077,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         f"请读取 `{prompt_file}` 并严格按其中的说明执行本阶段"
                         f"({stage})任务,完成后按其完成协议写入 done 文件。"
                     )
-                    _session_spec = adapter.start_session(
-                        model=model, prompt=_seed
-                    )
+                    _session_spec = adapter.start_session(model=model, prompt=_seed)
                     launch_cmd = _session_spec.command
 
                 # grill-me:LLM 决定 + mode 兜底。

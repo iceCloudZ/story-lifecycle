@@ -255,13 +255,24 @@ class TestConsultSubprocess:
             "consult",
             *cli_args,
         ]
-        return subprocess.run(
+        result = subprocess.run(
             cmd,
             env=env,
             capture_output=True,
             text=True,
+            # Windows 控制台默认 GBK,子进程输出 UTF-8(含中文)会触发
+            # UnicodeDecodeError → stdout/stderr 被置 None。errors=replace 兜住,
+            # 保证返回 str(下游 ``in result.stdout`` 断言不撞 TypeError)。
+            errors="replace",
             timeout=60,
         )
+        # 防御:极端情况下 stdout/stderr 仍可能为 None(进程崩/管道断),
+        # 兜成空串让断言给出清晰的 failure 而非 TypeError。
+        if result.stdout is None:
+            result.stdout = ""
+        if result.stderr is None:
+            result.stderr = ""
+        return result
 
     def test_fake_mode_happy_path(self, isolated_story_home):
         """STORY_CONSULT_FAKE 设了 → advisory 是 fake 值,exit 0,两事件落 DB。"""
