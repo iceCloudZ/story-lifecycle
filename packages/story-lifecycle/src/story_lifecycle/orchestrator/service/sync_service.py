@@ -14,9 +14,15 @@ def _is_forward(current: str, target: str, story_states: dict) -> bool:
 
     沿 story_states 的 ``next`` 字段往前遍历,与 planner.py 的状态推进方向一致。
     current/target 相等不算 forward(同级不写)。未命中链 → False(不写,防回退)。
+
+    特例:「待启动」不在 story_states 拓扑里(它是规划前的前态,无 stages),但从它
+    到任何已定义状态都算前进 — 新同步的 candidate 落待启动,TAPD 状态映射(如
+    closed→结项、progressing→开发)应能正常写入(见 TABS-LIFECYCLE-STATE 决策)。
     """
     if not story_states or current == target:
         return False
+    if current == "待启动":
+        return target in story_states
     node = story_states.get(current, {}).get("next")
     while node:
         if node == target:

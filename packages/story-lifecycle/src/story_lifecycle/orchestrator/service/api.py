@@ -1040,7 +1040,7 @@ def advance_lifecycle_state(story_key: str):
     if not gate or not gate.get("awaiting_confirm"):
         raise HTTPException(409, "no pending story_state_gate")
 
-    cur_state = gate.get("from") or s.get("lifecycle_state") or "开发"
+    cur_state = gate.get("from") or s.get("lifecycle_state") or "待启动"
     next_state = gate.get("to")
     if not next_state:
         raise HTTPException(409, "story_state_gate has no next state")
@@ -1150,7 +1150,7 @@ def archive_story(story_key: str):
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")
-    db.update_story(story_key, status="archived")
+    db.update_story(story_key, status="archived", lifecycle_state="结项")
     db.log_stage(
         story_key,
         s.get("current_stage", ""),
@@ -3438,7 +3438,7 @@ def api_get_plan(story_key: str):
     # 推导每个状态的进度(done/进行中/待开始)。前端主进度条用它。无 story_states → 空。
     # SOURCE-DRIVEN-MODEL: 按 source_type 查(不再从 profile 读);无 source → default 四状态。
     cur_lifecycle = (
-        story.get("lifecycle_state") or ctx.get("_lifecycle_state") or "开发"
+        story.get("lifecycle_state") or ctx.get("_lifecycle_state") or "待启动"
     )
     story_states_view = []
     try:
@@ -3599,6 +3599,8 @@ def api_confirm_plan(story_key: str, body: dict | None = Body(default=None)):
         story_key,
         context_json=json.dumps(ctx, ensure_ascii=False),
         status="active",
+        # 确认规划 = 业务上进入开发态(TABS-LIFECYCLE-STATE:待启动→开发中的推进点)。
+        lifecycle_state="开发",
     )
 
     start_story_async(story_key)

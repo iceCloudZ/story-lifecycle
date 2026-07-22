@@ -279,11 +279,13 @@ def init_db():
             conn.execute("ALTER TABLE story ADD COLUMN driver_claim TEXT")
         except sqlite3.OperationalError:
             pass
-        # STORY-STATE-MODEL: lifecycle_state = Story 业务状态(开发/测试/上线/结项),
-        # 独立第一公民,不从阶段派生(区别于引擎 status)。幂等迁移:老行取 DEFAULT '开发'。
+        # STORY-STATE-MODEL: lifecycle_state = Story 业务状态(待启动/开发/测试/上线/结项),
+        # 独立第一公民,不从阶段派生(区别于引擎 status)。新 story 初值「待启动」—
+        # 确认规划(/plan/confirm)后才进「开发」。幂等迁移:老库已建的列不变(老数据
+        # 逐条人工确认),仅新库/新行取 DEFAULT '待启动'。
         try:
             conn.execute(
-                "ALTER TABLE story ADD COLUMN lifecycle_state TEXT DEFAULT '开发'"
+                "ALTER TABLE story ADD COLUMN lifecycle_state TEXT DEFAULT '待启动'"
             )
         except sqlite3.OperationalError:
             pass

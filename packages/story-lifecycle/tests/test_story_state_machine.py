@@ -36,13 +36,17 @@ from story_lifecycle.sourcing.source_loader import (
 def story(tmp_path):
     # SOURCE-DRIVEN-MODEL: source_type 通过 patch resolve_source_profile 注入测试
     # 状态机,故 create_story 不必带 source_type(planner 读的是 patch 后的返回值)。
-    return db.create_story(
+    # TABS-LIFECYCLE-STATE: 新 story 默认 lifecycle_state='待启动',但这些测试测的
+    # 是「已在开发态」的状态机推进,故显式设为「开发」(与 /plan/confirm 的写入一致)。
+    s = db.create_story(
         story_key="STORY-SSM-1",
         title="测试 Story 状态机",
         workspace=str(tmp_path),
         profile="headless-smoke",
         current_stage="design",
     )
+    db.update_story(s["story_key"], lifecycle_state="开发")
+    return db.get_story(s["story_key"])
 
 
 def _set_actions(story, actions):
