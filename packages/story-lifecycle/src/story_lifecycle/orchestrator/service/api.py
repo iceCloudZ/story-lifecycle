@@ -999,6 +999,21 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
         start_story_async(story_key)
         return {"ok": True, "status": "resumed"}
 
+    # Start an active-but-never-started story (single-pass 等 profile 创建即 active,
+    # 但执行从未触发:无 _active_execution)。overview 的「开始执行」按钮走这里。
+    # 区别于 paused→resume:这是首次启动。已在跑的(有 _active_execution)不重复触发
+    # (start_story_async 的 CAS 也会兜底,但这里提前返回避免无谓 claim 抖动)。
+    if s["status"] == "active":
+        import json as _json
+
+        try:
+            _ctx = _json.loads(s.get("context_json") or "{}")
+        except (ValueError, TypeError):
+            _ctx = {}
+        if not _ctx.get("_active_execution"):
+            start_story_async(story_key)
+            return {"ok": True, "status": "started"}
+
     return {"ok": True}
 
 

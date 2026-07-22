@@ -242,3 +242,82 @@ def test_planner_interactive_spawn_passes_read_file_seed_not_full_prompt(
     full = prompt_file.read_text(encoding="utf-8")
     assert full.startswith("## 任务: design")  # 完整 prompt 首行
     assert "设计冷却结清还款计划更新" in full  # focus 段在完整 prompt 里
+
+
+# ---- /advance 端点:active-unstarted 分支(single-pass 创建即 active 但从未启动) ----
+
+
+def test_advance_starts_active_unstarted_story(isolated_story_home, tmp_path, monkeypatch):
+    """PUT /advance 对 active 且无 _active_execution 的 story 触发 start_story_async。
+
+    single-pass 等 profile 创建即 active,但执行从未触发。overview「开始执行」按钮
+    调 /advance,这里断言它首次启动(而非像旧逻辑那样 active 时啥也不干返回 ok)。
+    """
+    import json as _json
+    from unittest.mock import MagicMock
+
+    from starlette.testclient import TestClient
+
+    import story_lifecycle.orchestrator.service.api as api_mod
+    from story_lifecycle.orchestrator.service.api import app
+
+    db.upsert_story(
+        "ADV-START-1",
+        workspace=str(tmp_path),
+        profile="single-pass",
+        current_stage="verify",
+        status="active",
+    )
+    # 无 _active_execution(从未启动)
+    db.update_story(
+        "ADV-START-1",
+        context_json=_json.dumps({"prd_path": "x"}),
+    )
+
+    started = MagicMock()
+    monkeypatch.setattr(api_mod, "start_story_async", started)
+
+    client = TestClient(app)
+    r = client.put("/api/story/ADV-START-1/advance")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "started"
+    started.assert_called_once_with("ADV-START-1")
+
+
+def test_advance_does_not_restart_active_running_story(isolated_story_home, tmp_path, monkeypatch):
+    """PUT /advance 对 active 且已有 _active_execution 的 story 不重复触发启动。
+
+    已在跑的 story 不该被 /advance 再次 start(CAS 也会兜底,但提前返回避免抖动)。
+    """
+    import json as _json
+    from unittest.mock import MagicMock
+
+    from starlette.testclient import TestClient
+
+    import story_lifecycle.orchestrator.service.api as api_mod
+    from story_lifecycle.orchestrator.service.api import app
+
+    db.upsert_story(
+        "ADV-RUN-1",
+        workspace=str(tmp_path),
+        profile="single-pass",
+        current_stage="verify",
+        status="active",
+    )
+    # 有 _active_execution(已在跑)
+    db.update_story(
+        "ADV-RUN-1",
+        context_json=_json.dumps(
+            {"_active_execution": {"mode": "interactive_pty", "stage": "verify"}}
+        ),
+    )
+
+    started = MagicMock()
+    monkeypatch.setattr(api_mod, "start_story_async", started)
+
+    client = TestClient(app)
+    r = client.put("/api/story/ADV-RUN-1/advance")
+    assert r.status_code == 200, r.text
+    # 已在跑 → 不触发 start(返回默认 ok,无 status 字段)
+    assert r.json() == {"ok": True}
+    started.assert_not_called()
