@@ -264,13 +264,6 @@ export default function StoryDetailPage() {
 
   return (
     <div className="story-detail-page-v2">
-      <div className="sdpv2-topbar">
-        <button className="btn btn-back" onClick={() => navigate('/')}>← 返回</button>
-        {detail.lastError && <span className="sdpv2-error-badge" title={detail.lastError}>⚠ {detail.lastError}</span>}
-        {detail.tapdType === 'bug' && (
-          <button className="btn btn-primary" onClick={handleResolve}>标记已修复</button>
-        )}
-      </div>
       <div className="sdpv2-body">
         <StorySidebar
           storyKey={storyKey}
@@ -280,6 +273,7 @@ export default function StoryDetailPage() {
           activeModule={validTab}
           onModuleChange={setActiveTab}
           onArchive={handleArchive}
+          onBack={() => navigate('/')}
         />
         <div className="sdpv2-content">
           <ClarifyDialog storyKey={storyKey} status={detail.status} headless={detail.headless} />
@@ -299,6 +293,7 @@ export default function StoryDetailPage() {
               onActionAdapterChange={handleActionAdapterChange}
               neverStarted={neverStarted}
               onStart={handleStart}
+              onResolve={detail.tapdType === 'bug' ? handleResolve : undefined}
             />
           )}
           {validTab === 'code' && <CodeChangesTab storyKey={storyKey} />}

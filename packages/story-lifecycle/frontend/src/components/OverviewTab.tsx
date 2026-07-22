@@ -21,12 +21,14 @@ interface Props {
   // overview 显示「开始执行」按钮首次启动它。
   neverStarted: boolean
   onStart: () => void
+  // bug 类 story 的「标记已修复」入口(原顶部 topbar,迁入头部右侧)。
+  onResolve?: () => void
 }
 
 export default function OverviewTab({
   storyKey, detail, resolvedActions, isConfirmed, planData,
   onConfirmPlan, onRegeneratePlan, onAction, actions, onTabChange, onAdvanceLifecycle,
-  onActionAdapterChange, neverStarted, onStart,
+  onActionAdapterChange, neverStarted, onStart, onResolve,
 }: Props) {
   // stage 进度条用真实数据(PLAN-stage-confirm-gate):优先 /plan 回的 stages(done 标记
   // 驱动状态);无 plan 数据(legacy / 规划前)回落到 minimal 默认三阶段。StageProgress
@@ -69,15 +71,41 @@ export default function OverviewTab({
     (planData?.stages ?? []).filter((s) => s.done).map((s) => s.name)
   )
 
+  // profile 名 → 可读标签(头部元信息行用)
+  const profileLabel: Record<string, string> = {
+    minimal: '最小开发流程',
+    realtest: '真机测试流程',
+    strict: '严格流程',
+    swebench: 'SWE-bench 评测',
+    'headless-smoke': 'headless 冒烟',
+    demo: '演示流程',
+  }
+
   return (
     <div className="tab-content overview-tab">
-      {/* Top bar — 标题 + TAPD 跳转 + 更新时间 */}
+      {/* Top bar — 标题 + key + 元信息(原信息卡片行,并入头部)/ TAPD 跳转 + 更新时间 */}
       <div className="ot-header">
         <div className="ot-header-left">
           <span className="ot-title">{detail.title || detail.storyKey}</span>
           <span className="ot-key">{detail.storyKey}</span>
+          <span className="ot-meta">
+            {[
+              profileLabel[detail.profile] || detail.profile,
+              `${detail.currentStage} 重试 ${detail.executionCount}/3`,
+              detail.priority,
+              detail.sourceType,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
         </div>
         <div className="ot-header-right">
+          {detail.lastError && (
+            <span className="ot-error-badge" title={detail.lastError}>⚠ {detail.lastError}</span>
+          )}
+          {onResolve && (
+            <button className="btn btn-sm btn-primary" onClick={onResolve}>标记已修复</button>
+          )}
           {(() => {
             // TAPD 跳转:优先 tapdUrl(后端同步时填);否则从 tapd- 前缀的 key 推导。
             // story_id 格式:11{workspace 8位}{流水号} → URL /{ws}/prong/stories/view/{full_id}
@@ -199,46 +227,29 @@ export default function OverviewTab({
         </div>
       )}
 
-      {/* Info cards — Profile 改可读;空值字段不显示(不占 '-') */}
-      {(() => {
-        // profile 名 → 可读标签
-        const profileLabel: Record<string, string> = {
-          minimal: '最小开发流程',
-          realtest: '真机测试流程',
-          strict: '严格流程',
-          swebench: 'SWE-bench 评测',
-          'headless-smoke': 'headless 冒烟',
-          demo: '演示流程',
-        }
-        const cards: { label: string; value: string }[] = [
-          { label: '流程', value: profileLabel[detail.profile] || detail.profile },
-          {
-            label: `${detail.currentStage} 重试`,
-            value: `${detail.executionCount} / 3`,
-          },
-        ]
-        if (detail.priority) cards.push({ label: '优先级', value: detail.priority })
-        if (detail.sourceType) cards.push({ label: '来源', value: detail.sourceType })
-        return (
-          <div className="ot-info-grid">
-            {cards.map((c) => (
-              <div key={c.label} className="ot-info-card">
-                <div className="ot-info-label">{c.label}</div>
-                <div className="ot-info-value">{c.value}</div>
-              </div>
-            ))}
-          </div>
-        )
-      })()}
-
       {/* Agent planning area — 规划期可改 adapter;执行期作为阶段执行入口
-          (执行=全自动 spawn 终端,复制提示词=半自动手动跑) */}
+          (执行=全自动 spawn 终端,复制提示词=半自动手动跑)。
+          确认/重新规划按钮收进卡片头部,操作对象和按钮同处一屏。 */}
       {resolvedActions.length > 0 && (
         <div className="ot-plan-section">
-          <h3>🤖 Agent 规划</h3>
-          <p className="ot-plan-hint">
-            复制提示词后可贴到自己的 CLI 执行，完成后系统会自动认领结果
-          </p>
+          <div className="ot-plan-head">
+            <div>
+              <h3>🤖 Agent 规划</h3>
+              <p className="ot-plan-hint">
+                复制提示词后可贴到自己的 CLI 执行，完成后系统会自动认领结果
+              </p>
+            </div>
+            {detail.status === 'planning' && !isConfirmed && (
+              <div className="ot-plan-actions">
+                <button className="btn" onClick={onRegeneratePlan}>
+                  🔄 重新规划
+                </button>
+                <button className="btn btn-primary" onClick={onConfirmPlan}>
+                  ✅ 确认规划，开始执行
+                </button>
+              </div>
+            )}
+          </div>
           <div className="action-cards">
             {resolvedActions.map((a, i) => (
               <ActionCard
@@ -255,25 +266,9 @@ export default function OverviewTab({
         </div>
       )}
 
-      {/* Action buttons */}
+      {/* Action buttons(确认/重新规划已收进 Agent 规划卡片头部;这里只剩
+          single-pass 启动和各状态的操作按钮) */}
       <div className="ot-actions">
-        {/*
-          主按钮统一走自动链路(PLAN-stage-confirm-gate):去掉孤立的「启动终端(HITL)」
-          主按钮(它调 /sessions/spawn 旁路自动链路,跑完 design 无人衔接下一阶段)。
-          planning → 「开始 design」走 /plan/confirm → continue_orchestrator_agent,
-          由自动链路 spawn design 终端(前端 TerminalTab 能发现)。执行期终端入口仍由
-          TerminalTab sidebar 提供(次要 debug 入口)。
-        */}
-        {detail.status === 'planning' && !isConfirmed && resolvedActions.length > 0 && (
-          <>
-            <button className="btn btn-primary" onClick={onConfirmPlan}>
-              ✅ 确认规划，开始执行
-            </button>
-            <button className="btn" onClick={onRegeneratePlan}>
-              🔄 重新规划
-            </button>
-          </>
-        )}
         {/*
           single-pass 等 profile 创建即 active,但执行从未触发(无 _active_execution)。
           planning 走的是「确认规划」按钮;这种 active-unstarted story 走「开始执行」

@@ -7,7 +7,10 @@ import { IntakeStartModal, useIntakeStart } from '../components/IntakeStartModal
 import './Dashboard.css'
 
 /**
- * 待启动(Dashboard)— 已激活(intakeState==='ready')等待开始/进行中的 Story 卡片列表。
+ * 待启动(Dashboard)— lifecycle_state==='待启动' 的 Story 卡片列表。
+ *
+ * TABS-LIFECYCLE-STATE: 四个主 tab 按 lifecycle_state 互斥判据,与引擎 status 解耦。
+ * 「待启动」= start 之后、确认规划之前(DB 默认值,未经过 /plan/confirm 推进到「开发」)。
  * TAPD 需求 / 日历 / 项目 已拆为独立页面(/tapd、/calendar、/projects)。
  */
 export default function Dashboard() {
@@ -16,8 +19,8 @@ export default function Dashboard() {
   const { intakeModal, intakeNotice, openIntake, closeIntake, handleIntakeConfirm } = useIntakeStart()
   const qc = useQueryClient()
 
-  // 我的 Story: 所有已激活的 story，不区分来源（TAPD/飞书/手工创建）
-  const myStories = allStories.filter((s) => s.intakeState === 'ready')
+  // 待启动:lifecycle_state 为「待启动」的 story(start 后、确认规划前)
+  const myStories = allStories.filter((s) => s.lifecycleState === '待启动')
 
   async function handleCardAction(s: StorySummary, action: StoryCardAction) {
     if (action.confirm && !window.confirm(action.confirm)) return
