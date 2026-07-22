@@ -60,13 +60,10 @@ export default function StoryCard({
   return (
     <div className="story-card-v2">
       <div className="card-top" onClick={() => navigate(`/story/${story.storyKey}`)}>
-        <span className="card-key">{story.storyKey}</span>
+        <span className="card-title">{story.title || '(未命名)'}</span>
         <span className={`badge badge-${story.status}`}>
           {STATUS_LABELS[story.status] || story.status}
         </span>
-      </div>
-      <div className="card-title" onClick={() => navigate(`/story/${story.storyKey}`)}>
-        {story.title || '(未命名)'}
       </div>
       <div className="card-progress" onClick={() => navigate(`/story/${story.storyKey}`)}>
         <div className="progress-bar">
