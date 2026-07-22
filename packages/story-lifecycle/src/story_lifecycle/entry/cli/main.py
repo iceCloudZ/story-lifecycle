@@ -144,7 +144,10 @@ def cli(ctx, serve, host, port, fix_deps):
             "done",
             "calendar",
         ):
-            if not is_configured():
+            # STORY_SKIP_FIRST_RUN: 测试 / CI 用 —— 跳过 setup wizard 拦截。
+            # consult 等命令在 fake 模式(STORY_CONSULT_FAKE)下不需要真 LLM,
+            # 但无 API key 时会被这里的 wizard 拦死。设了这个 env 就放行。
+            if not os.environ.get("STORY_SKIP_FIRST_RUN") and not is_configured():
                 console.print(
                     "[yellow]LLM API key not configured — launching setup wizard.[/]\n"
                 )
