@@ -50,6 +50,8 @@ class TestPlanConfirm:
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
+        # TABS-LIFECYCLE-STATE: 确认规划应推进 lifecycle_state 到「开发」(待启动→开发中)
+        assert db.get_story("TEST-001")["lifecycle_state"] == "开发"
 
     def test_404_for_missing_story(self, client):
         resp = client.post("/api/story/NONEXISTENT/plan/confirm")
@@ -240,3 +242,21 @@ class TestGetPlan:
         updated = db.get_story("TEST-001")
         ctx_after = json.loads(updated["context_json"])
         assert "_stage_gate" not in ctx_after
+
+
+class TestArchive:
+    def test_archive_sets_lifecycle_done(self, client, tmp_path, monkeypatch):
+        """归档端点应同步写 lifecycle_state=结项(TABS-LIFECYCLE-STATE: 已结项 tab 纯按
+        lifecycle_state 判,不再靠 status=archived 兜底)。"""
+        _create_story(client)
+        resp = client.put("/api/story/TEST-001/archive")
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "archived"
+        updated = db.get_story("TEST-001")
+        assert updated["status"] == "archived"
+        assert updated["lifecycle_state"] == "结项"
+
+    def test_404_for_missing_story(self, client):
+        resp = client.put("/api/story/NONEXISTENT/archive")
+        assert resp.status_code == 404
