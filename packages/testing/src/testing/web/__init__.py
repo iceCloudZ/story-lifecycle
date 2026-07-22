@@ -25,6 +25,7 @@ judge       — Judge base + CalculatorJudge: pure-Python pass/fail by composing
 from testing.web.api_client import ApiError, StoryApiClient
 from testing.web.judge import (
     CalculatorJudge,
+    ConsultJudge,
     HcAllJavaJudge,
     HcOrderJudge,
     Judge,
@@ -38,11 +39,13 @@ from testing.web.runner import (
 )
 from testing.web.scenario import (
     CalculatorPrep,
+    ConsultPrep,
     InjectedSpecPrep,
     ScenarioError,
     ScenarioResult,
     WorkspacePrep,
     run_calculator_scenario,
+    run_consult_scenario,
     run_scenario,
 )
 from testing.web.server import RunningServer, start_uvicorn_server
@@ -52,6 +55,8 @@ __all__ = [
     "ApiError",
     "CalculatorJudge",
     "CalculatorPrep",
+    "ConsultJudge",
+    "ConsultPrep",
     "HcAllJavaJudge",
     "HcOrderJudge",
     "InjectedSpecPrep",
@@ -69,6 +74,7 @@ __all__ = [
     "WebBridgeError",
     "WorkspacePrep",
     "run_calculator_scenario",
+    "run_consult_scenario",
     "run_scenario",
     "start_uvicorn_server",
 ]

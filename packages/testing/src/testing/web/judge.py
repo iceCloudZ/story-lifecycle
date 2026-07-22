@@ -216,5 +216,163 @@ class HcAllJavaJudge(ScenarioJudge):
         )
 
 
+class ConsultJudge(ScenarioJudge):
+    """Consult E2E judge: greeter red→green + consult 链路落了事件 + (若 spawn)
+    advisory 文件可解析 + reviewer adapter ≠ caller + advisory 非空。
+
+    Pure Decider (AGENTS.md): 只读后端 artifacts / DB 事件,不调 LLM,不看 DOM。
+
+    断言点(对齐任务「真实验收」契约):
+    a. DB 出现 consult_request + consult_response 事件
+    b. 若 consult_response 的 spawn_count > 0:.story/consult/<rid>*.json 存在且可解析
+    c. spawn 的 reviewer adapter ≠ caller adapter(decorrelation)
+    d. advisory 文本非空
+
+    参数
+    ----
+    caller_adapter: PRD 故事里 caller 的 adapter(本场景是 claude 跑 headless stage)
+    miner_db: 同 ScenarioJudge
+    """
+
+    def __init__(
+        self,
+        *,
+        caller_adapter: str = "claude",
+        miner_db: str | Path = _DEFAULT_MINER_DB,
+    ):
+        super().__init__(
+            test_runner=PytestRunner(test_path="tests"),
+            expected_impl_files=["greeter.py"],
+            miner_db=miner_db,
+            skip_miner=True,  # consult_demo 是隔离场景,不连真实 miner
+        )
+        self.caller_adapter = caller_adapter
+
+    def _fetch_consult_events(self, story_key: str) -> list[dict]:
+        """从当前进程的 story DB 拉 consult_* 事件。
+
+        WebBridge 场景下 STORY_HOME 被 webbridge_server fixture 设到了 tmp,
+        本函数从同一个 STORY_HOME 读 db。失败时返空列表(让断言给出明确报错)。
+        """
+        import json
+        import os
+        import sqlite3
+        from pathlib import Path
+
+        story_home = os.environ.get("STORY_HOME")
+        if not story_home:
+            return []
+        db_path = Path(story_home) / "story.db"
+        if not db_path.exists():
+            return []
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    "SELECT event_type, payload FROM event_log "
+                    "WHERE story_key = ? AND event_type IN (?, ?) ORDER BY id",
+                    (story_key, "consult_request", "consult_response"),
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return []
+        out = []
+        for r in rows:
+            try:
+                payload = json.loads(r["payload"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                payload = {}
+            out.append({"event_type": r["event_type"], "payload": payload})
+        return out
+
+    def judge(
+        self,
+        result: ScenarioResult,
+        *,
+        workspace: str | Path,
+        story_key: str,
+        stages: list[str],
+        api: StoryApiClient | None = None,
+    ) -> None:
+        # 先跑通用 red→green + done-file 断言(greeter.py 写出来 + 测试过)
+        super().judge(
+            result, workspace=workspace, story_key=story_key, stages=stages, api=api
+        )
+
+        ws = Path(workspace)
+        events = self._fetch_consult_events(story_key)
+        types = [e["event_type"] for e in events]
+
+        # (a) DB 出现 consult_request + consult_response 事件
+        assert "consult_request" in types, (
+            f"DB 未落 consult_request 事件(claude 没调 story consult?)。"
+            f"落了的事件类型:{types}"
+        )
+        assert "consult_response" in types, (
+            f"DB 落了 consult_request 但没有 consult_response(链路断了?)。"
+            f"事件类型:{types}"
+        )
+
+        # (d) advisory 非空
+        resp_events = [e for e in events if e["event_type"] == "consult_response"]
+        last_resp = resp_events[-1]["payload"]
+        advice = last_resp.get("advice", "")
+        assert advice and advice.strip(), (
+            f"consult_response.advice 为空(advisory 必须非空,DESIGN §5.1)。"
+            f"完整 payload:{last_resp}"
+        )
+
+        # (b/c) 若 spawn_count > 0:.story/consult/ 文件可解析 + decorrelation
+        spawn_count = int(last_resp.get("spawn_count", 0))
+        if spawn_count > 0:
+            consult_dir = ws / ".story" / "consult"
+            assert consult_dir.exists(), (
+                f"spawn_count={spawn_count} 但 {consult_dir} 不存在"
+            )
+            json_files = sorted(consult_dir.glob("*.json"))
+            assert json_files, (
+                f"spawn_count={spawn_count} 但 {consult_dir} 下无 .json 文件"
+            )
+            # 至少一个文件 JSON 可解析
+            parsed = None
+            parse_err = None
+            for jf in json_files:
+                try:
+                    import json as _json
+
+                    parsed = _json.loads(jf.read_text(encoding="utf-8"))
+                    break
+                except Exception as exc:
+                    parse_err = exc
+            assert parsed is not None, (
+                f"{len(json_files)} 个 .story/consult/*.json 都解析失败"
+                f"(最后一个错:{parse_err})"
+            )
+
+            # (c) decorrelation:从 spawn_results 旁路验证 —— 但 consult_response
+            # 事件去掉了 spawn_results(只留 spawn_count)。所以我们间接断言:
+            # caller_adapter 必须不在 .log 文件名后缀里。request_id 后缀格式
+            # 是 <rid>_r<n>_<adapter>(见 consult_orchestrator.py)。
+            # 找带 caller_adapter 后缀的文件 → 那是 decorrelation violation
+            # 不该出现(Handler 层不真 spawn 违规 adapter)。
+            caller_suffixed = [
+                f.name for f in json_files if f"_{self.caller_adapter}.json" in f.name
+            ]
+            assert not caller_suffixed, (
+                f"发现 caller({self.caller_adapter})同 adapter 的 spawn 文件:"
+                f"{caller_suffixed} —— decorrelation 违规(Handler 应该拒绝)"
+            )
+            # 至少有一个非 caller adapter 的文件 = 真做了 decorrelation
+            non_caller = [
+                f.name for f in json_files if f"_{self.caller_adapter}.json" not in f.name
+            ]
+            assert non_caller, (
+                f"spawn_count={spawn_count} 但没找到非 caller adapter 的 spawn "
+                f"文件(decorrelation 没生效)。所有文件:{[f.name for f in json_files]}"
+            )
+
+
 # Back-compat alias: the original name targeted hc-order specifically.
 HcOrderJudge = HcAllJavaJudge

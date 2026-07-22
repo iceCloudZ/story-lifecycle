@@ -427,6 +427,10 @@ from .calendar_cmd import calendar_cmd  # noqa: E402
 
 cli.add_command(calendar_cmd)
 
+from .consult_cmd import consult_cmd  # noqa: E402
+
+cli.add_command(consult_cmd)
+
 from .project import project  # noqa: E402
 
 cli.add_command(project)

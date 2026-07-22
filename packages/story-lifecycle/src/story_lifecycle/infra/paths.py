@@ -79,3 +79,34 @@ def runs_dir(workspace_root: str | Path) -> Path:
 
 def swebench_run_dir(workspace_root: str | Path, run_id: str) -> Path:
     return runs_dir(workspace_root) / "swebench" / run_id
+
+
+# ---- consult ----
+
+
+def consult_dir(workspace: str | Path) -> Path:
+    """advisory 结果目录(与 stage done 隔离,无 stage 推进语义)。
+
+    consult 的产出是 advisory(建议),绝不能落进 ``.story/done/`` —— 那是
+    stage 完成的握手文件目录,会被 graph / planner / orphan-claim 多处扫描,
+    误落会被当成 stage 已完成(详见 DESIGN-consult-tool §3.5)。
+    """
+    return story_dir(workspace) / "consult"
+
+
+def consult_result_file(workspace: str | Path, request_id: str) -> Path:
+    """绝对路径:consult 单次请求的 advisory 结果文件。
+
+    ``request_id`` 是 uuid hex[:12](同 clarify_server 的生成法),**不用**
+    story_key / stage —— 同一 stage 可多次 consult,用 request_id 天然唯一。
+    """
+    return consult_dir(workspace) / f"{request_id}.json"
+
+
+def consult_result_file_rel(request_id: str) -> str:
+    """Workspace-relative path(嵌进 CLI prompt + 自身轮询)。
+
+    与 ``consult_result_file`` 同布局(写读对齐,同 ``stage_done_file_rel``
+    的不变式约定)。
+    """
+    return f".story/consult/{request_id}.json"

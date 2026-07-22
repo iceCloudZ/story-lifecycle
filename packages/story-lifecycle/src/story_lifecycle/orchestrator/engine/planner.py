@@ -1084,8 +1084,21 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 _wants_grill = action.get("grill", False) and _has_interactive
 
                 story_env = None
-                if _wants_grill and adapter_name == "claude" and headless:
+                # consult (DESIGN-consult-tool §5.8):env 注入提升到所有 headless spawn
+                # —— STORY_KEY/STAGE/WORKSPACE/ADAPTER 对 claude/kimi caller 都可用,
+                # 这样 code agent 用 Bash 跑 `story consult` 时能读到。**不注入**
+                # STORY_CONSULT_DEPTH(caller depth 是未设/0;只有外援 spawn 时注入 1)。
+                if headless:
                     import os as _os
+
+                    story_env = {
+                        **_os.environ,
+                        "STORY_KEY": story_key,
+                        "STORY_STAGE": stage,
+                        "STORY_WORKSPACE": workspace,  # consult spawn 外援的工作区
+                        "STORY_ADAPTER": adapter_name,  # consult 的 decorrelation 决策
+                    }
+                if _wants_grill and adapter_name == "claude" and headless:
                     import sys as _sys
 
                     try:
@@ -1097,13 +1110,10 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         )
                         write_mcp_config(_mcp_cfg, _sys.executable)
                         launch_cmd = list(launch_cmd) + ["--mcp-config", str(_mcp_cfg)]
-                        story_env = {
-                            **_os.environ,
-                            "STORY_KEY": story_key,
-                            "STORY_STAGE": stage,
-                        }
+                        # story_env 已在 headless 分支注入;这里只补 MCP config,
+                        # 不再重复设 STORY_KEY/STAGE(避免双源真相漂移)。
                         log.info(
-                            "[%s] stage %s grill clarify MCP wired: --mcp-config=%s STORY_KEY/STORY_STAGE set",
+                            "[%s] stage %s grill clarify MCP wired: --mcp-config=%s",
                             story_key,
                             stage,
                             _mcp_cfg,
@@ -1843,6 +1853,7 @@ def _build_cli_prompt(
     """
     from ...infra.story_paths import story_evidence_dir
     from .prompt_sections import (
+        build_consult_protocol_section,
         build_design_dimensions_section,
         build_grill_protocol_section,
         build_kb_tool_section,
@@ -1898,6 +1909,13 @@ def _build_cli_prompt(
     grill_section = ""
     if grill and (stage != "design" or is_single_stage):
         grill_section = build_grill_protocol_section(interactive=interactive)
+
+    # consult (DESIGN-consult-tool §5.3): 所有 headless 路径注入 consult 协议段
+    # (claude/kimi caller 都能用,无 claude-only 限制 —— 与 grill 不同)。
+    # interactive 路径 code agent 在终端可直接问人,不注入。
+    consult_section = ""
+    if not interactive:
+        consult_section = build_consult_protocol_section(interactive=interactive)
 
     # BUG #18: worktree 已建(build 阶段 prepare_worktrees 跑过)→ 确定性指令:
     # "直接在 worktree 路径下改代码,不要自己建 worktree 或切分支"。
@@ -1990,6 +2008,7 @@ cd ./hc-config
 {dimensions_section}
 {quality_section}
 {grill_section}
+{consult_section}
 {task_list_section}
 ### 关键要点
 {focus}

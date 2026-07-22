@@ -102,6 +102,20 @@ class CalculatorPrep(WorkspacePrep):
         pass
 
 
+class ConsultPrep(WorkspacePrep):
+    """Red baseline for consult_demo scenario: delete greeter.py + clear story dirs.
+
+    同 :class:`CalculatorPrep` 结构,只是 red_file 换成 ``greeter.py``。
+    场景目录 IS 工作区(同 calculator 模式)。
+    """
+
+    def prepare(self, workspace: Path, scenario_dir: Path, story_key: str) -> None:
+        reset_workspace(workspace, story_key, red_files=("greeter.py",))
+
+    def cleanup(self, workspace: Path, scenario_dir: Path, story_key: str) -> None:
+        pass
+
+
 class InjectedSpecPrep(WorkspacePrep):
     """For real repos: copy spec/test files from scenario_dir into the workspace,
     and remove them (plus any AI-generated impl files) on cleanup.
@@ -353,6 +367,42 @@ def run_calculator_scenario(
         story_key=story_key,
         prd_content=prd_content,
         prep=CalculatorPrep(),
+        stages=stages,
+        title=title,
+        profile=profile,
+        use_browser_for_gates=use_browser_for_gates,
+        gate_timeout=gate_timeout,
+        poll_interval=poll_interval,
+    )
+
+
+def run_consult_scenario(
+    *,
+    server: RunningServer,
+    webbridge: WebBridgeClient,
+    scenario_dir: str | Path,
+    story_key: str,
+    prd_content: str,
+    stages: list[str] | None = None,
+    title: str = "Consult E2E story",
+    profile: str = "minimal",
+    use_browser_for_gates: bool = True,
+    gate_timeout: float = 1800.0,
+    poll_interval: float = 3.0,
+) -> ScenarioResult:
+    """consult_demo red→green + 强制 consult —— thin wrapper over :func:`run_scenario`.
+
+    同 :func:`run_calculator_scenario` 结构,只是 red_file 换成 ``greeter.py``、
+    Prep 用 :class:`ConsultPrep`。场景目录 IS 工作区。
+    """
+    return run_scenario(
+        server=server,
+        webbridge=webbridge,
+        workspace=scenario_dir,
+        scenario_dir=scenario_dir,
+        story_key=story_key,
+        prd_content=prd_content,
+        prep=ConsultPrep(),
         stages=stages,
         title=title,
         profile=profile,

@@ -234,6 +234,49 @@ def build_grill_protocol_section(*, interactive: bool = False) -> str:
     )
 
 
+def build_consult_protocol_section(*, interactive: bool = False) -> str:
+    """教 code agent 何时/怎么调 consult(DESIGN-consult-tool §5.3)。
+
+    consult 是 code agent 在 headless stage 内卡住时的求助通道:经 Bash 调
+    ``story consult`` → 编排 LLM FC loop(可 spawn 外援 CLI 实地调查)→ advisory
+    打印 stdout。advisory 是建议不是命令(DESIGN §2.2 advisory-not-blocking)。
+
+    仅 headless 路径注入(claude/kimi caller 都能用);interactive 路径 code agent
+    在终端可直接问人,不注入。
+
+    Args:
+        interactive: True=交互式终端(不注入);False=headless(注入)。
+    """
+    if interactive:
+        return ""  # interactive 路径在终端可直接问人,不注入
+    return (
+        "\n### 不确定时请外援(consult)\n\n"
+        "当遇到以下情况,用 Bash 工具运行 `story consult`:\n"
+        "- 你尝试了 2 种方案仍无法确定哪个对(stuck loop)\n"
+        "- 涉及跨模块/跨服务的边界判断,凭现有代码推断不确定\n"
+        "- 需要第二意见打破 stuck loop(编排 LLM 可 spawn 外援从不同角度调查)\n\n"
+        "**调用方式**:\n"
+        "```bash\n"
+        "# 1. 先把上下文写文件(避免命令行转义问题)\n"
+        "#    .story/consult/req-<简述>.md —— 你试过什么、当前代码现状、相关 snippet\n"
+        "# 2. 调 consult\n"
+        "story consult --question \"<具体问题>\" "
+        "--context-file .story/consult/req-<简述>.md --urgency high\n"
+        "```\n\n"
+        "- urgency=high(撞墙/阻塞):**前台**跑,Bash timeout 设 480000ms 以上。\n"
+        "- urgency=low/medium(概念澄清/选型):**后台**跑(Bash 的 run_in_background),"
+        "继续干别的,稍后读输出。\n\n"
+        "**纪律**:\n"
+        "- consult 返回的是**建议**(advisory),最终决策仍在你。你可以不采纳,但**必须**"
+        "在 done summary 里说明未采纳理由(引用输出里的 request_id)。\n"
+        "- consult 可能 spawn 一个外援 CLI 实地调查(跨模型 decorrelation),"
+        "需要 30 秒 - 数分钟。**不要滥用**。\n"
+        "- 能从代码/PRD/kb.py 自己查清楚的,不要 consult。consult 是卡住后的求助,"
+        "不是默认工作流。\n"
+        "- 每个阻塞点最多 consult 一次。别反复 consult 同一个问题。\n"
+    )
+
+
 def build_transcript_section(story_key: str, workspace: str, stage: str) -> str:
     """Return historical transcript context for this story/stage, or ``""``.
 
@@ -366,4 +409,6 @@ __all__ = [
     "build_knowledge_section",
     "build_quality_section",
     "build_transcript_section",
+    "build_grill_protocol_section",
+    "build_consult_protocol_section",
 ]
