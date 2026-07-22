@@ -1064,8 +1064,21 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     # 交互式:走 adapter.start_session 拿统一的 SessionSpec。
                     # prompt/resume/session_id 在 spec 里,下游 ensure_agent_pty
                     # 按 spec.pty_prompt + spec.readiness_marker 注入,不再分支。
+                    #
+                    # prompt 投递策略:不把完整多行 cli_prompt 直接塞进 claude "query"
+                    # —— claude CLI 只接收命令行的首行,多行 prompt 会被截断到
+                    # `## 任务: <stage>` 一行(实测:tapd-1144381896001067642 的 verify
+                    # stage 只剩首行,agent 无从下手)。cli_prompt 已在上方写入
+                    # prompt_file(1049 行),这里只传一条「读该文件并执行」的 seed,
+                    # 与 _spawn_story_agent_pty(api.py)的投递路径对齐:两条 spawn
+                    # 入口落到同一个 prompt_<stage>.md,claude 收到的也都是读文件指令。
+                    # 对 kimi/codex(PTY paste)同样安全:seed 短,完整内容在文件里。
+                    _seed = (
+                        f"请读取 `{prompt_file}` 并严格按其中的说明执行本阶段"
+                        f"({stage})任务,完成后按其完成协议写入 done 文件。"
+                    )
                     _session_spec = adapter.start_session(
-                        model=model, prompt=cli_prompt
+                        model=model, prompt=_seed
                     )
                     launch_cmd = _session_spec.command
 
@@ -1267,6 +1280,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         import threading as _th
 
                         from .awaiting_detector import make_awaiting_fn
+                        from .execution import auto_confirm_from_profile
                         from .supervisor import supervise_pty_session
 
                         _sup_llm = get_llm().invoke
@@ -1274,6 +1288,10 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             "story_key": story_key,
                             "stage": stage,
                             "summary": focus,
+                            # supervision 模式:默认 False(人工盯,supervisor 不调 LLM、不写 PTY,
+                            # 仅落 awaiting_confirm 事件 + 桌面通知);仅 profile 显式 auto_confirm=True
+                            # 的全自动场景(benchmark/CI)才走 LLM 决策 + 自动回写。
+                            "auto_confirm": auto_confirm_from_profile(rp, stage),
                         }
                         _sup_pty = _agent_pty
                         _sup_det = make_awaiting_fn(adapter_name)

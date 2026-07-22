@@ -1,13 +1,20 @@
-"""Supervisor Decider — LLM-driven response to code-agent questions.
+"""Supervisor Decider — 监督交互式 code agent 的提问。
 
-监督交互式 code agent (claude/codex/kimi):当 agent 提问/要选择时,
-``decide_response`` 用注入的 LLM 决策返回 {choice, reason}。
+监督交互式 code agent (claude/codex/kimi):当 agent 提问/要选择时,``handle_pty_output``
+按 supervision 模式分流:
 
-设计原则(阶段 0 立骨架,后续层复用):
-- **纯 Decider**:不读 DB、不写文件、不起进程;LLM 通过 ``llm_invoke`` 参数注入(可测)。
-- **零副作用**:所有 I/O(写 PTY、log_event)归 Handler,不在此处。
+- **默认(人工盯,``auto_confirm=False``)**:不调 LLM、不写 PTY。仅落 ``awaiting_confirm``
+  事件(审计可见)+ 桌面通知(复用 ``notify.send``)。人工在终端自己看到确认提示、自己答。
+  零 token 消耗,绝不往 PTY 塞噪声输入。
+- **全自动(``auto_confirm=True``,仅 benchmark/CI 显式配置)**:``decide_response`` 用注入的
+  LLM 决策返回 {choice, reason},Handler 回写 PTY。
+
+设计原则:
+- **纯 Decider**(``decide_response``):不读 DB、不写文件、不起进程;LLM 通过 ``llm_invoke``
+  参数注入(可测)。
+- **零副作用**:所有 I/O(写 PTY、log_event、notify)归 Handler(``handle_pty_output``)。
 - **决策上下文喂结构化 facts**(LangGraph 范式),不喂原始 PTY/stream 文本。
-- 两轨(Claude stream-json / codex-kimi PTY)共用此决策大脑。
+- 模式由 ``story_facts["auto_confirm"]`` 门控,planner 从 profile 的 ``auto_confirm`` 注入。
 """
 
 from __future__ import annotations
@@ -81,6 +88,23 @@ def log_decision(
     )
 
 
+def _notify_awaiting(story_key, stage: str, adapter: str, question: str) -> None:
+    """人工模式下命中 code-agent 提问时弹桌面通知(复用 ``notify.send``)。
+
+    ``notify.send`` 是软依赖(plyer 不可用时静默跳过),故包 try/except 不抛 ——
+    通知失败绝不能影响 supervisor 主循环。question 截断到 120 字防通知溢出。
+    """
+    try:
+        from .notify import send as notify
+
+        notify(
+            f"[{story_key}] {adapter} 需要确认",
+            f"({stage}) {question[:120]}",
+        )
+    except Exception:  # noqa: BLE001 — 通知是 best-effort,绝不炸 supervisor
+        log.debug("awaiting notify skipped for %s", story_key)
+
+
 def handle_pty_output(
     *,
     buffer: str,
@@ -97,12 +121,36 @@ def handle_pty_output(
     (0c 借 agent-yes 三层 pattern: readyPatterns/enterPatterns/fatalPatterns)。
     async 循环 ``supervise_pty_session`` 消费 tap queue,每个 chunk 调本函数。
 
-    Returns: True 命中并应答,False 未命中(不调 LLM、不写 PTY、不 log)。
+    Returns: True 命中(auto_confirm 时已应答+log;人工模式时仅落 awaiting_confirm 事件 +
+    桌面通知,不写 PTY),False 未命中(不调 LLM、不写 PTY、不 log)。
     """
     hit = is_awaiting_fn(buffer)
     if not hit:
         return False
     question, options = hit
+    story_key = story_facts.get("story_key")
+    stage = story_facts.get("stage", "")
+
+    # §supervision-mode:默认人工盯(不 auto_confirm)。
+    #   auto_confirm=False → **不**调 LLM、**不**往 PTY 写答案:
+    #     人工在终端自己看到确认提示、自己键入答案。supervisor 仅落 awaiting_confirm
+    #     事件(审计可见)+ 桌面通知(复用 notify.send),零 token 消耗。
+    #   auto_confirm=True  → 原全自动逻辑:decide_response(LLM) + pty.write(应答)。
+    #     仅 benchmark/CI 等显式配置的场景启用,避免对人工盯着的故事自动塞噪声输入。
+    if not story_facts.get("auto_confirm"):
+        log_event_fn(
+            story_key,
+            stage=stage,
+            event_type="awaiting_confirm",
+            payload={
+                "adapter": adapter,
+                "question": question,
+                "options": options,
+            },
+        )
+        _notify_awaiting(story_key, stage, adapter, question)
+        return True
+
     try:
         decision = decide_response(
             question=question,

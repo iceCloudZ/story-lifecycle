@@ -99,8 +99,11 @@ class TestLogDecision:
 
 
 class TestHandlePtyOutput:
-    def test_answers_and_logs_on_awaiting_hit(self):
-        """is_awaiting 命中 → 决策 + pty.write 应答 + log。"""
+    def test_auto_confirm_answers_and_logs_on_awaiting_hit(self):
+        """auto_confirm=True(全自动场景):is_awaiting 命中 → 决策 + pty.write 应答 + log。
+
+        仅 profile 显式 auto_confirm=True(benchmark/CI)才走 LLM 自动应答。
+        """
         from types import SimpleNamespace
 
         writes: list[bytes] = []
@@ -122,7 +125,7 @@ class TestHandlePtyOutput:
             buffer="提问: 用 A 还是 B?",
             pty=fake_pty,
             adapter="codex",
-            story_facts={"story_key": "S-1", "stage": "implement"},
+            story_facts={"story_key": "S-1", "stage": "implement", "auto_confirm": True},
             is_awaiting_fn=fake_awaiting,
             llm_invoke=fake_llm,
             log_event_fn=fake_log,
@@ -133,6 +136,60 @@ class TestHandlePtyOutput:
         assert len(logs) == 1
         assert logs[0]["event_type"] == "supervisor_decision"
         assert logs[0]["payload"]["choice"] == "option_a"
+
+    def test_manual_mode_does_not_write_pty_or_call_llm(self):
+        """回归:默认 auto_confirm 未设/False(人工盯)→ 命中提问也不调 LLM、不写 PTY。
+
+        旧默认是"无条件 LLM 自动答",会把 code-agent 正常提问误应答、烧 token、往 PTY
+        塞噪声输入。翻转后:人工模式仅落 awaiting_confirm 事件 + 桌面通知,人工在终端
+        自己看到提示自己答。supervisor 零 LLM 调用。
+        """
+        from types import SimpleNamespace
+
+        writes: list[bytes] = []
+        fake_pty = SimpleNamespace(write=lambda d: writes.append(d))
+        logs: list[dict] = []
+        llm_calls = {"n": 0}
+
+        def fake_log(story_key, *, stage, event_type, payload):
+            logs.append({"story_key": story_key, "event_type": event_type, "payload": payload})
+
+        def fake_awaiting(buffer):
+            if "A 还是 B" in buffer:
+                return ("用 A 还是 B?", ["option_a", "option_b"])
+            return None
+
+        def fake_llm(prompt):
+            llm_calls["n"] += 1
+            return '{"choice": "option_a", "reason": "must not be called in manual mode"}'
+
+        # notify.send 是软依赖(plyer 可能不可用)→ mock 掉避免测试环境弹窗/报错
+        import story_lifecycle.orchestrator.engine.supervisor as sup_mod
+
+        orig_notify = getattr(sup_mod, "_notify_awaiting", None)
+        sup_mod._notify_awaiting = lambda *a, **k: None
+        try:
+            answered = handle_pty_output(
+                buffer="提问: 用 A 还是 B?",
+                pty=fake_pty,
+                adapter="codex",
+                # auto_confirm 缺省 = False(人工盯)
+                story_facts={"story_key": "S-1", "stage": "implement"},
+                is_awaiting_fn=fake_awaiting,
+                llm_invoke=fake_llm,
+                log_event_fn=fake_log,
+            )
+        finally:
+            if orig_notify is not None:
+                sup_mod._notify_awaiting = orig_notify
+
+        assert answered is True             # 命中了(清 buffer 防重复触发)
+        assert writes == []                 # 但不写 PTY —— 人工自己答
+        assert llm_calls["n"] == 0          # 不调 LLM —— 零 token
+        assert len(logs) == 1
+        assert logs[0]["event_type"] == "awaiting_confirm"  # 落的是"待确认"事件,不是决策
+        assert logs[0]["payload"]["question"] == "用 A 还是 B?"
+        assert logs[0]["payload"]["options"] == ["option_a", "option_b"]
 
     def test_no_answer_no_llm_no_log_on_miss(self):
         """is_awaiting 未命中 → 短路:不调 LLM、不写 PTY、不 log(省 token)。
@@ -221,7 +278,7 @@ class TestSupervisePtySession:
         await supervise_pty_session(
             pty=fake_pty,
             adapter="codex",
-            story_facts={"story_key": "S-1", "stage": "implement"},
+            story_facts={"story_key": "S-1", "stage": "implement", "auto_confirm": True},
             is_awaiting_fn=fake_awaiting,
             llm_invoke=fake_llm,
             log_event_fn=fake_log,

@@ -75,7 +75,7 @@ class TestHandlePtyOutputHitlTrigger:
         return fake_pty, fake_log, fake_awaiting, fake_llm, writes, logs
 
     def test_triggers_hitl_on_question_marker(self):
-        """buffer 命中提问信号 → 决策 + pty.write + log。"""
+        """auto_confirm=True:buffer 命中提问信号 → 决策 + pty.write + log。"""
         fake_pty, fake_log, fake_awaiting, fake_llm, writes, logs = self._make_deps(
             '{"choice": "staging", "reason": "safer"}'
         )
@@ -84,7 +84,7 @@ class TestHandlePtyOutputHitlTrigger:
             buffer="系统提示: 请选择部署环境?",
             pty=fake_pty,
             adapter="codex",
-            story_facts={"story_key": "S-1", "stage": "deploy"},
+            story_facts={"story_key": "S-1", "stage": "deploy", "auto_confirm": True},
             is_awaiting_fn=fake_awaiting,
             llm_invoke=fake_llm,
             log_event_fn=fake_log,
@@ -98,7 +98,12 @@ class TestHandlePtyOutputHitlTrigger:
 
 
 class TestHandlePtyOutputDegradation:
-    """LLM 失常时 handle_pty_output 降级:不崩、不写 PTY、不 log。"""
+    """auto_confirm=True 时 LLM 失常,handle_pty_output 降级:不崩、不写 PTY、不 log。
+
+    (降级路径只在自动确认模式触发;人工模式根本不调 LLM,无降级可言。)
+    """
+
+    _AUTO_CONFIRM_FACTS = {"story_key": "S-1", "stage": "implement", "auto_confirm": True}
 
     def _make_deps(self, llm_response: str):
         writes: list[bytes] = []
@@ -127,7 +132,7 @@ class TestHandlePtyOutputDegradation:
             buffer="用 A 还是 B?",
             pty=fake_pty,
             adapter="codex",
-            story_facts={"story_key": "S-1", "stage": "implement"},
+            story_facts=TestHandlePtyOutputDegradation._AUTO_CONFIRM_FACTS,
             is_awaiting_fn=fake_awaiting,
             llm_invoke=fake_llm,
             log_event_fn=fake_log,
@@ -147,7 +152,7 @@ class TestHandlePtyOutputDegradation:
             buffer="用 A 还是 B?",
             pty=fake_pty,
             adapter="codex",
-            story_facts={"story_key": "S-1", "stage": "implement"},
+            story_facts=TestHandlePtyOutputDegradation._AUTO_CONFIRM_FACTS,
             is_awaiting_fn=fake_awaiting,
             llm_invoke=fake_llm,
             log_event_fn=fake_log,
@@ -167,7 +172,7 @@ class TestHandlePtyOutputDegradation:
             buffer="用 A 还是 B?",
             pty=fake_pty,
             adapter="codex",
-            story_facts={"story_key": "S-1", "stage": "implement"},
+            story_facts=TestHandlePtyOutputDegradation._AUTO_CONFIRM_FACTS,
             is_awaiting_fn=fake_awaiting,
             llm_invoke=fake_llm,
             log_event_fn=fake_log,

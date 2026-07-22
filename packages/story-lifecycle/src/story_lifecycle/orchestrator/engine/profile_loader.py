@@ -21,6 +21,10 @@ class StageConfig:
     model: str = ""
     provider: str = ""
     execution_mode: str = "interactive_pty"
+    # supervisor 是否用 LLM 自动确认 code-agent 的提问(PTY 轨)。
+    # 默认 False(人工盯,supervisor 仅落 awaiting_confirm 事件 + 桌面通知,不自动答);
+    # 仅全自动场景(benchmark/CI)显式设 true。
+    auto_confirm: bool = False
     skill: str = ""
     confirm: bool = False
     review: bool = True
@@ -50,6 +54,8 @@ class ResolvedProfile:
     model: str = ""
     provider: str = ""
     execution_mode: str = "interactive_pty"
+    # profile 顶层 auto_confirm(被 stage 级 auto_confirm 覆盖)。语义同 StageConfig.auto_confirm。
+    auto_confirm: bool = False
     stages: dict[str, StageConfig] = field(default_factory=dict)
     quality: dict = field(default_factory=dict)
     adversarial: dict = field(default_factory=dict)
@@ -75,6 +81,7 @@ class ResolvedProfile:
             "model": self.model,
             "provider": self.provider,
             "execution_mode": self.execution_mode,
+            "auto_confirm": self.auto_confirm,
             "stages": stages,
             "quality": self.quality,
             "adversarial": self.adversarial,
@@ -108,6 +115,7 @@ class ResolvedProfile:
             model=data.get("model", ""),
             provider=data.get("provider", ""),
             execution_mode=data.get("execution_mode", "interactive_pty"),
+            auto_confirm=data.get("auto_confirm", False),
             stages=stages,
             quality=data.get("quality", {}),
             adversarial=data.get("adversarial", {}),
@@ -126,6 +134,7 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
     top_model = raw.get("model", "")
     top_provider = raw.get("provider", "")
     top_execution_mode = raw.get("execution_mode", "interactive_pty")
+    top_auto_confirm = bool(raw.get("auto_confirm", False))
 
     stages = {}
     for stage_name, stage_raw in raw.get("stages", {}).items():
@@ -136,6 +145,7 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
             model=stage_raw.get("model", top_model),
             provider=stage_raw.get("provider", top_provider),
             execution_mode=stage_raw.get("execution_mode", top_execution_mode),
+            auto_confirm=bool(stage_raw.get("auto_confirm", top_auto_confirm)),
             skill=stage_raw.get("skill", ""),
             confirm=stage_raw.get("confirm", False),
             review=stage_raw.get("review", True),
@@ -154,6 +164,7 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
                     "model",
                     "provider",
                     "execution_mode",
+                    "auto_confirm",
                     "skill",
                     "confirm",
                     "review",
@@ -171,6 +182,7 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
         model=top_model,
         provider=top_provider,
         execution_mode=top_execution_mode,
+        auto_confirm=top_auto_confirm,
         stages=stages,
         quality=raw.get("quality", {}),
         adversarial=raw.get("adversarial", {}),

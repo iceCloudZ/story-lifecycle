@@ -4,6 +4,9 @@
 version: 2
 cli: claude
 execution_mode: headless
+# 全自动 benchmark 场景:supervisor 命中 code-agent 提问时用 LLM 自动决策 + 回写 PTY。
+# (headless 轨 stdin 已关,实际只 observe+log;此处标记语义,PTY 轨会真正自动应答。)
+auto_confirm: true
 hidden: true
 
 stages:

@@ -52,13 +52,28 @@ class TestMakeAwaitingFn:
         assert result is not None
         assert result[1] == ["A", "B"]
 
-    def test_trailing_question_mark_alone_is_awaiting(self):
-        """行尾问号(无显式选项)→ 视为 binary 询问,给默认 [是, 否] options。"""
-        detect = make_awaiting_fn("codex")
-        result = detect("要继续吗?")
-        assert result is not None
-        _question, options = result
-        assert len(options) >= 2  # 至少 是/否 二元
+    def test_trailing_question_mark_is_not_awaiting(self):
+        """回归:行尾问号(无显式选项)不再误判为 awaiting。
+
+        历史 bug:``\\?[ \\t]*$`` 这条 pattern 把 kimi/codex 正常思考输出里的
+        任何疑问句("要继续吗?"、"是否需要...?"、中文反问)都判成"在等人",
+        随后 _default_options_for 兜底 [是, 否] → supervisor 烧一次 LLM token
+        并往 PTY 塞一个 是/否 噪声输入。修复:删除该 pattern + 取消二元兜底。
+        """
+        detect = make_awaiting_fn("kimi")
+        assert detect("要继续吗?") is None
+        assert detect("是否需要我继续执行下一步?") is None
+        assert detect("这个方案的代价是什么?") is None
+
+    def test_no_fallback_binary_for_bare_question(self):
+        """回归:命中"请选择"但无任何可提取选项时,不兜底 [是, 否]。
+
+        旧实现会返回默认二元 [是, 否];新实现返回 None(让 supervisor 短路)。
+        真正的二元确认必须自带 (Y/n) 标记(见 test_detects_yes_no_prompt_*)。
+        """
+        detect = make_awaiting_fn("kimi")
+        # "请选择" 命中但后面无可提取编号/YN → 不兜底,返回 None
+        assert detect("请选择一个方案") is None
 
     def test_strips_ansi_escape_sequences_from_question(self):
         """真实 PTY(winpty)输出含 ANSI 转义(标题/光标/颜色),detector 要先剥离。

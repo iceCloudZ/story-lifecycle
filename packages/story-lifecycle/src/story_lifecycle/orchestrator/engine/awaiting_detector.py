@@ -20,13 +20,17 @@ from __future__ import annotations
 import re
 from typing import Callable
 
-# agent-yes 三层 pattern 的 enter 子集:命中表示 agent 在等人(待选择/确认/答复)
+# agent-yes 三层 pattern 的 enter 子集:命中表示 agent 在等人(待选择/确认/答复)。
+#
+# **只收强信号** —— 必须是明确的选项菜单/确认提示。
+# 不要加"行尾问号 \?[ \t]*$"这类弱信号:kimi/codex 正常思考输出里大量以"?"
+# 结尾的反问句/中文疑问句会被误判成"在等人",supervisor 就会塞一个 [是,否]
+# 选择题并烧一次 LLM token。历史回归见 test_trailing_question_mark_is_not_awaiting。
 _DEFAULT_ENTER_PATTERNS: list[str] = [
     r"请选择",
     r"选择\s*[：:]\s",  # "选择: " / "选择："
     r"\(\s*[Yy]\s*/\s*[Nn]\s*\)",  # (Y/n) / (y/N) — 二元确认
     r"\byes\s*/\s*no\b",
-    r"\?[ \t]*$",  # 行尾问号(agent 在等人答复)
     r"Select\s+an\s+option",
     r"Choose\s+(?:an?\s+)?\w",
 ]
@@ -45,8 +49,10 @@ _OPTION_RE = re.compile(r"\b([A-Za-z0-9])\s*[).．、）]\s*\S")
 # (Y/n) 类二元确认 —— 大小写照原样
 _YN_RE = re.compile(r"\(\s*([Yy])\s*/\s*([Nn])\s*\)")
 
-# 默认二元 options(行尾问号等无显式选项的提问)
-_BINARY_ZH = ["是", "否"]
+# (Y/n) 类二元确认命中后无显式编号选项时,从提示里照大小写取 options。
+# **不再**对无选项的提问兜底 [是, 否] —— 那会把 agent 的正常疑问句误判成
+# 二元选择,supervisor 就烧一次 LLM 并往 PTY 塞噪声(历史回归见
+# test_no_fallback_binary_for_bare_question)。
 
 # ANSI 转义序列(真实 PTY/winpty 输出里大量出现:CSI 颜色/光标、OSC 标题、字符集)
 # E2E 实跑发现不剥离会污染 question 字段 + 干扰 pattern 匹配。
@@ -117,8 +123,12 @@ def _extract_options(tail: str) -> list[str]:
 
 
 def _default_options_for(tail: str) -> list[str]:
-    """无显式编号选项时:(Y/n) 照大小写;否则默认二元 [是, 否]。"""
+    """无显式编号选项时:仅 (Y/n) 类二元确认照大小写提取;其余返回空(不兜底)。
+
+    返回空 → detect 返回 None → supervisor 不调 LLM、不写 PTY。
+    这避免了对 agent 正常疑问句(行尾问号)的误应答。
+    """
     m = _YN_RE.search(tail)
     if m:
         return [m.group(1), m.group(2)]
-    return list(_BINARY_ZH)
+    return []

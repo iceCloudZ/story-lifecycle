@@ -38,3 +38,29 @@ def headless_from_profile(profile) -> bool:
         return parse_execution_mode(mode) == ExecutionMode.HEADLESS
     except Exception:
         return False
+
+
+def auto_confirm_from_profile(profile, stage: str | None = None) -> bool:
+    """supervisor 是否用 LLM 自动确认 code-agent 的提问(PTY 轨)。
+
+    解析优先级(与 ``execution_mode`` 同构):
+    1. ``stage`` 给定 → 读该 stage 的 ``StageConfig.auto_confirm``(已 merge 过 profile 顶层默认);
+    2. 否则 → 读 profile 顶层 ``auto_confirm``。
+
+    **默认 False** —— 人工盯着:supervisor 命中 code-agent 提问时仅落 ``awaiting_confirm``
+    事件 + 桌面通知,**不**调 LLM、**不**往 PTY 写答案(token 不浪费,人不被打断)。
+    仅全自动场景(benchmark/CI,如 swebench profile)显式设 ``auto_confirm: true`` 才走
+    LLM 决策 + 自动回写 PTY。
+
+    防御:profile 为 None / 缺字段 / 异常 → False(默认人工,绝不抛)。
+    """
+    if profile is None:
+        return False
+    try:
+        if stage is not None:
+            stage_cfg = profile.stage(stage) if hasattr(profile, "stage") else None
+            if stage_cfg is not None:
+                return bool(getattr(stage_cfg, "auto_confirm", False))
+        return bool(getattr(profile, "auto_confirm", False))
+    except Exception:
+        return False
