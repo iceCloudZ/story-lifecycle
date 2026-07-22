@@ -33,8 +33,6 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
   // When sessionId is provided, the session already exists — skip spawn
   const [spawned, setSpawned] = useState(!!sessionId)
   const [prevStoryKey, setPrevStoryKey] = useState(storyKey)
-  const [searchVisible, setSearchVisible] = useState(false)
-  const [searchText, setSearchText] = useState('')
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reconnectAttemptsRef = useRef(0)
@@ -327,7 +325,6 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
     setPrevStoryKey(storyKey)
     setSpawned(false)
     setConnectionState('idle')
-    setSearchVisible(false)
   }
 
   // Auto-connect for active stories. handleSpawn's setState runs only after an
@@ -338,13 +335,6 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
       handleSpawn()
     }
   }, [autoConnect, storyKey, spawned, handleSpawn])
-
-  // Search functionality
-  function handleSearch() {
-    if (!searchText || !termRef.current) return
-    // Basic search: write the search text to terminal for visual scan
-    // Full search requires @xterm/addon-search which can be added later
-  }
 
   const statusText: Record<ConnectionState, string> = {
     idle: '○ 空闲',
@@ -384,28 +374,8 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
               重新启动
             </button>
           )}
-          <button
-            className="toolbar-btn"
-            onClick={() => setSearchVisible(!searchVisible)}
-            title="搜索"
-          >
-            🔍
-          </button>
         </div>
       </div>
-      {searchVisible && (
-        <div className="terminal-search">
-          <input
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleSearch() }}
-            placeholder="搜索终端输出..."
-            className="search-input"
-          />
-          <button className="toolbar-btn" onClick={handleSearch}>查找</button>
-          <button className="toolbar-btn" onClick={() => setSearchVisible(false)}>✕</button>
-        </div>
-      )}
       <div ref={containerRef} className="terminal-container" />
     </div>
   )

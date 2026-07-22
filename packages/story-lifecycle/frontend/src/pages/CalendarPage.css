@@ -1,0 +1,105 @@
+/* 日历视图(从 Dashboard.css 抽出,改用 design tokens) */
+
+.calendar-view {
+  width: 100%;
+}
+
+.cal-title {
+  font-size: var(--text-lg);
+  margin: 0 0 12px;
+  color: var(--color-text-strong);
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+
+.cal-day-header {
+  text-align: center;
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  padding: 8px 0;
+  font-weight: 600;
+}
+
+.cal-day {
+  min-height: 120px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  overflow: hidden;
+}
+
+.cal-empty { background: none; border-color: transparent; }
+
+.cal-today { border-color: var(--color-primary); box-shadow: 0 0 0 1px var(--color-primary-soft); }
+
+.cal-date {
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  margin-bottom: 4px;
+  text-align: right;
+}
+
+.cal-today .cal-date {
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+.cal-task {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text);
+  background: var(--gray-100);
+  border-left: 3px solid var(--color-purple-text);
+  padding: 2px 6px;
+  margin-bottom: 2px;
+  border-radius: 3px;
+  line-height: 1.4;
+  min-height: 20px;
+}
+
+.cal-task:hover { background: var(--gray-200); }
+
+.cal-task-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.cal-task-text {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-task-link {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 11px;
+  color: var(--color-primary);
+  text-decoration: none;
+  border-radius: 3px;
+  background: var(--color-primary-soft);
+  transition: background 0.15s;
+}
+
+.cal-task-link:hover { background: var(--color-info-soft); }
+
+.cal-more {
+  font-size: 10px;
+  color: var(--color-primary);
+  padding-left: 6px;
+  margin-top: 2px;
+}

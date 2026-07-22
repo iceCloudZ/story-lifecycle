@@ -1,9 +1,8 @@
-import { useQuery } from '@tanstack/react-query'
-import { statsApi, storyApi } from '../api/client'
+import { storyApi } from '../api/client'
 import type { Story, AgentAction, ActionButton, Plan, PlanStage, StoryStateView } from '../api/client'
 import StageProgress from './StageProgress'
 import ActionCard from './ActionCard'
-import ContextTab from './ContextTab'
+import SemiAutoSection from './SemiAutoSection'
 
 interface Props {
   storyKey: string
@@ -18,19 +17,17 @@ interface Props {
   onTabChange: (tabId: string) => void
   onAdvanceLifecycle: () => void
   onActionAdapterChange: (index: number, adapter: string) => void
+  // single-pass 等 profile 创建即 active 但从未启动(无 _active_execution):
+  // overview 显示「开始执行」按钮首次启动它。
+  neverStarted: boolean
+  onStart: () => void
 }
 
 export default function OverviewTab({
   storyKey, detail, resolvedActions, isConfirmed, planData,
   onConfirmPlan, onRegeneratePlan, onAction, actions, onTabChange, onAdvanceLifecycle,
-  onActionAdapterChange,
+  onActionAdapterChange, neverStarted, onStart,
 }: Props) {
-  const { data: stats } = useQuery({
-    queryKey: ['stats', storyKey],
-    queryFn: () => statsApi.get(storyKey),
-    enabled: !!detail,
-  })
-
   // stage 进度条用真实数据(PLAN-stage-confirm-gate):优先 /plan 回的 stages(done 标记
   // 驱动状态);无 plan 数据(legacy / 规划前)回落到 minimal 默认三阶段。StageProgress
   // 自己按 currentStage 把当前阶段标 running。
@@ -61,6 +58,16 @@ export default function OverviewTab({
   const storyStateGate = planData?.story_state_gate ?? null
   const showStateGateCard =
     detail.status === 'paused' && !!storyStateGate?.awaiting_confirm
+
+  // paused「继续执行」/ blocked「重试」是主恢复路径,提到进度条下方做醒目主按钮;
+  // 底部按钮行不再重复它(其余 status 的按钮行行为不变)。
+  const primaryAction = actions.find((a) => a.variant === 'primary') ?? null
+  const rowActions = primaryAction ? actions.filter((a) => a !== primaryAction) : actions
+
+  // 阶段完成标记(planData.stages[].done)→ ActionCard 隐藏已完成阶段的「执行」。
+  const doneStages = new Set(
+    (planData?.stages ?? []).filter((s) => s.done).map((s) => s.name)
+  )
 
   return (
     <div className="tab-content overview-tab">
@@ -142,6 +149,15 @@ export default function OverviewTab({
         <StageProgress stages={stages} currentStage={detail.currentStage} />
       )}
 
+      {/* 主恢复路径(paused 继续执行 / blocked 重试)提到进度条下方,不再埋在按钮行里 */}
+      {primaryAction && (
+        <div className="ot-continue-banner">
+          <button className="btn btn-primary" onClick={() => onAction(primaryAction)}>
+            ▶ {primaryAction.label}
+          </button>
+        </div>
+      )}
+
       {/* STORY-STATE-MODEL: Story 状态闸卡片(业务层,优先于阶段间闸) */}
       {showStateGateCard && (
         <div className="ot-story-state-gate-card">
@@ -215,16 +231,22 @@ export default function OverviewTab({
         )
       })()}
 
-      {/* Agent planning area */}
-      {detail.status === 'planning' && resolvedActions.length > 0 && (
+      {/* Agent planning area — 规划期可改 adapter;执行期作为阶段执行入口
+          (执行=全自动 spawn 终端,复制提示词=半自动手动跑) */}
+      {resolvedActions.length > 0 && (
         <div className="ot-plan-section">
           <h3>🤖 Agent 规划</h3>
+          <p className="ot-plan-hint">
+            复制提示词后可贴到自己的 CLI 执行，完成后系统会自动认领结果
+          </p>
           <div className="action-cards">
             {resolvedActions.map((a, i) => (
               <ActionCard
                 key={i}
                 action={a}
                 index={i}
+                storyKey={storyKey}
+                done={!!a.stage && doneStages.has(a.stage)}
                 editable={detail.status === 'planning' && !isConfirmed}
                 onAdapterChange={onActionAdapterChange}
               />
@@ -252,7 +274,17 @@ export default function OverviewTab({
             </button>
           </>
         )}
-        {actions.map((a) => (
+        {/*
+          single-pass 等 profile 创建即 active,但执行从未触发(无 _active_execution)。
+          planning 走的是「确认规划」按钮;这种 active-unstarted story 走「开始执行」
+          直接 start_story_async(跳过 planning 确认闸,PRD 已有)。已在跑的不显示。
+        */}
+        {detail.status === 'active' && neverStarted && (
+          <button className="btn btn-primary" onClick={onStart}>
+            🚀 开始执行
+          </button>
+        )}
+        {rowActions.map((a) => (
           <button
             key={a.label}
             className={`btn ${a.variant === 'danger' ? 'btn-danger' : ''} ${a.variant === 'primary' ? 'btn-primary' : ''}`}
@@ -263,68 +295,8 @@ export default function OverviewTab({
         ))}
       </div>
 
-      {/* Quick stats */}
-      {stats && (
-        <div className="ot-stats">
-          <button className="ot-stat-card" onClick={() => onTabChange('code')}>
-            <div className="ot-stat-num">{stats.code_changes}</div>
-            <div className="ot-stat-label">代码变更</div>
-          </button>
-          <button className="ot-stat-card" onClick={() => onTabChange('llm-audit')}>
-            <div className="ot-stat-num">{stats.tokens.calls}</div>
-            <div className="ot-stat-label">LLM 调用</div>
-          </button>
-          <div className="ot-stat-card ot-stat-card-static">
-            <div className="ot-stat-num">
-              {stats.tokens.total_tokens >= 1000
-                ? `${(stats.tokens.total_tokens / 1000).toFixed(1)}K`
-                : stats.tokens.total_tokens}
-            </div>
-            <div className="ot-stat-label">Token · ¥{stats.tokens.cost_cny.toFixed(2)}</div>
-          </div>
-        </div>
-      )}
-
-      {/* Token breakdown */}
-      {stats && stats.tokens.total_tokens > 0 && (
-        <div className="ot-token-breakdown">
-          <div className="ot-token-row">
-            <span>Prompt</span>
-            <span>{stats.tokens.prompt_tokens.toLocaleString()}</span>
-          </div>
-          <div className="ot-token-row">
-            <span>Completion</span>
-            <span>{stats.tokens.completion_tokens.toLocaleString()}</span>
-          </div>
-          {Object.entries(stats.tokens.by_stage).length > 0 && (
-            <div className="ot-token-group">
-              <div className="ot-token-group-title">按阶段</div>
-              {Object.entries(stats.tokens.by_stage).map(([stage, tokens]) => (
-                <div key={stage} className="ot-token-row">
-                  <span>{stage}</span>
-                  <span>{tokens.toLocaleString()}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {Object.entries(stats.tokens.by_model).length > 0 && (
-            <div className="ot-token-group">
-              <div className="ot-token-group-title">按模型</div>
-              {Object.entries(stats.tokens.by_model).map(([model, tokens]) => (
-                <div key={model} className="ot-token-row">
-                  <span>{model || '未知模型'}</span>
-                  <span>{tokens.toLocaleString()}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Context content merged into overview */}
-      <div className="ot-context-section">
-        <ContextTab storyKey={storyKey} />
-      </div>
+      {/* 半自动工具(原 ContextTab 收敛):复制资料包/上线提示词/PRD/工作区 */}
+      <SemiAutoSection storyKey={storyKey} />
     </div>
   )
 }

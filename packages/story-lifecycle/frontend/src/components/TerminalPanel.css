@@ -52,29 +52,6 @@
   background: #d1d5db;
 }
 
-.terminal-search {
-  display: flex;
-  gap: 6px;
-  padding: 4px 10px;
-  background: #f5f7fa;
-  border-bottom: 1px solid #e5e7eb;
-}
-
-.search-input {
-  flex: 1;
-  padding: 3px 8px;
-  border: 1px solid #e5e7eb;
-  border-radius: 3px;
-  background: #ffffff;
-  color: #1f2937;
-  font-size: 12px;
-}
-
-.search-input:focus {
-  outline: none;
-  border-color: #2563eb;
-}
-
 .terminal-container {
   width: 100%;
   flex: 1;

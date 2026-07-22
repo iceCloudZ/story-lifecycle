@@ -38,9 +38,12 @@ export interface Story {
   // BUG #9:是否 headless 执行(从 profile execution_mode 推导)。
   // headless→MCP clarify+前端卡片;交互式→终端直接问人(卡片不显示)。
   headless?: boolean
+  // context_json 原文(JSON 字符串)。前端 parse 后读 _active_execution 判断
+  // story 是否曾启动过(active 但无 _active_execution = single-pass 创建后从未跑)。
+  contextJson?: string | null
 }
 
-// Bug 列表项(BugsPage 列表 + Story 详情 BugsTab 共用,替掉两处重复定义)。
+// Bug 列表项(BugsPage 列表使用)。
 export interface BugSummary {
   storyKey: string
   title?: string

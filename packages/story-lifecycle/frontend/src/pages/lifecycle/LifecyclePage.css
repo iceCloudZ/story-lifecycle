@@ -1,4 +1,4 @@
-/* 生命周期列表页(待启动/开发中/测试上线/已结项)共用样式 */
+/* 生命周期列表页(待启动/开发中/测试上线/已结项)及视图页(TAPD/日历/项目)共用样式 */
 
 .lifecycle-page {
   max-width: 1400px;
@@ -9,29 +9,25 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: var(--space-5);
 }
 
 .lifecycle-header h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--text-xl);
   font-weight: 600;
-  color: #111827;
+  color: var(--color-text-strong);
 }
 
 .lifecycle-header .story-count {
-  color: #6b7280;
-  font-size: 13px;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
 }
 
-/* 视图切换(列表 / 班车看板) */
-.lifecycle-header .view-switch {
-  display: flex;
-  gap: 4px;
+/* 页头右侧操作区(如「注册项目」按钮) */
+.lifecycle-header .page-actions {
   margin-left: auto;
-}
-
-.lifecycle-header .view-switch .tab-btn {
-  padding: 4px 12px;
-  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

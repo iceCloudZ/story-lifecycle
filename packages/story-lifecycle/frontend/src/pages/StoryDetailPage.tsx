@@ -6,25 +6,19 @@ import type { AgentAction, ActionButton } from '../api/client'
 import StorySidebar from '../components/StorySidebar'
 import OverviewTab from '../components/OverviewTab'
 import CodeChangesTab from '../components/CodeChangesTab'
-import TestTab from '../components/TestTab'
 import TerminalTab from '../components/TerminalTab'
-import BugsTab from '../components/BugsTab'
-import LlmAuditTab from '../components/LlmAuditTab'
 import DocsTab from '../components/DocsTab'
 import ClarifyDialog from '../components/ClarifyDialog'
 import './StoryDetailPage.css'
 
 // Visible modules for the semi-automatic workflow. Terminal 放回 sidebar:
 // handleConfirmPlan / handleAdvanceLifecycle 都 setActiveTab('terminal'),
-// 必须让用户能从 sidebar 够得到它。loop/quality/context 已移除渲染分支。
+// 必须让用户能从 sidebar 够得到它。测试/LLM 审计/缺陷 tab 已移除(精简为 4 个模块)。
 const MODULES = [
   { id: 'overview', icon: '📊', label: '概览' },
   { id: 'terminal', icon: '💻', label: '终端' },
   { id: 'code', icon: '📦', label: '代码变更' },
-  { id: 'test', icon: '🧪', label: '测试' },
   { id: 'docs', icon: '📄', label: '文档' },
-  { id: 'llm-audit', icon: '🔍', label: 'LLM 审计' },
-  { id: 'bugs', icon: '🐛', label: '缺陷' },
 ]
 
 const ACTIONS: Record<string, ActionButton[]> = {
@@ -58,6 +52,8 @@ export default function StoryDetailPage() {
 
   const activeTab = searchParams.get('tab') || 'overview'
   const setActiveTab = (tab: string) => setSearchParams({ tab })
+  // 旧链接可能带已删除的 tab(test/llm-audit/bugs),回落到概览,避免空白内容区。
+  const validTab = MODULES.some((m) => m.id === activeTab) ? activeTab : 'overview'
 
   const { data: detail, refetch } = useQuery({
     queryKey: ['story', storyKey],
@@ -139,6 +135,17 @@ export default function StoryDetailPage() {
 
   const actions = ACTIONS[detail.status] || []
 
+  // single-pass 等 profile 创建即 active,但执行从未触发(无 _active_execution)。
+  // overview 对这种 story 显示「开始执行」按钮(调 /advance 首次启动)。
+  // 已在跑的(有 _active_execution)不显示,避免重复启动。
+  let ctx: Record<string, unknown>
+  try {
+    ctx = JSON.parse(detail.contextJson || '{}')
+  } catch {
+    ctx = {}
+  }
+  const neverStarted = !ctx._active_execution
+
   // 下拉即改即生效:onChange 立即 PATCH 到 DB,本地乐观翻 UI。
   // PATCH 成功后 invalidate plan query,DB 回的 actions 会覆盖本地 overrides
   // (值一致,无缝);失败则弹错并保持原值(下一次 onChange 会再覆盖)。
@@ -193,6 +200,20 @@ export default function StoryDetailPage() {
       setActiveTab('terminal')
     } else {
       alert(`推进失败: ${(await r.json()).detail || '未知错误'}`)
+    }
+  }
+
+  async function handleStart() {
+    // single-pass 等 profile「开始执行」:active 但从未启动 → /advance 首次
+    // start_story_async。成功后跳终端看 claude 启动(与 advanceLifecycle 同行为)。
+    const r = await fetch(`/api/story/${storyKey}/advance`, { method: 'PUT' })
+    if (r.ok) {
+      refetch()
+      qc.invalidateQueries({ queryKey: ['plan', storyKey] })
+      qc.invalidateQueries({ queryKey: ['sessions', storyKey] })
+      setActiveTab('terminal')
+    } else {
+      alert(`启动失败: ${(await r.json()).detail || '未知错误'}`)
     }
   }
 
@@ -256,13 +277,13 @@ export default function StoryDetailPage() {
           storyTitle={detail.title || storyKey}
           storyStatus={detail.status}
           modules={MODULES}
-          activeModule={activeTab}
+          activeModule={validTab}
           onModuleChange={setActiveTab}
           onArchive={handleArchive}
         />
         <div className="sdpv2-content">
           <ClarifyDialog storyKey={storyKey} status={detail.status} headless={detail.headless} />
-          {activeTab === 'overview' && (
+          {validTab === 'overview' && (
             <OverviewTab
               storyKey={storyKey}
               detail={detail}
@@ -276,14 +297,13 @@ export default function StoryDetailPage() {
               onTabChange={setActiveTab}
               onAdvanceLifecycle={handleAdvanceLifecycle}
               onActionAdapterChange={handleActionAdapterChange}
+              neverStarted={neverStarted}
+              onStart={handleStart}
             />
           )}
-          {activeTab === 'code' && <CodeChangesTab storyKey={storyKey} />}
-          {activeTab === 'llm-audit' && <LlmAuditTab storyKey={storyKey} />}
-          {activeTab === 'test' && <TestTab storyKey={storyKey} />}
-          {activeTab === 'docs' && <DocsTab storyKey={storyKey} />}
-          {activeTab === 'bugs' && <BugsTab storyKey={storyKey} />}
-          {activeTab === 'terminal' && (
+          {validTab === 'code' && <CodeChangesTab storyKey={storyKey} />}
+          {validTab === 'docs' && <DocsTab storyKey={storyKey} />}
+          {validTab === 'terminal' && (
             <TerminalTab storyKey={storyKey} status={detail.status} />
           )}
         </div>
