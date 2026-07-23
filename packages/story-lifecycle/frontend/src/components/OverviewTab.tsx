@@ -129,42 +129,38 @@ export default function OverviewTab({
         })}
       </div>
 
-      {/* gate 推进卡片:当前状态可推进时显示「进入 X」按钮 */}
-      {gate && (
-        <div className={`ot-gate-card${gate.all_satisfied ? ' satisfied' : ''}`}>
-          <div className="ot-gate-title">
-            {gate.all_satisfied
-              ? `✅ 成果物就绪,可进入 ${gate.to}`
-              : `进入 ${gate.to} 需要以下成果物`}
-          </div>
-          {!gate.all_satisfied && (
-            <div className="ot-gate-missing">
-              {gate.required.filter((r) => !r.satisfied).map((r) => (
-                <span key={r.key} className="ot-gate-missing-item">
-                  {r.label}{r.exists && r.needs_confirm && !r.confirmed ? '(未确认)' : '(未完成)'}
-                </span>
-              ))}
-            </div>
-          )}
-          {gate.all_satisfied && (
-            <button className="btn btn-primary" onClick={onAdvanceLifecycle}>
-              确认进入 {gate.to} →
-            </button>
-          )}
-        </div>
-      )}
-
       {/* 第二层:成果物清单(自动检测 + 人工确认 + 可跳过)
           横排卡片,每卡两个灯:产物灯(只读) + 确认灯(可点击=确认动作)。
-          灯含义由标题右侧图例说明一次,卡片里不重复标注。 */}
+          灯含义由标题右侧图例说明一次,卡片里不重复标注。
+          gate 推进入口并入此区标题右侧:all_satisfied 时按钮可点(进入下一状态),
+          未满足时按钮置灰 + tooltip 列出缺的成果物 —— 不再单开一张 gate 卡片。 */}
       {deliverables.length > 0 && (
         <div className="ot-deliverables">
           <div className="ot-deliv-head">
             <h3 className="ot-deliv-title">📦 交付物</h3>
-            <span className="ot-deliv-legend" title="左:产物是否存在 · 右:是否已确认">
-              <span className="ot-deliv-lamp off" title="产物" />
-              <span className="ot-deliv-lamp off" title="确认" />
-            </span>
+            <div className="ot-deliv-head-right">
+              <span className="ot-deliv-legend" title="左:产物是否存在 · 右:是否已确认">
+                <span className="ot-deliv-lamp off" title="产物" />
+                <span className="ot-deliv-lamp off" title="确认" />
+              </span>
+              {gate && (
+                <button
+                  className={`btn btn-sm ${gate.all_satisfied ? 'btn-primary' : 'ot-gate-btn-disabled'}`}
+                  disabled={!gate.all_satisfied}
+                  title={
+                    gate.all_satisfied
+                      ? `进入 ${gate.to}`
+                      : `还差: ${gate.required
+                          .filter((r) => !r.satisfied)
+                          .map((r) => r.label)
+                          .join('、')}`
+                  }
+                  onClick={onAdvanceLifecycle}
+                >
+                  进入 {gate.to} →
+                </button>
+              )}
+            </div>
           </div>
           <div className="ot-deliv-list">
             {deliverables.map((d) => {
