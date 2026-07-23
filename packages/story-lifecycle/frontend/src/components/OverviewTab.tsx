@@ -206,15 +206,6 @@ export default function OverviewTab({
         </div>
       )}
 
-      {/* 主恢复按钮(paused 继续 / failed 重试) */}
-      {primaryAction && (
-        <div className="ot-continue-banner">
-          <button className="btn btn-primary" onClick={() => onAction(primaryAction)}>
-            ▶ {primaryAction.label}
-          </button>
-        </div>
-      )}
-
       {/* Agent 规划区 */}
       {resolvedActions.length > 0 && (
         <div className="ot-plan-section">
@@ -266,14 +257,14 @@ export default function OverviewTab({
         </div>
       )}
 
-      {/* 半自动工具 */}
-      <SemiAutoSection storyKey={storyKey} />
-
       {/* 第三层:终端区(按 profile stage 分 tab) */}
       <div id="overview-terminal" className="ot-terminal-section">
         <h3 className="ot-terminal-title">💻 终端</h3>
         <TerminalTab storyKey={storyKey} status={detail.status} />
       </div>
+
+      {/* 半自动工具(置底:日常全自动跑不用,手动介入时才翻) */}
+      <SemiAutoSection storyKey={storyKey} />
     </div>
   )
 }

@@ -105,16 +105,6 @@
   flex-wrap: wrap;
 }
 
-/* 主恢复路径(paused 继续执行 / blocked 重试)的醒目入口 */
-.ot-continue-banner {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-left: 3px solid var(--color-primary);
-  border-radius: var(--radius-lg);
-  padding: var(--space-4) var(--space-5);
-  box-shadow: var(--shadow-sm);
-}
-
 /* 确认闸卡片(stage gate):paused 状态下醒目引导人确认推进下一 stage。 */
 .ot-stage-gate-card {
   background: var(--color-surface);
@@ -470,12 +460,26 @@
   min-height: 30px;
 }
 
-/* 概览底部终端区(原独立 tab 并入:状态控制上 + 终端下) */
+/* 概览底部终端区(终端 + 对话历史左右分栏)。
+   固定高度让 flex 分栏可滚动;overflow 内容由 .tt-main 内部处理。 */
 .ot-terminal-section {
   margin-top: var(--space-5);
   border-top: 1px solid var(--color-border);
   padding-top: var(--space-4);
   scroll-margin-top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  /* 视口高度的 55%,给终端 + 历史足够的可视区;小屏保底 420px。 */
+  height: 55vh;
+  min-height: 420px;
+}
+.ot-terminal-section > .ot-terminal-title {
+  flex-shrink: 0;
+  margin-bottom: var(--space-2);
+}
+.ot-terminal-section > .tab-content {
+  flex: 1;
+  min-height: 0;
 }
 .ot-terminal-head {
   display: flex;

@@ -1,0 +1,210 @@
+/* 对话历史面板(终端区旁/下):对话(llm-calls)+ 事件(timeline)双子 tab。
+   配色/间距用全局 design token,跟终端工具栏风格一致。 */
+.dh-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+/* 子 tab 切换条 */
+.dh-subtabs {
+  display: flex;
+  gap: 2px;
+  padding: var(--space-1) var(--space-1) 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--gray-50);
+  flex-shrink: 0;
+}
+.dh-subtab {
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.dh-subtab:hover {
+  color: var(--color-text);
+}
+.dh-subtab.active {
+  color: var(--color-primary-text);
+  border-bottom-color: var(--color-primary);
+}
+
+/* 滚动内容区 */
+.dh-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: var(--space-2);
+}
+
+.dh-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* stage 分组标题 */
+.dh-stage-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.dh-stage-head {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--color-text-faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: var(--space-1) 0;
+  border-bottom: 1px dashed var(--color-border);
+}
+
+/* 单条 LLM 调用 */
+.dh-call-item {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--gray-50);
+  overflow: hidden;
+}
+.dh-call-item.open {
+  background: var(--color-surface);
+  border-color: var(--color-primary);
+}
+.dh-call-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.dh-call-head:hover {
+  background: var(--gray-100);
+}
+.dh-call-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+.dh-call-dot.ok { background: var(--color-success); }
+.dh-call-dot.fail { background: var(--color-danger); }
+.dh-call-op {
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+.dh-call-model {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.dh-call-tokens {
+  margin-left: auto;
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
+}
+.dh-call-time {
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.dh-call-chevron {
+  color: var(--color-text-faint);
+}
+
+/* 展开的正文 */
+.dh-call-body {
+  padding: 0 var(--space-3) var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.dh-call-body details {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-1);
+}
+.dh-call-body summary {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: var(--space-1) 0;
+}
+.dh-pre {
+  margin: 0;
+  padding: var(--space-2);
+  background: var(--gray-50);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.dh-call-error {
+  color: var(--color-danger-text);
+  background: var(--color-danger-soft);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+
+/* timeline 事件 */
+.dh-tl-event {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+}
+.dh-tl-tag {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--gray-100);
+  color: var(--color-text-muted);
+}
+.dh-tag-plan { background: var(--color-primary-soft); color: var(--color-primary-text); }
+.dh-tag-review { background: var(--color-success-soft); color: var(--color-success-text); }
+.dh-tag-gate_decision { background: var(--color-warning-soft); color: var(--color-warning-text); }
+.dh-tag-node_error,
+.dh-tag-validation_failure { background: var(--color-danger-soft); color: var(--color-danger-text); }
+.dh-tl-summary {
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+/* 空态 */
+.dh-empty {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+.dh-empty-inline {
+  text-align: left;
+  padding: var(--space-1) var(--space-2);
+}

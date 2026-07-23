@@ -2,81 +2,148 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  gap: var(--space-2);
 }
+
+/* Session tabs 条:对齐全局 token(原硬编码 #e5e7eb/#f3f4f6 改 CSS 变量) */
 .tt-session-tabs {
   display: flex;
-  gap: 4px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #e5e7eb;
+  gap: var(--space-1);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
   overflow-x: auto;
   flex-shrink: 0;
+  align-items: center;
 }
 .tt-session-tab {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px 6px 0 0;
-  background: #f3f4f6;
-  color: #6b7280;
-  font-size: 11px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--gray-50);
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--text-xs);
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s;
 }
-.tt-session-tab:hover { background: #e5e7eb; color: #374151; }
+.tt-session-tab:hover {
+  background: var(--gray-100);
+  color: var(--color-text);
+}
 .tt-session-tab.active {
-  background: #eff6ff;
-  color: #2563eb;
-  border-bottom-color: transparent;
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+  border-color: var(--color-primary);
+  font-weight: 600;
 }
 .tt-adapter-icon { font-size: 12px; }
 .tt-session-label { font-weight: 500; }
 .tt-status-dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   flex-shrink: 0;
 }
-.tt-running { background: #16a34a; }
-.tt-waiting { background: #d97706; animation: sp-pulse 2s infinite; }
-.tt-exited { background: #9ca3af; }
-.tt-terminal-area {
+.tt-running { background: var(--color-success); }
+.tt-waiting { background: var(--color-warning); animation: sp-pulse 2s infinite; }
+.tt-exited { background: var(--color-text-faint); }
+.tt-session-tab.tt-exited {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+.tt-spawn-btn {
+  border-style: dashed;
+  color: var(--color-text-muted);
+}
+
+/* 恢复执行按钮(paused/failed 显示) */
+.tt-resume-btn {
+  margin-left: auto;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: #fff;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.tt-resume-btn:hover:not(:disabled) {
+  background: var(--color-primary-text);
+}
+.tt-resume-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 对话历史显隐切换 */
+.tt-history-toggle {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.tt-history-toggle:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
+}
+
+/* 主区:终端 + 对话历史左右分栏(历史收起时终端占满) */
+.tt-main {
   flex: 1;
+  display: flex;
+  gap: var(--space-3);
+  min-height: 0;
+}
+.tt-main.with-history .tt-terminal-pane {
+  flex: 1.4;
+  min-width: 0;
+}
+.tt-history-pane {
+  flex: 1;
+  min-width: 320px;
+  max-width: 520px;
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
-.tt-session-info {
-  padding: 4px 8px;
-  font-size: 10px;
-  color: #9ca3af;
-  border-top: 1px solid #e5e7eb;
-  flex-shrink: 0;
+/* 历史收起:终端占满 */
+.tt-terminal-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
 }
-.tt-empty-sessions {
-  padding: 8px 12px;
-  color: #6b7280;
-  font-size: 11px;
-}
+
+/* 无会话空态 */
 .tt-no-session {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #6b7280;
-  font-size: 13px;
-  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  gap: var(--space-2);
+  padding: var(--space-4);
 }
 .tt-no-session .tt-hint {
-  font-size: 11px;
-  color: #9ca3af;
-}
-.tt-session-tab.tt-exited {
-  opacity: 0.7;
-  text-decoration: line-through;
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
 }
 
 @keyframes sp-pulse {

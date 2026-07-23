@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import TerminalPanel from './TerminalPanel'
+import DialogHistory from './DialogHistory'
 import './TerminalTab.css'
 
 interface Props {
@@ -18,9 +19,15 @@ interface Session {
   started_at: string
 }
 
-export default function TerminalTab({ storyKey, stage }: Props) {
+// 可恢复状态:删了概览的「继续执行」横幅后,恢复入口收到这里。
+// paused/failed/blocked/aborted 都调 PUT /advance 重启全自动编排循环。
+const RESUMABLE = new Set(['paused', 'failed', 'blocked', 'aborted'])
+
+export default function TerminalTab({ storyKey, status, stage }: Props) {
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeSession, setActiveSession] = useState<string | null>(null)
+  const [resuming, setResuming] = useState(false)
+  const [showHistory, setShowHistory] = useState(true)
 
   const fetchSessions = useCallback(async () => {
     try {
@@ -71,6 +78,24 @@ export default function TerminalTab({ storyKey, stage }: Props) {
     }
   }
 
+  // 恢复全自动编排(paused/failed → PUT /advance 重启循环)。
+  // 成功后刷新 sessions,新 spawn 的 driver 会话会出现在列表里。
+  async function handleResume() {
+    setResuming(true)
+    try {
+      const r = await fetch(`/api/story/${storyKey}/advance`, { method: 'PUT' })
+      if (r.ok) {
+        fetchSessions()
+      } else {
+        alert(`恢复失败: ${(await r.json()).detail || '未知错误'}`)
+      }
+    } catch {
+      alert('恢复失败: 网络错误')
+    } finally {
+      setResuming(false)
+    }
+  }
+
   // stage 过滤:有 stage prop 时只显示该 stage 的 session;否则全部。
   const visibleSessions = stage
     ? sessions.filter((s) => s.stage === stage)
@@ -83,9 +108,13 @@ export default function TerminalTab({ storyKey, stage }: Props) {
     visibleSessions.find((s) => s.status === 'running')?.session_id ||
     null
 
+  // 当前选中会话的 stage(喂给 DialogHistory,只看该 stage 的历史)。
+  const activeStage = sessions.find((s) => s.session_id === activeSessionId)?.stage || stage || ''
+  const resumable = RESUMABLE.has(status ?? '')
+
   return (
     <div className="tab-content terminal-tab">
-      {/* Session tabs */}
+      {/* Session tabs(每个标注 stage · adapter)+ 新建 + 恢复 */}
       <div className="tt-session-tabs">
         {visibleSessions.map((s) => (
           <button
@@ -106,24 +135,48 @@ export default function TerminalTab({ storyKey, stage }: Props) {
         <button className="tt-session-tab tt-spawn-btn" onClick={handleSpawn} title="新建会话">
           + 新建
         </button>
+        {resumable && (
+          <button
+            className="tt-resume-btn"
+            onClick={handleResume}
+            disabled={resuming}
+            title="恢复全自动编排循环(PUT /advance)"
+          >
+            {resuming ? '恢复中…' : '▶ 恢复执行'}
+          </button>
+        )}
+        <button
+          className="tt-history-toggle"
+          onClick={() => setShowHistory((v) => !v)}
+          title={showHistory ? '隐藏对话历史' : '显示对话历史'}
+        >
+          {showHistory ? '📜 隐藏历史' : '📜 对话历史'}
+        </button>
       </div>
 
-      {/* Active terminal */}
-      {activeSessionId ? (
-        <div className="tt-terminal-area">
-          <TerminalPanel storyKey={storyKey} sessionId={activeSessionId} autoConnect />
-        </div>
-      ) : (
-        <div className="tt-no-session">
-          <p>{stage ? `${stage} 阶段没有 CLI 会话` : '当前没有运行中的 CLI 会话'}</p>
-          {visibleSessions.length > 0 && (
-            <p className="tt-hint">点击上方历史会话可查看最终输出，或启动新会话继续工作。</p>
+      {/* 终端 + 对话历史(左右分栏;历史可收起) */}
+      <div className={`tt-main${showHistory ? ' with-history' : ''}`}>
+        <div className="tt-terminal-pane">
+          {activeSessionId ? (
+            <TerminalPanel storyKey={storyKey} sessionId={activeSessionId} autoConnect />
+          ) : (
+            <div className="tt-no-session">
+              <p>{stage ? `${stage} 阶段没有 CLI 会话` : '当前没有运行中的 CLI 会话'}</p>
+              {visibleSessions.length > 0 && (
+                <p className="tt-hint">点击上方历史会话可查看最终输出,或启动新会话继续工作。</p>
+              )}
+              <button className="btn btn-primary" onClick={handleSpawn}>
+                启动终端
+              </button>
+            </div>
           )}
-          <button className="btn btn-primary" onClick={handleSpawn}>
-            启动终端
-          </button>
         </div>
-      )}
+        {showHistory && (
+          <div className="tt-history-pane">
+            <DialogHistory storyKey={storyKey} stage={activeStage} />
+          </div>
+        )}
+      </div>
     </div>
   )
 }
