@@ -605,22 +605,29 @@ def _spawn_story_agent_pty(
     except (ValueError, TypeError):
         pass
     spawn_cwd = _ctx_spawn.get("workspace_path") or workspace
-    # session-persistence marker (claude --session-id / --resume). Idempotent:
-    # if the marker exists, we're resuming; else new session.
+    # session-persistence (claude --session-id / --resume; kimi -S). 真相源 = DB
+    # (story_session 表),marker 文件作兼容副本。resume 判据:DB 有 session_id,或 marker 在。
+    _adapter_name = getattr(adapter, "name", "") or ""
     session_uuid = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"{story_key}:{stage}"))
     session_name = f"{story_key}-{stage}"
     marker = (
         safe_story_path(workspace, ".story", "context", story_key)
         / f"session_{stage}.json"
     )
-    is_resume = marker.exists()
+    _db_row = db.get_session(story_key, stage, _adapter_name) if _adapter_name else None
+    is_resume = bool(
+        (_db_row and _db_row.get("session_id")) or marker.exists()
+    )
+    # resume 时用 DB 里捕获的 id(kimi)或确定性 uuid5(claude);否则用新 uuid5。
+    _use_sid = (_db_row["session_id"] if _db_row and _db_row.get("session_id")
+                else session_uuid)
     seed = _build_stage_launch_prompt(story)
     spec = adapter.start_session(
         model,
         prompt=seed
         if not is_resume
         else "继续上次的任务,完成后按完成协议写入 done 文件。",
-        session_id=session_uuid,
+        session_id=_use_sid,
         session_name=session_name,
         resume=is_resume,
     )
@@ -636,6 +643,15 @@ def _spawn_story_agent_pty(
     )
     # write session marker for NEW sessions (so next spawn resumes)
     if not is_resume:
+        # DB(claude 的 sid 已知;kimi 由调用方/捕获回填,这里占位)
+        if _adapter_name:
+            try:
+                db.upsert_session(
+                    story_key, stage, _adapter_name,
+                    session_id=session_uuid if _adapter_name == "claude" else None,
+                )
+            except Exception:
+                pass
         try:
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(

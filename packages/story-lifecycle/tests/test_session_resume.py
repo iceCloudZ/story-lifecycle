@@ -76,3 +76,88 @@ def test_build_stage_launch_cmd_resume_when_marker_exists(tmp_path, monkeypatch)
     assert "--resume" in cmd and sid in cmd
     assert "--session-id" not in cmd
     assert "SHOULD-NOT-BE-USED" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# kimi (ShellAdapter) session resume + banner capture + DB persistence
+# ---------------------------------------------------------------------------
+
+def _kimi_adapter():
+    from story_lifecycle.knowledge.adapters.shell import ShellAdapter
+
+    return ShellAdapter(
+        config={
+            "binary": "kimi",
+            "launch_cmd": "kimi",
+            "inject_method": "stdin",
+            "stdin_to_prompt_arg": True,
+        },
+        name="kimi",
+    )
+
+
+def test_kimi_new_session_no_resume_flag():
+    """kimi 新会话:命令是裸 kimi(prompt 走 PTY paste),无 -S。"""
+    kimi = _kimi_adapter()
+    spec = kimi.start_session(model="", prompt="读 prompt.md", session_id="", resume=False)
+    assert spec.command == ["kimi"]
+    assert spec.pty_prompt == "读 prompt.md"
+    assert spec.readiness_marker == "Welcome to Kimi Code"
+    assert "-S" not in spec.command
+
+
+def test_kimi_resume_uses_dash_S_with_session_id():
+    """kimi resume:命令含 -S <id>,prompt 走 PTY paste。"""
+    kimi = _kimi_adapter()
+    spec = kimi.start_session(
+        model="", prompt="继续", session_id="session_abc-123", resume=True
+    )
+    assert "-S" in spec.command
+    assert "session_abc-123" in spec.command
+    assert spec.pty_prompt == "继续"
+    # 不该带 kimi 不认的 --session-id(claude 专属)
+    assert "--session-id" not in spec.command
+
+
+def test_kimi_resume_without_session_id_is_noop():
+    """resume=True 但没 id(捕获失败兜底)→ 不加 -S,当新会话。"""
+    kimi = _kimi_adapter()
+    spec = kimi.start_session(model="", prompt="seed", session_id="", resume=True)
+    assert "-S" not in spec.command
+
+
+def test_kimi_session_capture_regex():
+    """_capture_kimi_session 的正则能从 banner 输出解析 session_<uuid>。"""
+    from story_lifecycle.orchestrator.engine.planner import _KIMI_SESSION_RE
+
+    banner = "│  Session:   session_a273ffaa-8630-4315-96c1-4beca972b7db      │"
+    m = _KIMI_SESSION_RE.search(banner)
+    assert m is not None
+    assert m.group(1) == "session_a273ffaa-8630-4315-96c1-4beca972b7db"
+    # 不匹配的行(如 Model/Version)
+    assert _KIMI_SESSION_RE.search("│  Model:     K3") is None
+
+
+def test_story_session_db_crud(isolated_story_home):
+    """story_session 表 CRUD:upsert / get / set_session_id / complete。"""
+    from story_lifecycle.infra.db import models as db
+
+    # 初始无记录
+    assert db.get_session("S1", "design", "claude") is None
+    # claude:spawn 前就给 uuid5
+    db.upsert_session("S1", "design", "claude", session_id="uuid-claude-1")
+    row = db.get_session("S1", "design", "claude")
+    assert row is not None
+    assert row["session_id"] == "uuid-claude-1"
+    assert row["status"] == "active"
+    # kimi:先占位(sid=None),捕获后回填
+    db.upsert_session("S1", "design", "kimi", session_id=None)
+    assert db.get_session("S1", "design", "kimi")["session_id"] is None
+    db.set_session_id("S1", "design", "kimi", "session_captured")
+    assert db.get_session("S1", "design", "kimi")["session_id"] == "session_captured"
+    # upsert 不覆盖已有 sid(COALESCE)
+    db.upsert_session("S1", "design", "claude", session_id=None)
+    assert db.get_session("S1", "design", "claude")["session_id"] == "uuid-claude-1"
+    # complete
+    db.complete_session("S1", "design", "claude")
+    assert db.get_session("S1", "design", "claude")["status"] == "completed"

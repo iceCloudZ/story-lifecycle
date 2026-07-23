@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from .base import BaseAdapter
+from .base import BaseAdapter, SessionSpec
 
 _CONFIG_PATH = Path.home() / ".story-lifecycle" / "adapters.yaml"
 
@@ -75,6 +75,60 @@ class ShellAdapter(BaseAdapter):
     def launch_cmd(self, model: str) -> str:
         template = self._config.get("launch_cmd", "")
         return template.format(model=model)
+
+    def interactive_launch_cmd(
+        self,
+        model: str,
+        prompt: str = "",
+        session_id: str = "",
+        session_name: str = "",
+        resume: bool = False,
+    ) -> list[str]:
+        """kimi/codex 交互式启动命令,支持 session 恢复。
+
+        resume=True 且 session_id 非空 → 追加 CLI 的 resume 参数。
+        kimi 用 ``-S <id>``(--session);其他 shell CLI 暂不支持 resume(忽略)。
+        prompt 不进 command(走 PTY paste,见 start_session 的 pty_prompt),故这里忽略 prompt。
+        """
+        cmd = super().interactive_launch_cmd(
+            model, prompt="", session_id=session_id,
+            session_name=session_name, resume=resume,
+        )
+        # 加 model flag(若配置)和 bypass flags(若配置)。
+        model_flag = self._config.get("model_flag")
+        if model_flag and model:
+            cmd += [model_flag, model]
+        cmd += self.bypass_flags()
+        # resume:kimi -S <id>。仅 kimi(_name 通常是 'kimi');其他 shell CLI 无 resume。
+        if resume and session_id and self._name.lower() == "kimi":
+            cmd += ["-S", session_id]
+        return cmd
+
+    def start_session(
+        self,
+        model: str,
+        prompt: str = "",
+        session_id: str = "",
+        session_name: str = "",
+        resume: bool = False,
+    ) -> SessionSpec:
+        """shell CLI 的 SessionSpec:prompt 走 PTY paste(pty_prompt),command 由
+        interactive_launch_cmd 构建(含 resume 的 -S <id> for kimi)。
+
+        与 base.start_session 的区别:base 用 launch_cmd 直接 split(绕过
+        interactive_launch_cmd),这里走 interactive_launch_cmd 才能把 -S 标志带上。
+        """
+        command = self.interactive_launch_cmd(
+            model, prompt="", session_id=session_id,
+            session_name=session_name, resume=resume,
+        )
+        return SessionSpec(
+            command=command,
+            pty_prompt=prompt,
+            readiness_marker=self.readiness_marker,
+            session_id=session_id,
+            resume=resume,
+        )
 
     def bypass_flags(self) -> list[str]:
         # 从 adapters.yaml 的 bypass_flags 读(kimi: ["--auto"] / ["-y"];aider: [])。

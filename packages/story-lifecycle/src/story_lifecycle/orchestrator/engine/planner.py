@@ -9,6 +9,7 @@ All LLM calls delegate to LLMClient.
 
 import json
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -789,6 +790,56 @@ def _build_verify_history_facts(*, db, failed_adapter, gate_round, retry_limit):
         }
 
 
+# kimi 启动 banner 里 session id 的正则:`Session:   session_a273ffaa-...`。
+# 用于从 PTY 输出捕获 kimi 分配的会话 id(回填 DB,下次该阶段 resume 用)。
+_KIMI_SESSION_RE = re.compile(r"Session:\s*(session_[0-9a-fA-F-]+)")
+
+
+def _capture_kimi_session(story_key: str, stage: str, adapter: str, pty) -> None:
+    """Best-effort 捕获 kimi 分配的 session id 并回填 DB。
+
+    kimi 无「指定新会话 id」参数,只能 spawn 后从 banner 输出捕获。banner 在
+    readiness_marker(Welcome to Kimi Code)之后打印 Session 行,此时 _wait_ready 已返回,
+    这里开个短 tap 扫剩余输出。失败/超时静默(下次当新会话,不崩)。
+    """
+    try:
+        import time as _t
+
+        from ...infra.db import models as _sd
+
+        tap = pty.add_tap()
+        deadline = _t.time() + 3.0  # banner 通常 spawn 后 <1s 出现,给 3s 余量
+        buf = ""
+        captured = None
+        try:
+            while _t.time() < deadline:
+                try:
+                    chunk = tap.get_nowait()
+                except Exception:
+                    _t.sleep(0.1)
+                    continue
+                if isinstance(chunk, (bytes, bytearray)):
+                    buf += chunk.decode("utf-8", errors="replace")
+                else:
+                    buf += str(chunk)
+                m = _KIMI_SESSION_RE.search(buf)
+                if m:
+                    captured = m.group(1)
+                    break
+        finally:
+            try:
+                pty.remove_tap(tap)
+            except Exception:
+                pass
+        if captured:
+            _sd.set_session_id(story_key, stage, adapter, captured)
+            log.info("[%s] captured kimi session sid=%s stage=%s", story_key, captured, stage)
+        else:
+            log.warning("[%s] kimi session id not captured in banner; resume disabled for stage=%s", story_key, stage)
+    except Exception as exc:
+        log.warning("[%s] kimi session capture failed (%s); resume disabled for stage=%s", story_key, exc, stage)
+
+
 @with_story_key()
 def continue_orchestrator_agent(story_key: str, headless: bool = False):
     """用户确认规划后，执行 action list。
@@ -1078,7 +1129,44 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         f"请读取 `{prompt_file}` 并严格按其中的说明执行本阶段"
                         f"({stage})任务,完成后按其完成协议写入 done 文件。"
                     )
-                    _session_spec = adapter.start_session(model=model, prompt=_seed)
+                    # 会话恢复回填:每阶段一个会话,同阶段重试/崩溃 resume 续上(省 token)。
+                    # claude 用确定性 uuid5(--session-id 主动给);kimi 由 CLI 分配,
+                    # spawn 后从 banner 捕获回填。查 DB 决定 NEW vs RESUME。
+                    import uuid as _su
+                    from ...infra.db import models as _sd
+                    _prior = _sd.get_session(story_key, stage, adapter_name)
+                    _is_new_kimi = False  # 仅新 kimi 会话需从 banner 捕获 sid
+                    if _prior and _prior.get("session_id"):
+                        # 该阶段已建过会话 → resume(续上 transcript,不重读 prompt_file)。
+                        _resume_seed = "继续上次的任务,完成后按完成协议写入 done 文件。"
+                        _session_spec = adapter.start_session(
+                            model=model, prompt=_resume_seed,
+                            session_id=_prior["session_id"], resume=True,
+                        )
+                        log.info(
+                            "[%s] RESUME session stage=%s adapter=%s sid=%s",
+                            story_key, stage, adapter_name, _prior["session_id"],
+                        )
+                    else:
+                        # 新会话。claude 给确定性 uuid5(主动指定,kimi 忽略由 CLI 分配)。
+                        _new_sid = str(
+                            _su.uuid5(_su.NAMESPACE_DNS, f"{story_key}:{stage}:{adapter_name}")
+                        )
+                        _session_spec = adapter.start_session(
+                            model=model, prompt=_seed,
+                            session_id=_new_sid, resume=False,
+                        )
+                        # 占位入库:claude 的 sid 已知;kimi 的 sid=None,spawn 后捕获回填。
+                        _sd.upsert_session(
+                            story_key, stage, adapter_name,
+                            session_id=_new_sid if adapter_name == "claude" else None,
+                        )
+                        _is_new_kimi = adapter_name == "kimi"
+                        log.info(
+                            "[%s] NEW session stage=%s adapter=%s sid=%s",
+                            story_key, stage, adapter_name,
+                            _new_sid if adapter_name == "claude" else "(kimi: 待捕获)",
+                        )
                     launch_cmd = _session_spec.command
 
                 # grill-me:LLM 决定 + mode 兜底。
@@ -1269,6 +1357,13 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         env=story_env,
                     )
                     log.info("[%s] PTY session started for stage=%s", story_key, stage)
+                    # kimi session-id 回填:kimi 启动 banner 打印 `Session: session_<uuid>`,
+                    # 此时 ensure_agent_pty 的 _wait_ready 已消费到 readiness_marker
+                    # (Welcome to Kimi Code),session id 紧随其后。开个短 tap 扫剩余 banner
+                    # 输出捕获 id 回填 DB(下次该阶段 resume 用)。best-effort:失败/超时则
+                    # 不回填,下次当新会话(不崩,只是不省 token)。claude 无需捕获(uuid5 主动给)。
+                    if _is_new_kimi:
+                        _capture_kimi_session(story_key, stage, adapter_name, _agent_pty)
                     # §4.1 层1 supervisor(interactive PTY):daemon 线程跑 supervise_pty_session。
                     # run_story 在 ThreadPoolExecutor 线程里(无 asyncio loop)→ 独立 daemon 线程 + new_event_loop。
                     # pty 死时 supervise_pty_session 退出(轮询 pty.alive)。
@@ -1503,6 +1598,12 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             story_key,
                             context_json=json.dumps(ctx, ensure_ascii=False),
                         )
+                        # 会话恢复回填:标记本阶段会话完成(语义:任务结束;不影响同 stage
+                        # resume 续上历史,只是跨 stage 不共享)。best-effort,失败忽略。
+                        try:
+                            db.complete_session(story_key, stage, adapter_name)
+                        except Exception:
+                            pass
                         # 回收 stage 进程(done 已确认,transcript 已写完整):
                         # headless 走 _kill_headless;interactive PTY 对齐 headless —— 先
                         # clean_exit_pty(/exit 握手 flush transcript,最长 _CLEAN_EXIT_TIMEOUT)

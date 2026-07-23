@@ -546,6 +546,29 @@ def init_db():
             )
             """
         )
+        # story_session: agent 会话恢复回填(每阶段一个会话)。
+        # 全自动/半自动循环复用 session 省 token:同阶段重试/崩溃 resume 续上,跨阶段独立。
+        # claude session_id 由后端 uuid5 主动给(--session-id);kimi 由 CLI 分配,
+        # 后端从启动 banner 捕获后回填。UNIQUE(story_key,stage,adapter) 保证每阶段每 adapter
+        # 一条;upsert 用 INSERT...ON CONFLICT。
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS story_session (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                story_key   TEXT NOT NULL,
+                stage       TEXT NOT NULL,
+                adapter     TEXT NOT NULL,
+                session_id  TEXT,
+                status      TEXT NOT NULL DEFAULT 'active',
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL,
+                UNIQUE (story_key, stage, adapter)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ss_story_stage ON story_session(story_key, stage)"
+        )
 
 
 # -------- CRUD helpers --------
@@ -2350,6 +2373,79 @@ def update_delivery_artifact(artifact_id: int, **kwargs) -> None:
     values = list(kwargs.values()) + [artifact_id]
     with _db() as conn:
         conn.execute(f"UPDATE story_delivery_artifact SET {sets} WHERE id = ?", values)
+
+
+# ---------------------------------------------------------------------------
+# story_session — agent 会话恢复回填(每阶段一个会话,跨阶段独立)
+# 全自动/半自动循环复用 session 省 token。claude session_id 后端 uuid5 主动给;
+# kimi 由 CLI 分配,后端从启动 banner 捕获后回填。详见 init_db 里的建表注释。
+# ---------------------------------------------------------------------------
+
+
+def get_session(story_key: str, stage: str, adapter: str) -> dict | None:
+    """Return the persisted session row for (story_key, stage, adapter), or None.
+
+    用于 spawn 前判断该阶段是否已有会话可 resume。session_id 非空即代表已建过会话。
+    """
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM story_session "
+            "WHERE story_key = ? AND stage = ? AND adapter = ?",
+            (story_key, stage, adapter),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_session(
+    story_key: str,
+    stage: str,
+    adapter: str,
+    session_id: str | None = None,
+    status: str = "active",
+) -> None:
+    """Insert or update the session row for (story_key, stage, adapter).
+
+    session_id=None 时仅建占位行(kimi 在捕获到 banner 的 id 后再 set_session_id 回填)。
+    新插入 status 默认 active;重试/崩溃恢复时复用同一行(ON CONFLICT 更新 updated_at)。
+    """
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO story_session "
+            "(story_key, stage, adapter, session_id, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(story_key, stage, adapter) DO UPDATE SET "
+            "session_id = COALESCE(excluded.session_id, story_session.session_id), "
+            "updated_at = excluded.updated_at",
+            (story_key, stage, adapter, session_id, status, now, now),
+        )
+
+
+def set_session_id(story_key: str, stage: str, adapter: str, session_id: str) -> None:
+    """回填 kimi 捕获到的 session_id(banner 解析成功后调用)。
+
+    专给 kimi 用:claude 在 spawn 前就给 uuid5(upsert_session 带 session_id),
+    kimi 必须先 spawn 再从输出捕获,故拆出这个单字段更新。
+    """
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        conn.execute(
+            "UPDATE story_session SET session_id = ?, updated_at = ? "
+            "WHERE story_key = ? AND stage = ? AND adapter = ?",
+            (session_id, now, story_key, stage, adapter),
+        )
+
+
+def complete_session(story_key: str, stage: str, adapter: str) -> None:
+    """标记阶段会话完成(stage done 后调用)。语义:该阶段任务结束;不影响 resume
+    (同 stage 仍可 resume 续上历史,只是跨 stage 不共享)。"""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        conn.execute(
+            "UPDATE story_session SET status = 'completed', updated_at = ? "
+            "WHERE story_key = ? AND stage = ? AND adapter = ?",
+            (now, story_key, stage, adapter),
+        )
 
 
 # ---------------------------------------------------------------------------
