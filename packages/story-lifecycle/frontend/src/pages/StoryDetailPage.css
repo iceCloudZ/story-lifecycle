@@ -35,11 +35,6 @@
   gap: var(--space-4);
   max-width: 1200px;
 }
-.ot-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
 .ot-submeta {
   font-size: var(--text-xs);
   color: var(--color-text-muted);
@@ -107,21 +102,45 @@
   color: var(--color-text);
 }
 
-/* 第一层:业务状态条(纯状态节点,成果物 gate 驱动) */
+/* 第一层:Story Lifecycle 行 —— 元信息 + 状态节点 + 操作三段并一行 */
 .ot-lifecycle-bar {
   display: flex;
   align-items: center;
+  gap: var(--space-4);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-3) var(--space-5);
   box-shadow: var(--shadow-sm);
+}
+/* 左段:标题 + key·meta(纵向两行) */
+.ot-lc-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex-shrink: 0;
+  max-width: 38%;
+}
+/* 中段:状态节点(紧凑居中,不拉伸) */
+.ot-lc-nodes {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  justify-content: center;
 }
 .ot-lc-item {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex: 1;
+  flex: 0 1 auto;
+}
+/* 右段:操作按钮 + TAPD + 更新时间 */
+.ot-lc-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
 }
 .ot-lc-node {
   display: inline-flex;
@@ -155,10 +174,11 @@
 .ot-lc-item.current .ot-lc-label { color: var(--color-text-strong); }
 .ot-lc-item.done .ot-lc-label { color: var(--color-text); }
 .ot-lc-line {
-  flex: 1;
+  width: 20px;
   height: 2px;
   background: var(--color-border);
   margin: 0 var(--space-1);
+  flex-shrink: 0;
 }
 .ot-lc-item.done .ot-lc-line { background: var(--color-success); }
 
@@ -178,21 +198,9 @@
 
 /* 交付物已移到左侧 sidebar(导航=交付物),此区清空。 */
 
-/* 标题区 */
-.ot-header-left {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.ot-header-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-shrink: 0;
-}
+/* 标题(并进 lifecycle 行后,从 lg 收到 base,避免挤占状态节点空间) */
 .ot-title {
-  font-size: var(--text-lg);
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--color-text-strong);
   white-space: nowrap;

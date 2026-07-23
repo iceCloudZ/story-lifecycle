@@ -48,9 +48,12 @@ export default function OverviewTab({
 
   return (
     <div className="tab-content overview-tab">
-      {/* 头部:标题一行 + key·meta 合并成一行小字(瘦身,原三行) */}
-      <div className="ot-header">
-        <div className="ot-header-left">
+      {/* 第一层:Story Lifecycle 行 —— 标题/元信息 + 状态节点 + 操作全并到一行。
+          交付物 + gate 推进入口已移到左侧 sidebar(导航=交付物)。
+          lastError(如「No actions to execute」)作为状态条的标注贴在下方 ——
+          业务状态条本就表达 story 进度,错误信息贴这里语义最顺。 */}
+      <div className="ot-lifecycle-bar">
+        <div className="ot-lc-meta">
           <span className="ot-title">{detail.title || detail.storyKey}</span>
           <span className="ot-submeta">
             {[
@@ -64,7 +67,22 @@ export default function OverviewTab({
               .join(' · ')}
           </span>
         </div>
-        <div className="ot-header-right">
+        <div className="ot-lc-nodes">
+          {LIFECYCLE_ORDER.map((state, i) => {
+            const isDone = i < curIdx
+            const isCurrent = i === curIdx
+            return (
+              <div key={state} className={`ot-lc-item${isCurrent ? ' current' : ''}${isDone ? ' done' : ''}`}>
+                <span className="ot-lc-node">
+                  {isDone ? '✓' : isCurrent ? '●' : '○'}
+                </span>
+                <span className="ot-lc-label">{state}</span>
+                {i < LIFECYCLE_ORDER.length - 1 && <span className="ot-lc-line" />}
+              </div>
+            )
+          })}
+        </div>
+        <div className="ot-lc-actions">
           {onResolve && (
             <button className="btn btn-sm btn-primary" onClick={onResolve}>标记已修复</button>
           )}
@@ -74,28 +92,8 @@ export default function OverviewTab({
             const url = detail.tapdUrl || (ws ? `https://www.tapd.cn/${ws}/prong/stories/view/${fullId}` : '')
             return url ? <a className="ot-tapd-link" href={url} target="_blank" rel="noreferrer">TAPD ↗</a> : null
           })()}
-          <span className="ot-updated">更新: {detail.updatedAt}</span>
+          <span className="ot-updated">{detail.updatedAt}</span>
         </div>
-      </div>
-
-      {/* 第一层:业务状态条(纯状态节点,成果物 gate 驱动推进)。
-          交付物 + gate 推进入口已移到左侧 sidebar(导航=交付物),这里只留状态条。
-          lastError(如「No actions to execute」)作为状态条的标注贴在下方 ——
-          业务状态条本就表达 story 进度,错误信息贴这里语义最顺。 */}
-      <div className="ot-lifecycle-bar">
-        {LIFECYCLE_ORDER.map((state, i) => {
-          const isDone = i < curIdx
-          const isCurrent = i === curIdx
-          return (
-            <div key={state} className={`ot-lc-item${isCurrent ? ' current' : ''}${isDone ? ' done' : ''}`}>
-              <span className="ot-lc-node">
-                {isDone ? '✓' : isCurrent ? '●' : '○'}
-              </span>
-              <span className="ot-lc-label">{state}</span>
-              {i < LIFECYCLE_ORDER.length - 1 && <span className="ot-lc-line" />}
-            </div>
-          )
-        })}
       </div>
       {detail.lastError && (
         <div className="ot-lifecycle-error" title={detail.lastError}>⚠ {detail.lastError}</div>
