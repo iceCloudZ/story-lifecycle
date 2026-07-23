@@ -6,21 +6,21 @@ import type { AgentAction, ActionButton } from '../api/client'
 import StorySidebar from '../components/StorySidebar'
 import OverviewTab from '../components/OverviewTab'
 import CodeChangesTab from '../components/CodeChangesTab'
-import TerminalTab from '../components/TerminalTab'
 import DocsTab from '../components/DocsTab'
 import ClarifyDialog from '../components/ClarifyDialog'
 import './StoryDetailPage.css'
 
 // Visible modules for the semi-automatic workflow. Terminal 放回 sidebar:
-// handleConfirmPlan / handleAdvanceLifecycle 都 setActiveTab('terminal'),
-// 必须让用户能从 sidebar 够得到它。测试/LLM 审计/缺陷 tab 已移除(精简为 4 个模块)。
+// 终端已并入概览底部(上下分区),不再单独成 tab。
 const MODULES = [
   { id: 'overview', icon: '📊', label: '概览' },
-  { id: 'terminal', icon: '💻', label: '终端' },
   { id: 'code', icon: '📦', label: '代码变更' },
   { id: 'docs', icon: '📄', label: '文档' },
 ]
 
+// 概览操作按钮:只放「推进执行类」操作(继续/重试/紧急停止)。
+// 「删除」在列表卡片上已有,概览不重复。blocked/aborted 是 CQRS 重构前的旧值,
+// 已合并到 paused/failed,这里保留兼容老数据但语义等价。
 const ACTIONS: Record<string, ActionButton[]> = {
   planning: [],
   active: [
@@ -29,17 +29,17 @@ const ACTIONS: Record<string, ActionButton[]> = {
   paused: [
     { label: '继续执行', method: 'PUT', path: '/advance', variant: 'primary' },
   ],
+  // blocked 旧值 → 已合并 paused(重试语义同 advance)
   blocked: [
     { label: '重试', method: 'PUT', path: '/advance', variant: 'primary' },
   ],
   failed: [
-    { label: '删除', method: 'DELETE', path: '', confirm: '确定删除？不可恢复。', variant: 'danger' },
+    { label: '重试', method: 'PUT', path: '/advance', variant: 'primary' },
   ],
-  completed: [
-    { label: '删除', method: 'DELETE', path: '', confirm: '确定删除？不可恢复。', variant: 'danger' },
-  ],
+  completed: [],
+  // aborted 旧值 → 已合并 failed
   aborted: [
-    { label: '删除', method: 'DELETE', path: '', confirm: '确定删除？不可恢复。', variant: 'danger' },
+    { label: '重试', method: 'PUT', path: '/advance', variant: 'primary' },
   ],
 }
 
@@ -208,21 +208,21 @@ export default function StoryDetailPage() {
     })
     if (r.ok) {
       refetch()
-      setActiveTab('terminal')
+      scrollToTerminal()
     } else {
       alert(`确认失败: ${(await r.json()).detail || '未知错误'}`)
     }
   }
 
   async function handleAdvanceLifecycle() {
-    // BUG #20: story_state advance(开发→测试→上线)成功后跳终端,与 #2 同类。
-    // 原 OverviewTab 裸调 advanceLifecycle 不跳 tab 不刷新,用户看不到执行。
+    // BUG #20: story_state advance(开发→测试→上线)成功后滚动到终端,与 #2 同类。
+    // 原 OverviewTab 裸调 advanceLifecycle 不刷新,用户看不到执行。
     const r = await fetch(`/api/story/${storyKey}/lifecycle/advance`, { method: 'POST' })
     if (r.ok) {
       refetch()
       qc.invalidateQueries({ queryKey: ['plan', storyKey] })
       qc.invalidateQueries({ queryKey: ['sessions', storyKey] })
-      setActiveTab('terminal')
+      scrollToTerminal()
     } else {
       alert(`推进失败: ${(await r.json()).detail || '未知错误'}`)
     }
@@ -230,16 +230,24 @@ export default function StoryDetailPage() {
 
   async function handleStart() {
     // single-pass 等 profile「开始执行」:active 但从未启动 → /advance 首次
-    // start_story_async。成功后跳终端看 claude 启动(与 advanceLifecycle 同行为)。
+    // start_story_async。成功后滚动到终端看 claude 启动(终端在概览底部)。
     const r = await fetch(`/api/story/${storyKey}/advance`, { method: 'PUT' })
     if (r.ok) {
       refetch()
       qc.invalidateQueries({ queryKey: ['plan', storyKey] })
       qc.invalidateQueries({ queryKey: ['sessions', storyKey] })
-      setActiveTab('terminal')
+      scrollToTerminal()
     } else {
       alert(`启动失败: ${(await r.json()).detail || '未知错误'}`)
     }
+  }
+
+  // 终端已并入概览底部;执行类操作(确认规划/推进/开始)成功后滚动到终端区,
+  // 让用户立刻看到 CLI 输出,不再切 tab。
+  function scrollToTerminal() {
+    requestAnimationFrame(() => {
+      document.getElementById('overview-terminal')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
   }
 
   async function handleRegeneratePlan() {
@@ -313,7 +321,6 @@ export default function StoryDetailPage() {
               onRegeneratePlan={handleRegeneratePlan}
               onAction={handleAction}
               actions={actions}
-              onTabChange={setActiveTab}
               onAdvanceLifecycle={handleAdvanceLifecycle}
               onActionAdapterChange={handleActionAdapterChange}
               neverStarted={neverStarted}
@@ -323,9 +330,6 @@ export default function StoryDetailPage() {
           )}
           {validTab === 'code' && <CodeChangesTab storyKey={storyKey} />}
           {validTab === 'docs' && <DocsTab storyKey={storyKey} />}
-          {validTab === 'terminal' && (
-            <TerminalTab storyKey={storyKey} status={detail.status} />
-          )}
         </div>
       </div>
     </div>

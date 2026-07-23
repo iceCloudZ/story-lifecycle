@@ -3,6 +3,7 @@ import type { Story, AgentAction, ActionButton, Plan, PlanStage, StoryStateView 
 import StageProgress from './StageProgress'
 import ActionCard from './ActionCard'
 import SemiAutoSection from './SemiAutoSection'
+import TerminalTab from './TerminalTab'
 
 interface Props {
   storyKey: string
@@ -14,7 +15,6 @@ interface Props {
   onRegeneratePlan: () => void
   onAction: (action: ActionButton) => void
   actions: ActionButton[]
-  onTabChange: (tabId: string) => void
   onAdvanceLifecycle: () => void
   onActionAdapterChange: (index: number, adapter: string) => void
   // single-pass 等 profile 创建即 active 但从未启动(无 _active_execution):
@@ -27,7 +27,7 @@ interface Props {
 
 export default function OverviewTab({
   storyKey, detail, resolvedActions, isConfirmed, planData,
-  onConfirmPlan, onRegeneratePlan, onAction, actions, onTabChange, onAdvanceLifecycle,
+  onConfirmPlan, onRegeneratePlan, onAction, actions, onAdvanceLifecycle,
   onActionAdapterChange, neverStarted, onStart, onResolve,
 }: Props) {
   // stage 进度条用真实数据(PLAN-stage-confirm-gate):优先 /plan 回的 stages(done 标记
@@ -219,7 +219,10 @@ export default function OverviewTab({
               // BUG #20: stage gate advance(PUT /advance = driver resume)成功后也跳终端,
               // 与 lifecycle advance / confirm plan 统一(所有"启动执行"按钮都跳终端)。
               const ok = await storyApi.advance(storyKey)
-              if (ok) onTabChange('terminal')
+              if (ok) {
+                // 终端在本页底部,滚动过去看输出(不再切 tab)。
+                document.getElementById('overview-terminal')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }
             }}
           >
             确认推进 → {stageGate?.next_stage}
@@ -292,6 +295,13 @@ export default function OverviewTab({
 
       {/* 半自动工具(原 ContextTab 收敛):复制资料包/上线提示词/PRD/工作区 */}
       <SemiAutoSection storyKey={storyKey} />
+
+      {/* 终端区(原独立 tab 并入):执行类操作成功后滚动到此看 CLI 输出。
+          有会话显示终端面板,无则空态。 */}
+      <div id="overview-terminal" className="ot-terminal-section">
+        <h3 className="ot-terminal-title">💻 终端</h3>
+        <TerminalTab storyKey={storyKey} status={detail.status} />
+      </div>
     </div>
   )
 }
