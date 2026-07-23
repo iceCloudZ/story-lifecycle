@@ -4,6 +4,8 @@ import { EditorState } from '@codemirror/state'
 import { EditorView, basicSetup } from 'codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued'
+import { Diff as RDiffView, Hunk as RHunk, parseDiff as rParseDiff } from 'react-diff-view'
+import 'react-diff-view/style/index.css'
 import { docApi } from '../api/client'
 import MarkdownView from './MarkdownView'
 import './DocEditor.css'
@@ -30,14 +32,15 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
   const [reason, setReason] = useState('')
   const [title, setTitle] = useState('')
   const [saving, setSaving] = useState(false)
-  // diff 弹层:存两个版本的原始内容 + 视图模式(split=左右并排,unified=合并)。
-  // 用原始内容而非后端 patch,这样 react-diff-viewer-continued 能渲染 split + 词级高亮。
+  // diff 弹层:两个 UI 库并排对比(react-diff-view vs react-diff-viewer-continued),
+  // 都用 split 视图,让用户选保留哪个。两份数据:patch(库A 要)+ 原文(库B 要)。
   const [showDiff, setShowDiff] = useState<{
     a: number
     b: number
-    oldContent: string
+    patch: string           // 后端 unified patch(库A react-diff-view 用)
+    oldContent: string      // 原文(库B react-diff-viewer-continued 用)
     newContent: string
-    splitView: boolean
+    which: 'libA' | 'libB'  // 当前看哪个库
   } | null>(null)
   const [rollbackTarget, setRollbackTarget] = useState<number | null>(null)
   const [rollbackReason, setRollbackReason] = useState('')
@@ -111,18 +114,19 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
 
   const viewDiff = async (a: number, b: number) => {
     try {
-      // 拉两个版本的原始内容(不是后端 patch),交给 ReactDiffViewer 自己算 diff。
-      // 这样能渲染 split(左右并排)+ 词级高亮,比裸 <pre> patch 清晰得多。
-      const [va, vb] = await Promise.all([
+      // 同时拉:patch(库A react-diff-view 要)+ 两版原文(库B 要)。
+      const [diffResp, va, vb] = await Promise.all([
+        docApi.diff(storyKey, docType, a, b),
         docApi.getVersion(storyKey, docType, a),
         docApi.getVersion(storyKey, docType, b),
       ])
       setShowDiff({
         a,
         b,
+        patch: diffResp.diff,
         oldContent: va.content,
         newContent: vb.content,
-        splitView: true, // 默认左右并排(对比最直观),可切 unified
+        which: 'libB', // 默认库B(react-diff-viewer-continued),高亮更开箱即用
       })
     } catch (e) {
       alert(`diff 失败: ${e instanceof Error ? e.message : e}`)
@@ -244,39 +248,62 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
         </div>
       </div>
 
-      {/* diff 弹层:react-diff-viewer-continued 渲染,带行级高亮 + 词级 diff +
-          split(左右并排)/unified(合并)切换。比裸 <pre> patch 清晰。 */}
+      {/* diff 弹层:两个 UI 库对比 —— react-diff-view(库A) vs react-diff-viewer-continued(库B)。
+          两个都渲染 split(左右并排),用 tab 切换,让你直观比较后选保留哪个。 */}
       {showDiff && (
         <div className="doc-editor-modal doc-diff-modal">
           <div className="doc-modal-head">
             <strong>diff v{showDiff.a} → v{showDiff.b}</strong>
-            <div className="doc-diff-view-toggle">
+            <div className="doc-diff-lib-toggle">
               <button
                 type="button"
-                className={`btn btn-sm${showDiff.splitView ? ' btn-primary' : ''}`}
-                onClick={() => setShowDiff({ ...showDiff, splitView: true })}
+                className={`btn btn-sm${showDiff.which === 'libA' ? ' btn-primary' : ''}`}
+                onClick={() => setShowDiff({ ...showDiff, which: 'libA' })}
+                title="react-diff-view(轻量,渲染 git patch hunk)"
               >
-                左右并排
+                库A: react-diff-view
               </button>
               <button
                 type="button"
-                className={`btn btn-sm${!showDiff.splitView ? ' btn-primary' : ''}`}
-                onClick={() => setShowDiff({ ...showDiff, splitView: false })}
+                className={`btn btn-sm${showDiff.which === 'libB' ? ' btn-primary' : ''}`}
+                onClick={() => setShowDiff({ ...showDiff, which: 'libB' })}
+                title="react-diff-viewer-continued(自带词级高亮 + 行号)"
               >
-                合并视图
+                库B: react-diff-viewer-continued
               </button>
             </div>
             <button className="btn btn-sm" onClick={() => setShowDiff(null)}>关闭</button>
           </div>
+          <p className="hint doc-diff-compare-hint">
+            两个库都用 split(左右并排)视图。比较后告诉我保留哪个,我会删掉另一个库 + 这个切换器。
+          </p>
           <div className="doc-diff-viewer-wrap">
-            <ReactDiffViewer
-              oldValue={showDiff.oldContent}
-              newValue={showDiff.newContent}
-              splitView={showDiff.splitView}
-              compareMethod={DiffMethod.WORDS}
-              useDarkTheme={false}
-              hideLineNumbers={false}
-            />
+            {showDiff.which === 'libA' ? (
+              (() => {
+                const files = rParseDiff(showDiff.patch || '')
+                if (!files.length) {
+                  return <div className="doc-diff-empty">（无 diff 内容 / patch 解析为空）</div>
+                }
+                return files.map((file) => (
+                  <RDiffView
+                    key={file.newPath || file.oldPath || 'f'}
+                    viewType="split"
+                    diffType={file.type}
+                    hunks={file.hunks}
+                  >
+                    {(hunks) => hunks.map((hunk) => <RHunk key={hunk.content} hunk={hunk} />)}
+                  </RDiffView>
+                ))
+              })()
+            ) : (
+              <ReactDiffViewer
+                oldValue={showDiff.oldContent}
+                newValue={showDiff.newContent}
+                splitView
+                compareMethod={DiffMethod.WORDS}
+                useDarkTheme={false}
+              />
+            )}
           </div>
         </div>
       )}
