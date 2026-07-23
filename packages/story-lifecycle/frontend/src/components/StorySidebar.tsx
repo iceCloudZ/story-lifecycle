@@ -1,4 +1,6 @@
-import type { ReactNode } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { deliverablesApi, docApi } from '../api/client'
+import type { DeliverableItem, GateInfo } from '../api/client'
 import './StorySidebar.css'
 
 interface Module {
@@ -11,8 +13,6 @@ interface Module {
 
 interface Props {
   storyKey: string
-  storyTitle: string
-  storyStatus: string
   modules: Module[]
   activeModule: string
   onModuleChange: (id: string) => void
@@ -20,58 +20,77 @@ interface Props {
   onBack?: () => void
   /** PRD 文件路径;有值时 sidebar 底部显示「打开 PRD」(任何 tab 都能开)。 */
   prdPath?: string
+  /** gate 推进(进入下一 lifecycle 状态)入口;调 POST /lifecycle/advance。 */
+  onAdvance?: () => void
 }
 
-// 线性图标(16px,stroke=currentColor),按 module id 取;取不到回落 emoji。
-const LINE_ICONS: Record<string, ReactNode> = {
-  overview: (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-      <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.2" />
-      <rect x="9" y="1.5" width="5.5" height="5.5" rx="1.2" />
-      <rect x="1.5" y="9" width="5.5" height="5.5" rx="1.2" />
-      <rect x="9" y="9" width="5.5" height="5.5" rx="1.2" />
-    </svg>
-  ),
-  terminal: (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
-      <path d="M4.5 6l2.5 2.5L4.5 11" />
-      <path d="M8.5 11h3" />
-    </svg>
-  ),
-  code: (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="4.5" cy="4" r="2" />
-      <circle cx="4.5" cy="12" r="2" />
-      <circle cx="11.5" cy="7.5" r="2" />
-      <path d="M4.5 6v4" />
-      <path d="M11.5 9.5c0 1.5-2 2.5-4.5 2.5" />
-    </svg>
-  ),
-  docs: (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 1.5h5.5L12.5 4.5V14.5h-8.5z" />
-      <path d="M9.5 1.5v3h3" />
-      <path d="M6 8h4M6 10.5h4" />
-    </svg>
-  ),
+// 模块导航图标(概览/代码/文档 tab)。
+const MODULE_ICONS: Record<string, string> = {
+  overview: '📊',
+  code: '📦',
+  docs: '📄',
 }
 
-// status → badge 样式类(复用全局 .badge-*)
-const STATUS_BADGE: Record<string, string> = {
-  active: 'badge-active',
-  planning: 'badge-completed',
-  paused: 'badge-paused',
-  blocked: 'badge-blocked',
-  failed: 'badge-failed',
-  completed: 'badge-completed',
-  archived: 'badge-aborted',
-  aborted: 'badge-aborted',
-  idle: 'badge-aborted',
+// 交付物 key → 点击跳转的 tab。doc 类(doc_type)→ docs;code → code;
+// delivery 没有专门 tab → 留空(不可点,只显示状态)。
+const DELIV_TARGET_TAB: Record<string, string> = {
+  prd: 'docs',
+  spec: 'docs',
+  code: 'code',
+  test_report: 'docs',
+  // delivery: 无目标,只展示
 }
 
-export default function StorySidebar({ storyKey, storyTitle, storyStatus, modules, activeModule, onModuleChange, onArchive, onBack, prdPath }: Props) {
-  const archived = storyStatus === 'archived'
+// doc 类交付物(spec/test_report/prd)走 docApi.confirm(写 story_doc);
+// 非 doc 类(code/delivery)走 deliverablesApi.confirm(写 context_json)。
+const DOC_DELIVERABLES = new Set(['spec', 'test_report', 'prd'])
+
+/**
+ * StorySidebar — 左侧导航。
+ *
+ * 结构:
+ *   - 返回
+ *   - 模块导航(概览/代码/文档 tab)
+ *   - 交付物导航:每项 = 一个交付物,带双灯(产物/确认),点击跳到对应 tab。
+ *     灯状态直接嵌在导航项上,无需另开交付物区。确认灯可点 = 确认动作。
+ *   - gate 推进入口(进入下一状态)收在交付物列表底
+ *   - 底部操作(PRD 打开 / 归档)
+ *
+ * 标题/状态徽章已删(与 detail 头部重复)。
+ */
+export default function StorySidebar({
+  storyKey, modules, activeModule, onModuleChange, onArchive, onBack, prdPath, onAdvance,
+}: Props) {
+  const qc = useQueryClient()
+  const archived = false // 归档由 onArchive 触发,这里不依赖 status
+
+  const { data: delivData } = useQuery({
+    queryKey: ['deliverables', storyKey],
+    queryFn: () => deliverablesApi.get(storyKey),
+    enabled: !!storyKey,
+    refetchInterval: 15000,
+  })
+
+  const deliverables: DeliverableItem[] = delivData?.deliverables ?? []
+  const gate: GateInfo | null = delivData?.gate ?? null
+
+  async function handleConfirm(delivKey: string) {
+    const ok = DOC_DELIVERABLES.has(delivKey)
+      ? await docApi.confirm(storyKey, delivKey).then(() => true).catch(() => false)
+      : await deliverablesApi.confirm(storyKey, delivKey).then(() => true).catch(() => false)
+    if (ok) qc.invalidateQueries({ queryKey: ['deliverables', storyKey] })
+  }
+
+  async function handleSkip(delivKey: string) {
+    const ok = await deliverablesApi.skip(storyKey, delivKey).then(() => true).catch(() => false)
+    if (ok) qc.invalidateQueries({ queryKey: ['deliverables', storyKey] })
+  }
+
+  function handleDelivClick(d: DeliverableItem) {
+    const tab = DELIV_TARGET_TAB[d.key]
+    if (tab) onModuleChange(tab)
+  }
+
   return (
     <aside className="story-sidebar">
       {onBack && (
@@ -79,12 +98,8 @@ export default function StorySidebar({ storyKey, storyTitle, storyStatus, module
           ← 返回
         </button>
       )}
-      <div className="ss-story-info">
-        <div className="ss-title" title={storyKey}>{storyTitle || storyKey}</div>
-        <span className={`badge ${STATUS_BADGE[storyStatus] ?? 'badge-aborted'}`}>
-          {storyStatus}
-        </span>
-      </div>
+
+      {/* 模块导航(概览/代码/文档) */}
       <nav className="ss-nav">
         {modules.map((m) => (
           <button
@@ -92,7 +107,7 @@ export default function StorySidebar({ storyKey, storyTitle, storyStatus, module
             className={`ss-nav-item ${activeModule === m.id ? 'active' : ''}`}
             onClick={() => onModuleChange(m.id)}
           >
-            <span className="ss-icon">{LINE_ICONS[m.id] ?? m.icon}</span>
+            <span className="ss-icon">{MODULE_ICONS[m.id] ?? m.icon}</span>
             <span className="ss-label">{m.label}</span>
             {m.badge != null && (
               <span className={`ss-badge ${m.badgeVariant === 'danger' ? 'ss-badge-danger' : ''}`}>
@@ -102,6 +117,87 @@ export default function StorySidebar({ storyKey, storyTitle, storyStatus, module
           </button>
         ))}
       </nav>
+
+      {/* 交付物导航:每项带双灯,点击跳转 tab */}
+      {deliverables.length > 0 && (
+        <div className="ss-deliverables">
+          <div className="ss-deliv-head">
+            <span className="ss-deliv-title">📦 交付物</span>
+            <span className="ss-deliv-legend" title="左:产物是否存在 · 右:是否已确认">
+              <span className="ss-lamp off" />
+              <span className="ss-lamp off" />
+            </span>
+          </div>
+          <div className="ss-deliv-list">
+            {deliverables.map((d) => {
+              const skipped = !!d.skipped
+              const showConfirm = !!d.needs_confirm && !skipped
+              const targetTab = DELIV_TARGET_TAB[d.key]
+              const clickable = !!targetTab && !skipped
+              return (
+                <div
+                  key={d.key}
+                  className={`ss-deliv-item${d.satisfied ? ' done' : ''}${skipped ? ' skipped' : ''}`}
+                >
+                  <div
+                    className={`ss-deliv-main${clickable ? ' clickable' : ''}`}
+                    title={targetTab ? `查看${d.label}` : `${d.label}(无对应 tab)`}
+                    onClick={() => clickable && handleDelivClick(d)}
+                  >
+                    <span className="ss-deliv-icon">{d.icon}</span>
+                    <span className="ss-deliv-label">{d.label}</span>
+                    {!skipped && (
+                      <button
+                        className="ss-deliv-skip"
+                        title="跳过"
+                        onClick={(e) => { e.stopPropagation(); handleSkip(d.key) }}
+                      >
+                        ⊘
+                      </button>
+                    )}
+                  </div>
+                  {skipped ? (
+                    <span className="ss-deliv-skipped-tag">⊘ 已跳过</span>
+                  ) : (
+                    <span className="ss-deliv-lamps">
+                      {/* 产物灯:只读 */}
+                      <span
+                        className={`ss-lamp ${d.exists ? 'on' : 'off'}`}
+                        title={`产物${d.exists ? '已存在' : '未生成'}`}
+                      />
+                      {/* 确认灯:可点击 → 确认动作 */}
+                      {showConfirm && (
+                        <button
+                          className={`ss-lamp clickable ${d.confirmed ? 'on' : 'off'}`}
+                          title={d.confirmed ? '已确认' : '点击确认'}
+                          onClick={(e) => { e.stopPropagation(); handleConfirm(d.key) }}
+                        />
+                      )}
+                    </span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* gate 推进入口:all_satisfied 可点,否则置灰 + tooltip */}
+          {gate && (
+            <button
+              className={`ss-gate-btn ${gate.all_satisfied ? 'ready' : 'locked'}`}
+              disabled={!gate.all_satisfied}
+              title={
+                gate.all_satisfied
+                  ? `进入 ${gate.to}`
+                  : `还差: ${gate.required.filter((r) => !r.satisfied).map((r) => r.label).join('、')}`
+              }
+              onClick={onAdvance}
+            >
+              进入 {gate.to} →
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="ss-bottom-actions">
         {prdPath && (
           <button

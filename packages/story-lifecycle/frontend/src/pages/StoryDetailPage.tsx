@@ -303,14 +303,13 @@ export default function StoryDetailPage() {
       <div className="sdpv2-body">
         <StorySidebar
           storyKey={storyKey}
-          storyTitle={detail.title || storyKey}
-          storyStatus={detail.status}
           modules={MODULES}
           activeModule={validTab}
           onModuleChange={setActiveTab}
           onArchive={handleArchive}
           onBack={() => navigate('/')}
           prdPath={prdPath}
+          onAdvance={handleAdvanceLifecycle}
         />
         <div className="sdpv2-content">
           <ClarifyDialog storyKey={storyKey} status={detail.status} headless={detail.headless} />
@@ -325,7 +324,6 @@ export default function StoryDetailPage() {
               onRegeneratePlan={handleRegeneratePlan}
               onAction={handleAction}
               actions={actions}
-              onAdvanceLifecycle={handleAdvanceLifecycle}
               onActionAdapterChange={handleActionAdapterChange}
               neverStarted={neverStarted}
               onStart={handleStart}

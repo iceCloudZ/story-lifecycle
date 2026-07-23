@@ -1,5 +1,3 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { deliverablesApi, docApi } from '../api/client'
 import type { Story, AgentAction, ActionButton, Plan } from '../api/client'
 import ActionCard from './ActionCard'
 import SemiAutoSection from './SemiAutoSection'
@@ -17,7 +15,6 @@ interface Props {
   onRegeneratePlan: () => void
   onAction: (action: ActionButton) => void
   actions: ActionButton[]
-  onAdvanceLifecycle: () => void
   onActionAdapterChange: (index: number, adapter: string) => void
   neverStarted: boolean
   onStart: () => void
@@ -26,22 +23,9 @@ interface Props {
 
 export default function OverviewTab({
   storyKey, detail, resolvedActions, isConfirmed, planData,
-  onConfirmPlan, onRegeneratePlan, onAction, actions, onAdvanceLifecycle,
+  onConfirmPlan, onRegeneratePlan, onAction, actions,
   onActionAdapterChange, neverStarted, onStart, onResolve,
 }: Props) {
-  const qc = useQueryClient()
-
-  // 成果物清单 + gate 状态(第二层进度条)。
-  const { data: delivData } = useQuery({
-    queryKey: ['deliverables', storyKey],
-    queryFn: () => deliverablesApi.get(storyKey),
-    enabled: !!storyKey,
-    refetchInterval: 15000,
-  })
-
-  const deliverables = delivData?.deliverables ?? []
-  const gate = delivData?.gate ?? null
-
   const profileLabel: Record<string, string> = {
     minimal: '最小开发流程',
     realtest: '真机测试流程',
@@ -55,21 +39,6 @@ export default function OverviewTab({
   // 业务状态条(第一层):纯状态节点,不带 stage chip。
   const curLifecycle = detail.lifecycleState || '待启动'
   const curIdx = LIFECYCLE_ORDER.indexOf(curLifecycle)
-
-  // doc 类(spec/test_report)走 docApi.confirm(写 story_doc);
-  // 非 doc 类(code/delivery)走 deliverablesApi.confirm(写 context_json)。
-  const DOC_DELIVERABLES = new Set(['spec', 'test_report'])
-  async function handleConfirm(delivKey: string) {
-    const ok = DOC_DELIVERABLES.has(delivKey)
-      ? await docApi.confirm(storyKey, delivKey).then(() => true).catch(() => false)
-      : await deliverablesApi.confirm(storyKey, delivKey).then(() => true).catch(() => false)
-    if (ok) qc.invalidateQueries({ queryKey: ['deliverables', storyKey] })
-  }
-
-  async function handleSkipDeliverable(delivKey: string) {
-    const ok = await deliverablesApi.skip(storyKey, delivKey).then(() => true).catch(() => false)
-    if (ok) qc.invalidateQueries({ queryKey: ['deliverables', storyKey] })
-  }
 
   const primaryAction = actions.find((a) => a.variant === 'primary') ?? null
   const rowActions = primaryAction ? actions.filter((a) => a !== primaryAction) : actions
@@ -96,9 +65,6 @@ export default function OverviewTab({
           </span>
         </div>
         <div className="ot-header-right">
-          {detail.lastError && (
-            <span className="ot-error-badge" title={detail.lastError}>⚠ {detail.lastError}</span>
-          )}
           {onResolve && (
             <button className="btn btn-sm btn-primary" onClick={onResolve}>标记已修复</button>
           )}
@@ -112,7 +78,10 @@ export default function OverviewTab({
         </div>
       </div>
 
-      {/* 第一层:业务状态条(纯状态节点,成果物 gate 驱动推进) */}
+      {/* 第一层:业务状态条(纯状态节点,成果物 gate 驱动推进)。
+          交付物 + gate 推进入口已移到左侧 sidebar(导航=交付物),这里只留状态条。
+          lastError(如「No actions to execute」)作为状态条的标注贴在下方 ——
+          业务状态条本就表达 story 进度,错误信息贴这里语义最顺。 */}
       <div className="ot-lifecycle-bar">
         {LIFECYCLE_ORDER.map((state, i) => {
           const isDone = i < curIdx
@@ -128,82 +97,8 @@ export default function OverviewTab({
           )
         })}
       </div>
-
-      {/* 第二层:成果物清单(自动检测 + 人工确认 + 可跳过)
-          横排卡片,每卡两个灯:产物灯(只读) + 确认灯(可点击=确认动作)。
-          灯含义由标题右侧图例说明一次,卡片里不重复标注。
-          gate 推进入口并入此区标题右侧:all_satisfied 时按钮可点(进入下一状态),
-          未满足时按钮置灰 + tooltip 列出缺的成果物 —— 不再单开一张 gate 卡片。 */}
-      {deliverables.length > 0 && (
-        <div className="ot-deliverables">
-          <div className="ot-deliv-head">
-            <h3 className="ot-deliv-title">📦 交付物</h3>
-            <div className="ot-deliv-head-right">
-              <span className="ot-deliv-legend" title="左:产物是否存在 · 右:是否已确认">
-                <span className="ot-deliv-lamp off" title="产物" />
-                <span className="ot-deliv-lamp off" title="确认" />
-              </span>
-              {gate && (
-                <button
-                  className={`btn btn-sm ${gate.all_satisfied ? 'btn-primary' : 'ot-gate-btn-disabled'}`}
-                  disabled={!gate.all_satisfied}
-                  title={
-                    gate.all_satisfied
-                      ? `进入 ${gate.to}`
-                      : `还差: ${gate.required
-                          .filter((r) => !r.satisfied)
-                          .map((r) => r.label)
-                          .join('、')}`
-                  }
-                  onClick={onAdvanceLifecycle}
-                >
-                  进入 {gate.to} →
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="ot-deliv-list">
-            {deliverables.map((d) => {
-              const skipped = !!d.skipped
-              const showConfirm = !!d.needs_confirm && !skipped
-              return (
-                <div key={d.key} className={`ot-deliv-item${d.satisfied ? ' done' : ''}${skipped ? ' skipped' : ''}`}>
-                  {!skipped && (
-                    <button
-                      className="ot-deliv-skip-btn"
-                      title="跳过此成果物"
-                      onClick={() => handleSkipDeliverable(d.key)}
-                    >
-                      ⊘
-                    </button>
-                  )}
-                  <span className="ot-deliv-icon">{d.icon}</span>
-                  <span className="ot-deliv-label">{d.label}</span>
-                  {skipped ? (
-                    <span className="ot-deliv-skipped-tag">⊘ 已跳过</span>
-                  ) : (
-                    <span className="ot-deliv-lamps">
-                      {/* 产物灯:只读,exists → 绿实心 / 灰空心 */}
-                      <span
-                        className={`ot-deliv-lamp ${d.exists ? 'on' : 'off'}`}
-                        title={`产物${d.exists ? '已存在' : '未生成'}`}
-                      />
-                      {/* 确认灯:可点击 → handleConfirm(doc 类写 story_doc,非 doc 类写 context_json)。
-                          needs_confirm=false(如 PRD)的卡片不显示此灯(无需确认)。 */}
-                      {showConfirm && (
-                        <button
-                          className={`ot-deliv-lamp clickable ${d.confirmed ? 'on' : 'off'}`}
-                          title={d.confirmed ? '已确认' : '点击确认'}
-                          onClick={() => handleConfirm(d.key)}
-                        />
-                      )}
-                    </span>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
+      {detail.lastError && (
+        <div className="ot-lifecycle-error" title={detail.lastError}>⚠ {detail.lastError}</div>
       )}
 
       {/* Agent 规划区 */}
