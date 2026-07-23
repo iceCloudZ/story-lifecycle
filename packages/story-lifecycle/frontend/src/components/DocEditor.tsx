@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { EditorState } from '@codemirror/state'
 import { EditorView, basicSetup } from 'codemirror'
 import { markdown } from '@codemirror/lang-markdown'
+import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued'
 import { docApi } from '../api/client'
 import MarkdownView from './MarkdownView'
 import './DocEditor.css'
@@ -29,7 +30,15 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
   const [reason, setReason] = useState('')
   const [title, setTitle] = useState('')
   const [saving, setSaving] = useState(false)
-  const [showDiff, setShowDiff] = useState<{ a: number; b: number; diff: string } | null>(null)
+  // diff 弹层:存两个版本的原始内容 + 视图模式(split=左右并排,unified=合并)。
+  // 用原始内容而非后端 patch,这样 react-diff-viewer-continued 能渲染 split + 词级高亮。
+  const [showDiff, setShowDiff] = useState<{
+    a: number
+    b: number
+    oldContent: string
+    newContent: string
+    splitView: boolean
+  } | null>(null)
   const [rollbackTarget, setRollbackTarget] = useState<number | null>(null)
   const [rollbackReason, setRollbackReason] = useState('')
 
@@ -102,8 +111,19 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
 
   const viewDiff = async (a: number, b: number) => {
     try {
-      const r = await docApi.diff(storyKey, docType, a, b)
-      setShowDiff({ a, b, diff: r.diff })
+      // 拉两个版本的原始内容(不是后端 patch),交给 ReactDiffViewer 自己算 diff。
+      // 这样能渲染 split(左右并排)+ 词级高亮,比裸 <pre> patch 清晰得多。
+      const [va, vb] = await Promise.all([
+        docApi.getVersion(storyKey, docType, a),
+        docApi.getVersion(storyKey, docType, b),
+      ])
+      setShowDiff({
+        a,
+        b,
+        oldContent: va.content,
+        newContent: vb.content,
+        splitView: true, // 默认左右并排(对比最直观),可切 unified
+      })
     } catch (e) {
       alert(`diff 失败: ${e instanceof Error ? e.message : e}`)
     }
@@ -224,14 +244,40 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
         </div>
       </div>
 
-      {/* diff 弹层 */}
+      {/* diff 弹层:react-diff-viewer-continued 渲染,带行级高亮 + 词级 diff +
+          split(左右并排)/unified(合并)切换。比裸 <pre> patch 清晰。 */}
       {showDiff && (
         <div className="doc-editor-modal doc-diff-modal">
           <div className="doc-modal-head">
             <strong>diff v{showDiff.a} → v{showDiff.b}</strong>
+            <div className="doc-diff-view-toggle">
+              <button
+                type="button"
+                className={`btn btn-sm${showDiff.splitView ? ' btn-primary' : ''}`}
+                onClick={() => setShowDiff({ ...showDiff, splitView: true })}
+              >
+                左右并排
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm${!showDiff.splitView ? ' btn-primary' : ''}`}
+                onClick={() => setShowDiff({ ...showDiff, splitView: false })}
+              >
+                合并视图
+              </button>
+            </div>
             <button className="btn btn-sm" onClick={() => setShowDiff(null)}>关闭</button>
           </div>
-          <pre className="doc-diff-pre">{showDiff.diff}</pre>
+          <div className="doc-diff-viewer-wrap">
+            <ReactDiffViewer
+              oldValue={showDiff.oldContent}
+              newValue={showDiff.newContent}
+              splitView={showDiff.splitView}
+              compareMethod={DiffMethod.WORDS}
+              useDarkTheme={false}
+              hideLineNumbers={false}
+            />
+          </div>
         </div>
       )}
 
