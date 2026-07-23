@@ -169,6 +169,30 @@
   overflow: auto;
   font-size: var(--text-sm);
 }
+/* 统一库A react-diff-view 的字号(默认偏大,跟库B对齐)。 */
+.doc-diff-viewer-wrap .diff {
+  font-size: var(--text-sm);
+}
+/* renderContent 渲染的 markdown 行:让 .markdown-body 在 diff 单元格里紧凑显示。
+   renderContent 逐行喂 MarkdownView,跨行结构(多行表格/代码块)可能不完整 —— 文档以行为主时够用。 */
+.doc-diff-md-line .markdown-body {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  background: transparent;
+}
+.doc-diff-md-line .markdown-body h1,
+.doc-diff-md-line .markdown-body h2,
+.doc-diff-md-line .markdown-body h3 {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.doc-diff-md-line .markdown-body p {
+  margin: 0;
+}
+.doc-diff-md-line .markdown-body pre,
+.doc-diff-md-line .markdown-body code {
+  font-size: var(--text-xs);
+}
 .doc-diff-pre {
   font-size: var(--text-sm);
   font-family: var(--font-mono);
