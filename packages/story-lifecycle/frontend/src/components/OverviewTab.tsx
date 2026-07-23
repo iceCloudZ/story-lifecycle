@@ -48,13 +48,13 @@ export default function OverviewTab({
 
   return (
     <div className="tab-content overview-tab">
-      {/* 头部:标题 + key + 元信息 */}
+      {/* 头部:标题一行 + key·meta 合并成一行小字(瘦身,原三行) */}
       <div className="ot-header">
         <div className="ot-header-left">
           <span className="ot-title">{detail.title || detail.storyKey}</span>
-          <span className="ot-key">{detail.storyKey}</span>
-          <span className="ot-meta">
+          <span className="ot-submeta">
             {[
+              detail.storyKey,
               profileLabel[detail.profile] || detail.profile,
               `${detail.currentStage} 重试 ${detail.executionCount}/3`,
               detail.priority,
