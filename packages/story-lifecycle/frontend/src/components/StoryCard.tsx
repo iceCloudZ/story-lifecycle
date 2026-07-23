@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import type { StorySummary } from '../store/storyStore'
 import { TYPE_LABELS } from '../pages/tapdMeta'
+import CardOverflowMenu from './CardOverflowMenu'
 
 /**
  * StoryCard — 从 Dashboard 抽出的可复用 story 卡片。
@@ -71,9 +72,13 @@ export interface StoryCardAction {
 export default function StoryCard({
   story,
   onAction,
+  onMove,
+  onDelete,
 }: {
   story: StorySummary
   onAction: (action: StoryCardAction) => void
+  onMove?: (state: string) => void
+  onDelete?: () => void
 }) {
   const navigate = useNavigate()
   const stageIndex = STAGES.indexOf(story.currentStage as (typeof STAGES)[number])
@@ -98,9 +103,18 @@ export default function StoryCard({
           )}
           <span className="card-title">{story.title || '(未命名)'}</span>
         </div>
-        <span className={`badge badge-${normalizedStatus}`}>
-          {STATUS_LABELS[normalizedStatus] || normalizedStatus}
-        </span>
+        <div className="card-top-right">
+          <span className={`badge badge-${normalizedStatus}`}>
+            {STATUS_LABELS[normalizedStatus] || normalizedStatus}
+          </span>
+          {(onMove || onDelete) && (
+            <CardOverflowMenu
+              currentLifecycle={story.lifecycleState}
+              onMove={(state) => onMove?.(state)}
+              onDelete={() => onDelete?.()}
+            />
+          )}
+        </div>
       </div>
       <div className="card-progress" onClick={() => navigate(`/story/${story.storyKey}`)}>
         <div className="progress-bar">

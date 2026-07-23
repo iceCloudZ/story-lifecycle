@@ -102,11 +102,106 @@
   gap: 6px;
 }
 
+/* 标题右侧簇:status badge + ⋯ 溢出菜单 */
+.card-top-right {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 /* 卡片上的类型徽章:固定不收缩,避免挤占标题 */
 .card-type-badge {
   flex-shrink: 0;
   margin-top: 2px;
   white-space: nowrap;
+}
+
+/* ⋯ 溢出菜单(交互抄 MoreMenu:outside-click + Escape 关闭) */
+.card-overflow {
+  position: relative;
+}
+
+.card-overflow-trigger {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background 0.1s, color 0.1s;
+}
+
+.card-overflow-trigger:hover,
+.card-overflow-trigger.open {
+  background: var(--gray-100);
+  color: var(--color-text-strong);
+}
+
+.card-overflow-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  padding: 4px;
+}
+
+.card-overflow-section {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  padding: 4px 8px 2px;
+}
+
+.card-overflow-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 6px 8px;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.card-overflow-item:hover:not(:disabled) {
+  background: var(--gray-100);
+}
+
+.card-overflow-item:disabled {
+  color: var(--color-text-faint);
+  cursor: default;
+}
+
+.card-overflow-current {
+  font-size: 11px;
+  color: var(--color-text-faint);
+}
+
+.card-overflow-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 4px 0;
+}
+
+.card-overflow-danger {
+  color: var(--color-danger-text);
+}
+
+.card-overflow-danger:hover {
+  background: var(--color-danger-soft);
 }
 
 /* 项目卡(ProjectsPage)的项目名;story 卡片已不展示数字 key */

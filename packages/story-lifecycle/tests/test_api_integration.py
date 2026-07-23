@@ -734,6 +734,99 @@ class TestReleaseTrainAPI:
         assert updated["title"] == "更新标题"
 
 
+class TestSoftDeleteAndMove:
+    """卡片菜单:软删除(可恢复)+ 移动生命周期状态(5 态全开放)。"""
+
+    def test_soft_delete_hides_from_list(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "SD-1", title="软删测试", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("SD-1", intake_state="ready")
+        # 删前在列表
+        assert any(s["storyKey"] == "SD-1" for s in api_client.get("/api/story").json())
+        resp = api_client.delete("/api/story/SD-1")
+        assert resp.status_code == 200
+        # 删后从列表消失
+        assert not any(s["storyKey"] == "SD-1" for s in api_client.get("/api/story").json())
+
+    def test_soft_delete_keeps_row_and_sets_deleted_at(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "SD-2", title="软删行保留", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("SD-2", intake_state="ready")
+        api_client.delete("/api/story/SD-2")
+        row = db.get_story("SD-2")
+        assert row is not None, "软删后行应保留(非物理删)"
+        assert row["deleted_at"] is not None
+
+    def test_restore_brings_back(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "SD-3", title="恢复测试", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("SD-3", intake_state="ready")
+        api_client.delete("/api/story/SD-3")
+        resp = api_client.post("/api/story/SD-3/restore")
+        assert resp.status_code == 200
+        assert db.get_story("SD-3")["deleted_at"] is None
+        assert any(s["storyKey"] == "SD-3" for s in api_client.get("/api/story").json())
+
+    def test_delete_nonexistent_returns_404(self, api_client, isolated_story_home):
+        assert api_client.delete("/api/story/NOPE").status_code == 404
+
+    def test_restore_not_deleted_returns_404(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "SD-4", title="未删除", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("SD-4", intake_state="ready")
+        # 未软删 → restore 应 404
+        assert api_client.post("/api/story/SD-4/restore").status_code == 404
+
+    def test_move_lifecycle_updates_state(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "MV-1", title="移动测试", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("MV-1", intake_state="ready")  # 默认 待启动
+        resp = api_client.put("/api/story/MV-1/lifecycle", json={"state": "开发"})
+        assert resp.status_code == 200
+        assert resp.json()["lifecycleState"] == "开发"
+        assert db.get_story("MV-1")["lifecycle_state"] == "开发"
+
+    def test_move_lifecycle_logs_event(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "MV-2", title="移动事件", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("MV-2", intake_state="ready")
+        api_client.put("/api/story/MV-2/lifecycle", json={"state": "测试"})
+        events = db.get_story_events("MV-2")
+        trans = [e for e in events if e["event_type"] == "story_state_transition"]
+        assert len(trans) == 1
+        payload = db.parse_event_payload(trans[0])
+        assert payload["from"] == "待启动"
+        assert payload["to"] == "测试"
+
+    def test_move_lifecycle_all_five_states(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "MV-3", title="五态遍历", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("MV-3", intake_state="ready")
+        for state in ("待启动", "开发", "测试", "上线", "结项"):
+            resp = api_client.put("/api/story/MV-3/lifecycle", json={"state": state})
+            assert resp.status_code == 200, f"{state} 应合法"
+            assert db.get_story("MV-3")["lifecycle_state"] == state
+
+    def test_move_lifecycle_invalid_state_400(self, api_client, isolated_story_home):
+        db.upsert_story(
+            "MV-4", title="非法态", workspace="/tmp", profile="minimal"
+        )
+        db.update_story("MV-4", intake_state="ready")
+        resp = api_client.put("/api/story/MV-4/lifecycle", json={"state": "瞎编的"})
+        assert resp.status_code == 400
+
+    def test_move_lifecycle_nonexistent_404(self, api_client, isolated_story_home):
+        resp = api_client.put("/api/story/NONEXIST/lifecycle", json={"state": "开发"})
+        assert resp.status_code == 404
+
+
 class TestStateGovernance:
     """状态治理:is_test 过滤 + lifecycle_state 字段暴露。映射逻辑见 test_sync.py。"""
 

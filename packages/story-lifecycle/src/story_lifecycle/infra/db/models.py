@@ -36,6 +36,7 @@ VALID_COLUMNS = frozenset(
         "lifecycle_state",
         "release_train",  # 班车归属(v3.2/v3.3/后台快线/NULL)
         "is_test",  # 测试/demo story 标记(0=正常,1=测试),看板与列表默认过滤
+        "deleted_at",  # 软删除时间戳(NULL=未删);卡片删除走软删,可 restore 恢复
     }
 )
 
@@ -299,6 +300,12 @@ def init_db():
         # 避免本地跑测试/seed 造的数据污染真实看板。同步默认 0(真实数据)。
         try:
             conn.execute("ALTER TABLE story ADD COLUMN is_test INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        # deleted_at:软删除时间戳。卡片「删除」置位(可 restore 恢复),物理删除仍由
+        # delete_story() 负责(一次性脚本用,不暴露到卡片)。列表三档查询都过滤 NULL。
+        try:
+            conn.execute("ALTER TABLE story ADD COLUMN deleted_at TIMESTAMP")
         except sqlite3.OperationalError:
             pass
 
@@ -609,6 +616,7 @@ def list_active_stories() -> list[dict]:
             """SELECT * FROM story
                WHERE lifecycle_state IN ('待启动', '开发', '测试', '上线')
                AND intake_state = 'ready'
+               AND deleted_at IS NULL
                ORDER BY updated_at DESC"""
         ).fetchall()
     return [dict(r) for r in rows]
@@ -619,6 +627,7 @@ def list_candidate_stories() -> list[dict]:
     with _db() as conn:
         rows = conn.execute(
             """SELECT * FROM story WHERE intake_state = 'candidate'
+               AND deleted_at IS NULL
                ORDER BY updated_at DESC"""
         ).fetchall()
     return [dict(r) for r in rows]
@@ -629,7 +638,10 @@ def list_completed_stories(limit: int | None = None) -> list[dict]:
     # (原按 status IN ('completed','failed','aborted','archived') 过滤)。
     # limit 默认 None=全量(前端 DonePage 做分页,后端不再截断;旧的 limit=20/100 会
     # 把结项 story 砍到看不到 — 已结项 tab 只显示 ~21 个的根因之一)。
-    sql = "SELECT * FROM story WHERE lifecycle_state = '结项' ORDER BY updated_at DESC"
+    sql = (
+        "SELECT * FROM story WHERE lifecycle_state = '结项' "
+        "AND deleted_at IS NULL ORDER BY updated_at DESC"
+    )
     params: tuple = ()
     if limit is not None:
         sql += " LIMIT ?"
@@ -832,6 +844,33 @@ def delete_story(story_key: str):
             conn.execute("DELETE FROM stage_log WHERE story_id = ?", (row["id"],))
             conn.execute("DELETE FROM gate_result WHERE story_id = ?", (row["id"],))
             conn.execute("DELETE FROM story WHERE id = ?", (row["id"],))
+
+
+def soft_delete_story(story_key: str) -> bool:
+    """软删除:置 deleted_at 时间戳,行保留可 restore 恢复。
+
+    卡片「删除」走这条(可恢复),区别于 delete_story()(物理删除,一次性脚本用)。
+    返回是否命中(行不存在或已软删返回 False)。
+    """
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE story SET deleted_at = ? "
+            "WHERE story_key = ? AND deleted_at IS NULL",
+            (now, story_key),
+        )
+        return cur.rowcount == 1
+
+
+def restore_story(story_key: str) -> bool:
+    """恢复软删除:清空 deleted_at。行不存在或未软删返回 False。"""
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE story SET deleted_at = NULL "
+            "WHERE story_key = ? AND deleted_at IS NOT NULL",
+            (story_key,),
+        )
+        return cur.rowcount == 1
 
 
 # -------- Event log --------

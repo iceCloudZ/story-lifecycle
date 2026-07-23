@@ -347,6 +347,14 @@ export const storyApi = {
   advance: (key: string) => apiAction('PUT', `/api/story/${key}/advance`),
   // STORY-STATE-MODEL: Story 业务状态推进(开发→测试→上线),区别于 /advance(driver resume)
   advanceLifecycle: (key: string) => apiAction('POST', `/api/story/${key}/lifecycle/advance`),
+  // 卡片「移动到...」菜单:5 态全开放,直接 set lifecycle_state(待启动/开发/测试/上线/结项)。
+  // 区别于 advanceLifecycle(受 gate 约束的单步前进)。
+  setLifecycle: (key: string, state: string) =>
+    fetchJSON<{ ok: boolean; lifecycleState: string }>(`/api/story/${key}/lifecycle`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state }),
+    }),
   // 班车看板:改 story 归属班车(横向拖),train=null 清空回待分配
   setReleaseTrain: (key: string, train: string | null) =>
     fetchJSON<{ ok: boolean; releaseTrain: string | null }>(`/api/story/${key}/release-train`, {

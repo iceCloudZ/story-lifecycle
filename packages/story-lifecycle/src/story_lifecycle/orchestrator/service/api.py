@@ -44,6 +44,7 @@ from ...sourcing.state_machine import (
     mark_completed as sm_mark_completed,
     pause as sm_pause,
 )
+from ...sourcing.lifecycle_state import LifecycleState
 
 
 log = logging.getLogger("story-lifecycle.api")
@@ -84,6 +85,10 @@ class AdvanceRequest(BaseModel):
 
 class SetReleaseTrainRequest(BaseModel):
     train: str | None = None
+
+
+class SetLifecycleRequest(BaseModel):
+    state: str  # lifecycle_state 目标值(待启动/开发/测试/上线/结项),5 态全开放
 
 
 class SkipRequest(BaseModel):
@@ -1140,9 +1145,47 @@ def fail_story(story_key: str, req: SkipRequest = None):
 
 @app.delete("/api/story/{story_key}")
 def delete_story(story_key: str):
-    db.delete_story(story_key)
+    """卡片「删除」— 软删除(置 deleted_at),行保留可 POST /restore 恢复。
+
+    区别于 db.delete_story()(物理删除,一次性脚本用,不暴露到卡片)。
+    """
+    if not db.soft_delete_story(story_key):
+        raise HTTPException(404, "Story not found or already deleted")
     kill_pty(story_key)
     return {"ok": True}
+
+
+@app.post("/api/story/{story_key}/restore")
+def restore_story(story_key: str):
+    """恢复软删除的 story(清空 deleted_at)→ 重新出现在原 lifecycle tab。"""
+    if not db.restore_story(story_key):
+        raise HTTPException(404, "Story not found or not deleted")
+    return {"ok": True}
+
+
+@app.put("/api/story/{story_key}/lifecycle")
+def set_lifecycle_state(story_key: str, req: SetLifecycleRequest):
+    """人工移动 story 到任意生命周期态(5 态全开放:待启动/开发/测试/上线/结项)。
+
+    与 POST /lifecycle/advance(受 StoryStateGate 约束的单步前进)不同,这里直接
+    set lifecycle_state — 卡片「移动到...」菜单用。只改 lifecycle_state,不动引擎
+    status。记 story_state_transition 事件(参照 release-train 的 event 模式)。
+    """
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+    valid = {v.value for v in LifecycleState.__members__.values()}
+    if req.state not in valid:
+        raise HTTPException(400, f"Invalid lifecycle state: {req.state}")
+    prev = s.get("lifecycle_state")
+    db.update_story(story_key, lifecycle_state=req.state)
+    db.log_event(
+        story_key,
+        s.get("current_stage") or "",
+        "story_state_transition",
+        {"from": prev, "to": req.state, "source": "card_menu"},
+    )
+    return {"ok": True, "lifecycleState": req.state}
 
 
 @app.put("/api/story/{story_key}/archive")

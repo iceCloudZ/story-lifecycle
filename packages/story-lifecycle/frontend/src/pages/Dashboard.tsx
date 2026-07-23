@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { apiAction } from '../api/client'
+import { apiAction, storyApi } from '../api/client'
 import { useStoryStore, type StorySummary } from '../store/storyStore'
 import { useStories } from '../hooks/useStories'
 import StoryCard, { type StoryCardAction } from '../components/StoryCard'
@@ -34,6 +34,23 @@ export default function Dashboard() {
     if (ok) qc.invalidateQueries({ queryKey: ['stories'] })
   }
 
+  // 卡片 ⋯ 菜单:移动生命周期态(5 态全开放)。与 StoryGrid.handleMove 同逻辑。
+  async function handleCardMove(s: StorySummary, state: string) {
+    try {
+      await storyApi.setLifecycle(s.storyKey, state)
+      qc.invalidateQueries({ queryKey: ['stories'] })
+    } catch {
+      alert(`移动失败:无法设置生命周期状态为 ${state}`)
+    }
+  }
+
+  // 卡片 ⋯ 菜单:删除(软删,可 POST /restore 恢复)。
+  async function handleCardDelete(s: StorySummary) {
+    if (!window.confirm('确定删除?此为软删除,可从回收站恢复。')) return
+    const ok = await apiAction('DELETE', `/api/story/${s.storyKey}`)
+    if (ok) qc.invalidateQueries({ queryKey: ['stories'] })
+  }
+
   return (
     <div className="dashboard">
       <div className="dashboard-header">
@@ -60,7 +77,13 @@ export default function Dashboard() {
           )
         ) : (
           myStories.map((s) => (
-            <StoryCard key={s.storyKey} story={s} onAction={(a) => handleCardAction(s, a)} />
+            <StoryCard
+              key={s.storyKey}
+              story={s}
+              onAction={(a) => handleCardAction(s, a)}
+              onMove={(state) => handleCardMove(s, state)}
+              onDelete={() => handleCardDelete(s)}
+            />
           ))
         )}
       </div>
