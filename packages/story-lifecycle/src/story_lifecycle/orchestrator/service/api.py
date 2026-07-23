@@ -663,6 +663,16 @@ def _spawn_story_agent_pty(
             )
         except Exception:
             pass
+        # kimi session-id 回填:半自动路径同样要捕获 banner 的 session_<uuid>
+        # (与全自动循环 planner._capture_kimi_session 对等),否则占位行 sid 永远 None,
+        # 下次永远当新会话 → kimi resume 在半自动下形同虚设。best-effort,失败不崩。
+        if _adapter_name == "kimi":
+            try:
+                from ..engine.planner import _capture_kimi_session
+
+                _capture_kimi_session(story_key, stage, _adapter_name, pty)
+            except Exception:
+                pass
     return session_id, pty, is_resume
 
 

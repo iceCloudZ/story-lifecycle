@@ -161,3 +161,108 @@ def test_story_session_db_crud(isolated_story_home):
     # complete
     db.complete_session("S1", "design", "claude")
     assert db.get_session("S1", "design", "claude")["status"] == "completed"
+
+
+class _FakePty:
+    """Minimal PTY stub:立即吐一段 banner 输出给 tap,模拟 kimi 启动。
+
+    _capture_kimi_session 只用 add_tap/remove_tap + tap.get_nowait(),这里实现这三者。
+    """
+
+    def __init__(self, banner_chunk: str):
+        self._chunk = banner_chunk
+        self._delivered = False
+
+    def add_tap(self, maxsize: int = 512):
+        return self
+
+    def remove_tap(self, tap):
+        pass
+
+    def get_nowait(self):
+        # 第一次取返回 banner,之后抛空(模拟「输出结束」)。
+        import asyncio
+
+        if not self._delivered:
+            self._delivered = True
+            return self._chunk
+        raise asyncio.QueueEmpty
+
+
+def test_capture_kimi_session_writes_db(isolated_story_home):
+    """_capture_kimi_session 从 banner 输出解析 session_<uuid> 并回填 DB。
+
+    这是半自动路径(api.py)+ 全自动路径(planner.py)共用的回填函数 ——
+    kimi 的 session id 只能 spawn 后捕获,这函数是 resume 能否生效的关键。
+    """
+    from story_lifecycle.infra.db import models as db
+    from story_lifecycle.orchestrator.engine.planner import _capture_kimi_session
+
+    # 占位行(模拟 spawn 前的 upsert_session(sid=None))
+    db.upsert_session("S2", "design", "kimi", session_id=None)
+    assert db.get_session("S2", "design", "kimi")["session_id"] is None
+
+    banner = (
+        "│  Welcome to Kimi Code!                                              │\n"
+        "│  Session:   session_a273ffaa-8630-4315-96c1-4beca972b7db            │\n"
+        "│  Model:     K3                                                      │\n"
+    )
+    _capture_kimi_session("S2", "design", "kimi", _FakePty(banner))
+
+    row = db.get_session("S2", "design", "kimi")
+    assert row["session_id"] == "session_a273ffaa-8630-4315-96c1-4beca972b7db"
+
+
+def test_capture_kimi_session_missing_banner_is_noop(isolated_story_home):
+    """banner 没出现 session 行 → 不回填(下次当新会话),不崩。"""
+    from story_lifecycle.infra.db import models as db
+    from story_lifecycle.orchestrator.engine.planner import _capture_kimi_session
+
+    db.upsert_session("S3", "build", "kimi", session_id=None)
+    # banner 里没有 Session: 行
+    _capture_kimi_session("S3", "build", "kimi", _FakePty("│  Welcome to Kimi Code!\n"))
+    # sid 仍为 None(未捕获),但行还在(不崩)
+    row = db.get_session("S3", "build", "kimi")
+    assert row is not None
+    assert row["session_id"] is None
+
+
+def test_semiauto_kimi_path_calls_capture(tmp_path, monkeypatch):
+    """半自动 _spawn_story_agent_pty 的 kimi 新会话会调 _capture_kimi_session。
+
+    回归保护:之前半自动路径漏了捕获调用(只在全自动 planner 里加了),
+    导致 kimi resume 在半自动下形同虚设。这里 spy 确认调用发生。
+    """
+    import story_lifecycle.orchestrator.service.api as api
+    from story_lifecycle.knowledge.adapters.shell import ShellAdapter
+
+    kimi_cfg = {
+        "binary": "kimi",
+        "launch_cmd": "kimi",
+        "inject_method": "stdin",
+        "stdin_to_prompt_arg": True,
+    }
+    kimi = ShellAdapter(config=kimi_cfg, name="kimi")
+    story = {
+        "story_key": "SEMI-1",
+        "workspace": str(tmp_path),
+        "current_stage": "design",
+        "profile": "minimal",
+    }
+    monkeypatch.setattr(api, "_build_stage_launch_prompt", lambda s: "SEED")
+    # ensure_agent_pty 返回 (session_id, fake_pty) — 不真 spawn
+    monkeypatch.setattr(api, "ensure_agent_pty", lambda *a, **k: ("pty-1", object()))
+
+    called = {"n": 0}
+
+    def fake_capture(story_key, stage, adapter, pty):
+        called["n"] += 1
+
+    # api.py 里是延迟 import `from ..engine.planner import _capture_kimi_session`,
+    # 故 patch 源头 planner._capture_kimi_session(api 每次 spawn 时现取)。
+    import story_lifecycle.orchestrator.engine.planner as _planner
+
+    monkeypatch.setattr(_planner, "_capture_kimi_session", fake_capture)
+
+    api._spawn_story_agent_pty(story, kimi, model="")
+    assert called["n"] == 1, "半自动 kimi 新会话应调 _capture_kimi_session 回填 sid"
