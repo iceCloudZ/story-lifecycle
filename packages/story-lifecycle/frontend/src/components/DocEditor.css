@@ -1,0 +1,164 @@
+/* DocEditor — 版本化文档预览/编辑布局 */
+
+.doc-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* 顶栏 */
+.doc-editor-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.doc-editor-doctype { font-size: var(--text-lg); }
+.doc-editor-title-display {
+  flex: 1;
+  color: var(--color-text-muted);
+  font-size: var(--text-base);
+}
+.doc-editor-title-input {
+  flex: 1;
+}
+.doc-editor-reason-input {
+  flex: 1;
+}
+.doc-editor-reason-input.full {
+  width: 100%;
+  margin: var(--space-2) 0;
+}
+
+/* 主体:主区 + 版本历史 */
+.doc-editor-body {
+  display: flex;
+  gap: var(--space-4);
+  flex: 1;
+  min-height: 0;
+}
+
+/* 主区 */
+.doc-editor-main {
+  flex: 1;
+  display: flex;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* view 模式:纯预览 */
+.doc-editor-preview-pane {
+  flex: 1;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  overflow: auto;
+}
+
+/* edit 模式:左右分屏 */
+.doc-editor-edit-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.doc-editor-codemirror-wrap {
+  flex: 1;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: auto;
+  min-height: 0;
+}
+.doc-editor-save-bar {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  align-items: center;
+}
+.doc-editor-preview-col {
+  flex: 1;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  overflow: auto;
+  min-width: 0;
+}
+
+/* 版本历史右栏 */
+.doc-editor-versions {
+  width: 280px;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  overflow: auto;
+}
+.doc-editor-versions h4 { margin: 0 0 var(--space-2); font-size: var(--text-base); }
+
+.doc-version-item {
+  padding: var(--space-2);
+  margin-bottom: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+.doc-version-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.doc-author-badge {
+  font-size: var(--text-xs);
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-success-soft);
+}
+.doc-author-badge.ai { background: var(--color-info-soft); }
+.doc-version-time { margin: 2px 0; }
+.doc-version-reason { color: var(--color-text-muted); }
+.doc-version-actions {
+  display: flex;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  flex-wrap: wrap;
+}
+
+/* 弹层(diff / 回滚) */
+.doc-editor-modal {
+  position: fixed;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+  padding: var(--space-4);
+  overflow: auto;
+}
+.doc-diff-modal {
+  top: 10%;
+  left: 10%;
+  right: 10%;
+  bottom: 10%;
+}
+.doc-rollback-modal {
+  top: 30%;
+  left: 30%;
+  right: 30%;
+}
+.doc-modal-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+.doc-diff-pre {
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  margin: 0;
+}
+.doc-modal-actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
