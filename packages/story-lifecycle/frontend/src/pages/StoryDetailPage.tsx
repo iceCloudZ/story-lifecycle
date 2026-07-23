@@ -52,6 +52,11 @@ export default function StoryDetailPage() {
 
   const activeTab = searchParams.get('tab') || 'overview'
   const setActiveTab = (tab: string) => setSearchParams({ tab })
+  // 交付物精准跳转:跳 tab + 可选打开特定 doc(如 spec)。
+  // setSearchParams 替换整个 query string,所以 tab + doc 一次写全。
+  const handleNavigate = (tab: string, doc?: string) => {
+    setSearchParams(doc ? { tab, doc } : { tab })
+  }
   // 旧链接可能带已删除的 tab(test/llm-audit/bugs),回落到概览,避免空白内容区。
   const validTab = MODULES.some((m) => m.id === activeTab) ? activeTab : 'overview'
 
@@ -306,6 +311,7 @@ export default function StoryDetailPage() {
           modules={MODULES}
           activeModule={validTab}
           onModuleChange={setActiveTab}
+          onNavigate={handleNavigate}
           onArchive={handleArchive}
           onBack={() => navigate('/')}
           prdPath={prdPath}

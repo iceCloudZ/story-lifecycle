@@ -104,9 +104,6 @@
   gap: var(--space-1);
 }
 .ss-deliv-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   padding: var(--space-1) var(--space-2);
 }
 .ss-deliv-title {
@@ -115,10 +112,6 @@
   color: var(--color-text-faint);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-}
-.ss-deliv-legend {
-  display: inline-flex;
-  gap: 4px;
 }
 .ss-deliv-list {
   display: flex;
@@ -160,9 +153,25 @@
   font-size: 14px;
   flex-shrink: 0;
 }
+/* 无产物时图标半透明(替代产物灯) */
+.ss-deliv-icon.absent {
+  opacity: 0.35;
+}
 .ss-deliv-label {
   flex: 1;
   font-weight: 500;
+}
+/* 确认 checkbox:勾选=绿(已确认);无产物置灰禁用 */
+.ss-checkbox {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--color-success);
+  flex-shrink: 0;
+}
+.ss-checkbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 /* 跳过按钮:行内小图标 */
 .ss-deliv-skip {
@@ -179,49 +188,32 @@
   color: var(--color-warning-text);
   background: var(--color-warning-soft);
 }
+/* 产物状态说明小字(替代产物灯的文字版) */
+.ss-deliv-status-text {
+  font-size: var(--text-xs);
+  padding-left: calc(14px + var(--space-2));
+}
+.ss-deliv-status-text.has {
+  color: var(--color-text-faint);
+}
+.ss-deliv-status-text.absent {
+  color: var(--color-text-faint);
+  opacity: 0.7;
+}
 .ss-deliv-skipped-tag {
   font-size: var(--text-xs);
   color: var(--color-text-muted);
-  padding-left: var(--space-2);
-}
-
-/* 双灯 */
-.ss-deliv-lamps {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   padding-left: calc(14px + var(--space-2));
 }
-.ss-lamp {
-  width: 9px;
-  height: 9px;
-  border-radius: var(--radius-full);
-  border: 2px solid var(--color-border-strong);
-  background: transparent;
-  flex-shrink: 0;
-  box-sizing: border-box;
-}
-.ss-lamp.on {
-  background: var(--color-success);
-  border-color: var(--color-success);
-}
-.ss-lamp.off {
-  background: transparent;
-  border-color: var(--color-border-strong);
-}
-.ss-lamp.clickable {
-  cursor: pointer;
-  padding: 0;
-  transition: transform 0.12s, border-color 0.12s, background 0.12s;
-}
-.ss-lamp.clickable:hover {
-  transform: scale(1.35);
-  border-color: var(--color-primary);
-}
 
-/* gate 推进按钮(交付物列表底) */
-.ss-gate-btn {
+/* gate 推进(交付物列表底):按钮 + 下方置灰原因 */
+.ss-gate-wrap {
   margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ss-gate-btn {
   padding: var(--space-2) var(--space-3);
   border: none;
   border-radius: var(--radius-md);
@@ -243,6 +235,12 @@
   color: var(--color-text-faint);
   border: 1px solid var(--color-border);
   cursor: not-allowed;
+}
+/* 置灰原因(直接可见,非 tooltip) */
+.ss-gate-reason {
+  font-size: var(--text-xs);
+  color: var(--color-warning-text);
+  padding: 0 var(--space-1);
 }
 
 .ss-bottom-actions {

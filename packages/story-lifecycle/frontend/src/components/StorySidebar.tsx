@@ -16,6 +16,8 @@ interface Props {
   modules: Module[]
   activeModule: string
   onModuleChange: (id: string) => void
+  /** 交付物精准跳转:跳 tab + 可选打开特定 doc(如 spec)。 */
+  onNavigate: (tab: string, doc?: string) => void
   onArchive?: () => void
   onBack?: () => void
   /** PRD 文件路径;有值时 sidebar 底部显示「打开 PRD」(任何 tab 都能开)。 */
@@ -31,14 +33,14 @@ const MODULE_ICONS: Record<string, string> = {
   docs: '📄',
 }
 
-// 交付物 key → 点击跳转的 tab。doc 类(doc_type)→ docs;code → code;
-// delivery 没有专门 tab → 留空(不可点,只显示状态)。
-const DELIV_TARGET_TAB: Record<string, string> = {
-  prd: 'docs',
-  spec: 'docs',
-  code: 'code',
-  test_report: 'docs',
-  // delivery: 无目标,只展示
+// 交付物 key → {跳转 tab, 可选打开的 doc_type}。
+// doc 类(doc_type)→ docs tab + 打开该 doc;code → code tab;delivery → 无目标(只展示)。
+const DELIV_TARGET: Record<string, { tab: string; doc?: string }> = {
+  prd: { tab: 'docs', doc: 'prd' },
+  spec: { tab: 'docs', doc: 'spec' },
+  code: { tab: 'code' },
+  test_report: { tab: 'docs', doc: 'test_report' },
+  // delivery: 无目标,只展示状态
 }
 
 // doc 类交付物(spec/test_report/prd)走 docApi.confirm(写 story_doc);
@@ -51,18 +53,19 @@ const DOC_DELIVERABLES = new Set(['spec', 'test_report', 'prd'])
  * 结构:
  *   - 返回
  *   - 模块导航(概览/代码/文档 tab)
- *   - 交付物导航:每项 = 一个交付物,带双灯(产物/确认),点击跳到对应 tab。
- *     灯状态直接嵌在导航项上,无需另开交付物区。确认灯可点 = 确认动作。
- *   - gate 推进入口(进入下一状态)收在交付物列表底
+ *   - 交付物导航:每项 = 一个交付物。
+ *     确认用 checkbox(☑ 已确认 / ☐ 待确认);产物存在与否用图标明暗 + 小字说明。
+ *     点击项 = 精准跳转(跳 tab + 打开对应 doc)。
+ *   - gate 推进入口(进入下一状态):未满足置灰 + 下方红字显示缺什么
  *   - 底部操作(PRD 打开 / 归档)
  *
- * 标题/状态徽章已删(与 detail 头部重复)。
+ * 确认模式选择(NN/g + Eleken 研究):用户主动确认完成 → checkbox 是正确模式
+ * (deliberate commit);产物不存在(前置条件未满足)→ checkbox 置灰禁用 + 说明原因。
  */
 export default function StorySidebar({
-  storyKey, modules, activeModule, onModuleChange, onArchive, onBack, prdPath, onAdvance,
+  storyKey, modules, activeModule, onModuleChange, onNavigate, onArchive, onBack, prdPath, onAdvance,
 }: Props) {
   const qc = useQueryClient()
-  const archived = false // 归档由 onArchive 触发,这里不依赖 status
 
   const { data: delivData } = useQuery({
     queryKey: ['deliverables', storyKey],
@@ -87,9 +90,14 @@ export default function StorySidebar({
   }
 
   function handleDelivClick(d: DeliverableItem) {
-    const tab = DELIV_TARGET_TAB[d.key]
-    if (tab) onModuleChange(tab)
+    const target = DELIV_TARGET[d.key]
+    if (target) onNavigate(target.tab, target.doc)
   }
+
+  // gate 未满足时,缺失的成果物名(下方红字显示)。
+  const gateMissing = gate && !gate.all_satisfied
+    ? gate.required.filter((r) => !r.satisfied).map((r) => r.label)
+    : []
 
   return (
     <aside className="story-sidebar">
@@ -118,22 +126,20 @@ export default function StorySidebar({
         ))}
       </nav>
 
-      {/* 交付物导航:每项带双灯,点击跳转 tab */}
+      {/* 交付物导航:checkbox 确认 + 图标明暗表产物 + 点击精准跳转 */}
       {deliverables.length > 0 && (
         <div className="ss-deliverables">
           <div className="ss-deliv-head">
             <span className="ss-deliv-title">📦 交付物</span>
-            <span className="ss-deliv-legend" title="左:产物是否存在 · 右:是否已确认">
-              <span className="ss-lamp off" />
-              <span className="ss-lamp off" />
-            </span>
           </div>
           <div className="ss-deliv-list">
             {deliverables.map((d) => {
               const skipped = !!d.skipped
               const showConfirm = !!d.needs_confirm && !skipped
-              const targetTab = DELIV_TARGET_TAB[d.key]
-              const clickable = !!targetTab && !skipped
+              const target = DELIV_TARGET[d.key]
+              const clickable = !!target && !skipped
+              // checkbox 可用性:产物存在才能确认;无产物 → 置灰禁用。
+              const confirmDisabled = !d.exists
               return (
                 <div
                   key={d.key}
@@ -141,11 +147,24 @@ export default function StorySidebar({
                 >
                   <div
                     className={`ss-deliv-main${clickable ? ' clickable' : ''}`}
-                    title={targetTab ? `查看${d.label}` : `${d.label}(无对应 tab)`}
+                    title={target ? `查看${d.label}` : `${d.label}(无对应 tab)`}
                     onClick={() => clickable && handleDelivClick(d)}
                   >
-                    <span className="ss-deliv-icon">{d.icon}</span>
+                    <span className={`ss-deliv-icon${d.exists ? '' : ' absent'}`}>{d.icon}</span>
                     <span className="ss-deliv-label">{d.label}</span>
+                    {/* 确认 checkbox:可点 = 确认动作;无产物置灰禁用 */}
+                    {showConfirm && (
+                      <input
+                        type="checkbox"
+                        className="ss-checkbox"
+                        checked={!!d.confirmed}
+                        disabled={confirmDisabled}
+                        title={confirmDisabled ? '产物未生成,无法确认' : (d.confirmed ? '已确认' : '点击确认')}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={() => !confirmDisabled && handleConfirm(d.key)}
+                      />
+                    )}
+                    {/* 跳过按钮(非 skipped 才显示) */}
                     {!skipped && (
                       <button
                         className="ss-deliv-skip"
@@ -156,44 +175,35 @@ export default function StorySidebar({
                       </button>
                     )}
                   </div>
-                  {skipped ? (
-                    <span className="ss-deliv-skipped-tag">⊘ 已跳过</span>
-                  ) : (
-                    <span className="ss-deliv-lamps">
-                      {/* 产物灯:只读 */}
-                      <span
-                        className={`ss-lamp ${d.exists ? 'on' : 'off'}`}
-                        title={`产物${d.exists ? '已存在' : '未生成'}`}
-                      />
-                      {/* 确认灯:可点击 → 确认动作 */}
-                      {showConfirm && (
-                        <button
-                          className={`ss-lamp clickable ${d.confirmed ? 'on' : 'off'}`}
-                          title={d.confirmed ? '已确认' : '点击确认'}
-                          onClick={(e) => { e.stopPropagation(); handleConfirm(d.key) }}
-                        />
-                      )}
+                  {/* 状态说明小字:产物存在与否 */}
+                  {!skipped && (
+                    <span className={`ss-deliv-status-text ${d.exists ? 'has' : 'absent'}`}>
+                      {d.exists ? '有产物' : '无产物'}
                     </span>
+                  )}
+                  {skipped && (
+                    <span className="ss-deliv-skipped-tag">⊘ 已跳过</span>
                   )}
                 </div>
               )
             })}
           </div>
 
-          {/* gate 推进入口:all_satisfied 可点,否则置灰 + tooltip */}
+          {/* gate 推进入口:all_satisfied 可点;未满足置灰 + 下方红字显示缺什么 */}
           {gate && (
-            <button
-              className={`ss-gate-btn ${gate.all_satisfied ? 'ready' : 'locked'}`}
-              disabled={!gate.all_satisfied}
-              title={
-                gate.all_satisfied
-                  ? `进入 ${gate.to}`
-                  : `还差: ${gate.required.filter((r) => !r.satisfied).map((r) => r.label).join('、')}`
-              }
-              onClick={onAdvance}
-            >
-              进入 {gate.to} →
-            </button>
+            <div className="ss-gate-wrap">
+              <button
+                className={`ss-gate-btn ${gate.all_satisfied ? 'ready' : 'locked'}`}
+                disabled={!gate.all_satisfied}
+                title={gate.all_satisfied ? `进入 ${gate.to}` : `还差: ${gateMissing.join('、')}`}
+                onClick={onAdvance}
+              >
+                进入 {gate.to} →
+              </button>
+              {!gate.all_satisfied && gateMissing.length > 0 && (
+                <div className="ss-gate-reason">还差: {gateMissing.join('、')}</div>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -208,7 +218,7 @@ export default function StorySidebar({
             📄 打开 PRD
           </button>
         )}
-        {onArchive && !archived && (
+        {onArchive && (
           <button className="ss-archive-btn" onClick={onArchive} title="已上线并验证过，归档此 Story">
             归档
           </button>

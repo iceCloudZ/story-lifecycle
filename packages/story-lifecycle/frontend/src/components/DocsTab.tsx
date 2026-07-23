@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { docApi, type DocListItem } from '../api/client'
 import DocEditor from './DocEditor'
 import './DocsTab.css'
@@ -8,10 +9,13 @@ import './DocsTab.css'
  * DocsTab — 版本化文档列表 + 进入预览/编辑。
  *
  * 点列表项进 DocEditor(默认预览模式)。新建文档后直接进编辑。
+ * 支持 URL `?doc=<type>` 精准打开(sidebar 交付物点击「设计文档」等跳来时)。
  */
 export default function DocsTab({ storyKey }: { storyKey: string }) {
   const qc = useQueryClient()
-  const [editing, setEditing] = useState<string | null>(null) // doc_type being viewed
+  const [searchParams, setSearchParams] = useSearchParams()
+  // 初始 editing 从 URL doc 参数取(sidebar 交付物点击跳来);默认 null 走列表。
+  const [editing, setEditing] = useState<string | null>(searchParams.get('doc'))
   const [newType, setNewType] = useState('')
   const [newTitle, setNewTitle] = useState('')
 
@@ -28,6 +32,11 @@ export default function DocsTab({ storyKey }: { storyKey: string }) {
         docType={editing}
         onBack={() => {
           setEditing(null)
+          // 清掉 URL 的 doc 参数,避免返回列表后又被 ?doc= 重新打开。
+          if (searchParams.get('doc')) {
+            searchParams.delete('doc')
+            setSearchParams(searchParams, { replace: true })
+          }
           qc.invalidateQueries({ queryKey: ['docs', storyKey] })
         }}
       />
