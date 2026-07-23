@@ -344,6 +344,7 @@
 }
 .ot-deliv-lamp.clickable.on:hover {
   border-color: var(--color-success);
+}
 
 /* 标题区 */
 .ot-header-left {
