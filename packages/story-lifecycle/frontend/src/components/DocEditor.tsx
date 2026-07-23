@@ -300,18 +300,18 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
                 oldValue={showDiff.oldContent}
                 newValue={showDiff.newContent}
                 splitView
-                compareMethod={DiffMethod.WORDS}
+                // 关键:用 DiffMethod.LINES(行级 diff,不拆词)。库的渲染分支:
+                //   有词级 diff(CHARS/WORDS…) → renderWordDiff,renderContent 不生效。
+                //   无词级 diff(LINES) → 走 renderContent,markdown 才会渲染。
+                // 所以要 markdown 渲染必须用 LINES,代价是失去词级精细高亮(但行级 +/- 还在)。
+                compareMethod={DiffMethod.LINES}
                 useDarkTheme={false}
-                // 把每行 markdown 渲染成格式化内容(标题/粗体/列表…),而非裸源码。
-                // 行级 +/- 背景高亮由行容器管,renderContent 只替换内容,高亮不丢。
-                // 注:逐行渲染,跨行结构(多行表格/代码块)可能不完整 —— 文档以行为主时够用。
                 renderContent={(source: string) => (
                   <span className="doc-diff-md-line">
                     <MarkdownView content={source} />
                   </span>
                 )}
                 styles={{
-                  // 统一字号(两个库默认字号不同,这里强制对齐项目 text-sm)。
                   contentText: { fontSize: 'var(--text-sm)' },
                   diffRemoved: { fontSize: 'var(--text-sm)' },
                   diffAdded: { fontSize: 'var(--text-sm)' },
