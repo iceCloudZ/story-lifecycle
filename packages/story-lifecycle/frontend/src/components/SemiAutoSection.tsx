@@ -97,21 +97,6 @@ export default function SemiAutoSection({ storyKey }: { storyKey: string }) {
     flash('resume')
   }
 
-  async function copyText(value: string, target: string) {
-    if (!value) return
-    await navigator.clipboard.writeText(value)
-    flash(target)
-  }
-
-  function openLocalPath(path: string) {
-    if (!path) return
-    window.open(`file:///${path.replace(/\\/g, '/')}`, '_blank', 'noopener,noreferrer')
-  }
-
-  const workspace = ctx?.story?.workspace || ''
-  const prd = (ctx?.documents || []).find((d) => d.kind === 'prd')
-  const prdPath = prd?.ref || ''
-
   return (
     <details className="semi-auto-section">
       <summary className="semi-auto-summary">🛠 半自动工具</summary>
@@ -124,35 +109,18 @@ export default function SemiAutoSection({ storyKey }: { storyKey: string }) {
           <option value="bug-fix">bug-fix</option>
           <option value="env-debug">env-debug</option>
         </select>
-        <button className="btn" onClick={copyReleasePrompt}>
-          {copiedTarget === 'release' ? '已复制上线提示词' : '复制上线准备提示词'}
-        </button>
-        <button className="btn" onClick={copyPostReleasePrompt}>
-          {copiedTarget === 'post-release' ? '已复制验证提示词' : '已经上线 · 自动验证'}
-        </button>
-        <button
-          className="btn"
-          onClick={copyResumeCmd}
-          title={
-            sessionRow?.session_id
-              ? `复制 ${sessionRow.adapter} resume 命令(续接 ${sessionRow.stage} 会话)`
-              : '尚未回写 session id —— 复制带占位符的模板,自己填 id(id 从哪取见文案)'
-          }
-        >
+        <button className="btn" onClick={copyResumeCmd}>
           {copiedTarget === 'resume'
             ? '已复制 resume 文案'
             : sessionRow?.session_id
               ? `复制 resume 命令（${sessionRow.adapter}）`
               : '复制 resume 文案（未回写,填 id 用）'}
         </button>
-        <button className="btn" disabled={!prdPath} onClick={() => copyText(prdPath, 'prd')}>
-          {copiedTarget === 'prd' ? '已复制 PRD 路径' : '复制 PRD 路径'}
+        <button className="btn" onClick={copyReleasePrompt}>
+          {copiedTarget === 'release' ? '已复制上线提示词' : '复制上线准备提示词'}
         </button>
-        <button className="btn" disabled={!workspace} onClick={() => copyText(workspace, 'workspace')}>
-          {copiedTarget === 'workspace' ? '已复制工作区' : '复制工作区'}
-        </button>
-        <button className="btn" disabled={!prdPath} onClick={() => openLocalPath(prdPath)}>
-          打开 PRD
+        <button className="btn" onClick={copyPostReleasePrompt}>
+          {copiedTarget === 'post-release' ? '已复制验证提示词' : '已经上线 · 自动验证'}
         </button>
       </div>
     </details>

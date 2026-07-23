@@ -116,11 +116,15 @@
   background: var(--color-danger-soft);
   color: var(--color-danger-text);
 }
-.ss-archive {
+.ss-bottom-actions {
   margin-top: auto;
   padding: var(--space-3);
   border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
 }
+.ss-prd-btn,
 .ss-archive-btn {
   display: block;
   width: 100%;
@@ -134,7 +138,11 @@
   text-align: left;
   cursor: pointer;
   transition: color 0.12s, background 0.12s;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.ss-prd-btn:hover,
 .ss-archive-btn:hover {
   color: var(--color-text);
   background: var(--gray-100);

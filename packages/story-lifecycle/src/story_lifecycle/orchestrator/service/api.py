@@ -367,11 +367,36 @@ class WritebackSessionRequest(BaseModel):
 
 @app.get("/api/story/{story_key}/sessions")
 def api_list_sessions(story_key: str):
-    """List all PTY sessions for a story."""
+    """List all sessions for a story.
+
+    合并两个数据源:story_session 表(真实 stage/adapter/session_id,但无进程存活态)
+    + PTY 注册表(实时 alive/exited)。DB 有记录优先用 DB 的 stage/adapter/session_id,
+    再用 PTY 的存活态覆盖 status;只在 PTY 有而 DB 无时回退到 PTY 的空 stage。
+    """
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")
-    return {"sessions": list_pty_sessions(story_key)}
+    db_sessions = db.list_sessions_for_story(story_key)
+    pty_sessions = list_pty_sessions(story_key)
+    result = []
+    for row in db_sessions:
+        sid = row.get("session_id") or ""
+        # DB 的 session_id 是 uuid5/kimi-id;PTY 注册表的 key 是 pty-{id}-{n},两者不同。
+        # 这里用 DB 的 stage/adapter/session_id(真实值);PTY 列表仅用于兜底补无 DB 记录的。
+        result.append({
+            "session_id": sid,
+            "adapter": row.get("adapter", ""),
+            "stage": row.get("stage", ""),
+            "model": "",
+            "status": row.get("status", "active"),
+            "started_at": row.get("created_at", ""),
+        })
+    # PTY 注册表里有但 DB 没有的(老数据/无 session 回写)兜底补上。
+    db_sids = {r["session_id"] for r in result}
+    for p in pty_sessions:
+        if p["session_id"] not in db_sids:
+            result.append(p)
+    return {"sessions": result}
 
 
 @app.get("/api/story/{story_key}/session")
@@ -1125,14 +1150,16 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
 
 @app.post("/api/story/{story_key}/lifecycle/advance")
 def advance_lifecycle_state(story_key: str):
-    """STORY-STATE-MODEL: 推进 Story 业务状态到下一态(开发→测试→上线)。
+    """推进 Story 业务状态到下一态(待启动→开发→测试→上线→结项)。
 
-    区别于 ``PUT /advance``(那是 driver resume,从 paused 重启执行)。本端点处理
-    Story 状态机转移:校验当前状态 stages 全 done(防跳级)→ 清 _story_state_gate
-    → 推进 lifecycle_state → 若 next 有 stages 则 start_story_async 跑它们,
-    无 stages(终态)则标 completed。由前端 Story 状态闸卡片的「进入下一状态」触发。
+    成果物 gate 驱动:推进前检查该转换的成果物是否全部满足(exists+confirmed
+    或 skipped)。不满足则 409 返回缺失列表(前端显示「还差:测试报告」)。
+    gate 满足 → 推进 lifecycle_state → 若下一状态有 stages 则 start_story_async,
+    无(终态)则标 completed。
     """
     import json as _json
+
+    from ...sourcing.deliverables import gate_for_current_state, gate_satisfied
 
     s = db.get_story(story_key)
     if not s:
@@ -1142,17 +1169,21 @@ def advance_lifecycle_state(story_key: str):
     except (ValueError, TypeError):
         ctx = {}
 
-    gate = ctx.get("_story_state_gate")
-    if not gate or not gate.get("awaiting_confirm"):
-        raise HTTPException(409, "no pending story_state_gate")
+    cur_state = s.get("lifecycle_state") or "待启动"
 
-    cur_state = gate.get("from") or s.get("lifecycle_state") or "待启动"
-    next_state = gate.get("to")
-    if not next_state:
-        raise HTTPException(409, "story_state_gate has no next state")
+    # 成果物 gate 检查(取代旧的 _story_state_gate.awaiting_confirm 检查)。
+    gate_info = gate_for_current_state(story_key)
+    if not gate_info:
+        raise HTTPException(409, "已到终态,无法推进")
+    next_state = gate_info["to"]
+    satisfied, missing = gate_satisfied(story_key, cur_state, next_state)
+    if not satisfied:
+        raise HTTPException(
+            409,
+            f"成果物 gate 未满足,还差: {'、'.join(missing)}",
+        )
 
-    # 推进 lifecycle_state,清闸标记。driver 重进时从 next 状态的 stages 开始
-    # (start_idx 跳过 _completed_stages 已含的)。
+    # gate 满足 → 推进。清旧的 _story_state_gate(向后兼容老数据)。
     ctx.pop("_story_state_gate", None)
     ctx["_lifecycle_state"] = next_state
     sm_activate(story_key, lifecycle_state=next_state, ctx_updates=ctx)
@@ -1164,7 +1195,6 @@ def advance_lifecycle_state(story_key: str):
     )
 
     # next 状态有无 stages 决定是继续跑还是终态完成
-    # SOURCE-DRIVEN-MODEL: story_states 按 source_type 查(不再从 profile 读)。
     try:
         from ...sourcing.source_loader import resolve_source_profile
 
@@ -3174,6 +3204,50 @@ def api_search_docs(q: str, type: str = "", story: str = ""):
         return {"results": []}
     hits = db.search_docs(q, doc_type=(type or None), story_key=(story or None))
     return {"query": q, "results": hits}
+
+
+@app.put("/api/story/{story_key}/docs/{doc_type}/confirm")
+def api_confirm_doc(story_key: str, doc_type: str):
+    """人工确认文档(成果物 gate 用)。只有 user 手动调用 —— AI 不能自我确认。
+
+    确认后该 doc 的 confirmed_by/confirmed_at 被写入,成果物 gate 视为 confirmed。
+    """
+    if not db.confirm_story_doc(story_key, doc_type):
+        raise HTTPException(404, f"doc not found: {doc_type}")
+    return {"ok": True}
+
+
+@app.get("/api/story/{story_key}/deliverables")
+def api_get_deliverables(story_key: str):
+    """成果物清单 + 当前 gate 状态(概览第二层进度条用)。"""
+    from ...sourcing.deliverables import check_deliverables, gate_for_current_state
+
+    return {
+        "deliverables": check_deliverables(story_key),
+        "gate": gate_for_current_state(story_key),
+    }
+
+
+@app.post("/api/story/{story_key}/deliverables/{deliv_key}/skip")
+def api_skip_deliverable(story_key: str, deliv_key: str):
+    """跳过某成果物(存 context_json._skipped_deliverables)。
+
+    跳过的成果物在 gate 检查时视为 satisfied(不阻塞推进)。
+    """
+    import json as _json
+
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+    try:
+        ctx = _json.loads(s.get("context_json") or "{}")
+    except (ValueError, TypeError):
+        ctx = {}
+    skipped = set(ctx.get("_skipped_deliverables", []))
+    skipped.add(deliv_key)
+    ctx["_skipped_deliverables"] = sorted(skipped)
+    db.update_story(story_key, context_json=_json.dumps(ctx, ensure_ascii=False))
+    return {"ok": True, "skipped": sorted(skipped)}
 
 
 # -------- Lifecycle endpoints --------

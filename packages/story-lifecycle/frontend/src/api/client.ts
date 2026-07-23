@@ -296,6 +296,7 @@ export interface StoryProject {
 export interface StoryContext {
   projects: Project[]
   story_projects: StoryProject[]
+  documents?: { kind: string; ref: string; summary?: string }[]
 }
 
 export interface Pattern {
@@ -495,6 +496,8 @@ export interface DocListItem {
   updated_by: string
   updated_at: string
   local_path?: string
+  confirmed_by?: string | null
+  confirmed_at?: string | null
 }
 
 export interface DocContent {
@@ -506,6 +509,8 @@ export interface DocContent {
   local_path: string
   updated_by: string
   updated_at: string
+  confirmed_by?: string | null
+  confirmed_at?: string | null
 }
 
 export interface DocVersionSummary {
@@ -576,5 +581,53 @@ export const docApi = {
   search: (q: string, type = '', story = '') =>
     fetchJSON<{ query: string; results: DocSearchHit[] }>(
       `/api/docs/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ''}${story ? `&story=${story}` : ''}`,
+    ),
+  confirm: (key: string, type: string) =>
+    fetchJSON<{ ok: boolean }>(`/api/story/${key}/docs/${type}/confirm`, {
+      method: 'PUT',
+    }),
+}
+
+// ---------------------------------------------------------------------------
+// Deliverables (成果物 gate — 驱动业务状态推进)
+// ---------------------------------------------------------------------------
+
+export interface DeliverableItem {
+  key: string
+  label: string
+  icon: string
+  exists: boolean
+  confirmed: boolean
+  needs_confirm: boolean
+  satisfied: boolean
+  skipped: boolean
+}
+
+export interface GateRequired {
+  key: string
+  label: string
+  satisfied: boolean
+  exists: boolean
+  confirmed: boolean
+  skipped: boolean
+  needs_confirm: boolean
+}
+
+export interface GateInfo {
+  from: string
+  to: string
+  required: GateRequired[]
+  all_satisfied: boolean
+}
+
+export const deliverablesApi = {
+  get: (key: string) =>
+    fetchJSON<{ deliverables: DeliverableItem[]; gate: GateInfo | null }>(
+      `/api/story/${key}/deliverables`,
+    ),
+  skip: (key: string, delivKey: string) =>
+    fetchJSON<{ ok: boolean; skipped: string[] }>(
+      `/api/story/${key}/deliverables/${delivKey}/skip`,
+      { method: 'POST' },
     ),
 }

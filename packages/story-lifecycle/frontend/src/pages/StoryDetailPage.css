@@ -138,109 +138,141 @@
   color: var(--color-text);
 }
 
-/* STORY-STATE-MODEL: Story 业务状态主进度条(开发/测试/上线) */
-.ot-story-state-progress {
+/* 第一层:业务状态条(纯状态节点,成果物 gate 驱动) */
+.ot-lifecycle-bar {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: var(--space-4) var(--space-5);
   box-shadow: var(--shadow-sm);
 }
-.ot-ss-item {
-  flex: 1;
-  min-width: 0;
+.ot-lc-item {
   display: flex;
-  flex-direction: column;
   align-items: center;
+  gap: var(--space-2);
+  flex: 1;
 }
-.ot-ss-node {
+.ot-lc-node {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   font-size: var(--text-sm);
   font-weight: 700;
   border: 2px solid var(--color-border-strong);
   color: var(--color-text-faint);
-  background: var(--color-surface);
-  position: relative;
-  z-index: 1;
   flex-shrink: 0;
 }
-.ot-ss-node.done {
+.ot-lc-item.done .ot-lc-node {
   border-color: var(--color-success);
   background: var(--color-success);
   color: #fff;
 }
-.ot-ss-node.current {
+.ot-lc-item.current .ot-lc-node {
   border-color: var(--color-primary);
   background: var(--color-primary-soft);
   color: var(--color-primary-text);
 }
-.ot-ss-label {
-  font-size: var(--text-base);
+.ot-lc-label {
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--color-text-muted);
-  position: relative;
-  z-index: 1;
+  white-space: nowrap;
+}
+.ot-lc-item.current .ot-lc-label { color: var(--color-text-strong); }
+.ot-lc-item.done .ot-lc-label { color: var(--color-text); }
+.ot-lc-line {
+  flex: 1;
+  height: 2px;
+  background: var(--color-border);
+  margin: 0 var(--space-1);
+}
+.ot-lc-item.done .ot-lc-line { background: var(--color-success); }
+
+/* gate 推进卡片 */
+.ot-gate-card {
   background: var(--color-surface);
-  padding: 0 var(--space-1);
-}
-.ot-ss-label.active {
-  color: var(--color-text-strong);
-}
-.ot-ss-head {
-  position: relative;
-  width: 100%;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+  box-shadow: var(--shadow-sm);
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
   gap: var(--space-2);
 }
-/* 节点间的连接线:从前一个 item 中心连到本 item 中心,被节点/标签底色盖住两端 */
-.ot-ss-item:not(:first-child) .ot-ss-head::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: -50%;
-  right: 50%;
-  height: 2px;
-  transform: translateY(-50%);
-  background: var(--color-border);
-  z-index: 0;
+.ot-gate-card.satisfied {
+  border-left-color: var(--color-success);
 }
-.ot-ss-item:has(.ot-ss-node.done) .ot-ss-head::before {
-  background: var(--color-success);
+.ot-gate-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-text-strong);
 }
-/* 状态节点下展开的阶段 chip(次级,小于主节点) */
-.ot-ss-stages {
+.ot-gate-missing {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-1);
-  margin-top: var(--space-2);
+  gap: var(--space-2);
 }
-.sg-chip {
-  font-size: var(--text-xs);
-  padding: 2px 8px;
+.ot-gate-missing-item {
+  font-size: var(--text-sm);
+  padding: 2px 10px;
   border-radius: var(--radius-full);
-  background: var(--color-bg);
-  color: var(--color-text-faint);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-text);
+}
+
+/* 第二层:成果物清单 */
+.ot-deliverables {
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+  box-shadow: var(--shadow-sm);
 }
-.sg-chip.done {
+.ot-deliv-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin: 0 0 var(--space-3);
+  letter-spacing: 0.04em;
+}
+.ot-deliv-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ot-deliv-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--gray-50);
+}
+.ot-deliv-item.done {
   background: var(--color-success-soft);
-  color: var(--color-success-text);
-  border-color: transparent;
 }
-.sg-chip.running {
-  background: var(--color-primary-soft);
-  color: var(--color-primary-text);
-  border-color: transparent;
+.ot-deliv-icon { font-size: 16px; }
+.ot-deliv-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-strong);
+  min-width: 80px;
+}
+.ot-deliv-status {
+  font-size: var(--text-xs);
+  flex: 1;
+}
+.ot-deliv-status.ok { color: var(--color-success-text); }
+.ot-deliv-status.pending { color: var(--color-text-muted); }
+.ot-deliv-actions {
+  display: flex;
+  gap: var(--space-1);
 }
 
 /* 标题区 */
@@ -394,9 +426,29 @@
   padding-top: var(--space-4);
   scroll-margin-top: var(--space-4);
 }
+.ot-terminal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
 .ot-terminal-title {
   font-size: var(--text-base);
   font-weight: 700;
-  margin: 0 0 var(--space-2);
+  margin: 0;
   color: var(--color-text-strong);
+}
+.ot-terminal-clear {
+  font-size: var(--text-xs);
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+  cursor: pointer;
+  font-family: inherit;
+}
+.ot-terminal-clear:hover {
+  background: var(--color-primary);
+  color: #fff;
 }

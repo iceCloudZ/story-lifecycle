@@ -43,6 +43,14 @@
   border-color: var(--color-primary);
 }
 .docs-item-name { font-size: var(--text-base); }
+.docs-confirmed-badge {
+  font-size: var(--text-xs);
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-success-soft);
+  color: var(--color-success-text);
+  margin-left: var(--space-2);
+}
 
 /* 列表项:左侧(name+hint 簇),右侧「从文件同步」按钮。点列表进编辑,点按钮同步。 */
 .docs-list-item .docs-item-info {

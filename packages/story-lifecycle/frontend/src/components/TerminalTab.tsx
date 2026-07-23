@@ -5,6 +5,8 @@ import './TerminalTab.css'
 interface Props {
   storyKey: string
   status?: string
+  /** 进度条 stage chip 点击后传入:只显示该 stage 的 session,并优先选中它。 */
+  stage?: string
 }
 
 interface Session {
@@ -16,7 +18,7 @@ interface Session {
   started_at: string
 }
 
-export default function TerminalTab({ storyKey }: Props) {
+export default function TerminalTab({ storyKey, stage }: Props) {
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeSession, setActiveSession] = useState<string | null>(null)
 
@@ -38,6 +40,13 @@ export default function TerminalTab({ storyKey }: Props) {
     const interval = setInterval(fetchSessions, 5000)
     return () => clearInterval(interval)
   }, [fetchSessions])
+
+  // stage prop 变化时(进度条 chip 点击),优先选中该 stage 的会话。
+  useEffect(() => {
+    if (!stage) return
+    const match = sessions.find((s) => s.stage === stage)
+    if (match) setActiveSession(match.session_id)
+  }, [stage, sessions])
 
   async function handleSpawn() {
     // adapter 留空 → 后端 resolve_stage_adapter 从 _agent_actions 拿用户在 plan UI
@@ -62,18 +71,23 @@ export default function TerminalTab({ storyKey }: Props) {
     }
   }
 
+  // stage 过滤:有 stage prop 时只显示该 stage 的 session;否则全部。
+  const visibleSessions = stage
+    ? sessions.filter((s) => s.stage === stage)
+    : sessions
+
   // Auto-select only a RUNNING session. Never auto-pick an exited session,
   // because that causes the terminal to reconnect to a dead PTY forever.
   const activeSessionId =
     activeSession ||
-    sessions.find((s) => s.status === 'running')?.session_id ||
+    visibleSessions.find((s) => s.status === 'running')?.session_id ||
     null
 
   return (
     <div className="tab-content terminal-tab">
       {/* Session tabs */}
       <div className="tt-session-tabs">
-        {sessions.map((s) => (
+        {visibleSessions.map((s) => (
           <button
             key={s.session_id}
             className={`tt-session-tab ${s.session_id === activeSessionId ? 'active' : ''} ${s.status !== 'running' ? 'tt-exited' : ''}`}
@@ -84,7 +98,7 @@ export default function TerminalTab({ storyKey }: Props) {
               {s.adapter === 'claude' ? '🟠' : '🟢'}
             </span>
             <span className="tt-session-label">
-              {s.adapter}
+              {s.stage ? `${s.stage} · ${s.adapter}` : s.adapter}
             </span>
             <span className={`tt-status-dot tt-${s.status === 'running' ? 'running' : 'exited'}`} />
           </button>
@@ -101,8 +115,8 @@ export default function TerminalTab({ storyKey }: Props) {
         </div>
       ) : (
         <div className="tt-no-session">
-          <p>当前没有运行中的 CLI 会话</p>
-          {sessions.length > 0 && (
+          <p>{stage ? `${stage} 阶段没有 CLI 会话` : '当前没有运行中的 CLI 会话'}</p>
+          {visibleSessions.length > 0 && (
             <p className="tt-hint">点击上方历史会话可查看最终输出，或启动新会话继续工作。</p>
           )}
           <button className="btn btn-primary" onClick={handleSpawn}>

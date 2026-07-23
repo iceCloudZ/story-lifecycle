@@ -54,6 +54,9 @@ def _set_actions(story, actions):
     ctx = json.loads(updated.get("context_json", "{}"))
     ctx["_agent_actions"] = actions
     ctx["_plan_confirmed"] = True
+    # DELIVERABLE-GATE: 跳过所有成果物,让 gate_satisfied 不阻塞(这些测试测状态机,
+    # 不测成果物检测)。spec/code/test_report/delivery 全跳过。
+    ctx["_skipped_deliverables"] = ["prd", "spec", "code", "test_report", "delivery"]
     db.update_story(
         story["story_key"],
         context_json=json.dumps(ctx, ensure_ascii=False),
@@ -385,12 +388,12 @@ def test_resolved_profile_no_longer_has_story_states():
 
 
 def test_lifecycle_advance_endpoint(story, tmp_path):
-    """POST /lifecycle/advance 推进 lifecycle_state,清 _story_state_gate。"""
+    """POST /lifecycle/advance 推进 lifecycle_state(成果物 gate 满足后)。"""
     from starlette.testclient import TestClient
 
     from story_lifecycle.orchestrator.service.api import app
 
-    # 构造 paused + _story_state_gate 状态
+    # 构造 paused 状态 + 跳过成果物(gate 满足)。
     ctx = json.loads(story.get("context_json", "{}"))
     ctx["_story_state_gate"] = {
         "from": "开发",
@@ -399,6 +402,7 @@ def test_lifecycle_advance_endpoint(story, tmp_path):
         "label": "进入测试",
     }
     ctx["_lifecycle_state"] = "开发"
+    ctx["_skipped_deliverables"] = ["code", "test_report", "delivery"]
     db.update_story(
         story["story_key"],
         status="paused",
@@ -418,11 +422,12 @@ def test_lifecycle_advance_endpoint(story, tmp_path):
 
 
 def test_lifecycle_advance_rejects_without_gate(story):
-    """无 pending _story_state_gate → 409(防误调)。"""
+    """成果物 gate 未满足 → 409(还缺交付物)。"""
     from starlette.testclient import TestClient
 
     from story_lifecycle.orchestrator.service.api import app
 
+    # lifecycle=开发,无跳过的 deliverables → gate 未满足(code 缺) → 409
     client = TestClient(app)
     r = client.post(f"/api/story/{story['story_key']}/lifecycle/advance")
     assert r.status_code == 409

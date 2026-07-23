@@ -514,6 +514,12 @@ def init_db():
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sd2_story ON story_doc(story_key)")
+        # Migration: 人工确认字段(成果物 gate 用)。AI 不能自我确认,只有 user 点确认才写。
+        for _col in ("confirmed_by", "confirmed_at"):
+            try:
+                conn.execute(f"ALTER TABLE story_doc ADD COLUMN {_col} TEXT DEFAULT NULL")
+            except Exception:
+                pass  # column already exists
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS story_doc_version (
@@ -2396,6 +2402,20 @@ def get_session(story_key: str, stage: str, adapter: str) -> dict | None:
     return dict(row) if row else None
 
 
+def list_sessions_for_story(story_key: str) -> list[dict]:
+    """Return all session rows for a story, ordered by id (insertion order).
+
+    GET /sessions 用:返回每个 (stage, adapter) 的会话记录,带真实的 stage 字段
+    (内存 PTY 注册表的 stage 是硬编码空的,这里从 DB 读真实值)。
+    """
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM story_session WHERE story_key = ? ORDER BY id",
+            (story_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def upsert_session(
     story_key: str,
     stage: str,
@@ -2524,15 +2544,29 @@ def set_story_doc_local_path(story_key: str, doc_type: str, local_path: str) -> 
 
 
 def get_story_doc(story_key: str, doc_type: str) -> dict | None:
-    """Latest version of a doc: content + version + title + updated_at."""
+    """Latest version of a doc: content + version + title + confirmed + updated_at."""
     with _db() as conn:
         row = conn.execute(
             "SELECT story_key, doc_type, title, current_version, latest_content, "
-            "local_path, updated_by, updated_at FROM story_doc "
-            "WHERE story_key=? AND doc_type=?",
+            "local_path, updated_by, updated_at, confirmed_by, confirmed_at "
+            "FROM story_doc WHERE story_key=? AND doc_type=?",
             (story_key, doc_type),
         ).fetchone()
     return dict(row) if row else None
+
+
+def confirm_story_doc(story_key: str, doc_type: str, confirmed_by: str = "user") -> bool:
+    """Mark a doc as manually confirmed (人工确认)。只有 user 能调(AI 不能自我确认)。
+
+    Returns True if a row was updated, False if doc doesn't exist.
+    """
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE story_doc SET confirmed_by=?, confirmed_at=CURRENT_TIMESTAMP "
+            "WHERE story_key=? AND doc_type=?",
+            (confirmed_by, story_key, doc_type),
+        )
+    return cur.rowcount > 0
 
 
 def get_story_doc_version(story_key: str, doc_type: str, version: int) -> dict | None:
@@ -2562,7 +2596,8 @@ def list_story_docs(story_key: str) -> list[dict]:
     """All doc_types for a story (no full content) — for the docs tab list."""
     with _db() as conn:
         rows = conn.execute(
-            "SELECT story_key, doc_type, title, current_version, updated_by, updated_at, local_path "
+            "SELECT story_key, doc_type, title, current_version, updated_by, updated_at, "
+            "local_path, confirmed_by, confirmed_at "
             "FROM story_doc WHERE story_key=? ORDER BY doc_type",
             (story_key,),
         ).fetchall()

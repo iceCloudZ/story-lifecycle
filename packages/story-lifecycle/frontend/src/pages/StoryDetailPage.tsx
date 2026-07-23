@@ -160,6 +160,9 @@ export default function StoryDetailPage() {
 
   const actions = ACTIONS[detail.status] || []
 
+  // PRD 路径(sidebar「打开 PRD」用 + 概览头部)。从 context bundle 的 documents 里取。
+  const prdPath = (storyCtx?.documents ?? []).find((d) => d.kind === 'prd')?.ref || ''
+
   // single-pass 等 profile 创建即 active,但执行从未触发(无 _active_execution)。
   // overview 对这种 story 显示「开始执行」按钮(调 /advance 首次启动)。
   // 已在跑的(有 _active_execution)不显示,避免重复启动。
@@ -307,6 +310,7 @@ export default function StoryDetailPage() {
           onModuleChange={setActiveTab}
           onArchive={handleArchive}
           onBack={() => navigate('/')}
+          prdPath={prdPath}
         />
         <div className="sdpv2-content">
           <ClarifyDialog storyKey={storyKey} status={detail.status} headless={detail.headless} />

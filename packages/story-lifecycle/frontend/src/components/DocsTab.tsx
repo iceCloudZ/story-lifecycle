@@ -106,6 +106,7 @@ export default function DocsTab({ storyKey }: { storyKey: string }) {
                 <div className="docs-item-name">
                   <strong>{d.doc_type}</strong>
                   {d.title ? <span className="hint"> · {d.title}</span> : null}
+                  {d.confirmed_by && <span className="docs-confirmed-badge">✓ 已确认</span>}
                 </div>
                 <div className="hint">
                   v{d.current_version} · {d.updated_by || '?'} · {d.updated_at}

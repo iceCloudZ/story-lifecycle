@@ -18,6 +18,8 @@ interface Props {
   onModuleChange: (id: string) => void
   onArchive?: () => void
   onBack?: () => void
+  /** PRD 文件路径;有值时 sidebar 底部显示「打开 PRD」(任何 tab 都能开)。 */
+  prdPath?: string
 }
 
 // 线性图标(16px,stroke=currentColor),按 module id 取;取不到回落 emoji。
@@ -68,7 +70,7 @@ const STATUS_BADGE: Record<string, string> = {
   idle: 'badge-aborted',
 }
 
-export default function StorySidebar({ storyKey, storyTitle, storyStatus, modules, activeModule, onModuleChange, onArchive, onBack }: Props) {
+export default function StorySidebar({ storyKey, storyTitle, storyStatus, modules, activeModule, onModuleChange, onArchive, onBack, prdPath }: Props) {
   const archived = storyStatus === 'archived'
   return (
     <aside className="story-sidebar">
@@ -100,13 +102,22 @@ export default function StorySidebar({ storyKey, storyTitle, storyStatus, module
           </button>
         ))}
       </nav>
-      {onArchive && !archived && (
-        <div className="ss-archive">
+      <div className="ss-bottom-actions">
+        {prdPath && (
+          <button
+            className="ss-prd-btn"
+            title={prdPath}
+            onClick={() => window.open(`file:///${prdPath.replace(/\\/g, '/')}`, '_blank', 'noopener,noreferrer')}
+          >
+            📄 打开 PRD
+          </button>
+        )}
+        {onArchive && !archived && (
           <button className="ss-archive-btn" onClick={onArchive} title="已上线并验证过，归档此 Story">
             归档
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </aside>
   )
 }

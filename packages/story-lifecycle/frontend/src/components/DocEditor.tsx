@@ -148,6 +148,23 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
         {mode === 'view' ? (
           <>
             <span className="doc-editor-title-display">{title}</span>
+            {doc?.confirmed_by ? (
+              <span className="hint doc-confirmed-hint">✓ 已由 {doc.confirmed_by} 确认</span>
+            ) : (
+              <button
+                className="btn btn-sm"
+                onClick={async () => {
+                  try {
+                    await docApi.confirm(storyKey, docType)
+                    qc.invalidateQueries({ queryKey: ['doc', storyKey, docType] })
+                  } catch (e) {
+                    alert(`确认失败: ${e instanceof Error ? e.message : e}`)
+                  }
+                }}
+              >
+                ✓ 人工确认
+              </button>
+            )}
             <button className="btn btn-primary" onClick={() => setMode('edit')}>编辑</button>
           </>
         ) : (

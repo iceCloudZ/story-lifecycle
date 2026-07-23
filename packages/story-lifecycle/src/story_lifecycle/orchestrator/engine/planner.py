@@ -1625,31 +1625,44 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                 _agent_pty.kill()
                             except Exception:
                                 pass
-                        # STORY-STATE-MODEL: Story 状态闸(业务层,优先于阶段间闸)。
-                        # 当前 lifecycle_state 定义的所有 stages 全 done → 按该状态 confirm
-                        # 规则转移:ui_button→paused 等人;config(auto)→直接推进;none→推进。
-                        # 触发转移后不再走下方阶段间闸。无 story_states 配置 → 跳过(向后兼容)。
+                        # STORY-STATE-MODEL + DELIVERABLE-GATE: Story 状态闸由成果物驱动。
+                        # 当前 lifecycle_state 的所有 stages 全 done 后,检查成果物 gate
+                        # 是否满足(gate_satisfied)。满足 → 按 confirm 规则转移;不满足 →
+                        # 不阻塞 driver(让它继续跑或自然结束;用户后续补齐成果物后再推进)。
+                        # 这取代了旧的 ``all(state.stages ⊂ _completed_stages)`` 判据 ——
+                        # 成果物 gate 与 stage 数量无关,修复了 single-pass(1 stage)对不上
+                        # story_state(多 stage)的矛盾,以及 上线/结项 stages=[] 的 dead end。
                         _state_handled = False
                         if story_states and lifecycle_state in story_states:
                             _state_def = story_states[lifecycle_state] or {}
                             _state_stages = list(_state_def.get("stages") or [])
-                            if _state_stages and all(
-                                _ss in completed_stages for _ss in _state_stages
-                            ):
+                            _stages_done = (
+                                not _state_stages
+                                or all(_ss in completed_stages for _ss in _state_stages)
+                            )
+                            if _stages_done:
                                 _next_state = _state_def.get("next")
                                 _confirm = _state_def.get("confirm") or {}
                                 _ctype = _confirm.get("type", "none")
-                                # config 类型:auto_advance 看 key 指定的环境/全局配置
-                                _auto = False
-                                if _ctype == "config":
-                                    import os as _os
+                                # 成果物 gate 检查:看该转换的成果物是否全满足。
+                                _gate_ok = True
+                                if _next_state:
+                                    try:
+                                        from ...sourcing.deliverables import (
+                                            gate_satisfied as _gate_satisfied,
+                                        )
 
-                                    _ck = _confirm.get("key", "")
-                                    _auto = _os.environ.get(
-                                        f"STORY_{_ck}".upper(), ""
-                                    ).lower() in ("1", "true", "yes")
-                                if _next_state and (_ctype in ("none",) or _auto):
-                                    # 无条件 / 配置自动 → 直接推进到下一 Story 状态
+                                        _gate_ok, _missing = _gate_satisfied(
+                                            story_key, lifecycle_state, _next_state
+                                        )
+                                    except Exception:
+                                        _missing = []
+                                else:
+                                    _missing = []
+                                if _next_state and _gate_ok and (
+                                    _ctype in ("none",) or _ctype == "config"
+                                ):
+                                    # 成果物满足 + 无条件/config → 推进到下一 Story 状态
                                     lifecycle_state = _next_state
                                     ctx["_lifecycle_state"] = _next_state
                                     ctx.pop("_story_state_gate", None)
@@ -1677,8 +1690,8 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                         _next_state,
                                     )
                                     _state_handled = True
-                                elif _next_state and _ctype == "ui_button":
-                                    # 人工确认 → paused,前端显示 Story 状态闸卡片
+                                elif _next_state and _gate_ok and _ctype == "ui_button":
+                                    # 成果物满足 + 人工确认 → paused,前端显示状态闸卡片
                                     ctx["_story_state_gate"] = {
                                         "from": lifecycle_state,
                                         "to": _next_state,
@@ -1695,13 +1708,21 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                         {"from": lifecycle_state, "to": _next_state},
                                     )
                                     log.info(
-                                        "[%s] story state gate: %s done → paused awaiting confirm to advance %s → %s",
+                                        "[%s] story state gate: deliverables satisfied → paused awaiting confirm %s → %s",
                                         story_key,
-                                        stage,
                                         lifecycle_state,
                                         _next_state,
                                     )
-                                    return  # 释放 driver;点「进入下一状态」→ /lifecycle/advance
+                                    return
+                                elif _next_state and not _gate_ok:
+                                    # 成果物未满足 → 不推进,driver 继续跑或自然结束。
+                                    # 用户补齐成果物(写文档/确认/跳过)后,前端点推进。
+                                    log.info(
+                                        "[%s] story state gate NOT satisfied (%s done): missing %s — driver continues",
+                                        story_key,
+                                        stage,
+                                        _missing,
+                                    )
                                 elif not _next_state:
                                     # 终态:所有 Story 状态跑完 → 整个 story 完成
                                     sm_mark_completed(story_key)
