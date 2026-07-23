@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { storyApi, apiAction, planApi } from '../api/client'
+import { storyApi, apiAction, planApi, diffApi } from '../api/client'
 import type { AgentAction, ActionButton } from '../api/client'
 import StorySidebar from '../components/StorySidebar'
 import OverviewTab from '../components/OverviewTab'
@@ -71,6 +71,31 @@ export default function StoryDetailPage() {
     staleTime: 5 * 60 * 1000,
     retry: false,
   })
+
+  // 进详情页就异步预取所有 project 的 diff(代码变更 tab 用)。
+  // 每仓 fetch ~2s 是瓶颈,三个仓独立;进页并行 prefetch → 切到 code tab / 切 project
+  // 时直接命中缓存(staleTime 见 CodeChangesTab 的 diff 查询),不再串行等 fetch。
+  // 用独立的 context 查询拿 story_projects,避免和 CodeChangesTab 的 context 查询重复
+  // (同 queryKey ['context', storyKey] 会自动复用缓存)。
+  const { data: storyCtx } = useQuery({
+    queryKey: ['context', storyKey],
+    queryFn: () => storyApi.context(storyKey),
+    enabled: !!storyKey,
+    staleTime: 60 * 1000,
+  })
+  useEffect(() => {
+    const bindings = storyCtx?.story_projects ?? []
+    if (bindings.length === 0) return
+    // 并行 prefetch 每个 project 的 diff(React Query 的 prefetchQuery 不会阻塞渲染,
+    // 失败静默 — 命中后 CodeChangesTab 的 useQuery 直接走缓存)。
+    for (const b of bindings) {
+      qc.prefetchQuery({
+        queryKey: ['diff', storyKey, b.project_id],
+        queryFn: () => diffApi.get(storyKey, b.project_id),
+        staleTime: 2 * 60 * 1000,
+      })
+    }
+  }, [qc, storyKey, storyCtx?.story_projects])
 
   const [planTriggered, setPlanTriggered] = useState(false)
   // Re-entry guard for the SSE effect — a ref avoids setState-in-effect and,

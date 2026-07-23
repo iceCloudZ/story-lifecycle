@@ -60,6 +60,10 @@ export default function CodeChangesTab({ storyKey }: Props) {
     queryKey: ['diff', storyKey, effectiveProjectId],
     queryFn: () => diffApi.get(storyKey, effectiveProjectId),
     enabled: !!storyKey,
+    // diff 是重查询(每仓 fetch ~2s),且 story 详情页进页时会并行 prefetch 所有
+    // project 的 diff。这里给较长 staleTime,避免在 project 间切换 / tab 切回时重拉
+    // (全局默认 5s 对 diff 太短 — 来回切 tab 会反复 fetch)。
+    staleTime: 2 * 60 * 1000,
   })
 
   const fileDiffs = useMemo(() => {
