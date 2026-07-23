@@ -630,4 +630,9 @@ export const deliverablesApi = {
       `/api/story/${key}/deliverables/${delivKey}/skip`,
       { method: 'POST' },
     ),
+  confirm: (key: string, delivKey: string) =>
+    fetchJSON<{ ok: boolean; confirmed: string[] }>(
+      `/api/story/${key}/deliverables/${delivKey}/confirm`,
+      { method: 'POST' },
+    ),
 }

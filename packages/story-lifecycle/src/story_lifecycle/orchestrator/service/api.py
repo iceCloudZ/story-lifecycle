@@ -3250,6 +3250,30 @@ def api_skip_deliverable(story_key: str, deliv_key: str):
     return {"ok": True, "skipped": sorted(skipped)}
 
 
+@app.post("/api/story/{story_key}/deliverables/{deliv_key}/confirm")
+def api_confirm_deliverable(story_key: str, deliv_key: str):
+    """人工确认某成果物(非 doc 类,如 code/delivery)。存 context_json._confirmed_deliverables。
+
+    doc 类(spec/test_report)走 PUT /docs/{type}/confirm(写 story_doc.confirmed_by)。
+    非 doc 类(code/delivery)走本端点(写 context_json)。
+    只有 user 手动调用 —— AI 不能自我确认。
+    """
+    import json as _json
+
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+    try:
+        ctx = _json.loads(s.get("context_json") or "{}")
+    except (ValueError, TypeError):
+        ctx = {}
+    confirmed = set(ctx.get("_confirmed_deliverables", []))
+    confirmed.add(deliv_key)
+    ctx["_confirmed_deliverables"] = sorted(confirmed)
+    db.update_story(story_key, context_json=_json.dumps(ctx, ensure_ascii=False))
+    return {"ok": True, "confirmed": sorted(confirmed)}
+
+
 # -------- Lifecycle endpoints --------
 
 

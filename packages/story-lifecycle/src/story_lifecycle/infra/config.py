@@ -19,10 +19,25 @@ CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
 
 def _merge_config(existing: dict, updates: dict) -> dict:
-    """Merge updates into existing config. Preserves keys not in updates."""
+    """Shallow merge (kept for backward compat). Use _merge_config_deep instead."""
     merged = dict(existing)
     merged.update(updates)
     return merged
+
+
+def _merge_config_deep(base: dict, updates: dict) -> dict:
+    """Deep merge: nested dicts merged recursively, leaf values replaced.
+
+    grok-build §6.1: 浅合并(dict.update)会把嵌套 dict 整个替换掉,
+    丢失同层级其它键。深合并只替叶节点,保留同层级兄弟。
+    """
+    result = dict(base)
+    for k, v in updates.items():
+        if isinstance(v, dict) and isinstance(result.get(k), dict):
+            result[k] = _merge_config_deep(result[k], v)
+        else:
+            result[k] = v
+    return result
 
 
 def get_config() -> dict:
@@ -36,14 +51,31 @@ def get_config() -> dict:
 
 
 def save_config(config: dict):
-    """Merge `config` into the on-disk config file and persist."""
+    """Merge `config` into the on-disk config file and persist atomically.
+
+    grok-build §6.1: 原子写(temp file + fsync + rename)防止写一半崩溃留半个
+    文件;深合并防止嵌套 dict 整个替换丢键。config 写得勤(setup 向导、
+    每次 autonomy trace),非原子写迟早出半个文件。
+    """
+    import tempfile
+
     existing = get_config()
-    merged = _merge_config(existing, config)
+    merged = _merge_config_deep(existing, config)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(
-        yaml.dump(merged, default_flow_style=False, allow_unicode=True),
-        encoding="utf-8",
-    )
+    # 原子写:先写临时文件 → fsync → rename(原子)。并发安全(pid+nonce 唯一名)。
+    fd, tmp = tempfile.mkstemp(dir=str(CONFIG_DIR), prefix=".config.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(yaml.dump(merged, default_flow_style=False, allow_unicode=True))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, CONFIG_FILE)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def get_worktrees_root() -> Path:

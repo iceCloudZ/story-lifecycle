@@ -154,7 +154,8 @@ class TestInfraZeroInternalImport:
         # stdlib modules infra leaf files may use. Kept tight on purpose —
         # widening requires architectural justification (infra = leaf, no
         # heavyweight deps). os added for env-var lookups (STORY_WORKTREES_ROOT).
-        stdlib_ok = {"__future__", "pathlib", "yaml", "json", "re", "os"}
+        # tempfile added for atomic config write (grok-build §6.1).
+        stdlib_ok = {"__future__", "pathlib", "yaml", "json", "re", "os", "tempfile"}
         root = Path(__file__).resolve().parents[2]
         path = root / rel_path
         imports = self._parse_imports(path)

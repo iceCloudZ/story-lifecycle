@@ -1717,6 +1717,19 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                 elif _next_state and not _gate_ok:
                                     # 成果物未满足 → 不推进,driver 继续跑或自然结束。
                                     # 用户补齐成果物(写文档/确认/跳过)后,前端点推进。
+                                    # grok-build §2.3: gate 阻塞记独立事件(区别于
+                                    # 正常 stage_done / gate_reached),便于审计追溯
+                                    # 「为什么这个 story 卡在这个状态」。
+                                    db.log_event(
+                                        story_key,
+                                        stage,
+                                        "deliverable_gate_blocked",
+                                        {
+                                            "from": lifecycle_state,
+                                            "to": _next_state,
+                                            "missing": _missing,
+                                        },
+                                    )
                                     log.info(
                                         "[%s] story state gate NOT satisfied (%s done): missing %s — driver continues",
                                         story_key,

@@ -56,8 +56,13 @@ export default function OverviewTab({
   const curLifecycle = detail.lifecycleState || '待启动'
   const curIdx = LIFECYCLE_ORDER.indexOf(curLifecycle)
 
-  async function handleConfirmDoc(docType: string) {
-    const ok = await docApi.confirm(storyKey, docType).then(() => true).catch(() => false)
+  // doc 类(spec/test_report)走 docApi.confirm(写 story_doc);
+  // 非 doc 类(code/delivery)走 deliverablesApi.confirm(写 context_json)。
+  const DOC_DELIVERABLES = new Set(['spec', 'test_report'])
+  async function handleConfirm(delivKey: string) {
+    const ok = DOC_DELIVERABLES.has(delivKey)
+      ? await docApi.confirm(storyKey, delivKey).then(() => true).catch(() => false)
+      : await deliverablesApi.confirm(storyKey, delivKey).then(() => true).catch(() => false)
     if (ok) qc.invalidateQueries({ queryKey: ['deliverables', storyKey] })
   }
 
@@ -149,40 +154,58 @@ export default function OverviewTab({
         </div>
       )}
 
-      {/* 第二层:成果物清单(自动检测 + 人工确认 + 可跳过) */}
+      {/* 第二层:成果物清单(自动检测 + 人工确认 + 可跳过)
+          横排卡片,每卡两个灯:产物灯(只读) + 确认灯(可点击=确认动作)。
+          灯含义由标题右侧图例说明一次,卡片里不重复标注。 */}
       {deliverables.length > 0 && (
         <div className="ot-deliverables">
-          <h3 className="ot-deliv-title">📦 交付物</h3>
+          <div className="ot-deliv-head">
+            <h3 className="ot-deliv-title">📦 交付物</h3>
+            <span className="ot-deliv-legend" title="左:产物是否存在 · 右:是否已确认">
+              <span className="ot-deliv-lamp off" title="产物" />
+              <span className="ot-deliv-lamp off" title="确认" />
+            </span>
+          </div>
           <div className="ot-deliv-list">
-            {deliverables.map((d) => (
-              <div key={d.key} className={`ot-deliv-item${d.satisfied ? ' done' : ''}`}>
-                <span className="ot-deliv-icon">{d.icon}</span>
-                <span className="ot-deliv-label">{d.label}</span>
-                <span className={`ot-deliv-status ${d.satisfied ? 'ok' : 'pending'}`}>
-                  {d.skipped ? '⊘ 已跳过'
-                    : d.confirmed ? '✓ 已确认'
-                    : d.exists ? (d.needs_confirm ? '⚠ 待确认' : '✓ 已有')
-                    : '✗ 未完成'}
-                </span>
-                {/* 操作按钮 */}
-                {!d.satisfied && (
-                  <div className="ot-deliv-actions">
-                    {/* doc 类:存在但需确认 → 确认按钮 */}
-                    {d.exists && d.needs_confirm && !d.confirmed && !d.skipped && (
-                      <button className="btn btn-sm btn-primary" onClick={() => handleConfirmDoc(d.key === 'spec' ? 'spec' : d.key === 'test_report' ? 'test_report' : d.key)}>
-                        ✓ 确认
-                      </button>
-                    )}
-                    {/* 跳过 */}
-                    {!d.skipped && (
-                      <button className="btn btn-sm" onClick={() => handleSkipDeliverable(d.key)}>
-                        跳过
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
+            {deliverables.map((d) => {
+              const skipped = !!d.skipped
+              const showConfirm = !!d.needs_confirm && !skipped
+              return (
+                <div key={d.key} className={`ot-deliv-item${d.satisfied ? ' done' : ''}${skipped ? ' skipped' : ''}`}>
+                  {!skipped && (
+                    <button
+                      className="ot-deliv-skip-btn"
+                      title="跳过此成果物"
+                      onClick={() => handleSkipDeliverable(d.key)}
+                    >
+                      ⊘
+                    </button>
+                  )}
+                  <span className="ot-deliv-icon">{d.icon}</span>
+                  <span className="ot-deliv-label">{d.label}</span>
+                  {skipped ? (
+                    <span className="ot-deliv-skipped-tag">⊘ 已跳过</span>
+                  ) : (
+                    <span className="ot-deliv-lamps">
+                      {/* 产物灯:只读,exists → 绿实心 / 灰空心 */}
+                      <span
+                        className={`ot-deliv-lamp ${d.exists ? 'on' : 'off'}`}
+                        title={`产物${d.exists ? '已存在' : '未生成'}`}
+                      />
+                      {/* 确认灯:可点击 → handleConfirm(doc 类写 story_doc,非 doc 类写 context_json)。
+                          needs_confirm=false(如 PRD)的卡片不显示此灯(无需确认)。 */}
+                      {showConfirm && (
+                        <button
+                          className={`ot-deliv-lamp clickable ${d.confirmed ? 'on' : 'off'}`}
+                          title={d.confirmed ? '已确认' : '点击确认'}
+                          onClick={() => handleConfirm(d.key)}
+                        />
+                      )}
+                    </span>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
