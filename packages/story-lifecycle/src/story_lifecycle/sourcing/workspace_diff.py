@@ -21,8 +21,16 @@ from ..infra.db.models import get_project, get_story, get_story_projects
 from .integrations import gitlab
 
 
-def _local_git_diff(repo: Path, base_branch: str, current: str) -> dict:
-    """Fallback helper: produce a diff dict from local git."""
+def _local_git_diff(repo: Path, base_branch: str) -> dict:
+    """Fallback helper: produce a diff dict from local git.
+
+    跟「最新 master」比,而非 story 开始那一刻的旧 master 或 feature 分支 tip:
+    - base 用远程引用 ``origin/<base_branch>``(先 fetch 刷新),不用本地可能落后的
+      ``<base_branch>`` —— 否则别人后合进 master 的提交会被算成 story 的改动(虚高)。
+    - 比对**工作树**而非 ``HEAD`` 提交快照(``git diff <base>`` 无 ``..HEAD``)—— agent
+      改动常未 commit,``base..HEAD`` 会漏掉工作树的未提交部分。
+    fetch 失败(离线)时退回本地 ``origin/<base_branch>`` 引用,再不行退回本地分支。
+    """
 
     def _git(args: list[str], check: bool = True) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -34,12 +42,30 @@ def _local_git_diff(repo: Path, base_branch: str, current: str) -> dict:
             check=check,
         )
 
-    diff_range = f"{base_branch}..{current}" if current else base_branch
-
+    # 解析「最新 base」:优先 origin/<base_branch>(先 fetch),fetch 失败/无网络时退回本地引用。
+    origin_base = f"origin/{base_branch}"
     try:
-        diff_text = _git(["diff", diff_range]).stdout
+        _git(["fetch", "origin", base_branch], check=False)
+    except Exception:
+        pass  # 离线时忽略 — 下面用现有 origin 引用兜底
+    for candidate in (origin_base, base_branch):
+        try:
+            _git(["rev-parse", "--verify", candidate], check=True)
+            diff_base = candidate
+            break
+        except subprocess.CalledProcessError:
+            continue
+    else:
+        diff_base = base_branch  # 最后兜底
+
+    # git diff <diff_base> = 工作树 vs 最新 base(含未提交改动)。
+    # 注意:不带 ..HEAD,否则比的是提交快照会漏掉工作树的未提交改动。
+    try:
+        diff_text = _git(["diff", diff_base]).stdout
     except subprocess.CalledProcessError:
         diff_text = ""
+
+    diff_range = diff_base
 
     files: list[dict] = []
     # Parse full file paths and line stats from the actual diff output instead of
@@ -231,7 +257,7 @@ def get_story_workspace_diff(story_key: str, project_id: int | None = None) -> d
         return gitlab_result
 
     # Fallback to local git diff.
-    local = _local_git_diff(repo, base_branch, current)
+    local = _local_git_diff(repo, base_branch)
     return {
         "source": "local",
         "current_branch": current,
