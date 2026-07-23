@@ -93,6 +93,22 @@
   overflow: hidden;
 }
 
+/* 标题左侧簇:类型 badge 紧贴标题(.card-top 右侧是引擎 status badge,分开放) */
+.card-title-cluster {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* 卡片上的类型徽章:固定不收缩,避免挤占标题 */
+.card-type-badge {
+  flex-shrink: 0;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
 /* 项目卡(ProjectsPage)的项目名;story 卡片已不展示数字 key */
 .card-key {
   font-family: var(--font-mono);

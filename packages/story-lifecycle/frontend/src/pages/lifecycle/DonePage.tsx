@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useStories } from '../../hooks/useStories'
 import StoryGrid from '../../components/StoryGrid'
+import TypeFilter from '../../components/TypeFilter'
 import './LifecyclePage.css'
 
 // 已结项默认只展示最近创建的若干条,余量靠「显示更多」展开 —— 结项总量可能很大
@@ -13,17 +14,27 @@ const DONE_PAGE_SIZE = 20
  * TABS-LIFECYCLE-STATE: 纯 lifecycleState 判据(去掉旧 status==='archived' 兜底)。
  * 归档端点(/archive)已同步写 lifecycle_state=结项,故无需 status 兜底。
  * 生命周期终态:TAPD closed 映射到结项,或手动归档。只读历史 + 可删除。
+ *
+ * 类型筛选(tapdType):需求和缺陷都可能在结项态,用筛选下拉分开看。
+ * 注意「显示更多」的计数跟着筛选走 —— 切了类型就只展开该类型。
  */
 export default function DonePage() {
   const { stories: allStories, isLoading } = useStories()
   const [expanded, setExpanded] = useState(false)
+  const [typeFilter, setTypeFilter] = useState('')
 
   // 按创建时间倒序(最新结项在最前);createdAt 缺失时退到列表原序(稳定排序)。
   const doneStories = allStories
     .filter((s) => s.lifecycleState === '结项')
+    .filter((s) => !typeFilter || s.tapdType === typeFilter)
     .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
   const shown = expanded ? doneStories : doneStories.slice(0, DONE_PAGE_SIZE)
   const hasMore = !expanded && doneStories.length > DONE_PAGE_SIZE
+  // 切类型时收起分页,避免新类型下还停在「已展开」状态显示空。
+  function applyTypeFilter(v: string) {
+    setTypeFilter(v)
+    setExpanded(false)
+  }
 
   return (
     <div className="lifecycle-page">
@@ -31,6 +42,7 @@ export default function DonePage() {
         <h2>已结项</h2>
         <span className="story-count">{doneStories.length} 个 Story</span>
       </div>
+      <TypeFilter value={typeFilter} onChange={applyTypeFilter} />
       <StoryGrid
         stories={shown}
         emptyHint="还没有已结项的 Story。"

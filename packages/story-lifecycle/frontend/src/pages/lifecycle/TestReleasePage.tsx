@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { useStories } from '../../hooks/useStories'
 import StoryGrid from '../../components/StoryGrid'
+import TypeFilter from '../../components/TypeFilter'
 import './LifecyclePage.css'
 
 /**
@@ -10,9 +12,10 @@ import './LifecyclePage.css'
  */
 export default function TestReleasePage() {
   const { stories: allStories, isLoading } = useStories()
-  const trStories = allStories.filter(
-    (s) => s.lifecycleState === '测试' || s.lifecycleState === '上线'
-  )
+  const [typeFilter, setTypeFilter] = useState('')
+  const trStories = allStories
+    .filter((s) => s.lifecycleState === '测试' || s.lifecycleState === '上线')
+    .filter((s) => !typeFilter || s.tapdType === typeFilter)
 
   return (
     <div className="lifecycle-page">
@@ -20,6 +23,7 @@ export default function TestReleasePage() {
         <h2>测试·上线</h2>
         <span className="story-count">{trStories.length} 个 Story</span>
       </div>
+      <TypeFilter value={typeFilter} onChange={setTypeFilter} />
       <StoryGrid
         stories={trStories}
         emptyHint="没有测试/上线中的 Story。开发完成后会自动进入测试。"

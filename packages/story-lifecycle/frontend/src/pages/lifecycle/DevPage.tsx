@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { useStories } from '../../hooks/useStories'
 import StoryGrid from '../../components/StoryGrid'
+import TypeFilter from '../../components/TypeFilter'
 import './LifecyclePage.css'
 
 /**
@@ -11,7 +13,10 @@ import './LifecyclePage.css'
  */
 export default function DevPage() {
   const { stories: allStories, isLoading } = useStories()
-  const devStories = allStories.filter((s) => s.lifecycleState === '开发')
+  const [typeFilter, setTypeFilter] = useState('')
+  const devStories = allStories
+    .filter((s) => s.lifecycleState === '开发')
+    .filter((s) => !typeFilter || s.tapdType === typeFilter)
 
   return (
     <div className="lifecycle-page">
@@ -19,6 +24,7 @@ export default function DevPage() {
         <h2>开发中</h2>
         <span className="story-count">{devStories.length} 个 Story</span>
       </div>
+      <TypeFilter value={typeFilter} onChange={setTypeFilter} />
       <StoryGrid
         stories={devStories}
         emptyHint="没有开发中的 Story。在「待启动」页点击开始开发。"

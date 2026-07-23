@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import type { StorySummary } from '../store/storyStore'
+import { TYPE_LABELS } from '../pages/tapdMeta'
 
 /**
  * StoryCard — 从 Dashboard 抽出的可复用 story 卡片。
@@ -79,11 +80,24 @@ export default function StoryCard({
   const progress = stageIndex >= 0 ? ((stageIndex + 1) / STAGES.length) * 100 : 0
   const normalizedStatus = normalizeStatus(story.status)
   const actions = CARD_ACTIONS[normalizedStatus] || []
+  // 类型 badge(需求/缺陷/子任务) — 卡片左侧紧贴标题,配色复用 TYPE_LABELS。
+  // tapdType 缺失(手工建的本地 story)时不显示,避免占位。
+  const typeInfo = TYPE_LABELS[story.tapdType || '']
 
   return (
     <div className="story-card-v2">
       <div className="card-top" onClick={() => navigate(`/story/${story.storyKey}`)}>
-        <span className="card-title">{story.title || '(未命名)'}</span>
+        <div className="card-title-cluster">
+          {typeInfo && (
+            <span
+              className="badge-type card-type-badge"
+              style={{ background: typeInfo.color }}
+            >
+              {typeInfo.label}
+            </span>
+          )}
+          <span className="card-title">{story.title || '(未命名)'}</span>
+        </div>
         <span className={`badge badge-${normalizedStatus}`}>
           {STATUS_LABELS[normalizedStatus] || normalizedStatus}
         </span>
