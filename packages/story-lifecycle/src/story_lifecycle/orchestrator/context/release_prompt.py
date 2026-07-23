@@ -87,6 +87,34 @@ def _render_release_prompt(story_key: str, bundle) -> str:
         "回写后,你可以在 Story 详情页的「半自动工具」里复制 resume 命令,下次直接续接本会话。"
     )
 
+    # 文档回写约定(半自动):DB 是版本化文档的唯一真相源,本地 .md 是只读缓存。
+    # 若你修改了 prd/spec 等文档,**必须**把新内容回写 DB(否则 UI 看不到、无版本记录)。
+    # 用 PUT /docs/{type} 回写会自动生成新版本(v1→v2)。
+    lines.append("")
+    lines.append("## 文档修改必须回写 DB")
+    lines.append(
+        "DB 是文档的唯一真相源(版本化),本地 .md 只是只读缓存。若你修改了 prd/spec/plan 等"
+        "文档,**不要只改本地 .md** —— 改完必须回写 DB,否则 Story 详情页的「文档」tab 看不到"
+        "新内容、也不会产生新版本。用 curl 调 PUT /docs/{type}(会自动生成下一版本):"
+    )
+    lines.append("")
+    lines.append("```bash")
+    lines.append(
+        '# 例:回写 spec。<type>=prd/spec/plan...,<reason>=本次改动说明\n'
+        'curl -X PUT http://127.0.0.1:8180/api/story/<story_key>/docs/<type> \\\n'
+        '  -H "Content-Type: application/json" \\\n'
+        '  -d \'{"content": "<新内容或从 .md 文件读>", "change_reason": "<reason>", "author": "agent"}\''
+    )
+    lines.append("# 或直接从改好的 .md 文件回写:")
+    lines.append(
+        'BODY=$(jq -n --arg c "$(cat <文件.md>)" --arg r "<reason>" \'{content:$c,change_reason:$r,author:"agent"}\')\n'
+        'curl -X PUT http://127.0.0.1:8180/api/story/<story_key>/docs/<type> -H "Content-Type: application/json" -d "$BODY"'
+    )
+    lines.append("```")
+    lines.append(
+        "（若忘了回写只改了文件,用户可在「文档」tab 点「从文件同步」补救,但请尽量直接回写 DB。）"
+    )
+
     if bundle.story_projects:
         lines.append("")
         lines.append("## 绑定项目与分支")

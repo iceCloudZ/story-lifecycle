@@ -567,6 +567,12 @@ export const docApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reason, author }),
     }),
+  // 从本地 .md 文件同步到 DB(半自动 agent 直接改文件没回写时的补救)。
+  syncFromLocal: (key: string, type: string) =>
+    fetchJSON<{ synced: boolean; version: number; reason?: string }>(
+      `/api/story/${key}/docs/${type}/sync`,
+      { method: 'POST' },
+    ),
   search: (q: string, type = '', story = '') =>
     fetchJSON<{ query: string; results: DocSearchHit[] }>(
       `/api/docs/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ''}${story ? `&story=${story}` : ''}`,

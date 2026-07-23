@@ -3114,6 +3114,60 @@ def api_rollback_doc(
     return db.get_story_doc(story_key, doc_type)
 
 
+@app.post("/api/story/{story_key}/docs/{doc_type}/sync")
+def api_sync_doc_from_local(story_key: str, doc_type: str):
+    """把本地 .md 文件的改动拉回 DB(生成新版本)。
+
+    半自动 agent 可能直接改本地 .md 绕过 DB(应为 doc_sync 契约禁止,但 agent 跑在
+    外部终端不可控),导致 docs tab 显示旧版本。本端点:重算 .md 路径 → 读内容 → 跟
+    DB 当前 latest_content 比 hash → 变了就 upsert_story_doc 生成 v+1。
+
+    文件不存在/内容未变 → 200 + {synced:false}(前端据此提示「无需同步」)。
+    """
+    story = db.get_story(story_key)
+    if not story:
+        raise HTTPException(404, detail=f"story not found: {story_key}")
+    workspace = story.get("workspace") or ""
+    title = story.get("title") or ""
+    if not workspace:
+        raise HTTPException(400, detail="story has no workspace; cannot locate .md")
+
+    from ...infra.doc_sync import _sha256
+    from ...infra.story_paths import story_doc_path
+
+    md_path = story_doc_path(workspace, story_key, doc_type, title)
+    if not md_path.exists():
+        raise HTTPException(404, detail=f"local .md not found: {md_path}")
+    file_body = md_path.read_text(encoding="utf-8", errors="replace")
+
+    doc = db.get_story_doc(story_key, doc_type) or {}
+    db_body = doc.get("latest_content") or ""
+    if _sha256(file_body) == _sha256(db_body):
+        # 内容未变 —— 文件跟 DB 一致,无需新版本。
+        return {"synced": False, "version": doc.get("current_version"), "reason": "unchanged"}
+
+    new_v = db.upsert_story_doc(
+        story_key,
+        doc_type,
+        file_body,
+        change_reason="从本地文件同步(agent 直接改了 .md)",
+        author="sync",
+        title=title,
+    )
+    # 同步成功后也刷新 local_path + .meta(让 .meta 的 version/hash 跟上新 DB 版本)。
+    try:
+        from ...infra.doc_sync import sync_doc_to_local
+
+        sync_doc_to_local(story_key, doc_type, file_body, new_v, workspace, title)
+    except Exception as exc:
+        log.warning("doc sync local-cache refresh failed: %s", exc)
+    db.log_event(
+        story_key, doc_type, "doc_synced_from_local",
+        {"doc_type": doc_type, "version": new_v},
+    )
+    return {"synced": True, "version": new_v}
+
+
 @app.get("/api/docs/search")
 def api_search_docs(q: str, type: str = "", story: str = ""):
     if not q.strip():

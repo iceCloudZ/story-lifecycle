@@ -801,6 +801,66 @@ class TestSessionWriteback:
         assert resp.json()["adapter"] == "claude"
 
 
+class TestDocSyncFromLocal:
+    """半自动 doc 同步:agent 直接改本地 .md 没回写 DB → 从文件同步拉回 DB 生成新版本。"""
+
+    def test_sync_creates_new_version_when_file_changed(
+        self, api_client, isolated_story_home, tmp_path
+    ):
+        """本地 .md 内容变了 → 同步生成 v2。"""
+        workspace = str(tmp_path)
+        db.upsert_story("DS-1", title="同步测试", workspace=workspace, profile="minimal")
+        db.update_story("DS-1", intake_state="ready")
+        # 先建 v1(DB + 本地 .md 缓存)
+        db.upsert_story_doc("DS-1", "spec", "v1 内容", "初始", "agent")
+        from story_lifecycle.infra.doc_sync import sync_doc_to_local
+        from story_lifecycle.infra.story_paths import story_doc_path
+
+        md = story_doc_path(workspace, "DS-1", "spec", "同步测试")
+        sync_doc_to_local("DS-1", "spec", "v1 内容", 1, workspace, "同步测试")
+        assert md.exists()
+        # agent 直接改了文件(绕过 DB)
+        md.write_text("v2 改过的内容", encoding="utf-8")
+        # 同步
+        resp = api_client.post("/api/story/DS-1/docs/spec/sync")
+        assert resp.status_code == 200
+        assert resp.json()["synced"] is True
+        assert resp.json()["version"] == 2
+        # DB 现在有 v2,内容是文件的新内容
+        doc = db.get_story_doc("DS-1", "spec")
+        assert doc["current_version"] == 2
+        assert "v2 改过的内容" in doc["latest_content"]
+
+    def test_sync_noop_when_unchanged(self, api_client, isolated_story_home, tmp_path):
+        """文件跟 DB 一致 → synced:false(unchanged)。"""
+        workspace = str(tmp_path)
+        db.upsert_story("DS-2", title="未变", workspace=workspace, profile="minimal")
+        db.update_story("DS-2", intake_state="ready")
+        db.upsert_story_doc("DS-2", "spec", "一致内容", "初始", "agent")
+        from story_lifecycle.infra.doc_sync import sync_doc_to_local
+
+        sync_doc_to_local("DS-2", "spec", "一致内容", 1, workspace, "未变")
+        resp = api_client.post("/api/story/DS-2/docs/spec/sync")
+        assert resp.json()["synced"] is False
+        assert resp.json()["reason"] == "unchanged"
+        # 版本没涨
+        assert db.get_story_doc("DS-2", "spec")["current_version"] == 1
+
+    def test_sync_missing_file_404(self, api_client, isolated_story_home, tmp_path):
+        """本地 .md 不存在 → 404(无法同步)。"""
+        workspace = str(tmp_path)
+        db.upsert_story("DS-3", title="无文件", workspace=workspace, profile="minimal")
+        db.update_story("DS-3", intake_state="ready")
+        db.upsert_story_doc("DS-3", "spec", "只有DB", "初始", "agent")
+        # 不写本地文件 → 同步应 404
+        resp = api_client.post("/api/story/DS-3/docs/spec/sync")
+        assert resp.status_code == 404
+
+    def test_sync_nonexistent_story_404(self, api_client, isolated_story_home):
+        resp = api_client.post("/api/story/NOPE/docs/spec/sync")
+        assert resp.status_code == 404
+
+
 class TestSoftDeleteAndMove:
     """卡片菜单:软删除(可恢复)+ 移动生命周期状态(5 态全开放)。"""
 

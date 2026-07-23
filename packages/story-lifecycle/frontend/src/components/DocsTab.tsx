@@ -51,6 +51,21 @@ export default function DocsTab({ storyKey }: { storyKey: string }) {
     }
   }
 
+  // 从本地 .md 同步到 DB:半自动 agent 可能直接改了文件没回写 DB,点这个把改动拉进来。
+  async function syncDoc(docType: string) {
+    try {
+      const r = await docApi.syncFromLocal(storyKey, docType)
+      if (r.synced) {
+        alert(`已同步 ${docType} → v${r.version}(从本地文件拉取了改动)`)
+      } else {
+        alert(`${docType} 无需同步(文件与 DB 一致)`)
+      }
+      qc.invalidateQueries({ queryKey: ['docs', storyKey] })
+    } catch (e) {
+      alert(`同步失败: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
   return (
     <div className="docs-tab">
       <h3 className="docs-tab-title">📄 业务文档（版本化）</h3>
@@ -87,13 +102,26 @@ export default function DocsTab({ storyKey }: { storyKey: string }) {
         <div className="docs-list">
           {docs.map((d) => (
             <div key={d.doc_type} className="docs-list-item" onClick={() => setEditing(d.doc_type)}>
-              <div className="docs-item-name">
-                <strong>{d.doc_type}</strong>
-                {d.title ? <span className="hint"> · {d.title}</span> : null}
+              <div className="docs-item-info">
+                <div className="docs-item-name">
+                  <strong>{d.doc_type}</strong>
+                  {d.title ? <span className="hint"> · {d.title}</span> : null}
+                </div>
+                <div className="hint">
+                  v{d.current_version} · {d.updated_by || '?'} · {d.updated_at}
+                </div>
               </div>
-              <div className="hint">
-                v{d.current_version} · {d.updated_by || '?'} · {d.updated_at}
-              </div>
+              <button
+                type="button"
+                className="btn btn-sm docs-sync-btn"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  syncDoc(d.doc_type)
+                }}
+                title="把本地 .md 的改动同步到 DB(半自动 agent 直接改文件时用)"
+              >
+                从文件同步
+              </button>
             </div>
           ))}
         </div>

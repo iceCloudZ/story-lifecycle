@@ -43,3 +43,16 @@
   border-color: var(--color-primary);
 }
 .docs-item-name { font-size: var(--text-base); }
+
+/* 列表项:左侧(name+hint 簇),右侧「从文件同步」按钮。点列表进编辑,点按钮同步。 */
+.docs-list-item .docs-item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.docs-sync-btn {
+  flex-shrink: 0;
+  margin-left: var(--space-2);
+}
