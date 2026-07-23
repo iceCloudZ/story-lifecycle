@@ -139,20 +139,9 @@
   min-width: 0;
 }
 
-/* 无会话空态:虚线占位面板 */
+/* 无会话空态:视觉用通用 .ui-empty,这里只补高度 */
 .tt-no-session {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
   height: 100%;
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1.5px dashed var(--color-border-strong);
-  border-radius: var(--radius-lg);
-  background: var(--gray-50);
 }
 .tt-no-session p {
   margin: 0;
@@ -166,3 +155,123 @@
   0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.4); }
   50% { box-shadow: 0 0 0 4px rgba(217, 119, 6, 0); }
 }
+
+/* ===== stage 卡片视图(有 plan 时) ===== */
+
+/* stage chip 栏 + 规划确认按钮 */
+.tt-stage-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.tt-stage-chips {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+.tt-stage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--gray-100);
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.tt-stage-chip:hover {
+  background: var(--gray-200);
+  color: var(--color-text);
+}
+.tt-stage-chip.active {
+  background: var(--color-surface);
+  color: var(--color-primary-text);
+  border-color: var(--color-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+.tt-stage-chip.done {
+  color: var(--color-success-text);
+}
+.tt-stage-check {
+  color: var(--color-success);
+  font-size: var(--text-xs);
+}
+.tt-plan-actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-1);
+}
+
+/* 选中 stage 的面板 */
+.tt-stage-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-height: 0;
+}
+.tt-stage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.tt-stage-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.tt-stage-name {
+  font-weight: 600;
+  font-size: var(--text-base);
+  color: var(--color-text);
+}
+.tt-adapter-select,
+.tt-adapter-badge {
+  font-size: var(--text-sm);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--gray-100);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+.tt-adapter-select {
+  font-family: inherit;
+  cursor: pointer;
+}
+.tt-done-badge {
+  font-size: var(--text-xs);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-success-soft);
+  color: var(--color-success-text);
+}
+.tt-stage-ops {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+.tt-stage-focus {
+  padding: var(--space-2) var(--space-3);
+  background: var(--gray-50);
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+

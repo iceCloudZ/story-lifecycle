@@ -154,10 +154,11 @@ export default function StoryDetailPage() {
   const isConfirmed = planData?.confirmed ?? false
   // resolvedActions = streaming(规划中实时) / planData.actions(已落 DB) +
   // 本地 adapterOverrides(乐观更新:PATCH 成功到 DB 前 UI 先翻)。
+  // adapterOverrides 按 stage 索引(规划下沉终端区后,adapter 切换按 stage 不按数组 index)。
   const baseActions: AgentAction[] = streamingActions.length > 0 ? streamingActions : (planData?.actions ?? [])
-  const [adapterOverrides, setAdapterOverrides] = useState<Record<number, string>>({})
-  const resolvedActions: AgentAction[] = baseActions.map((a, i) =>
-    adapterOverrides[i] ? { ...a, adapter: adapterOverrides[i] } : a
+  const [adapterOverrides, setAdapterOverrides] = useState<Record<string, string>>({})
+  const resolvedActions: AgentAction[] = baseActions.map((a) =>
+    a.stage && adapterOverrides[a.stage] ? { ...a, adapter: adapterOverrides[a.stage] } : a
   )
 
   if (!storyKey) return <div className="loading">无效的 Story Key</div>
@@ -182,11 +183,11 @@ export default function StoryDetailPage() {
   // 下拉即改即生效:onChange 立即 PATCH 到 DB,本地乐观翻 UI。
   // PATCH 成功后 invalidate plan query,DB 回的 actions 会覆盖本地 overrides
   // (值一致,无缝);失败则弹错并保持原值(下一次 onChange 会再覆盖)。
-  function handleActionAdapterChange(index: number, adapter: string) {
-    const stage = baseActions[index]?.stage
+  // 直接按 stage 切(规划下沉终端区后,adapter 下拉挂在 stage 面板上)。
+  function handleActionAdapterChange(stage: string, adapter: string) {
     if (!stage) return
     // 乐观更新:UI 先翻
-    setAdapterOverrides(prev => ({ ...prev, [index]: adapter }))
+    setAdapterOverrides(prev => ({ ...prev, [stage]: adapter }))
     planApi
       .updateAdapter(storyKey, stage, adapter)
       .then(() => {
@@ -198,7 +199,7 @@ export default function StoryDetailPage() {
         // 回滚乐观更新
         setAdapterOverrides(prev => {
           const next = { ...prev }
-          delete next[index]
+          delete next[stage]
           return next
         })
         const detail = e instanceof Error ? e.message : String(e)

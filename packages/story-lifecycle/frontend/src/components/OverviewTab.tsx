@@ -1,5 +1,4 @@
 import type { Story, AgentAction, ActionButton, Plan } from '../api/client'
-import ActionCard from './ActionCard'
 import SemiAutoSection from './SemiAutoSection'
 import TerminalTab from './TerminalTab'
 
@@ -15,7 +14,8 @@ interface Props {
   onRegeneratePlan: () => void
   onAction: (action: ActionButton) => void
   actions: ActionButton[]
-  onActionAdapterChange: (index: number, adapter: string) => void
+  // adapter 切换:下沉到终端区后按 stage 索引(不再是数组 index)。
+  onActionAdapterChange: (stage: string, adapter: string) => void
   neverStarted: boolean
   onStart: () => void
   onResolve?: () => void
@@ -42,9 +42,7 @@ export default function OverviewTab({
 
   const primaryAction = actions.find((a) => a.variant === 'primary') ?? null
   const rowActions = primaryAction ? actions.filter((a) => a !== primaryAction) : actions
-  const doneStages = new Set(
-    (planData?.stages ?? []).filter((s) => s.done).map((s) => s.name)
-  )
+  // doneStages 现在不再在 OverviewTab 算(TerminalTab 的 stage 卡片自己读 planData.stages)。
 
   return (
     <div className="tab-content overview-tab">
@@ -52,7 +50,7 @@ export default function OverviewTab({
           交付物 + gate 推进入口已移到左侧 sidebar(导航=交付物)。
           lastError(如「No actions to execute」)作为卡内告警条贴底部 ——
           业务状态条本就表达 story 进度,错误信息贴这里语义最顺。 */}
-      <div className="ot-header">
+      <div className="ui-card ot-header">
         <div className="ot-header-top">
           <div className="ot-lc-meta">
             <span className="ot-title">{detail.title || detail.storyKey}</span>
@@ -103,7 +101,7 @@ export default function OverviewTab({
           })}
         </div>
         {detail.lastError && (
-          <div className="ot-lifecycle-error" title={detail.lastError}>
+          <div className="ui-alert ui-alert-danger ot-header-error" title={detail.lastError}>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M8 5.5v3.5" />
               <circle cx="8" cy="11.25" r="0.25" fill="currentColor" />
@@ -114,38 +112,8 @@ export default function OverviewTab({
         )}
       </div>
 
-      {/* Agent 规划区 */}
-      {resolvedActions.length > 0 && (
-        <div className="ot-plan-section">
-          <div className="ot-plan-head">
-            <div>
-              <h3 className="ot-section-title">Agent 规划</h3>
-              <p className="ot-plan-hint">
-                复制提示词后可贴到自己的 CLI 执行，完成后系统会自动认领结果
-              </p>
-            </div>
-            {detail.status === 'planning' && !isConfirmed && (
-              <div className="ot-plan-actions">
-                <button className="btn" onClick={onRegeneratePlan}>重新规划</button>
-                <button className="btn btn-primary" onClick={onConfirmPlan}>确认规划，开始执行</button>
-              </div>
-            )}
-          </div>
-          <div className="action-cards">
-            {resolvedActions.map((a, i) => (
-              <ActionCard
-                key={i}
-                action={a}
-                index={i}
-                storyKey={storyKey}
-                done={!!a.stage && doneStages.has(a.stage)}
-                editable={detail.status === 'planning' && !isConfirmed}
-                onAdapterChange={onActionAdapterChange}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Agent 规划已下沉到终端区(跟 session/历史合并成 stage 卡片)。
+          操作按钮(继续/重试/紧急停止)留这里。 */}
 
       {/* 操作按钮 */}
       {((detail.status === 'active' && neverStarted) || rowActions.length > 0) && (
@@ -165,10 +133,22 @@ export default function OverviewTab({
         </div>
       )}
 
-      {/* 终端区(按 profile stage 分 tab) */}
-      <div id="overview-terminal" className="ot-terminal-section">
-        <h3 className="ot-section-title ot-terminal-title">终端</h3>
-        <TerminalTab storyKey={storyKey} status={detail.status} />
+      {/* 终端区:有 plan → stage 卡片视图(action + session + 历史);
+          无 plan → 现有 session tab 视图。规划确认按钮在 stage 卡片栏右上。 */}
+      <div id="overview-terminal" className="ui-card ot-terminal-section">
+        <h3 className="ui-section-title ot-terminal-title">终端</h3>
+        <TerminalTab
+          storyKey={storyKey}
+          status={detail.status}
+          actions={resolvedActions}
+          stages={planData?.stages}
+          currentStage={detail.currentStage}
+          isConfirmed={isConfirmed}
+          editable={detail.status === 'planning' && !isConfirmed}
+          onAdapterChange={onActionAdapterChange}
+          onConfirmPlan={onConfirmPlan}
+          onRegeneratePlan={onRegeneratePlan}
+        />
       </div>
 
       {/* 半自动工具(置底:日常全自动跑不用,手动介入时才翻) */}
