@@ -153,44 +153,45 @@
   margin-bottom: var(--space-2);
   gap: var(--space-2);
 }
-.doc-diff-lib-toggle {
-  display: flex;
-  gap: 4px;
-  margin-left: auto;
-  margin-right: var(--space-2);
-}
-.doc-diff-compare-hint {
-  margin: 0 0 var(--space-2) 0;
-  font-size: var(--text-xs);
-}
 .doc-diff-viewer-wrap {
   /* react-diff-viewer-continued 自带滚动 + 高度;给个 max-height 让弹层可滚。 */
   max-height: calc(100% - 60px);
   overflow: auto;
   font-size: var(--text-sm);
 }
-/* 统一库A react-diff-view 的字号(默认偏大,跟库B对齐)。 */
-.doc-diff-viewer-wrap .diff {
-  font-size: var(--text-sm);
-}
-/* renderContent 渲染的 markdown 行:让 .markdown-body 在 diff 单元格里紧凑显示。
-   renderContent 逐行喂 MarkdownView,跨行结构(多行表格/代码块)可能不完整 —— 文档以行为主时够用。 */
+/* renderContent 渲染的 markdown 行:正文用 sans-serif(库默认 monospace 显示 md 生硬),
+   行高 1.6 舒展,标题在 diff 行里压缩 + 去掉下边框(单行显示不适合分隔线)。 */
 .doc-diff-md-line .markdown-body {
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
-  line-height: 1.5;
+  line-height: 1.6;
+  color: var(--color-text);
   background: transparent;
 }
 .doc-diff-md-line .markdown-body h1,
 .doc-diff-md-line .markdown-body h2,
-.doc-diff-md-line .markdown-body h3 {
+.doc-diff-md-line .markdown-body h3,
+.doc-diff-md-line .markdown-body h4 {
   margin: 0;
-  font-size: var(--text-sm);
+  padding: 0;
+  border: none;
+  font-weight: 700;
+  color: var(--color-text-strong);
 }
-.doc-diff-md-line .markdown-body p {
-  margin: 0;
-}
-.doc-diff-md-line .markdown-body pre,
+.doc-diff-md-line .markdown-body h1 { font-size: var(--text-base); }
+.doc-diff-md-line .markdown-body h2 { font-size: var(--text-sm); }
+.doc-diff-md-line .markdown-body h3,
+.doc-diff-md-line .markdown-body h4 { font-size: var(--text-sm); }
+.doc-diff-md-line .markdown-body p { margin: 0; }
+.doc-diff-md-line .markdown-body ul,
+.doc-diff-md-line .markdown-body ol { margin: 0; padding-left: 1.2em; }
+.doc-diff-md-line .markdown-body li { margin: 0; }
 .doc-diff-md-line .markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.doc-diff-md-line .markdown-body pre {
+  margin: 0;
   font-size: var(--text-xs);
 }
 .doc-diff-pre {
