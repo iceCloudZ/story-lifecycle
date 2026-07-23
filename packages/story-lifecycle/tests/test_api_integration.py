@@ -734,6 +734,73 @@ class TestReleaseTrainAPI:
         assert updated["title"] == "更新标题"
 
 
+class TestSessionWriteback:
+    """半自动 session 回写闭环:POST /session(agent 写)+ GET /session(前端读)。"""
+
+    def test_get_session_initially_null(self, api_client, isolated_story_home):
+        db.upsert_story("WB-1", title="回写", workspace="/tmp", profile="minimal")
+        db.update_story("WB-1", intake_state="ready", current_stage="build")
+        resp = api_client.get("/api/story/WB-1/session?stage=build&adapter=kimi")
+        assert resp.status_code == 200
+        assert resp.json()["session_id"] is None
+
+    def test_writeback_then_read(self, api_client, isolated_story_home):
+        db.upsert_story("WB-2", title="回写读", workspace="/tmp", profile="minimal")
+        db.update_story("WB-2", intake_state="ready", current_stage="design")
+        # agent 回写
+        resp = api_client.post(
+            "/api/story/WB-2/session",
+            json={"session_id": "session_from_agent", "adapter": "kimi", "stage": "design"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["session_id"] == "session_from_agent"
+        # 前端读
+        resp = api_client.get("/api/story/WB-2/session?stage=design&adapter=kimi")
+        assert resp.json()["session_id"] == "session_from_agent"
+        assert resp.json()["adapter"] == "kimi"
+
+    def test_writeback_logs_event(self, api_client, isolated_story_home):
+        db.upsert_story("WB-3", title="回写事件", workspace="/tmp", profile="minimal")
+        db.update_story("WB-3", intake_state="ready", current_stage="build")
+        api_client.post(
+            "/api/story/WB-3/session",
+            json={"session_id": "sid-ev", "adapter": "claude", "stage": "build"},
+        )
+        events = db.get_story_events("WB-3")
+        wb = [e for e in events if e["event_type"] == "session_writeback"]
+        assert len(wb) == 1
+        payload = db.parse_event_payload(wb[0])
+        assert payload["session_id"] == "sid-ev"
+
+    def test_writeback_requires_session_id(self, api_client, isolated_story_home):
+        db.upsert_story("WB-4", title="缺id", workspace="/tmp", profile="minimal")
+        db.update_story("WB-4", intake_state="ready")
+        resp = api_client.post(
+            "/api/story/WB-4/session", json={"session_id": "", "adapter": "claude"}
+        )
+        assert resp.status_code == 400
+
+    def test_writeback_nonexistent_story_404(self, api_client, isolated_story_home):
+        resp = api_client.post(
+            "/api/story/NOPE/session", json={"session_id": "x", "adapter": "claude"}
+        )
+        assert resp.status_code == 404
+
+    def test_writeback_defaults_stage_and_adapter(self, api_client, isolated_story_home):
+        """stage/adapter 缺省取 story 当前值(build/claude)。"""
+        db.upsert_story("WB-5", title="默认值", workspace="/tmp", profile="minimal")
+        db.update_story("WB-5", intake_state="ready", current_stage="verify")
+        resp = api_client.post(
+            "/api/story/WB-5/session", json={"session_id": "sid-default"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["stage"] == "verify"
+        # GET 不带 adapter → 兜底 claude
+        resp = api_client.get("/api/story/WB-5/session?stage=verify")
+        assert resp.json()["session_id"] == "sid-default"
+        assert resp.json()["adapter"] == "claude"
+
+
 class TestSoftDeleteAndMove:
     """卡片菜单:软删除(可恢复)+ 移动生命周期状态(5 态全开放)。"""
 

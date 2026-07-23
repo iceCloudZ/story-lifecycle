@@ -355,6 +355,16 @@ class SpawnSessionRequest(BaseModel):
     model: str = ""
 
 
+class WritebackSessionRequest(BaseModel):
+    """Agent(在用户终端里)把它自己的 session id 回写给后端。
+
+    stage/adapter 缺省取 story 当前值。session_id 必填(agent 从它自己的 CLI 环境拿到)。
+    """
+    session_id: str
+    stage: str = ""
+    adapter: str = ""
+
+
 @app.get("/api/story/{story_key}/sessions")
 def api_list_sessions(story_key: str):
     """List all PTY sessions for a story."""
@@ -362,6 +372,62 @@ def api_list_sessions(story_key: str):
     if not s:
         raise HTTPException(404, "Story not found")
     return {"sessions": list_pty_sessions(story_key)}
+
+
+@app.get("/api/story/{story_key}/session")
+def api_get_session(story_key: str, stage: str = "", adapter: str = "") -> dict:
+    """读已回填的 session id(前端「复制 resume 文案」按钮用)。
+
+    stage/adapter 缺省取 story 当前值。返回该 (story,stage,adapter) 的 session 行;
+    无则 session_id=null(前端据此禁用 resume 按钮)。
+    """
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+    _stage = stage or s.get("current_stage", "") or "design"
+    _adapter = adapter or ""
+    if not _adapter:
+        # 兜底:从 _agent_actions 取当前 stage 的 adapter,否则默认 claude。
+        try:
+            import json as _json
+
+            _ctx = _json.loads(s.get("context_json") or "{}")
+            acts = _ctx.get("_agent_actions") or []
+            _adapter = next(
+                (a.get("adapter") for a in acts if a.get("stage") == _stage), ""
+            ) or "claude"
+        except (ValueError, TypeError):
+            _adapter = "claude"
+    row = db.get_session(story_key, _stage, _adapter)
+    return {
+        "session_id": row.get("session_id") if row else None,
+        "adapter": _adapter,
+        "stage": _stage,
+        "status": row.get("status") if row else None,
+    }
+
+
+@app.post("/api/story/{story_key}/session")
+def api_writeback_session(story_key: str, req: WritebackSessionRequest) -> dict:
+    """Agent 回写它自己的 session id(半自动:用户终端里的 agent 调 story session)。
+
+    把 agent 当前会话 id 落进 story_session 表 → 前端「复制 resume 文案」能读到 →
+    下次用户复制 `claude --resume <id>` / `kimi -S <id>` 续上,省 token。
+    """
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+    if not req.session_id:
+        raise HTTPException(400, "session_id is required")
+    _stage = req.stage or s.get("current_stage", "") or "design"
+    _adapter = req.adapter or "claude"
+    # upsert(若已有行则更新 session_id;COALESCE 在 models 层,这里直接 set)。
+    db.upsert_session(story_key, _stage, _adapter, session_id=req.session_id)
+    db.log_event(
+        story_key, _stage, "session_writeback",
+        {"adapter": _adapter, "session_id": req.session_id},
+    )
+    return {"ok": True, "session_id": req.session_id, "adapter": _adapter, "stage": _stage}
 
 
 @app.post("/api/story/{story_key}/sessions/spawn")

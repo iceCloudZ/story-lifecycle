@@ -70,6 +70,23 @@ def _render_release_prompt(story_key: str, bundle) -> str:
         "请直接输出一份结构化的《上线前检查清单》（Markdown 格式），并给出明确的通过/阻塞结论。"
     )
 
+    # 会话恢复闭环(半自动):让 agent 把自己的 session id 回写给后端,这样下次能用
+    # claude --resume <id> / kimi -S <id> 续上(省 token,不重读上下文)。
+    lines.append("")
+    lines.append("## 会话回写(便于下次续接)")
+    lines.append(
+        "任务开始前/完成后,请用 Bash 执行以下命令把你的会话 id 回写后端(替换 `<你的会话id>` —— "
+        "claude 从 `~/.claude/projects/` 最新 jsonl 文件名取,kimi 从启动 banner 的 "
+        "`Session: session_xxx` 取):"
+    )
+    lines.append("")
+    lines.append("```bash")
+    lines.append("story session --writeback <你的会话id>")
+    lines.append("```")
+    lines.append(
+        "回写后,你可以在 Story 详情页的「半自动工具」里复制 resume 命令,下次直接续接本会话。"
+    )
+
     if bundle.story_projects:
         lines.append("")
         lines.append("## 绑定项目与分支")

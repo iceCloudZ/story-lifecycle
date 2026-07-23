@@ -24,6 +24,17 @@ export default function SemiAutoSection({ storyKey }: { storyKey: string }) {
     },
   })
 
+  // 读已回填的 session id(用户终端里的 agent 调 story session --writeback 回写后才有)。
+  // 没回填时 session_id=null,resume 按钮禁用(提示用户先跑回写)。
+  const { data: sessionRow } = useQuery<{ session_id: string | null; adapter: string; stage: string }>({
+    queryKey: ['session', storyKey],
+    queryFn: async () => {
+      const r = await fetch(`/api/story/${storyKey}/session`)
+      if (!r.ok) throw new Error('load session failed')
+      return r.json()
+    },
+  })
+
   function flash(target: string) {
     setCopiedTarget(target)
     setTimeout(() => setCopiedTarget(''), 2000)
@@ -51,6 +62,21 @@ export default function SemiAutoSection({ storyKey }: { storyKey: string }) {
     const body = await r.json()
     await navigator.clipboard.writeText(body.content || '')
     flash('post-release')
+  }
+
+  // 复制 resume 文案:claude --resume <id> / kimi -S <id>。前提是 agent 已回写 session id。
+  async function copyResumeCmd() {
+    const sid = sessionRow?.session_id
+    if (!sid) return
+    const adapter = sessionRow?.adapter || 'claude'
+    // claude: --resume <id>;kimi: -S <id>。在 story 工作区里跑(cwd 对齐 transcript)。
+    const cmd = adapter === 'kimi' ? `kimi -S ${sid}` : `claude --resume ${sid}`
+    const hint =
+      `# 续接 ${storyKey} 的 ${sessionRow?.stage || ''} 会话(${adapter})\n` +
+      `# 请在 story 工作区目录里执行(cwd 对齐,claude 的 --resume 查找是 cwd 级):\n` +
+      cmd
+    await navigator.clipboard.writeText(hint)
+    flash('resume')
   }
 
   async function copyText(value: string, target: string) {
@@ -85,6 +111,22 @@ export default function SemiAutoSection({ storyKey }: { storyKey: string }) {
         </button>
         <button className="btn" onClick={copyPostReleasePrompt}>
           {copiedTarget === 'post-release' ? '已复制验证提示词' : '已经上线 · 自动验证'}
+        </button>
+        <button
+          className="btn"
+          disabled={!sessionRow?.session_id}
+          onClick={copyResumeCmd}
+          title={
+            sessionRow?.session_id
+              ? `复制 ${sessionRow.adapter} resume 命令(续接 ${sessionRow.stage} 会话)`
+              : '尚未回写 session id —— 先让 agent 跑一次并执行 story session --writeback'
+          }
+        >
+          {copiedTarget === 'resume'
+            ? '已复制 resume 命令'
+            : sessionRow?.session_id
+              ? `复制 resume 命令（${sessionRow.adapter}）`
+              : '复制 resume 命令（未回写）'}
         </button>
         <button className="btn" disabled={!prdPath} onClick={() => copyText(prdPath, 'prd')}>
           {copiedTarget === 'prd' ? '已复制 PRD 路径' : '复制 PRD 路径'}

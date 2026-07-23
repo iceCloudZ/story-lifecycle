@@ -434,6 +434,10 @@ from .consult_cmd import consult_cmd  # noqa: E402
 
 cli.add_command(consult_cmd)
 
+from .session_cmd import session_cmd  # noqa: E402
+
+cli.add_command(session_cmd)
+
 from .project import project  # noqa: E402
 
 cli.add_command(project)
