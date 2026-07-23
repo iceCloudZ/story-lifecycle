@@ -574,6 +574,70 @@ class TestStoryListWithFilters:
         assert data["tapdStatus"] == "progressing"
         assert data["sourceType"] == "tapd"
 
+    def test_done_story_not_hidden_by_tapd_closed(self, api_client, isolated_story_home):
+        """结项 story(tapd closed)在默认列表里不被 show_completed 过滤掉。
+
+        回归 CQRS 重构遗留矛盾:旧逻辑用 tapd_status ∈ COMPLETED_STATES 表达「完成」,
+        而「结项」已改由 lifecycle_state='结项' 表达。TAPD closed 是结项的正常来源,
+        旧的无差别过滤会把合法结项 story 删光(已结项 tab 只显示 ~21 个的根因)。
+        """
+        story, _ = db.upsert_story_from_source(
+            source_type="tapd",
+            source_id="closed-1",
+            title="已关闭结项",
+            tapd_status="closed",
+        )
+        db.update_story(
+            story["story_key"],
+            lifecycle_state="结项",
+            status="completed",
+            intake_state="ready",
+        )
+
+        # 默认(show_completed=False):结项 story 仍应出现(不再被 tapd closed 过滤)
+        resp = api_client.get("/api/story")
+        assert resp.status_code == 200
+        keys = [s["storyKey"] for s in resp.json()]
+        assert story["story_key"] in keys
+
+    def test_active_tapd_closed_still_hidden(self, api_client, isolated_story_home):
+        """非结项 story 的 tapd closed 仍被隐藏(COMPLETED_STATES 过滤收窄到非结项池)。
+
+        确认过滤没有被整体删除 —— 只对 lifecycle_state='结项' 豁免。
+        """
+        story, _ = db.upsert_story_from_source(
+            source_type="tapd",
+            source_id="closed-active-1",
+            title="TAPD 关闭但未结项",
+            tapd_status="closed",
+        )
+        db.update_story(
+            story["story_key"],
+            lifecycle_state="开发",
+            status="active",
+            intake_state="ready",
+        )
+
+        resp = api_client.get("/api/story")
+        assert resp.status_code == 200
+        keys = [s["storyKey"] for s in resp.json()]
+        assert story["story_key"] not in keys
+
+    def test_summary_includes_created_at(self, api_client, isolated_story_home):
+        """列表序列化带 createdAt(已结项 tab 按创建时间排序需要)。"""
+        story, _ = db.upsert_story_from_source(
+            source_type="tapd",
+            source_id="created-1",
+            title="建时间",
+            tapd_status="open",
+        )
+        db.update_story(story["story_key"], intake_state="ready", status="active")
+
+        resp = api_client.get("/api/story")
+        assert resp.status_code == 200
+        item = next(s for s in resp.json() if s["storyKey"] == story["story_key"])
+        assert item.get("createdAt"), "createdAt should be present and non-empty"
+
 
 class TestReleaseTrainAPI:
     """班车看板:release_train 字段 + PUT /release-train 端点。"""

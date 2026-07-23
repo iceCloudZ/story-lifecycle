@@ -200,6 +200,7 @@ def _serialize_story_summary(s: dict) -> dict:
         "workspace": s.get("workspace"),
         "profile": s["profile"],
         "executionCount": s["execution_count"],
+        "createdAt": s.get("created_at"),
         "updatedAt": s["updated_at"],
         "deadline": s.get("deadline"),
         "priority": s.get("priority"),
@@ -917,22 +918,25 @@ def get_story_llm_calls(story_key: str):
 
 
 @app.get("/api/story/{story_key}/diff")
-def get_story_diff(story_key: str):
+def get_story_diff(story_key: str, project_id: int | None = None):
     """Return git diff for the story's workspace branch vs its base branch.
 
-    Query params (future):
-        base: override base branch/ref.
+    Query params:
+        project_id: scope the diff to a single bound project — prefers its
+            worktree_path (the agent's checkout), falling back to repo_path.
+            Omit to diff the story workspace / first viable project (legacy).
 
     Returns:
         current_branch, base_branch, diff_range, files[], total_additions,
-        total_deletions, total_changes, diff (raw unified diff text).
+        total_deletions, total_changes, diff (raw unified diff text),
+        project_id, repo_path, worktree_path.
     """
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")
 
     try:
-        result = get_story_workspace_diff(story_key)
+        result = get_story_workspace_diff(story_key, project_id=project_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:

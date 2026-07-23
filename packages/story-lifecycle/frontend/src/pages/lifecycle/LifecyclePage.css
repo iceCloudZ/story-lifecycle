@@ -32,3 +32,36 @@
   align-items: center;
   gap: 8px;
 }
+
+/* 类型筛选条(需求/缺陷/子任务) — .filter-select 样式与 BugsPage 一致,
+   统一定义在此,生命周期页不用再各引一份 BugsPage.css。 */
+.lifecycle-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: var(--space-4);
+  align-items: center;
+}
+
+.filter-select {
+  color: var(--color-text-strong);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font-size: var(--text-sm);
+  min-width: 140px;
+}
+
+.filter-select:focus {
+  border-color: var(--color-primary);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+/* 页脚操作区(已结项「显示更多」按钮) */
+.lifecycle-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-5);
+}

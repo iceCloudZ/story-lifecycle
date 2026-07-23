@@ -229,6 +229,12 @@ export interface DiffResponse {
   mr_url: string
   gitlab_url: string
   project_path?: string
+  /** diff 所针对的 project_id(None = story workspace / 旧路径,未按单一项目过滤)。 */
+  project_id?: number | null
+  /** 实际 diff 的仓库路径(worktree_path 优先,否则 repo_path)。 */
+  repo_path?: string
+  /** 若用了 worktree 则为其路径;null = fallback 到主仓 repo_path。 */
+  worktree_path?: string | null
   files: DiffFile[]
   total_additions: number
   total_deletions: number
@@ -273,6 +279,25 @@ export interface ProfileOption {
   execution_mode: string
 }
 
+/** story_project 行 — 一个 story 与一个 project 的绑定(分支 + worktree)。 */
+export interface StoryProject {
+  id: number
+  story_key: string
+  project_id: number
+  branch?: string | null
+  base_branch?: string | null
+  worktree_path?: string | null
+  /** unprepared | available | missing | stale | conflict | unknown */
+  worktree_state: string
+  workspace_type?: string | null
+}
+
+/** GET /api/story/{key}/context 的精简视图(CodeChangesTab 只用 projects + story_projects)。 */
+export interface StoryContext {
+  projects: Project[]
+  story_projects: StoryProject[]
+}
+
 export interface Pattern {
   id: string | number
   pattern: string
@@ -308,6 +333,7 @@ export const storyApi = {
   workspaces: () => fetchJSON<{ workspaces: WorkspaceOption[] }>('/api/workspaces'),
   profiles: () => fetchJSON<{ profiles: ProfileOption[] }>('/api/profiles'),
   projects: () => fetchJSON<{ projects: Project[] }>('/api/projects'),
+  context: (key: string) => fetchJSON<StoryContext>(`/api/story/${key}/context`),
   previewIntake: (data: { source_type?: string; source_id: string; files?: File[] }) => {
     const form = new FormData()
     form.append('source_type', data.source_type || 'tapd')
@@ -397,7 +423,10 @@ export const statsApi = {
 
 // Diff API
 export const diffApi = {
-  get: (key: string) => fetchJSON<DiffResponse>(`/api/story/${key}/diff`),
+  get: (key: string, projectId?: number) =>
+    fetchJSON<DiffResponse>(
+      `/api/story/${key}/diff${projectId != null ? `?project_id=${projectId}` : ''}`,
+    ),
 }
 
 // Multi-session PTY API

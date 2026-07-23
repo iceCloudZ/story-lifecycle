@@ -90,35 +90,99 @@ def _local_git_diff(repo: Path, base_branch: str, current: str) -> dict:
     }
 
 
-def get_story_workspace_diff(story_key: str) -> dict:
-    """Return git diff between a story's workspace branch and its base branch.
+def _pick_repo_and_branches(
+    story_key: str, project_id: int | None
+) -> tuple[Path, str, str, int | None, str | None]:
+    """Pick the repo path + branches to diff for a story.
 
-    Prefers GitLab API when GITLAB_TOKEN is configured and the story's project
-    remote_url points to GitLab. Falls back to local ``git diff`` otherwise.
+    Returns ``(repo, source_branch, base_branch, resolved_project_id, worktree_path)``.
+
+    - ``project_id`` given: scope to that specific story_project binding. Prefer its
+      ``worktree_path`` (where the agent actually edits code); if the worktree isn't
+      prepared (state=unprepared or path missing on disk), fall back to the project's
+      main ``repo_path`` and leave ``worktree_path=None`` so the caller can flag the
+      fallback. The story's own ``workspace`` dir is irrelevant here.
+    - ``project_id`` None: legacy behaviour — use ``story.workspace`` if it's a git
+      repo, else the first bound project whose ``repo_path`` is a git repo. Branches
+      come from the first binding that defines them.
     """
-
     story = get_story(story_key)
     if not story:
         raise ValueError(f"story not found: {story_key}")
 
+    bindings = get_story_projects(story_key)
+    resolved_project_id: int | None = None
+    worktree_path: str | None = None
+
+    if project_id is not None:
+        # Scope to the requested binding.
+        sp = next((b for b in bindings if b.get("project_id") == project_id), None)
+        proj = get_project(project_id) if sp else None
+        if not (sp and proj):
+            raise ValueError(f"story has no binding for project_id={project_id}")
+
+        resolved_project_id = project_id
+        source_branch = sp.get("branch", "") or ""
+        base_branch = sp.get("base_branch", "") or ""
+
+        # Prefer the worktree (agent's actual checkout); fall back to main repo.
+        wt = sp.get("worktree_path", "") or ""
+        if wt and Path(wt).exists() and (Path(wt) / ".git").exists():
+            repo = Path(wt)
+            worktree_path = wt
+        else:
+            repo = Path(proj.get("repo_path", ""))
+        return repo, source_branch, base_branch, resolved_project_id, worktree_path
+
+    # Legacy: no project_id — workspace existence matters here (it's the diff target).
     workspace = story.get("workspace", "")
     if not workspace or not Path(workspace).exists():
         raise ValueError(f"invalid workspace: {workspace}")
 
     repo = Path(workspace)
-    # If the workspace itself is not a git repo, try the first bound project path.
     if not (repo / ".git").exists():
-        for sp in get_story_projects(story_key):
+        for sp in bindings:
             proj = get_project(sp.get("project_id"))
             if not proj:
                 continue
             candidate = Path(proj.get("repo_path", ""))
             if candidate.exists() and (candidate / ".git").exists():
                 repo = candidate
+                resolved_project_id = sp.get("project_id")
                 break
 
     if not (repo / ".git").exists():
         raise ValueError(f"workspace is not a git repository: {workspace}")
+
+    # Branches: first binding that defines them (preserves legacy precedence).
+    source_branch = ""
+    base_branch = ""
+    for sp in bindings:
+        if sp.get("branch"):
+            source_branch = sp["branch"]
+        if sp.get("base_branch"):
+            base_branch = sp["base_branch"]
+            break
+
+    return repo, source_branch, base_branch, resolved_project_id, worktree_path
+
+
+def get_story_workspace_diff(story_key: str, project_id: int | None = None) -> dict:
+    """Return git diff between a story's workspace branch and its base branch.
+
+    Prefers GitLab API when GITLAB_TOKEN is configured and the story's project
+    remote_url points to GitLab. Falls back to local ``git diff`` otherwise.
+
+    ``project_id``: when set, diff only that project's binding — preferring its
+    ``worktree_path`` (the agent's checkout) over the main ``repo_path``. When
+    None, diffs the story workspace / first viable project (legacy behaviour).
+    """
+    repo, source_branch, base_branch, resolved_project_id, worktree_path = (
+        _pick_repo_and_branches(story_key, project_id)
+    )
+
+    if not (repo / ".git").exists():
+        raise ValueError(f"workspace is not a git repository: {repo}")
 
     def _git(args: list[str], check: bool = True) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -135,16 +199,6 @@ def get_story_workspace_diff(story_key: str) -> dict:
         current = _git(["rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
     except subprocess.CalledProcessError:
         current = ""
-
-    # Base branch: prefer story_project binding, then repo default, then main/master.
-    base_branch = ""
-    source_branch = ""
-    for sp in get_story_projects(story_key):
-        if sp.get("branch"):
-            source_branch = sp["branch"]
-        if sp.get("base_branch"):
-            base_branch = sp["base_branch"]
-            break
 
     if not base_branch:
         try:
@@ -171,6 +225,9 @@ def get_story_workspace_diff(story_key: str) -> dict:
         story_key, repo, source_branch or current, base_branch
     )
     if gitlab_result:
+        gitlab_result["project_id"] = resolved_project_id
+        gitlab_result["repo_path"] = str(repo)
+        gitlab_result["worktree_path"] = worktree_path
         return gitlab_result
 
     # Fallback to local git diff.
@@ -182,6 +239,9 @@ def get_story_workspace_diff(story_key: str) -> dict:
         "mr_iid": None,
         "mr_url": "",
         "gitlab_url": "",
+        "project_id": resolved_project_id,
+        "repo_path": str(repo),
+        "worktree_path": worktree_path,
         **local,
     }
 

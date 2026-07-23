@@ -624,14 +624,18 @@ def list_candidate_stories() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def list_completed_stories(limit: int = 20) -> list[dict]:
+def list_completed_stories(limit: int | None = None) -> list[dict]:
     # TABS-LIFECYCLE-STATE: 改 lifecycle_state 驱动。结项 = lifecycle_state='结项'
     # (原按 status IN ('completed','failed','aborted','archived') 过滤)。
+    # limit 默认 None=全量(前端 DonePage 做分页,后端不再截断;旧的 limit=20/100 会
+    # 把结项 story 砍到看不到 — 已结项 tab 只显示 ~21 个的根因之一)。
+    sql = "SELECT * FROM story WHERE lifecycle_state = '结项' ORDER BY updated_at DESC"
+    params: tuple = ()
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = (limit,)
     with _db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM story WHERE lifecycle_state = '结项' ORDER BY updated_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -656,21 +660,42 @@ def list_visible_stories(
     show_all: include failed/aborted/archived stories (completed shows by default).
     status: filter by engine status (active/paused/completed/failed).
     item_type: filter by tapd_type (story/bug/subtask).
-    show_completed: keep resolved/rejected/closed TAPD stories (hidden by default).
+    show_completed: keep resolved/rejected/closed TAPD stories in the active/candidate
+        pool (hidden by default). 结项 story (lifecycle_state='结项') 不受此过滤 —
+        tapd closed 是结项的正常来源,不再被隐藏。
     overdue: only stories past their deadline.
     show_test: keep is_test=1 stories (hidden by default to keep worklist clean).
     """
     stories = list_active_stories() + list_candidate_stories()
-    # TABS-LIFECYCLE-STATE: 结项 story 全部显示(原按 status 分两档的逻辑已过时 —
-    # 4 值合并 + lifecycle 驱动后,结项 = lifecycle_state='结项',不再按 status 区分)。
-    stories = stories + list_completed_stories(limit=100)
+    # TABS-LIFECYCLE-STATE: 结项 story 全量拉(原 limit=100 会截断,220 条只回 100 条)。
+    stories = stories + list_completed_stories()
+    # 三档(active/candidate/completed)按不同维度过滤,会重叠 — 例如一条 intake=candidate
+    # 且 lifecycle=结项 的 story 会同时进 candidate 档和 completed 档。去重保首次出现顺序
+    # (active > candidate > completed),避免列表里出现重复卡片。
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for s in stories:
+        k = s.get("story_key", "")
+        if k and k not in seen:
+            seen.add(k)
+            deduped.append(s)
+    stories = deduped
 
     if status:
         stories = [s for s in stories if s["status"] == status]
     if item_type:
         stories = [s for s in stories if s.get("tapd_type") == item_type]
     if not show_completed:
-        stories = [s for s in stories if s.get("tapd_status") not in COMPLETED_STATES]
+        # COMPLETED_STATES(tapd closed/resolved/rejected)过滤只作用于活跃/候选池 —
+        # 隐藏「TAPD 已关闭但还没结项」的噪音。结项 story 不受此过滤:tapd closed 是
+        # 结项的正常来源(CQRS 后结项判据已是 lifecycle_state='结项'),原无差别过滤会
+        # 把合法结项 story 删掉(已结项 tab 只显示 ~21 个的根因之二)。
+        stories = [
+            s
+            for s in stories
+            if s.get("lifecycle_state") == "结项"
+            or s.get("tapd_status") not in COMPLETED_STATES
+        ]
     if overdue:
         from datetime import datetime, timezone
 

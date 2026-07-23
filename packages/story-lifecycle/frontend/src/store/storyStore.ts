@@ -7,6 +7,7 @@ export interface StorySummary {
   status: string
   profile: string
   executionCount: number
+  createdAt?: string
   updatedAt: string
   intakeState?: string | null
   sourceType?: string

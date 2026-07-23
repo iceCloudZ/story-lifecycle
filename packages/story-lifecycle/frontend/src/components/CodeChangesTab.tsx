@@ -2,20 +2,63 @@ import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Diff, Hunk, parseDiff } from 'react-diff-view'
 import 'react-diff-view/style/index.css'
-import { diffApi } from '../api/client'
-import type { DiffFile } from '../api/client'
+import { diffApi, storyApi } from '../api/client'
+import type { DiffFile, StoryProject, Project } from '../api/client'
 import './CodeChangesTab.css'
 
 interface Props {
   storyKey: string
 }
 
+/** worktree_state → 显示文案 + 颜色类。 */
+function worktreeBadge(state: string): { label: string; cls: string } {
+  switch (state) {
+    case 'available':
+      return { label: 'worktree', cls: 'wt-available' }
+    case 'unprepared':
+      return { label: '未就绪', cls: 'wt-unprepared' }
+    case 'missing':
+      return { label: '丢失', cls: 'wt-missing' }
+    case 'stale':
+      return { label: '过期', cls: 'wt-missing' }
+    case 'conflict':
+      return { label: '冲突', cls: 'wt-missing' }
+    default:
+      return { label: state || '未知', cls: 'wt-unprepared' }
+  }
+}
+
 export default function CodeChangesTab({ storyKey }: Props) {
   const [expandedFile, setExpandedFile] = useState<string | null>(null)
 
+  // 拉项目绑定(切换器 + diff 定位用)。context 端点已存在,这里只用 story_projects +
+  // projects 两档。
+  const { data: ctx } = useQuery({
+    queryKey: ['context', storyKey],
+    queryFn: () => storyApi.context(storyKey),
+    enabled: !!storyKey,
+  })
+
+  const projectsById = useMemo(() => {
+    const m = new Map<number, Project>()
+    for (const p of ctx?.projects ?? []) m.set(Number(p.id), p)
+    return m
+  }, [ctx?.projects])
+
+  const bindings: StoryProject[] = ctx?.story_projects ?? []
+  const hasMultiple = bindings.length >= 2
+
+  // 选中项目(默认首个绑定)。单项目/无绑定时为 undefined,走旧 storyKey-only diff。
+  const [selectedProjectId, setSelectedProjectId] = useState<number | undefined>(
+    undefined,
+  )
+  const effectiveProjectId = hasMultiple
+    ? (selectedProjectId ?? bindings[0]?.project_id)
+    : undefined
+
   const { data: diff, isLoading, error } = useQuery({
-    queryKey: ['diff', storyKey],
-    queryFn: () => diffApi.get(storyKey),
+    queryKey: ['diff', storyKey, effectiveProjectId],
+    queryFn: () => diffApi.get(storyKey, effectiveProjectId),
     enabled: !!storyKey,
   })
 
@@ -51,9 +94,34 @@ export default function CodeChangesTab({ storyKey }: Props) {
   if (!diff) return null
 
   const empty = diff.is_empty || diff.files.length === 0
+  const fellBackToRepo = !diff.worktree_path && !!diff.repo_path
 
   return (
     <div className="tab-content code-changes-tab">
+      {hasMultiple && (
+        <div className="cct-project-switcher">
+          {bindings.map((b) => {
+            const pid = b.project_id
+            const proj = projectsById.get(pid)
+            const active = pid === effectiveProjectId
+            const badge = worktreeBadge(b.worktree_state)
+            return (
+              <button
+                key={b.id}
+                type="button"
+                className={`cct-project-chip${active ? ' active' : ''}`}
+                onClick={() => setSelectedProjectId(pid)}
+                title={b.worktree_path || `repo: ${proj?.repo_path ?? ''}`}
+              >
+                <span className="cct-project-name">{proj?.name ?? `#${pid}`}</span>
+                {b.branch && <span className="cct-project-branch">{b.branch}</span>}
+                <span className={`cct-wt-badge ${badge.cls}`}>{badge.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       <div className="cct-header">
         <div className="cct-title">
           {diff.source === 'gitlab' && diff.mr_url ? (
@@ -80,6 +148,20 @@ export default function CodeChangesTab({ storyKey }: Props) {
           )}
         </div>
       </div>
+
+      {diff.worktree_path ? (
+        <div className="cct-worktree-info">
+          <span className="cct-worktree-label">worktree:</span>
+          <code className="cct-worktree-path">{diff.worktree_path}</code>
+        </div>
+      ) : (
+        fellBackToRepo && (
+          <div className="cct-worktree-info warn">
+            <span className="cct-worktree-label">⚠ worktree 未就绪,显示主仓 diff:</span>
+            <code className="cct-worktree-path">{diff.repo_path}</code>
+          </div>
+        )
+      )}
 
       <div className="cct-stats">
         <div className="cct-stat">
