@@ -44,7 +44,9 @@ def session_cmd(session_id: str):
 
         db.upsert_session(story_key, stage, adapter, session_id=session_id)
         db.log_event(
-            story_key, stage, "session_writeback",
+            story_key,
+            stage,
+            "session_writeback",
             {"adapter": adapter, "session_id": session_id},
         )
     except Exception as exc:

@@ -833,11 +833,22 @@ def _capture_kimi_session(story_key: str, stage: str, adapter: str, pty) -> None
                 pass
         if captured:
             _sd.set_session_id(story_key, stage, adapter, captured)
-            log.info("[%s] captured kimi session sid=%s stage=%s", story_key, captured, stage)
+            log.info(
+                "[%s] captured kimi session sid=%s stage=%s", story_key, captured, stage
+            )
         else:
-            log.warning("[%s] kimi session id not captured in banner; resume disabled for stage=%s", story_key, stage)
+            log.warning(
+                "[%s] kimi session id not captured in banner; resume disabled for stage=%s",
+                story_key,
+                stage,
+            )
     except Exception as exc:
-        log.warning("[%s] kimi session capture failed (%s); resume disabled for stage=%s", story_key, exc, stage)
+        log.warning(
+            "[%s] kimi session capture failed (%s); resume disabled for stage=%s",
+            story_key,
+            exc,
+            stage,
+        )
 
 
 @with_story_key()
@@ -1134,37 +1145,51 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     # spawn 后从 banner 捕获回填。查 DB 决定 NEW vs RESUME。
                     import uuid as _su
                     from ...infra.db import models as _sd
+
                     _prior = _sd.get_session(story_key, stage, adapter_name)
                     _is_new_kimi = False  # 仅新 kimi 会话需从 banner 捕获 sid
                     if _prior and _prior.get("session_id"):
                         # 该阶段已建过会话 → resume(续上 transcript,不重读 prompt_file)。
                         _resume_seed = "继续上次的任务,完成后按完成协议写入 done 文件。"
                         _session_spec = adapter.start_session(
-                            model=model, prompt=_resume_seed,
-                            session_id=_prior["session_id"], resume=True,
+                            model=model,
+                            prompt=_resume_seed,
+                            session_id=_prior["session_id"],
+                            resume=True,
                         )
                         log.info(
                             "[%s] RESUME session stage=%s adapter=%s sid=%s",
-                            story_key, stage, adapter_name, _prior["session_id"],
+                            story_key,
+                            stage,
+                            adapter_name,
+                            _prior["session_id"],
                         )
                     else:
                         # 新会话。claude 给确定性 uuid5(主动指定,kimi 忽略由 CLI 分配)。
                         _new_sid = str(
-                            _su.uuid5(_su.NAMESPACE_DNS, f"{story_key}:{stage}:{adapter_name}")
+                            _su.uuid5(
+                                _su.NAMESPACE_DNS, f"{story_key}:{stage}:{adapter_name}"
+                            )
                         )
                         _session_spec = adapter.start_session(
-                            model=model, prompt=_seed,
-                            session_id=_new_sid, resume=False,
+                            model=model,
+                            prompt=_seed,
+                            session_id=_new_sid,
+                            resume=False,
                         )
                         # 占位入库:claude 的 sid 已知;kimi 的 sid=None,spawn 后捕获回填。
                         _sd.upsert_session(
-                            story_key, stage, adapter_name,
+                            story_key,
+                            stage,
+                            adapter_name,
                             session_id=_new_sid if adapter_name == "claude" else None,
                         )
                         _is_new_kimi = adapter_name == "kimi"
                         log.info(
                             "[%s] NEW session stage=%s adapter=%s sid=%s",
-                            story_key, stage, adapter_name,
+                            story_key,
+                            stage,
+                            adapter_name,
                             _new_sid if adapter_name == "claude" else "(kimi: 待捕获)",
                         )
                     launch_cmd = _session_spec.command
@@ -1363,7 +1388,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     # 输出捕获 id 回填 DB(下次该阶段 resume 用)。best-effort:失败/超时则
                     # 不回填,下次当新会话(不崩,只是不省 token)。claude 无需捕获(uuid5 主动给)。
                     if _is_new_kimi:
-                        _capture_kimi_session(story_key, stage, adapter_name, _agent_pty)
+                        _capture_kimi_session(
+                            story_key, stage, adapter_name, _agent_pty
+                        )
                     # §4.1 层1 supervisor(interactive PTY):daemon 线程跑 supervise_pty_session。
                     # run_story 在 ThreadPoolExecutor 线程里(无 asyncio loop)→ 独立 daemon 线程 + new_event_loop。
                     # pty 死时 supervise_pty_session 退出(轮询 pty.alive)。
@@ -1636,9 +1663,8 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         if story_states and lifecycle_state in story_states:
                             _state_def = story_states[lifecycle_state] or {}
                             _state_stages = list(_state_def.get("stages") or [])
-                            _stages_done = (
-                                not _state_stages
-                                or all(_ss in completed_stages for _ss in _state_stages)
+                            _stages_done = not _state_stages or all(
+                                _ss in completed_stages for _ss in _state_stages
                             )
                             if _stages_done:
                                 _next_state = _state_def.get("next")
@@ -1659,8 +1685,10 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                         _missing = []
                                 else:
                                     _missing = []
-                                if _next_state and _gate_ok and (
-                                    _ctype in ("none",) or _ctype == "config"
+                                if (
+                                    _next_state
+                                    and _gate_ok
+                                    and (_ctype in ("none",) or _ctype == "config")
                                 ):
                                     # 成果物满足 + 无条件/config → 推进到下一 Story 状态
                                     lifecycle_state = _next_state
@@ -1859,7 +1887,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         repair_action.get("adapter", "-"),
                     )
                 elif gate_result["decision"] == "fail":
-                    sm_mark_failed(story_key, gate_result.get("reason", "verify gate fail"))
+                    sm_mark_failed(
+                        story_key, gate_result.get("reason", "verify gate fail")
+                    )
                     return
 
         idx += 1

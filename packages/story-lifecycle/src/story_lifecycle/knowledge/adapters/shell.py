@@ -91,8 +91,11 @@ class ShellAdapter(BaseAdapter):
         prompt 不进 command(走 PTY paste,见 start_session 的 pty_prompt),故这里忽略 prompt。
         """
         cmd = super().interactive_launch_cmd(
-            model, prompt="", session_id=session_id,
-            session_name=session_name, resume=resume,
+            model,
+            prompt="",
+            session_id=session_id,
+            session_name=session_name,
+            resume=resume,
         )
         # 加 model flag(若配置)和 bypass flags(若配置)。
         model_flag = self._config.get("model_flag")
@@ -119,8 +122,11 @@ class ShellAdapter(BaseAdapter):
         interactive_launch_cmd),这里走 interactive_launch_cmd 才能把 -S 标志带上。
         """
         command = self.interactive_launch_cmd(
-            model, prompt="", session_id=session_id,
-            session_name=session_name, resume=resume,
+            model,
+            prompt="",
+            session_id=session_id,
+            session_name=session_name,
+            resume=resume,
         )
         return SessionSpec(
             command=command,

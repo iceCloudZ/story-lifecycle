@@ -133,16 +133,18 @@ def check_deliverables(
     for d in DELIVERABLE_DEFS:
         key = d["key"]
         if key in skipped:
-            result.append({
-                "key": key,
-                "label": d["label"],
-                "icon": d["icon"],
-                "exists": False,
-                "confirmed": False,
-                "needs_confirm": d["needs_confirm"],
-                "satisfied": True,  # skipped = 满足
-                "skipped": True,
-            })
+            result.append(
+                {
+                    "key": key,
+                    "label": d["label"],
+                    "icon": d["icon"],
+                    "exists": False,
+                    "confirmed": False,
+                    "needs_confirm": d["needs_confirm"],
+                    "satisfied": True,  # skipped = 满足
+                    "skipped": True,
+                }
+            )
             continue
 
         exists = False
@@ -154,14 +156,19 @@ def check_deliverables(
             confirmed = bool(doc and doc.get("confirmed_by"))
         elif d.get("diff_check"):
             # 优先用 _completed_stages(纯 DB,快)
-            exists = any(s in completed_stages for s in ("build", "implement", "verify"))
+            exists = any(
+                s in completed_stages for s in ("build", "implement", "verify")
+            )
             # 回退:git diff(贵,只在展示路径用)
             if not exists and include_diff_check:
                 try:
                     from .workspace_diff import get_story_workspace_diff
 
                     result_diff = get_story_workspace_diff(story_key)
-                    exists = not result_diff.get("is_empty", True) or len(result_diff.get("files", [])) > 0
+                    exists = (
+                        not result_diff.get("is_empty", True)
+                        or len(result_diff.get("files", [])) > 0
+                    )
                 except Exception:
                     exists = False
             confirmed = key in confirmed_non_doc
@@ -173,16 +180,18 @@ def check_deliverables(
             confirmed = key in confirmed_non_doc
 
         satisfied = exists and (not d["needs_confirm"] or confirmed)
-        result.append({
-            "key": key,
-            "label": d["label"],
-            "icon": d["icon"],
-            "exists": exists,
-            "confirmed": confirmed,
-            "needs_confirm": d["needs_confirm"],
-            "satisfied": satisfied,
-            "skipped": False,
-        })
+        result.append(
+            {
+                "key": key,
+                "label": d["label"],
+                "icon": d["icon"],
+                "exists": exists,
+                "confirmed": confirmed,
+                "needs_confirm": d["needs_confirm"],
+                "satisfied": satisfied,
+                "skipped": False,
+            }
+        )
     return result
 
 
@@ -203,7 +212,9 @@ def gate_satisfied(
     if not required:
         return True, []  # 没有定义 gate 的转换直接放行
 
-    items = {d["key"]: d for d in check_deliverables(story_key, include_diff_check=False)}
+    items = {
+        d["key"]: d for d in check_deliverables(story_key, include_diff_check=False)
+    }
     label_map = {d["key"]: d["label"] for d in DELIVERABLE_DEFS}
     missing = [
         label_map.get(k, k)
@@ -229,7 +240,9 @@ def gate_for_current_state(story_key: str) -> dict | None:
     if not nxt:
         return None
     required_keys = LIFECYCLE_GATES.get((cur, nxt), [])
-    items = {d["key"]: d for d in check_deliverables(story_key, include_diff_check=True)}
+    items = {
+        d["key"]: d for d in check_deliverables(story_key, include_diff_check=True)
+    }
     label_map = {d["key"]: d["label"] for d in DELIVERABLE_DEFS}
     required = [
         {

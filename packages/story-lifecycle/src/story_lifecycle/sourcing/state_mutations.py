@@ -110,9 +110,7 @@ def decide_state_transition(
     return None
 
 
-def build_advance_from_gate(
-    story_key: str, gate: dict
-) -> StoryStateTransitionEvent:
+def build_advance_from_gate(story_key: str, gate: dict) -> StoryStateTransitionEvent:
     """从 _story_state_gate 构造确认推进事件(/lifecycle/advance 端点用)。
 
     gate 是 ctx 里的 _story_state_gate dict(from/to/label)。

@@ -100,8 +100,8 @@ def _render_release_prompt(story_key: str, bundle) -> str:
     lines.append("")
     lines.append("```bash")
     lines.append(
-        '# 例:回写 spec。<type>=prd/spec/plan...,<reason>=本次改动说明\n'
-        'curl -X PUT http://127.0.0.1:8180/api/story/<story_key>/docs/<type> \\\n'
+        "# 例:回写 spec。<type>=prd/spec/plan...,<reason>=本次改动说明\n"
+        "curl -X PUT http://127.0.0.1:8180/api/story/<story_key>/docs/<type> \\\n"
         '  -H "Content-Type: application/json" \\\n'
         '  -d \'{"content": "<新内容或从 .md 文件读>", "change_reason": "<reason>", "author": "agent"}\''
     )

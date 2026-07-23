@@ -360,6 +360,7 @@ class WritebackSessionRequest(BaseModel):
 
     stage/adapter 缺省取 story 当前值。session_id 必填(agent 从它自己的 CLI 环境拿到)。
     """
+
     session_id: str
     stage: str = ""
     adapter: str = ""
@@ -383,14 +384,16 @@ def api_list_sessions(story_key: str):
         sid = row.get("session_id") or ""
         # DB 的 session_id 是 uuid5/kimi-id;PTY 注册表的 key 是 pty-{id}-{n},两者不同。
         # 这里用 DB 的 stage/adapter/session_id(真实值);PTY 列表仅用于兜底补无 DB 记录的。
-        result.append({
-            "session_id": sid,
-            "adapter": row.get("adapter", ""),
-            "stage": row.get("stage", ""),
-            "model": "",
-            "status": row.get("status", "active"),
-            "started_at": row.get("created_at", ""),
-        })
+        result.append(
+            {
+                "session_id": sid,
+                "adapter": row.get("adapter", ""),
+                "stage": row.get("stage", ""),
+                "model": "",
+                "status": row.get("status", "active"),
+                "started_at": row.get("created_at", ""),
+            }
+        )
     # PTY 注册表里有但 DB 没有的(老数据/无 session 回写)兜底补上。
     db_sids = {r["session_id"] for r in result}
     for p in pty_sessions:
@@ -418,9 +421,10 @@ def api_get_session(story_key: str, stage: str = "", adapter: str = "") -> dict:
 
             _ctx = _json.loads(s.get("context_json") or "{}")
             acts = _ctx.get("_agent_actions") or []
-            _adapter = next(
-                (a.get("adapter") for a in acts if a.get("stage") == _stage), ""
-            ) or "claude"
+            _adapter = (
+                next((a.get("adapter") for a in acts if a.get("stage") == _stage), "")
+                or "claude"
+            )
         except (ValueError, TypeError):
             _adapter = "claude"
     row = db.get_session(story_key, _stage, _adapter)
@@ -449,10 +453,17 @@ def api_writeback_session(story_key: str, req: WritebackSessionRequest) -> dict:
     # upsert(若已有行则更新 session_id;COALESCE 在 models 层,这里直接 set)。
     db.upsert_session(story_key, _stage, _adapter, session_id=req.session_id)
     db.log_event(
-        story_key, _stage, "session_writeback",
+        story_key,
+        _stage,
+        "session_writeback",
         {"adapter": _adapter, "session_id": req.session_id},
     )
-    return {"ok": True, "session_id": req.session_id, "adapter": _adapter, "stage": _stage}
+    return {
+        "ok": True,
+        "session_id": req.session_id,
+        "adapter": _adapter,
+        "stage": _stage,
+    }
 
 
 @app.post("/api/story/{story_key}/sessions/spawn")
@@ -706,12 +717,11 @@ def _spawn_story_agent_pty(
         / f"session_{stage}.json"
     )
     _db_row = db.get_session(story_key, stage, _adapter_name) if _adapter_name else None
-    is_resume = bool(
-        (_db_row and _db_row.get("session_id")) or marker.exists()
-    )
+    is_resume = bool((_db_row and _db_row.get("session_id")) or marker.exists())
     # resume 时用 DB 里捕获的 id(kimi)或确定性 uuid5(claude);否则用新 uuid5。
-    _use_sid = (_db_row["session_id"] if _db_row and _db_row.get("session_id")
-                else session_uuid)
+    _use_sid = (
+        _db_row["session_id"] if _db_row and _db_row.get("session_id") else session_uuid
+    )
     seed = _build_stage_launch_prompt(story)
     spec = adapter.start_session(
         model,
@@ -738,7 +748,9 @@ def _spawn_story_agent_pty(
         if _adapter_name:
             try:
                 db.upsert_session(
-                    story_key, stage, _adapter_name,
+                    story_key,
+                    stage,
+                    _adapter_name,
                     session_id=session_uuid if _adapter_name == "claude" else None,
                 )
             except Exception:
@@ -3174,7 +3186,11 @@ def api_sync_doc_from_local(story_key: str, doc_type: str):
     db_body = doc.get("latest_content") or ""
     if _sha256(file_body) == _sha256(db_body):
         # 内容未变 —— 文件跟 DB 一致,无需新版本。
-        return {"synced": False, "version": doc.get("current_version"), "reason": "unchanged"}
+        return {
+            "synced": False,
+            "version": doc.get("current_version"),
+            "reason": "unchanged",
+        }
 
     new_v = db.upsert_story_doc(
         story_key,
@@ -3192,7 +3208,9 @@ def api_sync_doc_from_local(story_key: str, doc_type: str):
     except Exception as exc:
         log.warning("doc sync local-cache refresh failed: %s", exc)
     db.log_event(
-        story_key, doc_type, "doc_synced_from_local",
+        story_key,
+        doc_type,
+        "doc_synced_from_local",
         {"doc_type": doc_type, "version": new_v},
     )
     return {"synced": True, "version": new_v}
@@ -4145,6 +4163,7 @@ async def api_clarify_stream(story_key: str):
             if status not in ("awaiting-clarify", "active", "paused"):
                 idle += 1
                 from ...sourcing.execution_status import is_terminal
+
                 if idle > 2 or is_terminal(status):
                     yield f"data: {json.dumps({'type': 'done', 'status': status}, ensure_ascii=False)}\n\n"
                     return

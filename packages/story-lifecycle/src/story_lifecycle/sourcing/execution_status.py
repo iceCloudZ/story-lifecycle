@@ -16,10 +16,10 @@ from enum import Enum
 class ExecutionStatus(str, Enum):
     """引擎执行状态 — claude 进程在干嘛(与业务 lifecycle_state 正交)。"""
 
-    ACTIVE = "active"        # 在跑(含原 implementing 救援重试)
-    PAUSED = "paused"        # 暂停(含原 blocked/waiting_subtasks;子原因走 ctx._pause_reason)
+    ACTIVE = "active"  # 在跑(含原 implementing 救援重试)
+    PAUSED = "paused"  # 暂停(含原 blocked/waiting_subtasks;子原因走 ctx._pause_reason)
     COMPLETED = "completed"  # 引擎跑完所有阶段
-    FAILED = "failed"        # 失败终态(含原 aborted 手动终止)
+    FAILED = "failed"  # 失败终态(含原 aborted 手动终止)
 
 
 # 旧 status 值 → 新值。读老数据 / 老调用点时归一用。
@@ -44,16 +44,20 @@ def normalize_status(raw: str | None) -> str:
 
 
 # 终态集合(原 entry.py:_FINISHED_STATUSES / graph.py:408 consume_orphan_done 的并集)。
-TERMINAL_STATUSES: frozenset[str] = frozenset({
-    ExecutionStatus.COMPLETED.value,
-    ExecutionStatus.FAILED.value,
-})
+TERMINAL_STATUSES: frozenset[str] = frozenset(
+    {
+        ExecutionStatus.COMPLETED.value,
+        ExecutionStatus.FAILED.value,
+    }
+)
 
 # 活跃集合(引擎在跑或暂停,driver 关心)。
-ACTIVE_STATUSES: frozenset[str] = frozenset({
-    ExecutionStatus.ACTIVE.value,
-    ExecutionStatus.PAUSED.value,
-})
+ACTIVE_STATUSES: frozenset[str] = frozenset(
+    {
+        ExecutionStatus.ACTIVE.value,
+        ExecutionStatus.PAUSED.value,
+    }
+)
 
 
 def is_terminal(status: str | None) -> bool:

@@ -517,7 +517,9 @@ def init_db():
         # Migration: 人工确认字段(成果物 gate 用)。AI 不能自我确认,只有 user 点确认才写。
         for _col in ("confirmed_by", "confirmed_at"):
             try:
-                conn.execute(f"ALTER TABLE story_doc ADD COLUMN {_col} TEXT DEFAULT NULL")
+                conn.execute(
+                    f"ALTER TABLE story_doc ADD COLUMN {_col} TEXT DEFAULT NULL"
+                )
             except Exception:
                 pass  # column already exists
         conn.execute(
@@ -2555,7 +2557,9 @@ def get_story_doc(story_key: str, doc_type: str) -> dict | None:
     return dict(row) if row else None
 
 
-def confirm_story_doc(story_key: str, doc_type: str, confirmed_by: str = "user") -> bool:
+def confirm_story_doc(
+    story_key: str, doc_type: str, confirmed_by: str = "user"
+) -> bool:
     """Mark a doc as manually confirmed (人工确认)。只有 user 能调(AI 不能自我确认)。
 
     Returns True if a row was updated, False if doc doesn't exist.

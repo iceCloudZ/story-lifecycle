@@ -15,11 +15,11 @@ from enum import Enum
 class LifecycleState(str, Enum):
     """Story 业务状态 — 四个主 tab 的判据(互斥)。"""
 
-    PENDING = "待启动"   # start 后、确认规划前(DB DEFAULT)
-    DEV = "开发"          # /plan/confirm 后
-    TEST = "测试"         # /lifecycle/advance 后
-    ONLINE = "上线"       # 测试通过
-    CLOSED = "结项"       # 上线验证完成 / 归档 / TAPD closed 映射
+    PENDING = "待启动"  # start 后、确认规划前(DB DEFAULT)
+    DEV = "开发"  # /plan/confirm 后
+    TEST = "测试"  # /lifecycle/advance 后
+    ONLINE = "上线"  # 测试通过
+    CLOSED = "结项"  # 上线验证完成 / 归档 / TAPD closed 映射
 
 
 # tab 判据用的状态集合(对应四个主 tab 的过滤条件)。
@@ -33,12 +33,14 @@ TEST_ONLINE_VALUES = frozenset({LifecycleState.TEST.value, LifecycleState.ONLINE
 CLOSED_VALUE = LifecycleState.CLOSED.value
 
 # 所有非结项状态(未完结 = 还在流程里)。list_active_stories 用。
-NON_CLOSED_VALUES = frozenset({
-    LifecycleState.PENDING.value,
-    LifecycleState.DEV.value,
-    LifecycleState.TEST.value,
-    LifecycleState.ONLINE.value,
-})
+NON_CLOSED_VALUES = frozenset(
+    {
+        LifecycleState.PENDING.value,
+        LifecycleState.DEV.value,
+        LifecycleState.TEST.value,
+        LifecycleState.ONLINE.value,
+    }
+)
 
 
 def resolve_lifecycle_state(ctx_lifecycle: str | None, db_lifecycle: str | None) -> str:
