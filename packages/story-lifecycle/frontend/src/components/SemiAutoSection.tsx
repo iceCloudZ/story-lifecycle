@@ -64,18 +64,36 @@ export default function SemiAutoSection({ storyKey }: { storyKey: string }) {
     flash('post-release')
   }
 
-  // 复制 resume 文案:claude --resume <id> / kimi -S <id>。前提是 agent 已回写 session id。
+  // 复制 resume 文案。不同 CLI 指令不同:
+  //   claude: --resume <id>(或 -c 续当前目录最近会话)
+  //   kimi:   -S <id>        (或 --session <id>; -c 续当前目录最近会话)
+  // 已回写 id → 生成可直接执行的命令(按回写的 adapter 选 CLI)。
+  // 未回写 → 给带占位符的模板 + 两种 CLI 都列出来,让用户填 id 自己选。
   async function copyResumeCmd() {
     const sid = sessionRow?.session_id
-    if (!sid) return
-    const adapter = sessionRow?.adapter || 'claude'
-    // claude: --resume <id>;kimi: -S <id>。在 story 工作区里跑(cwd 对齐 transcript)。
-    const cmd = adapter === 'kimi' ? `kimi -S ${sid}` : `claude --resume ${sid}`
-    const hint =
-      `# 续接 ${storyKey} 的 ${sessionRow?.stage || ''} 会话(${adapter})\n` +
-      `# 请在 story 工作区目录里执行(cwd 对齐,claude 的 --resume 查找是 cwd 级):\n` +
-      cmd
-    await navigator.clipboard.writeText(hint)
+    const adapter = sessionRow?.adapter || ''
+    const ws = ctx?.story?.workspace || ''
+    const cwdHint = ws
+      ? `# 请先 cd 到 story 工作区(claude 的 --resume 按 cwd 查找 transcript):\ncd "${ws}"\n`
+      : '# 请在 story 工作区目录里执行(claude 的 --resume 按 cwd 查找):\n'
+    let text: string
+    if (sid) {
+      // 已回写:按回写的 adapter 生成确切命令。
+      const cmd = adapter === 'kimi' ? `kimi -S ${sid}` : `claude --resume ${sid}`
+      text =
+        cwdHint +
+        `# 续接 ${storyKey} 的 ${sessionRow?.stage || ''} 会话(${adapter})\n` +
+        cmd
+    } else {
+      // 未回写:给模板 + 两 CLI 都列,用户填 id 自己选。
+      text =
+        cwdHint +
+        `# 续接 ${storyKey} 会话 —— 把 <id> 换成你的会话 id:\n` +
+        `#   claude:  claude --resume <id>     (id 从 ~/.claude/projects/ 最新 jsonl 文件名取)\n` +
+        `#   kimi:    kimi -S <id>             (id 从启动 banner 的 Session: session_xxx 取)\n` +
+        `#   或不填 id:claude -c / kimi -c    (续当前目录最近一次会话)\n`
+    }
+    await navigator.clipboard.writeText(text)
     flash('resume')
   }
 
@@ -114,19 +132,18 @@ export default function SemiAutoSection({ storyKey }: { storyKey: string }) {
         </button>
         <button
           className="btn"
-          disabled={!sessionRow?.session_id}
           onClick={copyResumeCmd}
           title={
             sessionRow?.session_id
               ? `复制 ${sessionRow.adapter} resume 命令(续接 ${sessionRow.stage} 会话)`
-              : '尚未回写 session id —— 先让 agent 跑一次并执行 story session --writeback'
+              : '尚未回写 session id —— 复制带占位符的模板,自己填 id(id 从哪取见文案)'
           }
         >
           {copiedTarget === 'resume'
-            ? '已复制 resume 命令'
+            ? '已复制 resume 文案'
             : sessionRow?.session_id
               ? `复制 resume 命令（${sessionRow.adapter}）`
-              : '复制 resume 命令（未回写）'}
+              : '复制 resume 文案（未回写,填 id 用）'}
         </button>
         <button className="btn" disabled={!prdPath} onClick={() => copyText(prdPath, 'prd')}>
           {copiedTarget === 'prd' ? '已复制 PRD 路径' : '复制 PRD 路径'}
