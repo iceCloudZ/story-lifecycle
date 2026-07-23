@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { deliverablesApi, docApi } from '../api/client'
 import type { DeliverableItem, GateInfo } from '../api/client'
@@ -26,12 +27,44 @@ interface Props {
   onAdvance?: () => void
 }
 
-// 模块导航图标(概览/代码/文档 tab)。
-const MODULE_ICONS: Record<string, string> = {
-  overview: '📊',
-  code: '📦',
-  docs: '📄',
+// 模块导航图标(概览/代码/文档 tab)—— 统一 1.5px 描边 SVG,不用 emoji。
+const MODULE_ICONS: Record<string, ReactNode> = {
+  overview: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <rect x="1.75" y="1.75" width="5" height="5" rx="1.25" />
+      <rect x="9.25" y="1.75" width="5" height="5" rx="1.25" />
+      <rect x="1.75" y="9.25" width="5" height="5" rx="1.25" />
+      <rect x="9.25" y="9.25" width="5" height="5" rx="1.25" />
+    </svg>
+  ),
+  code: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5.75 4.75 2.5 8l3.25 3.25M10.25 4.75 13.5 8l-3.25 3.25" />
+    </svg>
+  ),
+  docs: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.25 1.75h4.5l3 3v9.5h-7.5z" />
+      <path d="M8.75 1.75v3h3" />
+    </svg>
+  ),
 }
+
+const ICON_EXTERNAL = (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M6.5 3.5h-3v9h9v-3" />
+    <path d="M9.5 3.5h3v3" />
+    <path d="M12.25 3.75 7.5 8.5" />
+  </svg>
+)
+
+const ICON_ARCHIVE = (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2" y="2.5" width="12" height="3.25" rx="0.75" />
+    <path d="M3 5.75v7.5h10v-7.5" />
+    <path d="M6.5 8.75h3" />
+  </svg>
+)
 
 // 交付物 key → {跳转 tab, 可选打开的 doc_type}。
 // doc 类(doc_type)→ docs tab + 打开该 doc;code → code tab;delivery → 无目标(只展示)。
@@ -47,20 +80,28 @@ const DELIV_TARGET: Record<string, { tab: string; doc?: string }> = {
 // 非 doc 类(code/delivery)走 deliverablesApi.confirm(写 context_json)。
 const DOC_DELIVERABLES = new Set(['spec', 'test_report', 'prd'])
 
+// 交付物状态点:状态 → 说明文案(tooltip)。视觉见 .ss-dot 各 modifier。
+const DOT_STATUS_TEXT: Record<string, string> = {
+  done: '已确认',
+  pending: '有产物,待确认',
+  ready: '有产物',
+  empty: '暂无产物',
+  skipped: '已跳过',
+}
+
 /**
  * StorySidebar — 左侧导航。
  *
  * 结构:
  *   - 返回
  *   - 模块导航(概览/代码/文档 tab)
- *   - 交付物导航:每项 = 一个交付物。
- *     确认用 checkbox(☑ 已确认 / ☐ 待确认);产物存在与否用图标明暗 + 小字说明。
- *     点击项 = 精准跳转(跳 tab + 打开对应 doc)。
- *   - gate 推进入口(进入下一状态):未满足置灰 + 下方红字显示缺什么
+ *   - 交付物导航:每项一行 = 状态点 + 标签 + 确认圈/跳过(悬停显现)。
+ *     状态点表达产物/确认状态(替代旧的「有产物」小字行);点击项 = 精准跳转。
+ *   - gate 推进入口(进入下一状态):未满足置灰 + 下方显示缺什么
  *   - 底部操作(PRD 打开 / 归档)
  *
  * 确认模式选择(NN/g + Eleken 研究):用户主动确认完成 → checkbox 是正确模式
- * (deliberate commit);产物不存在(前置条件未满足)→ checkbox 置灰禁用 + 说明原因。
+ * (deliberate commit);产物不存在(前置条件未满足)→ 确认圈置灰禁用。
  */
 export default function StorySidebar({
   storyKey, modules, activeModule, onModuleChange, onNavigate, onArchive, onBack, prdPath, onAdvance,
@@ -94,7 +135,7 @@ export default function StorySidebar({
     if (target) onNavigate(target.tab, target.doc)
   }
 
-  // gate 未满足时,缺失的成果物名(下方红字显示)。
+  // gate 未满足时,缺失的成果物名(下方显示)。
   const gateMissing = gate && !gate.all_satisfied
     ? gate.required.filter((r) => !r.satisfied).map((r) => r.label)
     : []
@@ -103,7 +144,10 @@ export default function StorySidebar({
     <aside className="story-sidebar">
       {onBack && (
         <button className="ss-back" onClick={onBack}>
-          ← 返回
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 3.5 5.5 8l4.5 4.5" />
+          </svg>
+          返回
         </button>
       )}
 
@@ -126,11 +170,11 @@ export default function StorySidebar({
         ))}
       </nav>
 
-      {/* 交付物导航:checkbox 确认 + 图标明暗表产物 + 点击精准跳转 */}
+      {/* 交付物导航:状态点 + 确认圈 + 悬停跳过 + 点击精准跳转 */}
       {deliverables.length > 0 && (
         <div className="ss-deliverables">
           <div className="ss-deliv-head">
-            <span className="ss-deliv-title">📦 交付物</span>
+            <span className="ss-deliv-title">交付物</span>
           </div>
           <div className="ss-deliv-list">
             {deliverables.map((d) => {
@@ -138,25 +182,33 @@ export default function StorySidebar({
               const showConfirm = !!d.needs_confirm && !skipped
               const target = DELIV_TARGET[d.key]
               const clickable = !!target && !skipped
-              // checkbox 可用性:产物存在才能确认;无产物 → 置灰禁用。
+              // 确认圈可用性:产物存在才能确认;无产物 → 置灰禁用。
               const confirmDisabled = !d.exists
+              const status = skipped
+                ? 'skipped'
+                : d.satisfied
+                  ? 'done'
+                  : d.exists
+                    ? showConfirm ? 'pending' : 'ready'
+                    : 'empty'
               return (
                 <div
                   key={d.key}
-                  className={`ss-deliv-item${d.satisfied ? ' done' : ''}${skipped ? ' skipped' : ''}`}
+                  className={`ss-deliv-item ss-status-${status}`}
                 >
                   <div
                     className={`ss-deliv-main${clickable ? ' clickable' : ''}`}
                     title={target ? `查看${d.label}` : `${d.label}(无对应 tab)`}
                     onClick={() => clickable && handleDelivClick(d)}
                   >
-                    <span className={`ss-deliv-icon${d.exists ? '' : ' absent'}`}>{d.icon}</span>
+                    <span className="ss-dot" title={DOT_STATUS_TEXT[status]} />
                     <span className="ss-deliv-label">{d.label}</span>
-                    {/* 确认 checkbox:可点 = 确认动作;无产物置灰禁用 */}
+                    {skipped && <span className="ss-deliv-skipped-tag">已跳过</span>}
+                    {/* 确认圈:可点 = 确认动作;无产物置灰禁用 */}
                     {showConfirm && (
                       <input
                         type="checkbox"
-                        className="ss-checkbox"
+                        className="ss-check"
                         checked={!!d.confirmed}
                         disabled={confirmDisabled}
                         title={confirmDisabled ? '产物未生成,无法确认' : (d.confirmed ? '已确认' : '点击确认')}
@@ -164,32 +216,26 @@ export default function StorySidebar({
                         onChange={() => !confirmDisabled && handleConfirm(d.key)}
                       />
                     )}
-                    {/* 跳过按钮(非 skipped 才显示) */}
+                    {/* 跳过按钮(悬停显现) */}
                     {!skipped && (
                       <button
                         className="ss-deliv-skip"
-                        title="跳过"
+                        title="跳过此交付物"
                         onClick={(e) => { e.stopPropagation(); handleSkip(d.key) }}
                       >
-                        ⊘
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+                          <circle cx="8" cy="8" r="5.75" />
+                          <path d="M4.1 4.1 11.9 11.9" />
+                        </svg>
                       </button>
                     )}
                   </div>
-                  {/* 状态说明小字:产物存在与否 */}
-                  {!skipped && (
-                    <span className={`ss-deliv-status-text ${d.exists ? 'has' : 'absent'}`}>
-                      {d.exists ? '有产物' : '无产物'}
-                    </span>
-                  )}
-                  {skipped && (
-                    <span className="ss-deliv-skipped-tag">⊘ 已跳过</span>
-                  )}
                 </div>
               )
             })}
           </div>
 
-          {/* gate 推进入口:all_satisfied 可点;未满足置灰 + 下方红字显示缺什么 */}
+          {/* gate 推进入口:all_satisfied 可点;未满足置灰 + 下方显示缺什么 */}
           {gate && (
             <div className="ss-gate-wrap">
               <button
@@ -198,10 +244,13 @@ export default function StorySidebar({
                 title={gate.all_satisfied ? `进入 ${gate.to}` : `还差: ${gateMissing.join('、')}`}
                 onClick={onAdvance}
               >
-                进入 {gate.to} →
+                进入 {gate.to}
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 8h10M9.5 4.5 13 8l-3.5 3.5" />
+                </svg>
               </button>
               {!gate.all_satisfied && gateMissing.length > 0 && (
-                <div className="ss-gate-reason">还差: {gateMissing.join('、')}</div>
+                <div className="ss-gate-reason">还差 {gateMissing.join('、')}</div>
               )}
             </div>
           )}
@@ -215,11 +264,13 @@ export default function StorySidebar({
             title={prdPath}
             onClick={() => window.open(`file:///${prdPath.replace(/\\/g, '/')}`, '_blank', 'noopener,noreferrer')}
           >
-            📄 打开 PRD
+            {ICON_EXTERNAL}
+            打开 PRD
           </button>
         )}
         {onArchive && (
           <button className="ss-archive-btn" onClick={onArchive} title="已上线并验证过，归档此 Story">
+            {ICON_ARCHIVE}
             归档
           </button>
         )}

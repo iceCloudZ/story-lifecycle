@@ -5,11 +5,11 @@
   gap: var(--space-2);
 }
 
-/* Session tabs 条:对齐全局 token(原硬编码 #e5e7eb/#f3f4f6 改 CSS 变量) */
+/* Session tabs 条:分段控件风(选中=白底浮起,未选中=灰底) */
 .tt-session-tabs {
   display: flex;
   gap: var(--space-1);
-  padding-bottom: var(--space-2);
+  padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--color-border);
   overflow-x: auto;
   flex-shrink: 0;
@@ -19,10 +19,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--gray-50);
+  padding: 5px var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--gray-100);
   color: var(--color-text-muted);
   font-family: inherit;
   font-size: var(--text-xs);
@@ -31,16 +31,25 @@
   transition: all 0.15s;
 }
 .tt-session-tab:hover {
-  background: var(--gray-100);
+  background: var(--gray-200);
   color: var(--color-text);
 }
 .tt-session-tab.active {
-  background: var(--color-primary-soft);
+  background: var(--color-surface);
   color: var(--color-primary-text);
   border-color: var(--color-primary);
   font-weight: 600;
+  box-shadow: var(--shadow-sm);
 }
-.tt-adapter-icon { font-size: 12px; }
+/* adapter 标识:彩色小圆点(替代 emoji) */
+.tt-adapter-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+.tt-adapter-dot.claude { background: #d97706; }
+.tt-adapter-dot.kimi { background: var(--color-primary); }
 .tt-session-label { font-weight: 500; }
 .tt-status-dot {
   width: 6px;
@@ -63,9 +72,9 @@
 /* 恢复执行按钮(paused/failed 显示) */
 .tt-resume-btn {
   margin-left: auto;
-  padding: var(--space-2) var(--space-3);
+  padding: 5px var(--space-3);
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   background: var(--color-primary);
   color: #fff;
   font-family: inherit;
@@ -74,9 +83,10 @@
   cursor: pointer;
   transition: background 0.15s;
   flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(94, 106, 210, 0.3);
 }
 .tt-resume-btn:hover:not(:disabled) {
-  background: var(--color-primary-text);
+  background: var(--color-primary-hover);
 }
 .tt-resume-btn:disabled {
   opacity: 0.6;
@@ -85,9 +95,9 @@
 
 /* 对话历史显隐切换 */
 .tt-history-toggle {
-  padding: var(--space-2) var(--space-3);
+  padding: 5px var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   background: var(--color-surface);
   color: var(--color-text-muted);
   font-family: inherit;
@@ -129,7 +139,7 @@
   min-width: 0;
 }
 
-/* 无会话空态 */
+/* 无会话空态:虚线占位面板 */
 .tt-no-session {
   display: flex;
   flex-direction: column;
@@ -138,8 +148,14 @@
   height: 100%;
   color: var(--color-text-muted);
   font-size: var(--text-sm);
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: var(--space-4);
+  border: 1.5px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--gray-50);
+}
+.tt-no-session p {
+  margin: 0;
 }
 .tt-no-session .tt-hint {
   font-size: var(--text-xs);

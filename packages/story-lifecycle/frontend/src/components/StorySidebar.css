@@ -1,18 +1,26 @@
 .story-sidebar {
-  width: 260px;
-  min-width: 260px;
+  width: 248px;
+  min-width: 248px;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
 }
+
+/* 所有侧栏 SVG 图标统一尺寸/颜色继承 */
+.story-sidebar svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
 .ss-back {
   display: flex;
   align-items: center;
   gap: 6px;
   width: calc(100% - var(--space-4));
-  margin: var(--space-2);
+  margin: var(--space-2) var(--space-2) 0;
   padding: 6px var(--space-3);
   border: none;
   border-radius: var(--radius-md);
@@ -24,6 +32,7 @@
   cursor: pointer;
   transition: color 0.12s, background 0.12s;
 }
+.ss-back svg { width: 13px; height: 13px; }
 .ss-back:hover {
   color: var(--color-text-strong);
   background: var(--gray-100);
@@ -31,7 +40,7 @@
 
 /* 模块导航(概览/代码/文档 tab) */
 .ss-nav {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-3);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -52,7 +61,6 @@
   transition: color 0.12s, background 0.12s;
   text-align: left;
   width: 100%;
-  position: relative;
 }
 .ss-nav-item:hover {
   background: var(--gray-100);
@@ -61,18 +69,7 @@
 .ss-nav-item.active {
   background: var(--color-primary-soft);
   color: var(--color-primary-text);
-  font-weight: 500;
-}
-.ss-nav-item.active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 16px;
-  border-radius: var(--radius-full);
-  background: var(--color-primary);
+  font-weight: 600;
 }
 .ss-icon {
   width: 16px;
@@ -91,54 +88,51 @@
   min-width: 16px;
   text-align: center;
 }
+.ss-nav-item.active .ss-badge {
+  background: rgba(94, 106, 210, 0.14);
+  color: var(--color-primary-text);
+}
 .ss-badge-danger {
   background: var(--color-danger-soft);
   color: var(--color-danger-text);
 }
 
-/* 交付物导航区(导航=交付物):标题 + 图例 + 竖向列表 */
+/* 交付物导航区:小节标题 + 竖向单行列表 */
 .ss-deliverables {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-2);
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
 }
 .ss-deliv-head {
-  padding: var(--space-1) var(--space-2);
+  padding: 0 var(--space-2) var(--space-1);
 }
 .ss-deliv-title {
-  font-size: var(--text-xs);
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--color-text-faint);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 .ss-deliv-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
-/* 单个交付物项:紧凑两行(图标+标签+跳过 / 双灯) */
+/* 单个交付物:单行(状态点 + 标签 + 右侧控件) */
 .ss-deliv-item {
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  border-radius: var(--radius-md);
+  transition: background 0.12s;
 }
-.ss-deliv-item.done {
-  background: var(--color-success-soft);
-}
-.ss-deliv-item.skipped {
-  opacity: 0.5;
+.ss-deliv-item:hover {
+  background: var(--gray-100);
 }
 .ss-deliv-main {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  padding: 2px 0;
+  padding: 6px var(--space-2);
   color: var(--color-text);
   font-family: inherit;
   font-size: var(--text-sm);
@@ -146,101 +140,180 @@
 .ss-deliv-main.clickable {
   cursor: pointer;
 }
-.ss-deliv-main.clickable:hover {
-  color: var(--color-primary-text);
-}
-.ss-deliv-icon {
-  font-size: 14px;
+
+/* 状态点:产物/确认状态的唯一视觉载体 */
+.ss-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
   flex-shrink: 0;
+  margin: 0 4px;
+  box-sizing: border-box;
 }
-/* 无产物时图标半透明(替代产物灯) */
-.ss-deliv-icon.absent {
-  opacity: 0.35;
+/* 无产物:空心灰 */
+.ss-status-empty .ss-dot {
+  border: 1.5px solid var(--gray-300);
+  background: transparent;
 }
+/* 有产物(无需确认):实心蓝 */
+.ss-status-ready .ss-dot {
+  background: var(--color-primary);
+}
+/* 有产物待确认:实心琥珀 + 呼吸 */
+.ss-status-pending .ss-dot {
+  background: var(--color-warning);
+  animation: ss-dot-pulse 2s infinite;
+}
+/* 已确认:实心绿 */
+.ss-status-done .ss-dot {
+  background: var(--color-success);
+}
+/* 已跳过:空心浅灰 */
+.ss-status-skipped .ss-dot {
+  border: 1.5px solid var(--gray-300);
+  background: transparent;
+  opacity: 0.6;
+}
+@keyframes ss-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.35); }
+  50% { box-shadow: 0 0 0 3px rgba(217, 119, 6, 0); }
+}
+
 .ss-deliv-label {
   flex: 1;
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-/* 确认 checkbox:勾选=绿(已确认);无产物置灰禁用 */
-.ss-checkbox {
-  width: 15px;
-  height: 15px;
-  cursor: pointer;
-  accent-color: var(--color-success);
+.ss-status-done .ss-deliv-label {
+  color: var(--color-text-muted);
+}
+.ss-status-skipped .ss-deliv-label {
+  color: var(--color-text-faint);
+  text-decoration: line-through;
+}
+.ss-status-empty .ss-deliv-label {
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+.ss-deliv-skipped-tag {
+  font-size: 11px;
+  color: var(--color-text-faint);
   flex-shrink: 0;
 }
-.ss-checkbox:disabled {
+
+/* 确认圈:自定义圆形 checkbox(替代原生方框) */
+.ss-check {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--gray-300);
+  background: var(--color-surface);
+  cursor: pointer;
+  flex-shrink: 0;
+  position: relative;
+  margin: 0;
+  transition: border-color 0.12s, background 0.12s;
+}
+.ss-check:hover:not(:disabled) {
+  border-color: var(--color-success);
+}
+.ss-check:checked {
+  border-color: var(--color-success);
+  background: var(--color-success);
+}
+.ss-check:checked::after {
+  content: '';
+  position: absolute;
+  left: 4.5px;
+  top: 1.5px;
+  width: 3.5px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(42deg);
+}
+.ss-check:disabled {
   cursor: not-allowed;
   opacity: 0.4;
 }
-/* 跳过按钮:行内小图标 */
+
+/* 跳过按钮:默认隐藏,行悬停时显现 */
 .ss-deliv-skip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: var(--color-text-faint);
-  font-size: var(--text-xs);
-  line-height: 1;
   cursor: pointer;
   padding: 2px;
   border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+  flex-shrink: 0;
+}
+.ss-deliv-item:hover .ss-deliv-skip {
+  opacity: 1;
+}
+.ss-deliv-skip svg {
+  width: 13px;
+  height: 13px;
 }
 .ss-deliv-skip:hover {
   color: var(--color-warning-text);
   background: var(--color-warning-soft);
 }
-/* 产物状态说明小字(替代产物灯的文字版) */
-.ss-deliv-status-text {
-  font-size: var(--text-xs);
-  padding-left: calc(14px + var(--space-2));
-}
-.ss-deliv-status-text.has {
-  color: var(--color-text-faint);
-}
-.ss-deliv-status-text.absent {
-  color: var(--color-text-faint);
-  opacity: 0.7;
-}
-.ss-deliv-skipped-tag {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  padding-left: calc(14px + var(--space-2));
-}
 
 /* gate 推进(交付物列表底):按钮 + 下方置灰原因 */
 .ss-gate-wrap {
-  margin-top: var(--space-2);
+  margin-top: var(--space-3);
+  padding: 0 var(--space-1);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 .ss-gate-btn {
-  padding: var(--space-2) var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px var(--space-3);
   border: none;
   border-radius: var(--radius-md);
   font-family: inherit;
   font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.ss-gate-btn svg {
+  width: 14px;
+  height: 14px;
 }
 .ss-gate-btn.ready {
   background: var(--color-primary);
   color: #fff;
+  box-shadow: 0 1px 3px rgba(94, 106, 210, 0.35);
 }
 .ss-gate-btn.ready:hover {
-  background: var(--color-primary-text);
+  background: var(--color-primary-hover);
 }
 .ss-gate-btn.locked {
-  background: var(--gray-100);
+  background: transparent;
   color: var(--color-text-faint);
-  border: 1px solid var(--color-border);
+  border: 1px dashed var(--color-border-strong);
   cursor: not-allowed;
 }
 /* 置灰原因(直接可见,非 tooltip) */
 .ss-gate-reason {
-  font-size: var(--text-xs);
+  font-size: 11px;
   color: var(--color-warning-text);
   padding: 0 var(--space-1);
+  text-align: center;
 }
 
 .ss-bottom-actions {
@@ -249,11 +322,13 @@
   border-top: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 2px;
 }
 .ss-prd-btn,
 .ss-archive-btn {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   width: 100%;
   padding: 6px var(--space-3);
   border: none;
@@ -266,8 +341,12 @@
   cursor: pointer;
   transition: color 0.12s, background 0.12s;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ss-prd-btn svg,
+.ss-archive-btn svg {
+  width: 14px;
+  height: 14px;
 }
 .ss-prd-btn:hover,
 .ss-archive-btn:hover {

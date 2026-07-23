@@ -123,9 +123,7 @@ export default function TerminalTab({ storyKey, status, stage }: Props) {
             onClick={() => setActiveSession(s.session_id)}
             title={s.status === 'running' ? '运行中' : '已退出'}
           >
-            <span className="tt-adapter-icon">
-              {s.adapter === 'claude' ? '🟠' : '🟢'}
-            </span>
+            <span className={`tt-adapter-dot ${s.adapter === 'claude' ? 'claude' : 'kimi'}`} />
             <span className="tt-session-label">
               {s.stage ? `${s.stage} · ${s.adapter}` : s.adapter}
             </span>
@@ -150,7 +148,7 @@ export default function TerminalTab({ storyKey, status, stage }: Props) {
           onClick={() => setShowHistory((v) => !v)}
           title={showHistory ? '隐藏对话历史' : '显示对话历史'}
         >
-          {showHistory ? '📜 隐藏历史' : '📜 对话历史'}
+          {showHistory ? '隐藏历史' : '对话历史'}
         </button>
       </div>
 
