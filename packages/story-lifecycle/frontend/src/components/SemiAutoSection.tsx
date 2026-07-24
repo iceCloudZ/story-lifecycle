@@ -98,7 +98,7 @@ export default function SemiAutoSection({ storyKey }: { storyKey: string }) {
   }
 
   return (
-    <details className="semi-auto-section">
+    <details className="ui-card semi-auto-section">
       <summary className="semi-auto-summary">半自动工具</summary>
       <div className="semi-auto-toolbar">
         <button className="btn btn-primary" onClick={copyPack}>

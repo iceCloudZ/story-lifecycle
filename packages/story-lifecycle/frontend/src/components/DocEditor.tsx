@@ -142,14 +142,14 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
   return (
     <div className="doc-editor">
       {/* 顶栏 */}
-      <div className="doc-editor-topbar">
+      <div className="ui-card doc-editor-topbar">
         <button className="btn btn-back" onClick={onBack}>← 返回</button>
         <strong className="doc-editor-doctype">{docType}</strong>
         {mode === 'view' ? (
           <>
             <span className="doc-editor-title-display">{title}</span>
             {doc?.confirmed_by ? (
-              <span className="hint doc-confirmed-hint">✓ 已由 {doc.confirmed_by} 确认</span>
+              <span className="ui-hint doc-confirmed-hint">✓ 已由 {doc.confirmed_by} 确认</span>
             ) : (
               <button
                 className="btn btn-sm"
@@ -178,7 +178,7 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
             <button className="btn" onClick={() => setMode('view')}>预览</button>
           </>
         )}
-        <span className="hint">v{doc?.current_version ?? '?'}</span>
+        <span className="ui-hint">v{doc?.current_version ?? '?'}</span>
       </div>
 
       <div className="doc-editor-body">
@@ -187,11 +187,11 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
           {mode === 'view' ? (
             <div className="doc-editor-preview-pane">
               {isLoading ? (
-                <p className="hint" style={{ padding: 12 }}>加载中...</p>
+                <p className="ui-hint" style={{ padding: 12 }}>加载中...</p>
               ) : content ? (
                 <MarkdownView content={content} />
               ) : (
-                <p className="hint">（空文档）</p>
+                <p className="ui-hint">（空文档）</p>
               )}
             </div>
           ) : (
@@ -224,10 +224,10 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
         </div>
 
         {/* 右:版本历史(两种模式都保留) */}
-        <div className="doc-editor-versions">
-          <h4>版本历史</h4>
+        <div className="ui-card doc-editor-versions">
+          <h4 className="ui-section-title">版本历史</h4>
           {versions.length === 0 ? (
-            <p className="hint">暂无历史</p>
+            <p className="ui-hint">暂无历史</p>
           ) : (
             versions.map((v) => (
               <div key={v.version} className="doc-version-item">
@@ -237,7 +237,7 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
                     {v.author}
                   </span>
                 </div>
-                <div className="hint doc-version-time">{v.created_at}</div>
+                <div className="ui-hint doc-version-time">{v.created_at}</div>
                 <div className="doc-version-reason">{v.change_reason}</div>
                 <div className="doc-version-actions">
                   {doc && v.version !== doc.current_version && (
@@ -296,7 +296,7 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
       {rollbackTarget !== null && (
         <div className="doc-editor-modal doc-rollback-modal">
           <strong>回滚到 v{rollbackTarget}?</strong>
-          <p className="hint">（会用 v{rollbackTarget} 的内容创建一个新版本，历史保留）</p>
+          <p className="ui-hint">（会用 v{rollbackTarget} 的内容创建一个新版本，历史保留）</p>
           <input
             value={rollbackReason}
             onChange={(e) => setRollbackReason(e.target.value)}

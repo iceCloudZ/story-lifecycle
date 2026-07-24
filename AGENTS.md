@@ -84,6 +84,7 @@ Each package has its own `pyproject.toml` and `docs/`. **Package-level docs stay
 
 For package internals, read that package's docs first:
 - `packages/story-lifecycle/docs/ARCHITECTURE.md` — the source of truth for story-lifecycle's layering
+- `packages/story-lifecycle/frontend/AGENTS.md` — frontend UI 规范(design tokens、`.ui-*` 通用原语、SVG 图标规则;所有页面必须遵守)
 - `packages/story-miner/README.md` — miner's directory structure, db schema, adapter pattern
 
 ## Architecture Review Triggers

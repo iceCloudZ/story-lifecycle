@@ -1,48 +1,45 @@
-/* DocsTab — 文档列表 */
+/* DocsTab — 文档列表(容器/行视觉用通用 ui-card / ui-list-row / ui-empty) */
 
-.docs-tab-title {
-  font-size: var(--text-lg);
-  font-weight: 700;
-  margin: 0 0 var(--space-1);
-  color: var(--color-text-strong);
+.docs-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 1200px;
 }
-.docs-tab-hint {
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
-  margin: 0 0 var(--space-3);
-  line-height: 1.6;
+
+/* 头部卡:小节标题 + 说明 + 新建行 */
+.docs-head .docs-tab-hint {
+  margin: var(--space-1) 0 var(--space-3);
 }
 
 .docs-create-row {
   display: flex;
   gap: var(--space-2);
-  margin: 0 0 var(--space-3);
 }
 .docs-create-input {
   flex: 1;
 }
 
+/* 加载/空态 */
+.docs-state {
+  padding: var(--space-8);
+}
+
+/* 文档列表行 */
 .docs-list {
+  overflow: hidden;
+}
+.docs-list-item .docs-item-info {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 2px;
 }
-.docs-list-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+.docs-item-name {
+  font-size: var(--text-base);
+  color: var(--color-text-strong);
 }
-.docs-list-item:hover {
-  background: var(--color-primary-soft);
-  border-color: var(--color-primary);
-}
-.docs-item-name { font-size: var(--text-base); }
 .docs-confirmed-badge {
   font-size: var(--text-xs);
   padding: 1px 8px;
@@ -50,15 +47,6 @@
   background: var(--color-success-soft);
   color: var(--color-success-text);
   margin-left: var(--space-2);
-}
-
-/* 列表项:左侧(name+hint 簇),右侧「从文件同步」按钮。点列表进编辑,点按钮同步。 */
-.docs-list-item .docs-item-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 .docs-sync-btn {
   flex-shrink: 0;

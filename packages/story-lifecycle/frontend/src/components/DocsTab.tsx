@@ -77,47 +77,49 @@ export default function DocsTab({ storyKey }: { storyKey: string }) {
 
   return (
     <div className="docs-tab">
-      <h3 className="docs-tab-title">📄 业务文档（版本化）</h3>
-      <p className="docs-tab-hint">
-        所有业务文档的服务器版本管理。DB 是唯一真相，本地 .md 是只读缓存。
-        每次保存必须填修改理由；支持版本历史 / diff / 回滚 / 全文搜索。
-      </p>
+      <div className="ui-card ui-card-pad docs-head">
+        <h3 className="ui-section-title">业务文档（版本化）</h3>
+        <p className="ui-hint docs-tab-hint">
+          所有业务文档的服务器版本管理。DB 是唯一真相，本地 .md 是只读缓存。
+          每次保存必须填修改理由；支持版本历史 / diff / 回滚 / 全文搜索。
+        </p>
 
-      {/* 新建文档 */}
-      <div className="docs-create-row">
-        <input
-          className="docs-create-input"
-          placeholder="文档类型（如 prd / spec / 会议纪要）"
-          value={newType}
-          onChange={(e) => setNewType(e.target.value)}
-        />
-        <input
-          className="docs-create-input"
-          placeholder="标题（可选）"
-          value={newTitle}
-          onChange={(e) => setNewTitle(e.target.value)}
-        />
-        <button className="btn btn-sm btn-primary" onClick={createDoc} disabled={!newType.trim()}>
-          新建
-        </button>
+        {/* 新建文档 */}
+        <div className="docs-create-row">
+          <input
+            className="docs-create-input"
+            placeholder="文档类型（如 prd / spec / 会议纪要）"
+            value={newType}
+            onChange={(e) => setNewType(e.target.value)}
+          />
+          <input
+            className="docs-create-input"
+            placeholder="标题（可选）"
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+          />
+          <button className="btn btn-sm btn-primary" onClick={createDoc} disabled={!newType.trim()}>
+            新建
+          </button>
+        </div>
       </div>
 
       {/* 文档列表 */}
       {isLoading ? (
-        <p className="hint">加载中...</p>
+        <div className="ui-empty docs-state">加载中…</div>
       ) : docs.length === 0 ? (
-        <p className="hint">还没有版本化文档。在上方新建一个，或在 intake 创建 PRD 后它会自动出现。</p>
+        <div className="ui-empty docs-state">还没有版本化文档。在上方新建一个，或在 intake 创建 PRD 后它会自动出现。</div>
       ) : (
-        <div className="docs-list">
+        <div className="ui-card docs-list">
           {docs.map((d) => (
-            <div key={d.doc_type} className="docs-list-item" onClick={() => setEditing(d.doc_type)}>
+            <div key={d.doc_type} className="ui-list-row clickable docs-list-item" onClick={() => setEditing(d.doc_type)}>
               <div className="docs-item-info">
                 <div className="docs-item-name">
                   <strong>{d.doc_type}</strong>
-                  {d.title ? <span className="hint"> · {d.title}</span> : null}
+                  {d.title ? <span className="ui-hint"> · {d.title}</span> : null}
                   {d.confirmed_by && <span className="docs-confirmed-badge">✓ 已确认</span>}
                 </div>
-                <div className="hint">
+                <div className="ui-hint">
                   v{d.current_version} · {d.updated_by || '?'} · {d.updated_at}
                 </div>
               </div>

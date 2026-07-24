@@ -93,8 +93,8 @@ export default function CodeChangesTab({ storyKey }: Props) {
     return map
   }, [diff?.diff])
 
-  if (isLoading) return <div className="cct-loading">加载 diff 中...</div>
-  if (error) return <div className="cct-error">加载失败: {(error as Error).message}</div>
+  if (isLoading) return <div className="ui-empty cct-state">加载 diff 中…</div>
+  if (error) return <div className="ui-empty cct-state cct-state-error">加载失败: {(error as Error).message}</div>
   if (!diff) return null
 
   const empty = diff.is_empty || diff.files.length === 0
@@ -113,7 +113,7 @@ export default function CodeChangesTab({ storyKey }: Props) {
               <button
                 key={b.id}
                 type="button"
-                className={`cct-project-chip${active ? ' active' : ''}`}
+                className={`ui-chip cct-project-chip${active ? ' active' : ''}`}
                 onClick={() => setSelectedProjectId(pid)}
                 title={b.worktree_path || `repo: ${proj?.repo_path ?? ''}`}
               >
@@ -126,14 +126,14 @@ export default function CodeChangesTab({ storyKey }: Props) {
         </div>
       )}
 
-      <div className="cct-header">
+      <div className="ui-card cct-header">
         <div className="cct-title">
           {diff.source === 'gitlab' && diff.mr_url ? (
             <a href={diff.mr_url} target="_blank" rel="noreferrer" className="cct-mr-link">
               MR !{diff.mr_iid}
             </a>
           ) : (
-            <span>本地 diff</span>
+            <span className="cct-source-label">本地 diff</span>
           )}
           <span className="cct-branch">
             {diff.base_branch} ← {diff.current_branch}
@@ -142,7 +142,7 @@ export default function CodeChangesTab({ storyKey }: Props) {
         <div className="cct-actions">
           {diff.source === 'gitlab' && diff.mr_url && (
             <a
-              className="btn btn-primary"
+              className="btn btn-sm btn-primary"
               href={diff.mr_url}
               target="_blank"
               rel="noreferrer"
@@ -155,47 +155,53 @@ export default function CodeChangesTab({ storyKey }: Props) {
 
       {diff.worktree_path ? (
         <div className="cct-worktree-info">
-          <span className="cct-worktree-label">worktree:</span>
+          <span className="cct-worktree-label">worktree</span>
           <code className="cct-worktree-path">{diff.worktree_path}</code>
         </div>
       ) : (
         fellBackToRepo && (
           <div className="cct-worktree-info warn">
-            <span className="cct-worktree-label">⚠ worktree 未就绪,显示主仓 diff:</span>
+            <span className="cct-worktree-label">worktree 未就绪,显示主仓 diff</span>
             <code className="cct-worktree-path">{diff.repo_path}</code>
           </div>
         )
       )}
 
-      <div className="cct-stats">
-        <div className="cct-stat">
-          <div className="cct-stat-num">{diff.files.length}</div>
-          <div className="cct-stat-label">文件变更</div>
+      <div className="ui-stats">
+        <div className="ui-card ui-stat">
+          <div className="ui-stat-num">{diff.files.length}</div>
+          <div className="ui-stat-label">文件变更</div>
         </div>
-        <div className="cct-stat">
-          <div className="cct-stat-num" style={{ color: '#3fb950' }}>+{diff.total_additions}</div>
-          <div className="cct-stat-label">新增行</div>
+        <div className="ui-card ui-stat">
+          <div className="ui-stat-num cct-add">+{diff.total_additions}</div>
+          <div className="ui-stat-label">新增行</div>
         </div>
-        <div className="cct-stat">
-          <div className="cct-stat-num" style={{ color: '#f85149' }}>-{diff.total_deletions}</div>
-          <div className="cct-stat-label">删除行</div>
+        <div className="ui-card ui-stat">
+          <div className="ui-stat-num cct-del">-{diff.total_deletions}</div>
+          <div className="ui-stat-label">删除行</div>
         </div>
       </div>
 
       {empty ? (
-        <div className="cct-empty">暂无代码变更。</div>
+        <div className="ui-empty cct-state">暂无代码变更。</div>
       ) : (
-        <div className="cct-file-list">
+        <div className="ui-card cct-file-list">
           {diff.files.map((f: DiffFile) => (
             <div key={f.path} className="cct-file-item">
               <div
-                className="cct-file-header"
+                className="ui-list-row clickable cct-file-header"
                 onClick={() => setExpandedFile(expandedFile === f.path ? null : f.path)}
               >
-                <span className="cct-expand-icon">{expandedFile === f.path ? '▼' : '▶'}</span>
+                <svg
+                  className={`cct-expand-icon${expandedFile === f.path ? ' open' : ''}`}
+                  viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
+                  strokeLinecap="round" strokeLinejoin="round"
+                >
+                  <path d="M6 3.5 10.5 8 6 12.5" />
+                </svg>
                 <span className="cct-file-path">{f.path}</span>
-                {f.additions > 0 && <span className="cct-file-additions">+{f.additions}</span>}
-                {f.deletions > 0 && <span className="cct-file-deletions">-{f.deletions}</span>}
+                {f.additions > 0 && <span className="ui-diff-add">+{f.additions}</span>}
+                {f.deletions > 0 && <span className="ui-diff-del">-{f.deletions}</span>}
               </div>
               {expandedFile === f.path && (
                 <FileDiffView diffText={fileDiffs.get(f.path) || diff.diff} />
