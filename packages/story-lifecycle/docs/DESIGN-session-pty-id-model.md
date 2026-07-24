@@ -399,13 +399,19 @@ def api_list_sessions(story_key):
 - 续会话:`claude --resume <sid>`(cwd-scoped 查找)
 - adapter 层按 `resume: bool` 分支(claude.py:46-52 现状已有,保留)
 
-**kimi resume**(Step 0 实测后定论,见 §2.5.3):
-- kimi **不支持预指定 id**,无法用确定性 sid 驱动。保留捕获机制(方向对)。
-- **修捕获正则**(问题 9,Step 0 发现):现状 `Session:\s*(session_...)` 匹配 kimi 0.29.0 实际输出 `To resume this session: kimi -r <sid>` 匹不上。
-  - 修正则为 `kimi -r (session_[0-9a-fA-F-]+)` 或同时兼容两种格式。
-  - 这是 kimi resume 在 0.29.0 上从未工作的根因。
+**kimi resume**(Step 0 实测 + 退出捕获方案,见 §2.5.3):
+- kimi **不支持预指定 id**,无法用确定性 sid 驱动。必须捕获 kimi 自己分配的 `session_<uuid>`。
+- **改捕获时机:从「启动 banner」改为「clean_exit 退出时」**(更稳)。
+  - kimi 在退出时(headless `-p` 跑完 / 交互式 `/exit`)吐稳定的一行:`To resume this session: kimi -r session_<uuid>`。
+  - 现状在启动 banner 捕获(planner.py:1390 `_capture_kimi_session`,3 秒超时扫 banner),正则 `Session:\s*(session_...)` 还跟实际输出不符(问题 9)→ 从未工作。
+  - **新方案**:planner.py:1640 stage 完成收尾时,`clean_exit_pty` 发 `/exit` 等 kimi 退出 —— **在此期间 drain PTY 输出,正则匹配 resume 行**。
+  - 接入点:`clean_exit_pty`(pty.py:548)目前只发 `/exit` 轮询 alive,**完全不读输出**(resume 行进了 queue/tap 但没人捞)。改为收尾时开 tap drain,匹配 `kimi -r (session_[0-9a-fA-F-]+)`。
+- **正则对齐实际格式**(问题 9):`kimi -r (session_[0-9a-fA-F-]+)`(匹配 `To resume this session: kimi -r session_...`)。
 - DB 的 `session_id` 列对 kimi 存捕获值(`session_<uuid>`),`set_session_id` 回填路径保留。
 - adapter 层:ShellAdapter 对 kimi 仍按 `resume: bool` 分支(新建不带 `-S`,续会话带 `-S <捕获值>`),现状逻辑正确,只是捕获上游断了。
+- **失败降级**:kimi 崩溃/被 kill 没吐 resume 行 → 捕获失败 → 静默降级为新会话(下次不续历史,可接受,跟现状失败处理一致,但成功率大幅提升 —— 退出捕获只在 kimi 异常时才失败,banner 捕获是常态失败)。
+
+> 为什么退出捕获比 banner 捕获稳:banner 时机依赖 readiness_marker 后 1s 内出现(脆弱),正则还错;退出捕获是 kimi **主动、确定地**在退出时吐这行(格式准、时机确定),且正好接在 `clean_exit_pty` 这个已有收尾动作上,不新增时机假设。
 
 ### 3.6 cleanup / reaper 机制(修问题 6、7)
 
@@ -449,11 +455,11 @@ interface Session {
 - 新增 `compute_session_id(story_key, stage, adapter) -> str`(三字段)。
 - `api.py:713`、`planner.py:1170` 改调它,删内联 uuid5。
 - `api.py:640`(deprecated `_build_stage_launch_cmd`)也改,保持一致。
-- **修 kimi 捕获正则(问题 9)**:`_KIMI_SESSION_RE` 改为匹配 `To resume this session: kimi -r <sid>` 实际格式。
-- 加测试:两路径同输入 → 同 ID;kimi banner 样本 → 捕获成功。
+- **kimi 捕获改时机(问题 9)**:从启动 banner 捕获改为 `clean_exit_pty` 退出时捕获(见 §3.5)。正则 `kimi -r (session_[0-9a-fA-F-]+)` 对齐实际输出。
+- 加测试:两路径同输入 → 同 ID;kimi 退出输出样本 → 捕获成功。
 - **验证**:
   - claude:交互 spawn,让自动循环 resume,确认续上历史。
-  - kimi:spawn 后确认 DB session_id 被捕获值回填(不再静默失败)。
+  - kimi:spawn 跑完一个 stage,确认 `clean_exit_pty` 收尾时捕获到 `session_<uuid>` 并回填 DB(不再静默失败)。
 
 ### Step 2 — PTY 注册表记 (stage, adapter) + 改 key 为 uuid5(修问题 1)
 - `ManagedPty` 加 `stage`/`adapter` 字段(构造时传入)。
