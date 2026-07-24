@@ -616,8 +616,8 @@ def _build_stage_launch_prompt(story: dict) -> str:
 def _build_stage_launch_cmd(story: dict, adapter, model: str) -> tuple[list[str], bool]:
     """Build the claude launch cmd for a story+stage: NEW or RESUME.
 
-    Deterministic session UUID (uuid5 of ``story_key:stage``) + a marker file
-    (``.story/context/<key>/session_<stage>.json``) decide:
+    Deterministic session UUID (compute_session_id of ``story_key:stage:adapter``)
+    + a marker file (``.story/context/<key>/session_<stage>.json``) decide:
       NEW    → claude --session-id <uuid> --name <key>-<stage> "<read-file seed>"
                + write marker. (seeds the stage task via claude "query")
       RESUME → claude --resume <uuid> "<continue>"   (loads transcript, continues)
@@ -630,14 +630,15 @@ def _build_stage_launch_cmd(story: dict, adapter, model: str) -> tuple[list[str]
     tests/test_session_resume.py.
     """
     import json as _json
-    import uuid as _uuid
 
     from ...infra.story_paths import safe_story_path
 
     story_key = story["story_key"]
     workspace = story.get("workspace", "")
     stage = story.get("current_stage", "design") or "design"
-    session_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"{story_key}:{stage}"))
+    # 统一走 compute_session_id(三字段),与 _spawn_story_agent_pty / planner 一致。
+    _adapter_name = getattr(adapter, "name", "") or ""
+    session_id = db.compute_session_id(story_key, stage, _adapter_name)
     session_name = f"{story_key}-{stage}"
     marker = (
         safe_story_path(workspace, ".story", "context", story_key)
@@ -692,7 +693,6 @@ def _spawn_story_agent_pty(
     sessions/spawn used ``spawn_pty`` which never injects → empty kimi session).
     """
     import json as _json
-    import uuid as _uuid
 
     from ...infra.story_paths import safe_story_path
 
@@ -710,7 +710,10 @@ def _spawn_story_agent_pty(
     # session-persistence (claude --session-id / --resume; kimi -S). 真相源 = DB
     # (story_session 表),marker 文件作兼容副本。resume 判据:DB 有 session_id,或 marker 在。
     _adapter_name = getattr(adapter, "name", "") or ""
-    session_uuid = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"{story_key}:{stage}"))
+    # claude 的确定性 sid:统一走 compute_session_id(三字段),保证两条 spawn 路径
+    # (api 交互式 / planner 自动循环)算出同一个 id,resume 才能对上历史。
+    # DESIGN-session-pty-id-model.md §3.5 / 问题 4。
+    session_uuid = db.compute_session_id(story_key, stage, _adapter_name)
     session_name = f"{story_key}-{stage}"
     marker = (
         safe_story_path(workspace, ".story", "context", story_key)
@@ -766,16 +769,12 @@ def _spawn_story_agent_pty(
             )
         except Exception:
             pass
-        # kimi session-id 回填:半自动路径同样要捕获 banner 的 session_<uuid>
-        # (与全自动循环 planner._capture_kimi_session 对等),否则占位行 sid 永远 None,
-        # 下次永远当新会话 → kimi resume 在半自动下形同虚设。best-effort,失败不崩。
-        if _adapter_name == "kimi":
-            try:
-                from ..engine.planner import _capture_kimi_session
-
-                _capture_kimi_session(story_key, stage, _adapter_name, pty)
-            except Exception:
-                pass
+        # kimi session-id 捕获:api 交互式 spawn 路径(用户手动启动)的 PTY 生命周期
+        # 不归 planner 管(用户自己 /exit 或前端断开),没有确定的 clean_exit 时机。
+        # 可靠的 kimi 捕获走 planner 全自动循环路径(stage-done 时 clean_exit_pty
+        # 退出捕获,planner._make_kimi_sid_capturer)。本路径暂不捕获 —— kimi 交互式
+        # 手动启动的 session id 回填留给 PTY 死亡监听(Step 5 reaper)统一处理。
+        # DESIGN-session-pty-id-model.md §3.5 / 问题 9。
     return session_id, pty, is_resume
 
 

@@ -790,65 +790,58 @@ def _build_verify_history_facts(*, db, failed_adapter, gate_round, retry_limit):
         }
 
 
-# kimi 启动 banner 里 session id 的正则:`Session:   session_a273ffaa-...`。
-# 用于从 PTY 输出捕获 kimi 分配的会话 id(回填 DB,下次该阶段 resume 用)。
-_KIMI_SESSION_RE = re.compile(r"Session:\s*(session_[0-9a-fA-F-]+)")
+# kimi 退出时吐的 resume 行:`To resume this session: kimi -r session_<uuid>`。
+# 也兼容旧 banner 格式 `Session: session_<uuid>`(防其他版本)。
+# DESIGN-session-pty-id-model.md §3.5 / 问题 9:此前只有 banner 正则且格式不符,
+# kimi resume 在 0.29.0 上从未工作过。改在 clean_exit_pty 退出时捕获(时机确定、格式准)。
+_KIMI_SESSION_RE = re.compile(
+    r"(?:kimi\s+-r\s+|Session:\s*)(session_[0-9a-fA-F-]+)"
+)
 
 
-def _capture_kimi_session(story_key: str, stage: str, adapter: str, pty) -> None:
-    """Best-effort 捕获 kimi 分配的 session id 并回填 DB。
+def _make_kimi_sid_capturer(story_key: str, stage: str, adapter: str):
+    """Build an ``on_output`` callback for ``clean_exit_pty`` that captures kimi's
+    session id from its exit-time ``To resume this session: kimi -r session_<uuid>``
+    line and backfills DB.
 
-    kimi 无「指定新会话 id」参数,只能 spawn 后从 banner 输出捕获。banner 在
-    readiness_marker(Welcome to Kimi Code)之后打印 Session 行,此时 _wait_ready 已返回,
-    这里开个短 tap 扫剩余输出。失败/超时静默(下次当新会话,不崩)。
+    kimi 不支持预指定 id(Step 0 实测,§2.5.3),自己分配 ``session_<uuid>``,
+    只在退出时吐这行。捕获在 clean_exit_pty 收尾期间 drain 输出时触发 —— 比
+    启动 banner 捕获稳(banner 时机脆弱)。best-effort:kimi 崩溃没吐就捕获不到,
+    下次当新会话(不崩,只是不省 token)。
+
+    返回的回调累积输出到 buffer,正则匹配到就回填一次(之后短路,避免重复写)。
     """
-    try:
-        import time as _t
+    buf = ""
+    done = False
 
-        from ...infra.db import models as _sd
-
-        tap = pty.add_tap()
-        deadline = _t.time() + 3.0  # banner 通常 spawn 后 <1s 出现,给 3s 余量
-        buf = ""
-        captured = None
-        try:
-            while _t.time() < deadline:
-                try:
-                    chunk = tap.get_nowait()
-                except Exception:
-                    _t.sleep(0.1)
-                    continue
-                if isinstance(chunk, (bytes, bytearray)):
-                    buf += chunk.decode("utf-8", errors="replace")
-                else:
-                    buf += str(chunk)
-                m = _KIMI_SESSION_RE.search(buf)
-                if m:
-                    captured = m.group(1)
-                    break
-        finally:
+    def _on_output(text: str) -> None:
+        nonlocal buf, done
+        if done:
+            return
+        buf += text
+        m = _KIMI_SESSION_RE.search(buf)
+        if m:
+            captured = m.group(1)
+            done = True
             try:
-                pty.remove_tap(tap)
-            except Exception:
-                pass
-        if captured:
-            _sd.set_session_id(story_key, stage, adapter, captured)
-            log.info(
-                "[%s] captured kimi session sid=%s stage=%s", story_key, captured, stage
-            )
-        else:
-            log.warning(
-                "[%s] kimi session id not captured in banner; resume disabled for stage=%s",
-                story_key,
-                stage,
-            )
-    except Exception as exc:
-        log.warning(
-            "[%s] kimi session capture failed (%s); resume disabled for stage=%s",
-            story_key,
-            exc,
-            stage,
-        )
+                from ...infra.db import models as _sd
+
+                _sd.set_session_id(story_key, stage, adapter, captured)
+                log.info(
+                    "[%s] captured kimi session sid=%s stage=%s (exit-time)",
+                    story_key,
+                    captured,
+                    stage,
+                )
+            except Exception as exc:
+                log.warning(
+                    "[%s] kimi session backfill failed (%s); resume disabled for stage=%s",
+                    story_key,
+                    exc,
+                    stage,
+                )
+
+    return _on_output
 
 
 @with_story_key()
@@ -1141,13 +1134,12 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         f"({stage})任务,完成后按其完成协议写入 done 文件。"
                     )
                     # 会话恢复回填:每阶段一个会话,同阶段重试/崩溃 resume 续上(省 token)。
-                    # claude 用确定性 uuid5(--session-id 主动给);kimi 由 CLI 分配,
-                    # spawn 后从 banner 捕获回填。查 DB 决定 NEW vs RESUME。
-                    import uuid as _su
+                    # claude 用确定性 sid(--session-id 主动给);kimi 由 CLI 分配,
+                    # 退出时捕获回填。查 DB 决定 NEW vs RESUME。
                     from ...infra.db import models as _sd
 
                     _prior = _sd.get_session(story_key, stage, adapter_name)
-                    _is_new_kimi = False  # 仅新 kimi 会话需从 banner 捕获 sid
+                    _is_new_kimi = False  # 仅新 kimi 会话需退出时捕获 sid
                     if _prior and _prior.get("session_id"):
                         # 该阶段已建过会话 → resume(续上 transcript,不重读 prompt_file)。
                         _resume_seed = "继续上次的任务,完成后按完成协议写入 done 文件。"
@@ -1165,12 +1157,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             _prior["session_id"],
                         )
                     else:
-                        # 新会话。claude 给确定性 uuid5(主动指定,kimi 忽略由 CLI 分配)。
-                        _new_sid = str(
-                            _su.uuid5(
-                                _su.NAMESPACE_DNS, f"{story_key}:{stage}:{adapter_name}"
-                            )
-                        )
+                        # 新会话。claude 给确定性 sid(compute_session_id 统一三字段);
+                        # kimi 忽略由 CLI 分配,退出时捕获回填。
+                        _new_sid = _sd.compute_session_id(story_key, stage, adapter_name)
                         _session_spec = adapter.start_session(
                             model=model,
                             prompt=_seed,
@@ -1385,12 +1374,12 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     # kimi session-id 回填:kimi 启动 banner 打印 `Session: session_<uuid>`,
                     # 此时 ensure_agent_pty 的 _wait_ready 已消费到 readiness_marker
                     # (Welcome to Kimi Code),session id 紧随其后。开个短 tap 扫剩余 banner
-                    # 输出捕获 id 回填 DB(下次该阶段 resume 用)。best-effort:失败/超时则
-                    # 不回填,下次当新会话(不崩,只是不省 token)。claude 无需捕获(uuid5 主动给)。
-                    if _is_new_kimi:
-                        _capture_kimi_session(
-                            story_key, stage, adapter_name, _agent_pty
-                        )
+                    # kimi session-id 捕获改在 stage 完成的 clean_exit_pty 收尾时做
+                    # (kimi 退出吐 'To resume this session: kimi -r session_<uuid>')。
+                    # 不再在 spawn 后扫启动 banner —— 那个时机脆弱且正则与实际输出不符
+                    # (DESIGN-session-pty-id-model.md §3.5 / 问题 9)。_is_new_kimi 标记
+                    # 传到下面 stage-done 收尾,决定是否给 clean_exit_pty 传捕获回调。
+                    # claude 无需捕获(compute_session_id 确定性 sid 主动给)。
                     # §4.1 层1 supervisor(interactive PTY):daemon 线程跑 supervise_pty_session。
                     # run_story 在 ThreadPoolExecutor 线程里(无 asyncio loop)→ 独立 daemon 线程 + new_event_loop。
                     # pty 死时 supervise_pty_session 退出(轮询 pty.alive)。
@@ -1641,7 +1630,18 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             try:
                                 from ...infra.terminal.pty import clean_exit_pty
 
-                                clean_exit_pty(_agent_pty)
+                                # kimi:收尾期间 drain 退出输出,捕获 kimi 吐的
+                                # 'To resume this session: kimi -r session_<uuid>' 回填 DB。
+                                # claude 无需捕获(compute_session_id 确定性 sid 已在 DB)。
+                                if _is_new_kimi:
+                                    clean_exit_pty(
+                                        _agent_pty,
+                                        on_output=_make_kimi_sid_capturer(
+                                            story_key, stage, adapter_name
+                                        ),
+                                    )
+                                else:
+                                    clean_exit_pty(_agent_pty)
                             except Exception:
                                 log.exception(
                                     "[%s] clean_exit_pty failed for stage %s; force-killing",

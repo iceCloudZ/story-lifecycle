@@ -14,7 +14,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 
 def _has_winpty() -> bool:
@@ -545,7 +545,11 @@ _CLEAN_EXIT_POLL_INTERVAL = 0.2  # how often to re-check `pty.alive`
 _CLEAN_EXIT_TIMEOUT = 10.0  # default patience before force-killing
 
 
-def clean_exit_pty(pty: "ManagedPty", timeout: float = _CLEAN_EXIT_TIMEOUT) -> bool:
+def clean_exit_pty(
+    pty: "ManagedPty",
+    timeout: float = _CLEAN_EXIT_TIMEOUT,
+    on_output: "Callable[[str], None] | None" = None,
+) -> bool:
     """Ask a PTY's agent to exit cleanly, then wait for it to die.
 
     Public (no leading underscore) so the planner can reclaim an interactive
@@ -564,16 +568,71 @@ def clean_exit_pty(pty: "ManagedPty", timeout: float = _CLEAN_EXIT_TIMEOUT) -> b
     ``~/.claude/projects/<proj>/<uuid>.jsonl`` transcript on a clean ``/exit``;
     a force-kill mid-run truncates it, so ``--resume`` later resumes from an
     incomplete history. See docs/claude-code-agent-internals.md §2.2.
+
+    ``on_output``: optional callback fed every decoded output chunk during the
+    exit wait. Used by kimi session-id capture — kimi prints
+    ``To resume this session: kimi -r session_<uuid>`` on exit; the planner
+    passes a callback that scans for it and backfills DB (replaces the fragile
+    banner-time capture, DESIGN-session-pty-id-model.md §3.5 / 问题 9).
     """
     pty.write(b"\x1b[200~" + b"/exit" + b"\x1b[201~")
     time.sleep(_CLEAN_EXIT_PASTE_DELAY)
     pty.write(b"\r")
+    # 开 tap 收退出期间的输出(给 on_output 回调扫 resume 行等)。best-effort:
+    # tap 创建/移除失败不影响退出握手本身。
+    tap = None
+    if on_output is not None:
+        try:
+            tap = pty.add_tap()
+        except Exception:
+            tap = None
     deadline = time.time() + timeout
-    while time.time() < deadline:
-        if not pty.alive:
-            return True
-        time.sleep(_CLEAN_EXIT_POLL_INTERVAL)
-    return not pty.alive
+    try:
+        while time.time() < deadline:
+            # drain tap 输出喂回调(非阻塞)。
+            if tap is not None:
+                while True:
+                    try:
+                        chunk = tap.get_nowait()
+                    except Exception:
+                        break
+                    if isinstance(chunk, (bytes, bytearray)):
+                        try:
+                            on_output(chunk.decode("utf-8", errors="replace"))
+                        except Exception:
+                            pass
+                    elif chunk:
+                        try:
+                            on_output(str(chunk))
+                        except Exception:
+                            pass
+            if not pty.alive:
+                # 进程已死,最后 drain 一次(退出时吐的 resume 行可能还在 tap 里)。
+                if tap is not None:
+                    while True:
+                        try:
+                            chunk = tap.get_nowait()
+                        except Exception:
+                            break
+                        if isinstance(chunk, (bytes, bytearray)):
+                            try:
+                                on_output(chunk.decode("utf-8", errors="replace"))
+                            except Exception:
+                                pass
+                        elif chunk:
+                            try:
+                                on_output(str(chunk))
+                            except Exception:
+                                pass
+                return True
+            time.sleep(_CLEAN_EXIT_POLL_INTERVAL)
+        return not pty.alive
+    finally:
+        if tap is not None:
+            try:
+                pty.remove_tap(tap)
+            except Exception:
+                pass
 
 
 def cleanup_all(prefer_clean_exit: bool = True):

@@ -2386,8 +2386,27 @@ def update_delivery_artifact(artifact_id: int, **kwargs) -> None:
 # ---------------------------------------------------------------------------
 # story_session — agent 会话恢复回填(每阶段一个会话,跨阶段独立)
 # 全自动/半自动循环复用 session 省 token。claude session_id 后端 uuid5 主动给;
-# kimi 由 CLI 分配,后端从启动 banner 捕获后回填。详见 init_db 里的建表注释。
+# kimi 由 CLI 分配,后端退出时捕获后回填。详见 init_db 里的建表注释。
 # ---------------------------------------------------------------------------
+
+
+def compute_session_id(story_key: str, stage: str, adapter: str) -> str:
+    """Deterministic session id for a (story_key, stage, adapter) triple.
+
+    全仓库唯一一处算 claude 的 session-id uuid5 —— 保证无论走哪条 spawn 路径
+    (api 交互式 / planner 自动循环),同一个 (story, stage, adapter) 算出
+    **同一个** session id,这样 resume 时 claude ``--resume <sid>`` 能对上历史。
+
+    DESIGN-session-pty-id-model.md §3.5 / 问题 4:此前 api.py 用
+    ``f"{story}:{stage}"``(2 字段)、planner.py 用 ``f"{story}:{stage}:{adapter}"``
+    (3 字段),同 stage 算出不同 uuid → resume 续不上历史。统一为 3 字段。
+
+    只用于 claude(kimi 不支持预指定 id,见 §2.5.3),但签名带 adapter 以与
+    story_session 的 ``UNIQUE(story_key, stage, adapter)`` 约束对齐。
+    """
+    import uuid as _uuid
+
+    return str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"{story_key}:{stage}:{adapter}"))
 
 
 def get_session(story_key: str, stage: str, adapter: str) -> dict | None:

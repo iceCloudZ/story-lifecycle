@@ -7,12 +7,13 @@ RESUME:  claude --resume <uuid> "<continue>"   (same cwd — resume lookup is cw
 import json
 import uuid
 
+from story_lifecycle.infra.db import models as db
 from story_lifecycle.knowledge.adapters.claude import ClaudeAdapter
 
 
 def test_launch_cmd_new_session_uses_session_id_and_name():
     a = ClaudeAdapter()
-    sid = str(uuid.uuid5(uuid.NAMESPACE_DNS, "tapd-1:design"))
+    sid = db.compute_session_id("tapd-1", "design", "claude")
     cmd = a.interactive_launch_cmd(
         "sonnet", prompt="do design", session_id=sid, session_name="tapd-1-design", resume=False
     )
@@ -24,7 +25,7 @@ def test_launch_cmd_new_session_uses_session_id_and_name():
 
 def test_launch_cmd_resume_uses_resume_and_not_session_id_flag():
     a = ClaudeAdapter()
-    sid = str(uuid.uuid5(uuid.NAMESPACE_DNS, "tapd-1:design"))
+    sid = db.compute_session_id("tapd-1", "design", "claude")
     cmd = a.interactive_launch_cmd("sonnet", prompt="继续", session_id=sid, resume=True)
     assert "--resume" in cmd and sid in cmd
     assert "--session-id" not in cmd  # resume doesn't re-declare --session-id
@@ -53,7 +54,8 @@ def test_build_stage_launch_cmd_new_writes_marker(tmp_path, monkeypatch):
     assert marker.exists()
     data = json.loads(marker.read_text(encoding="utf-8"))
     assert data["name"] == "tapd-1-design"
-    assert data["session_id"] == str(uuid.uuid5(uuid.NAMESPACE_DNS, "tapd-1:design"))
+    # compute_session_id 三字段(story:stage:adapter),adapter=claude
+    assert data["session_id"] == db.compute_session_id("tapd-1", "design", "claude")
 
 
 def test_build_stage_launch_cmd_resume_when_marker_exists(tmp_path, monkeypatch):
@@ -62,7 +64,7 @@ def test_build_stage_launch_cmd_resume_when_marker_exists(tmp_path, monkeypatch)
     story = {"story_key": "tapd-1", "workspace": str(tmp_path), "current_stage": "design", "profile": "minimal"}
     marker = tmp_path / ".story" / "context" / "tapd-1" / "session_design.json"
     marker.parent.mkdir(parents=True, exist_ok=True)
-    sid = str(uuid.uuid5(uuid.NAMESPACE_DNS, "tapd-1:design"))
+    sid = db.compute_session_id("tapd-1", "design", "claude")
     marker.write_text(json.dumps({"session_id": sid, "name": "tapd-1-design"}), encoding="utf-8")
     # new-prompt builder must NOT be called on resume
     called = {"n": 0}
@@ -126,16 +128,41 @@ def test_kimi_resume_without_session_id_is_noop():
     assert "-S" not in spec.command
 
 
-def test_kimi_session_capture_regex():
-    """_capture_kimi_session 的正则能从 banner 输出解析 session_<uuid>。"""
+def test_kimi_session_capture_regex_exit_line():
+    """_KIMI_SESSION_RE 能从 kimi 退出时的 resume 行解析 session_<uuid>。
+
+    kimi 0.29.0 退出吐 'To resume this session: kimi -r session_<uuid>'(实测确认,
+    DESIGN-session-pty-id-model.md §2.5.3)。旧正则匹配 'Session: <sid>' banner
+    格式,与实际输出不符 → 从未工作(问题 9)。
+    """
     from story_lifecycle.orchestrator.engine.planner import _KIMI_SESSION_RE
 
-    banner = "│  Session:   session_a273ffaa-8630-4315-96c1-4beca972b7db      │"
-    m = _KIMI_SESSION_RE.search(banner)
+    # 实测的真实退出输出格式
+    exit_line = "To resume this session: kimi -r session_9807484b-4963-435b-ac07-1f59562f5bb1"
+    m = _KIMI_SESSION_RE.search(exit_line)
     assert m is not None
-    assert m.group(1) == "session_a273ffaa-8630-4315-96c1-4beca972b7db"
-    # 不匹配的行(如 Model/Version)
+    assert m.group(1) == "session_9807484b-4963-435b-ac07-1f59562f5bb1"
+    # 也兼容旧 banner 格式(Session: <sid>),防其他 kimi 版本
+    banner = "│  Session:   session_a273ffaa-8630-4315-96c1-4beca972b7db      │"
+    assert _KIMI_SESSION_RE.search(banner).group(1) == "session_a273ffaa-8630-4315-96c1-4beca972b7db"
+    # 不匹配无关行
     assert _KIMI_SESSION_RE.search("│  Model:     K3") is None
+
+
+def test_compute_session_id_three_field():
+    """compute_session_id 三字段,跨路径确定性(问题 4 核心)。
+
+    DESIGN-session-pty-id-model.md §3.5:同一 (story,stage,adapter) 无论哪条
+    spawn 路径算出的 sid 必须相同。此前 api.py 用 2 字段、planner.py 用 3 字段,
+    算出不同 uuid → resume 续不上历史。
+    """
+    # 确定性:同输入同输出
+    assert db.compute_session_id("S", "design", "claude") == db.compute_session_id("S", "design", "claude")
+    # 三字段:含 adapter,不同 adapter 不同 sid(同 stage 可多 adapter)
+    assert db.compute_session_id("S", "design", "claude") != db.compute_session_id("S", "design", "kimi")
+    # 与旧 2 字段格式不同(回归保护:不能再退回 2 字段)
+    old_2field = str(uuid.uuid5(uuid.NAMESPACE_DNS, "S:design"))
+    assert db.compute_session_id("S", "design", "claude") != old_2field
 
 
 def test_story_session_db_crud(isolated_story_home):
@@ -163,106 +190,55 @@ def test_story_session_db_crud(isolated_story_home):
     assert db.get_session("S1", "design", "claude")["status"] == "completed"
 
 
-class _FakePty:
-    """Minimal PTY stub:立即吐一段 banner 输出给 tap,模拟 kimi 启动。
+def test_kimi_sid_capturer_writes_db(isolated_story_home):
+    """_make_kimi_sid_capturer 从退出输出解析 session_<uuid> 并回填 DB。
 
-    _capture_kimi_session 只用 add_tap/remove_tap + tap.get_nowait(),这里实现这三者。
+    DESIGN-session-pty-id-model.md §3.5 / 问题 9:捕获改在 clean_exit_pty 退出时,
+    kimi 退出吐 'To resume this session: kimi -r session_<uuid>'。捕获器是
+    on_output 回调,被 clean_exit_pty 在 drain 输出时调用。
     """
-
-    def __init__(self, banner_chunk: str):
-        self._chunk = banner_chunk
-        self._delivered = False
-
-    def add_tap(self, maxsize: int = 512):
-        return self
-
-    def remove_tap(self, tap):
-        pass
-
-    def get_nowait(self):
-        # 第一次取返回 banner,之后抛空(模拟「输出结束」)。
-        import asyncio
-
-        if not self._delivered:
-            self._delivered = True
-            return self._chunk
-        raise asyncio.QueueEmpty
-
-
-def test_capture_kimi_session_writes_db(isolated_story_home):
-    """_capture_kimi_session 从 banner 输出解析 session_<uuid> 并回填 DB。
-
-    这是半自动路径(api.py)+ 全自动路径(planner.py)共用的回填函数 ——
-    kimi 的 session id 只能 spawn 后捕获,这函数是 resume 能否生效的关键。
-    """
-    from story_lifecycle.infra.db import models as db
-    from story_lifecycle.orchestrator.engine.planner import _capture_kimi_session
+    from story_lifecycle.orchestrator.engine.planner import _make_kimi_sid_capturer
 
     # 占位行(模拟 spawn 前的 upsert_session(sid=None))
     db.upsert_session("S2", "design", "kimi", session_id=None)
     assert db.get_session("S2", "design", "kimi")["session_id"] is None
 
-    banner = (
-        "│  Welcome to Kimi Code!                                              │\n"
-        "│  Session:   session_a273ffaa-8630-4315-96c1-4beca972b7db            │\n"
-        "│  Model:     K3                                                      │\n"
-    )
-    _capture_kimi_session("S2", "design", "kimi", _FakePty(banner))
+    # 模拟 clean_exit_pty drain 的退出输出(分块喂,模拟真实流式)
+    capturer = _make_kimi_sid_capturer("S2", "design", "kimi")
+    capturer("• 完成\n\n")
+    capturer("To resume this session: kimi -r session_9807484b-4963-435b-ac07-1f59562f5bb1\n")
 
     row = db.get_session("S2", "design", "kimi")
-    assert row["session_id"] == "session_a273ffaa-8630-4315-96c1-4beca972b7db"
+    assert row["session_id"] == "session_9807484b-4963-435b-ac07-1f59562f5bb1"
 
 
-def test_capture_kimi_session_missing_banner_is_noop(isolated_story_home):
-    """banner 没出现 session 行 → 不回填(下次当新会话),不崩。"""
-    from story_lifecycle.infra.db import models as db
-    from story_lifecycle.orchestrator.engine.planner import _capture_kimi_session
+def test_kimi_sid_capturer_no_resume_line_is_noop(isolated_story_home):
+    """退出输出没出现 resume 行(kimi 崩溃/被 kill)→ 不回填,不崩。
+
+    失败降级:下次当新会话(DESIGN-session-pty-id-model.md §3.5)。
+    """
+    from story_lifecycle.orchestrator.engine.planner import _make_kimi_sid_capturer
 
     db.upsert_session("S3", "build", "kimi", session_id=None)
-    # banner 里没有 Session: 行
-    _capture_kimi_session("S3", "build", "kimi", _FakePty("│  Welcome to Kimi Code!\n"))
-    # sid 仍为 None(未捕获),但行还在(不崩)
+    capturer = _make_kimi_sid_capturer("S3", "build", "kimi")
+    # 只有普通输出,没有 resume 行
+    capturer("• 做了一些事\n[Process killed]\n")
+
     row = db.get_session("S3", "build", "kimi")
     assert row is not None
     assert row["session_id"] is None
 
 
-def test_semiauto_kimi_path_calls_capture(tmp_path, monkeypatch):
-    """半自动 _spawn_story_agent_pty 的 kimi 新会话会调 _capture_kimi_session。
+def test_kimi_sid_capturer_idempotent(isolated_story_home):
+    """捕获器匹配到一次后短路,不再重复回填(避免多次 set_session_id)。"""
+    from story_lifecycle.orchestrator.engine.planner import _make_kimi_sid_capturer
 
-    回归保护:之前半自动路径漏了捕获调用(只在全自动 planner 里加了),
-    导致 kimi resume 在半自动下形同虚设。这里 spy 确认调用发生。
-    """
-    import story_lifecycle.orchestrator.service.api as api
-    from story_lifecycle.knowledge.adapters.shell import ShellAdapter
+    db.upsert_session("S4", "verify", "kimi", session_id=None)
+    capturer = _make_kimi_sid_capturer("S4", "verify", "kimi")
+    # 喂两次 resume 行
+    capturer("To resume this session: kimi -r session_aaaa-1111\n")
+    capturer("To resume this session: kimi -r session_bbbb-2222\n")
 
-    kimi_cfg = {
-        "binary": "kimi",
-        "launch_cmd": "kimi",
-        "inject_method": "stdin",
-        "stdin_to_prompt_arg": True,
-    }
-    kimi = ShellAdapter(config=kimi_cfg, name="kimi")
-    story = {
-        "story_key": "SEMI-1",
-        "workspace": str(tmp_path),
-        "current_stage": "design",
-        "profile": "minimal",
-    }
-    monkeypatch.setattr(api, "_build_stage_launch_prompt", lambda s: "SEED")
-    # ensure_agent_pty 返回 (session_id, fake_pty) — 不真 spawn
-    monkeypatch.setattr(api, "ensure_agent_pty", lambda *a, **k: ("pty-1", object()))
-
-    called = {"n": 0}
-
-    def fake_capture(story_key, stage, adapter, pty):
-        called["n"] += 1
-
-    # api.py 里是延迟 import `from ..engine.planner import _capture_kimi_session`,
-    # 故 patch 源头 planner._capture_kimi_session(api 每次 spawn 时现取)。
-    import story_lifecycle.orchestrator.engine.planner as _planner
-
-    monkeypatch.setattr(_planner, "_capture_kimi_session", fake_capture)
-
-    api._spawn_story_agent_pty(story, kimi, model="")
-    assert called["n"] == 1, "半自动 kimi 新会话应调 _capture_kimi_session 回填 sid"
+    # 只回填第一次的
+    row = db.get_session("S4", "verify", "kimi")
+    assert row["session_id"] == "session_aaaa-1111"
