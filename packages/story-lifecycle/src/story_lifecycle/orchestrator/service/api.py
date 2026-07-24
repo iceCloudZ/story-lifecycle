@@ -370,35 +370,44 @@ class WritebackSessionRequest(BaseModel):
 def api_list_sessions(story_key: str):
     """List all sessions for a story.
 
-    合并两个数据源:story_session 表(真实 stage/adapter/session_id,但无进程存活态)
-    + PTY 注册表(实时 alive/exited)。DB 有记录优先用 DB 的 stage/adapter/session_id,
-    再用 PTY 的存活态覆盖 status;只在 PTY 有而 DB 无时回退到 PTY 的空 stage。
+    以 DB story_session 行为主(stage/adapter/session_id/created_at 真实值),
+    PTY 注册表只用来查**实时存活态**(running/exited)覆盖 status。
+
+    关联:按 (stage, adapter) 关联 DB 行与 PTY 行 —— 不按 session_id 字符串,
+    因为 kimi 的 DB session_id 是捕获值(session_<uuid>),≠ PTY key
+    (compute_session_id)。两者都挂在同一 (story,stage,adapter) 上。
+
+    DESIGN-session-pty-id-model.md §3.4 / 问题 2、3:此前 status 直读 DB 静态值
+    ('active'),且把 PTY 行当新行 append(去重失败)→ 同一会话出现两次 + 死进程
+    显示 active。现在 status 实时从 PTY alive 派生,不再重复 append。
     """
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")
     db_sessions = db.list_sessions_for_story(story_key)
-    pty_sessions = list_pty_sessions(story_key)
+    # 建 (stage, adapter) → PTY 存活态 映射。
+    pty_alive_by_key: dict[tuple[str, str], bool] = {}
+    for p in list_pty_sessions(story_key):
+        pty_alive_by_key[(p.get("stage", ""), p.get("adapter", ""))] = (
+            p.get("status") == "running"
+        )
     result = []
     for row in db_sessions:
-        sid = row.get("session_id") or ""
-        # DB 的 session_id 是 uuid5/kimi-id;PTY 注册表的 key 是 pty-{id}-{n},两者不同。
-        # 这里用 DB 的 stage/adapter/session_id(真实值);PTY 列表仅用于兜底补无 DB 记录的。
+        stage = row.get("stage", "")
+        adapter = row.get("adapter", "")
+        # PTY 存活态覆盖 status:PTY 有该 (stage,adapter) 活进程 → running,否则 exited。
+        # DB 的 status 是静态业务态(active/completed),不反映进程存活,不进前端 status。
+        alive = pty_alive_by_key.get((stage, adapter))
         result.append(
             {
-                "session_id": sid,
-                "adapter": row.get("adapter", ""),
-                "stage": row.get("stage", ""),
+                "session_id": row.get("session_id") or "",
+                "adapter": adapter,
+                "stage": stage,
                 "model": "",
-                "status": row.get("status", "active"),
+                "status": "running" if alive else "exited",
                 "started_at": row.get("created_at", ""),
             }
         )
-    # PTY 注册表里有但 DB 没有的(老数据/无 session 回写)兜底补上。
-    db_sids = {r["session_id"] for r in result}
-    for p in pty_sessions:
-        if p["session_id"] not in db_sids:
-            result.append(p)
     return {"sessions": result}
 
 
