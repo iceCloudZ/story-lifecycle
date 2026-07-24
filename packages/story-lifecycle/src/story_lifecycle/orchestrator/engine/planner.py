@@ -1654,6 +1654,15 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                 _agent_pty.kill()
                             except Exception:
                                 pass
+                            # 从 PTY 注册表移除该条目(问题 7):clean_exit_pty + kill
+                            # 杀了进程但条目留在 _ptys(无 reaper 时累积)。lazy reaper
+                            # (list_pty_sessions/get_pty)也会清,但显式移除更及时。
+                            try:
+                                from ...infra.terminal.pty import kill_pty
+
+                                kill_pty(story_key, _agent_pty.session_id)
+                            except Exception:
+                                pass
                         # STORY-STATE-MODEL + DELIVERABLE-GATE: Story 状态闸由成果物驱动。
                         # 当前 lifecycle_state 的所有 stages 全 done 后,检查成果物 gate
                         # 是否满足(gate_satisfied)。满足 → 按 confirm 规则转移;不满足 →

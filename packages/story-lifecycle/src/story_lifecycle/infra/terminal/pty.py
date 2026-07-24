@@ -429,8 +429,29 @@ def spawn_pty(
         return session_id, pty
 
 
+def _reap_dead(sessions: dict) -> None:
+    """Lazy reaper: remove dead (alive=False) entries from a session dict.
+
+    Must be called under ``_lock``. DESIGN-session-pty-id-model.md §3.6 / 问题 6:
+    进程自然死亡后 _ptys 条目永不清理(无 reaper)→ 死条目无限累积。在
+    list_pty_sessions/get_pty 调用时顺手清,避免另起后台线程。返回的 sessions
+    dict 是 _ptys 的内层引用,就地修改。
+    """
+    dead = [sid for sid, pty in sessions.items() if not pty.alive]
+    for sid in dead:
+        try:
+            sessions.pop(sid, None)
+        except Exception:
+            pass
+
+
 def get_pty(story_id: str, session_id: str = "") -> Optional[ManagedPty]:
-    """Get a specific PTY session, or the first available one."""
+    """Get a specific PTY session, or the first available one.
+
+    不做 lazy reaper:WS handler 用这个区分「不存在(4404)」vs「存在但进程已死
+    (1000)」(PTY_WEBSOCKET_RECONNECTION_DESIGN.md 的 close-code 语义)。reaper 只在
+    list_pty_sessions(展示用)里清。
+    """
     with _lock:
         sessions = _ptys.get(story_id, {})
         if session_id:
@@ -446,6 +467,7 @@ def list_pty_sessions(story_id: str) -> list[dict]:
     """List all PTY sessions for a story."""
     with _lock:
         sessions = _ptys.get(story_id, {})
+        _reap_dead(sessions)  # lazy reaper:顺手清死条目
         return [
             {
                 "session_id": sid,
