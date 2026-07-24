@@ -112,8 +112,8 @@ export default function TerminalTab({
         // Fallback: try legacy single-PTY spawn
         const r2 = await fetch(`/api/pty/${storyKey}/spawn`, { method: 'POST' })
         if (r2.ok) {
-          const data = await r.json()
-          setActiveSession(data.session_id || storyKey)
+          const data2 = await r2.json()
+          setActiveSession(data2.session_id || storyKey)
           fetchSessions()
         }
       }
