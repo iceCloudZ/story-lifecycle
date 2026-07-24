@@ -210,6 +210,71 @@ pty = ManagedPty(session_id, command, cwd, env, purpose=purpose)
 
 ---
 
+## 2.5 CLI resume 机制实测结论(目标设计的事实依据)
+
+> 本节目的:确认 claude / kimi 两个 cli 各自的 session/resume 语义,**判断能否统一**。结论决定 §3 目标设计的形态。
+> 方法:官方文档(claude code docs + kimi-cli docs)+ 实测(claude v2.1.210)。
+
+### 2.5.1 两个 cli 的真实机制
+
+| | claude code(实测 v2.1.210) | kimi code(官方文档) |
+|---|---|---|
+| **建新会话,指定 id** | ✅ `claude --session-id <uuid>` 确实能指定(转录文件以此 id 命名) | ❌ 不能预指定;但 resume 不存在的 id 会**自动新建** |
+| **续会话** | `claude --resume <uuid>` | `kimi --resume <uuid>`(同 `-S`/`-r`/`--session`) |
+| **resume 不存在的 id** | ❌ **报错** "No conversation found"(实测确认,不新建) | ✅ **自动新建**(官方原文:"a new session is created automatically") |
+| **会话存储** | `~/.claude/projects/<project>/<id>.jsonl`,**cwd-scoped** | 本地文件 |
+| **建会话命名** | `-n/--name` | 无(用 `/title`) |
+
+**实测验证记录**(claude v2.1.210):
+```
+claude --session-id aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee -p "..."   → 转录文件生成,exit 0
+claude --resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee -p "..."       → RESUMED,exit 0
+claude --resume 00000000-0000-0000-0000-000000000000 -p "..."       → "No conversation found",不新建
+```
+
+### 2.5.2 能否统一?—— 不能统一 flag,但能统一到「确定性 sid 驱动」
+
+**底层 flag 语义不对称,无法统一**:
+- claude 必须区分「新建用 `--session-id`」「续用 `--resume`」,resume 不存在会失败
+- kimi 的 `--resume` 自带「不存在则新建」,无需区分
+
+**强求统一 flag 对 claude 无效**(resume 不存在报错)。这是 cli 本身的限制。
+
+**但能统一到一个更高的抽象**:后端用同一个**确定性 sid** = `uuid5(story:stage:adapter)` 驱动两个 cli,由 adapter 层消化 flag 差异:
+
+```
+后端(任何 cli 统一):
+  sid = uuid5(story:stage:adapter)              # 确定性,spawn 前已知
+  exists = db.get_session(...).session_id 非空?  # DB 知道这个 sid 建过没
+
+  → claude adapter:  exists ? --resume sid : --session-id sid    (adapter 内部分支,现状已有)
+  → kimi adapter:    --resume sid  (永远 resume,kimi 自己决定建还是续)
+```
+
+**统一点在「后端用确定性 sid 驱动」**,不是统一 cli flag。这正是 `SessionSpec`(AGENTS.md domain convention:`resume: bool` 参数)该干的事 —— adapter 自己把 `resume: bool` 翻译成对应 cli 的 flag。
+
+### 2.5.3 重大设计修正:kimi 不再需要 banner 捕获
+
+现状 kimi 走**最脆弱的路径**:spawn 后从 banner 正则捕获 kimi 自己分配的 `session_<uuid>`(planner.py:798-851),捕获失败就静默禁用 resume。
+
+**有了「resume 不存在则新建」语义,kimi 可以直接用后端的确定性 sid**:
+- 第一次:`kimi --resume <sid>`(不存在 → kimi 自动新建,后续用这个 sid)
+- 第二次:`kimi --resume <sid>`(存在 → 续上)
+
+**消除整个 banner 捕获机制**(`_capture_kimi_session` + `_KIMI_SESSION_RE` + `set_session_id` 回填)。DB 直接存后端算的 sid,不再等 kimi 分配。
+
+> ⚠️ **待验证前提**:kimi 「resume 不存在则新建」后,**是否真的采用调用者传入的 sid**作为后续 resume 的 key?官方文档只说"自动新建",未明确新建会话的 id 是传入的还是 kimi 重新分配的。若是后者,kimi 仍需某种捕获。**实施前必须实测 kimi 验证此点**(见 §4 Step 1 的验证项)。
+
+### 2.5.4 claude cwd-scoped 对 spawn cwd 的约束
+
+claude 的 `--resume` 查找是 **cwd-scoped**("Session ID lookup is scoped to the current project directory and its git worktrees")。
+
+**含义**:同一个 (story, stage) 的所有 spawn(无论 api 路径还是 planner 路径)**必须在同一个 cwd 启动**,否则 claude 在新 cwd 找不到旧转录,resume 失败。
+
+现状 `spawn_cwd = workspace_path or workspace`(api.py:709)依赖 per-story workspace 隔离(AGENTS.md domain convention)。这是对的,但**必须在迁移时加约束:同 stage 的 spawn cwd 一致性不变量**,否则 resume 跨 cwd 会断。
+
+---
+
 ## 3. 目标设计:单一 Session ID 模型
 
 ### 3.1 核心原则
@@ -228,14 +293,16 @@ session_id = uuid5(NAMESPACE_DNS, f"{story_key}:{stage}:{adapter}")
 
 **为什么含 adapter**:同一个 stage 理论上可能换 adapter(用户在 plan UI 把 design 的 claude 改 kimi)。`UNIQUE(story_key, stage, adapter)` 已经允许同 stage 多 adapter 共存(不同 cli 各自的历史)。三字段 ID 与 DB 唯一约束对齐。
 
-**kimi 的特殊性**:kimi 的 session_id 是 CLI 启动后从 banner 捕获的(`session_<uuid>`,非 uuid5),之前 DB 先写 placeholder(`session_id=None`),捕获后 `set_session_id` 回填。
+**kimi 的特殊性**(实测后修正,见 §2.5.3):
+- **旧机制**:kimi 的 session_id 是 CLI 启动后从 banner 捕获的(`session_<uuid>`),DB 先写 placeholder 再回填。脆弱、best-effort。
+- **新机制**:`kimi --resume <sid>` 对不存在的 id 会自动新建(官方确认)。所以 kimi 可以直接用后端的确定性 sid,不再捕获 banner。
 
-**目标处理**:
-- PTY 注册表的 key **仍然用 uuid5(story:stage:adapter)**(确定性,spawn 前就能算),不用 kimi 捕获值。
-- DB 的 `session_id` 列:claude 存 uuid5;kimi 仍存捕获值(给 cli `-S` 用)。
-- **PTY key 与 DB session_id 解耦**:PTY key 是后端内部句柄(确定性 uuid5),DB session_id 是喂给 cli 的值(claude=uuid5,kimi=捕获值)。两者通过 (story, stage, adapter) 三元组关联,不强求字符串相等。
+**目标处理(修正后,更彻底统一)**:
+- PTY 注册表的 key = `uuid5(story:stage:adapter)`(确定性)。
+- DB 的 `session_id` 列:**claude 和 kimi 都存后端算的 sid**(`uuid5(story:stage:adapter)`)。kimi 不再存捕获值。
+- **PTY key == DB session_id == 喂给 cli 的 sid,三者完全统一**(待 kimi 实测确认,见 §2.5.3 ⚠️)。
 
-> 这是关键设计决策:不强求 PTY key == DB session_id(因为 kimi 做不到),而是让两者都**从 (story, stage, adapter) 派生**,PTY 永远能通过这个三元组找到对应的 DB 行,反之亦然。
+> 这是关键设计决策:让 PTY key、DB session_id、cli sid **三者字符串相等**(都 = `compute_session_id(story,stage,adapter)`),不再解耦。这是比「三元组关联但不强求相等」更强的保证 —— 只有 kimi 实测确认能采用调用者传入的 sid 才成立(否则退回解耦方案)。
 
 ### 3.3 目标状态机:session 生命周期
 
@@ -292,15 +359,29 @@ def api_list_sessions(story_key):
 
 ### 3.5 resume 协议保证(核心诉求)
 
-**不变量**:同一个 (story_key, stage, adapter),无论走哪条 spawn 路径(api 交互式 / planner 自动循环),算出的 session ID **必须相同**。
+**不变量**:同一个 (story_key, stage, adapter),无论走哪条 spawn 路径(api 交互式 / planner 自动循环),算出的 session ID **必须相同**,且 spawn cwd 必须一致(claude resume 是 cwd-scoped,见 §2.5.4)。
 
 **实现**:
 1. session ID 生成逻辑**抽成一个唯一函数** `compute_session_id(story_key, stage, adapter)`,放 `infra/db/models.py` 或独立模块。
 2. `api.py:713` 和 `planner.py:1170` **都改调这个函数**,删掉各自的内联 uuid5。
 3. 输入串统一为三字段 `f"{story_key}:{stage}:{adapter}"`。
 4. 加回归测试:两条路径对同一 (story, stage, adapter) 算出相同 ID。
+5. spawn cwd 一致性:同 stage 的所有 spawn 必须用同一 `workspace_path`(per-story workspace 保证,AGENTS.md domain convention)。
 
-**kimi resume**:kimi 的 cli session_id 是捕获的,但 resume 判定仍走 DB(`get_session` 查 (story,stage,adapter))。只要 DB 唯一约束 + 三元组查询正确,kimi resume 不受 ID 模型影响。捕获值的回填路径(`_capture_kimi_session` → `set_session_id`)不变。
+**claude resume**(语义不变,现状正确):
+- 新建:`claude --session-id <sid>`(实测确认能指定,转录以此 id 命名)
+- 续会话:`claude --resume <sid>`(cwd-scoped 查找)
+- adapter 层按 `resume: bool` 分支(claude.py:46-52 现状已有,保留)
+
+**kimi resume**(重大修正,见 §2.5.3):
+- **改用确定性 sid 驱动**,不再捕获 banner:`kimi --resume <sid>`
+  - 第一次(不存在)→ kimi 自动新建
+  - 第二次(存在)→ kimi 续上
+- **删除 banner 捕获机制**:`_capture_kimi_session`(planner.py:798-851)、`_KIMI_SESSION_RE`、`set_session_id` 回填路径全部移除。
+- DB 的 `session_id` 列对 kimi 也存后端算的 sid(不再等 kimi 分配 `session_<uuid>`)。
+- adapter 层:ShellAdapter 的 `interactive_launch_cmd` 对 kimi 永远走 `--resume`(无论 `resume: bool`),因为 kimi 的 resume 自带「不存在则新建」。
+
+> ⚠️ **kimi 实施前必须实测**:验证 kimi `--resume <新sid>` 新建后,第二次 `--resume <同sid>` 能否续上(即 kimi 是否采用调用者传入的 sid 作为 key)。若 kimi 重新分配自己的 id,则保留捕获机制作为 fallback。见 §4 Step 1 验证项。
 
 ### 3.6 cleanup / reaper 机制(修问题 6、7)
 
@@ -328,12 +409,24 @@ interface Session {
 
 > 每步改完提交。顺序按依赖关系:先统一 ID 生成(问题4,resume 命脉),再统一存储 key,再补存活态,最后前端。
 
+### Step 0 — kimi 实测验证(前置,决定 §3.2/3.5 的统一方案能否成立)
+**目的**:确认 kimi `--resume <新sid>` 新建后,第二次 `--resume <同sid>` 能否续上。
+- 这决定 §3.2 「三者字符串相等」是否成立,还是退回「PTY 与 DB 解耦」。
+- **实测脚本**:
+  1. `kimi --resume <确定性uuidA>` → 观察是否新建
+  2. `kimi --resume <同uuidA>` → 观察是否续上(关键)
+  3. 查 kimi 本地 session 存储,确认新建会话的 id 是 `uuidA` 还是 kimi 重分配
+- **若成立** → 按 §3.2 修订版(三者统一)+ §3.5 删 banner 捕获 走。
+- **若不成立**(kimi 重分配 id)→ 退回 §3.2 原版(PTY key 与 DB session_id 解耦,kimi 保留捕获 fallback)。
+- claude 已实测确认(§2.5.1),无需再验。
+
 ### Step 1 — 统一 uuid5 输入串 + 抽函数(修问题 4,resume 核心)
 - 新增 `compute_session_id(story_key, stage, adapter) -> str`(三字段)。
 - `api.py:713`、`planner.py:1170` 改调它,删内联 uuid5。
 - `api.py:640`(deprecated `_build_stage_launch_cmd`)也改,保持一致。
 - 加测试:两路径同输入 → 同 ID。
 - **验证**:交互 spawn 一个 claude,让自动循环 resume,确认续上历史。
+- **若 Step 0 成立**:kimi 也改用 `compute_session_id` 的 sid,删 banner 捕获(见 §3.5)。
 
 ### Step 2 — PTY 注册表记 (stage, adapter) + 改 key 为 uuid5(修问题 1)
 - `ManagedPty` 加 `stage`/`adapter` 字段(构造时传入)。
