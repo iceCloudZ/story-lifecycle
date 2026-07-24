@@ -15,7 +15,7 @@ def _fake_pty(story_id: str = "t") -> ManagedPty:
     with patch.object(ManagedPty, "_spawn", lambda self, env: None), patch.object(
         ManagedPty, "_read_loop", lambda self: None
     ):
-        return ManagedPty(story_id, ["fake"], "/tmp", purpose="test")
+        return ManagedPty(story_id, story_key="S", stage="design", adapter="test", command=["fake"], cwd="/tmp", purpose="test")
 
 
 class TestDistribute:

@@ -131,7 +131,8 @@ def test_terminal_spawn_starts_profile_agent_not_shell(
 
     result = api.api_spawn_pty("TERM-1")
 
-    assert calls[0][0][1] == ["claude-test"]
+    # ensure_agent_pty(story_key, stage, adapter, command, ...) — command 在 args[3]
+    assert calls[0][0][3] == ["claude-test"]
     assert result["purpose"] == "agent"
 
 

@@ -32,7 +32,7 @@ def _fake_pty(story_id: str = "t", alive: bool = True) -> ManagedPty:
     with patch.object(ManagedPty, "_spawn", lambda self, env: None), patch.object(
         ManagedPty, "_read_loop", lambda self: None
     ):
-        pty = ManagedPty(story_id, ["fake"], "/tmp", purpose="test")
+        pty = ManagedPty(story_id, story_key="S", stage="design", adapter="test", command=["fake"], cwd="/tmp", purpose="test")
         pty._mode = "subprocess"
         pty._process = _FakeProcess(None if alive else 0)
         return pty

@@ -24,7 +24,7 @@ def _fake_pty() -> ManagedPty:
     with patch.object(ManagedPty, "_spawn", lambda self, env: None), patch.object(
         ManagedPty, "_read_loop", lambda self: None
     ):
-        return ManagedPty("t", ["fake"], "/tmp", purpose="test")
+        return ManagedPty("t", story_key="S", stage="design", adapter="test", command=["fake"], cwd="/tmp", purpose="test")
 
 
 class TestWaitReady:
@@ -65,7 +65,7 @@ class TestEnsureAgentPtyReadiness:
             lambda *a, **k: ("sid", pty),
         )
         ensure_agent_pty(
-            "s", ["fake"], "/tmp", "do work",
+            "s", "design", "claude", ["fake"], "/tmp", "do work",
             readiness_marker=r">", readiness_timeout=1.0,
         )
         # BUG #21: prompt 用 bracketed paste 包裹 + delay + 单独 \r 提交
@@ -81,6 +81,6 @@ class TestEnsureAgentPtyReadiness:
             "story_lifecycle.infra.terminal.pty.spawn_pty",
             lambda *a, **k: ("sid", pty),
         )
-        ensure_agent_pty("s", ["fake"], "/tmp", "do work", startup_delay=0)
+        ensure_agent_pty("s", "design", "claude", ["fake"], "/tmp", "do work", startup_delay=0)
         # BUG #21: 无 marker 路径也用 bracketed paste。
         assert wrote == [b"\x1b[200~do work\x1b[201~", b"\r"]

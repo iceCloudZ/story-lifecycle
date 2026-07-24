@@ -1362,6 +1362,8 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     _spawn_cwd = ctx.get("workspace_path") or workspace
                     _pty_session, _agent_pty = ensure_agent_pty(
                         story_key,
+                        stage,
+                        adapter_name,
                         launch_cmd,
                         _spawn_cwd,
                         _session_spec.pty_prompt if _session_spec else "",

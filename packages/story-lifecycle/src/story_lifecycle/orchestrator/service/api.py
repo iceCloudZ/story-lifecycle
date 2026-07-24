@@ -737,6 +737,8 @@ def _spawn_story_agent_pty(
     )
     session_id, pty = ensure_agent_pty(
         story_key,
+        stage,
+        _adapter_name,
         spec.command,
         spawn_cwd,
         spec.pty_prompt,
@@ -804,10 +806,14 @@ def _ensure_story_agent_pty(story: dict) -> dict:
     adapter_name = resolve_stage_adapter(story, stage, profile=profile, action=_action)
     stage_cfg = profile.stage(stage)
     model = stage_cfg.model or profile.model or "sonnet"
-    existing = get_pty(story["story_key"])
+    # 复用检查:按 (story, stage, adapter) 精确查注册表(不再是「第一个 alive」)。
+    # 之前 get_pty(story) 无 session_id 返回任意 alive 会话,且 existing.session_id
+    # 读不存在的属性(问题 5)。现在注册表 key = compute_session_id,能精确命中。
+    _reuse_sid = db.compute_session_id(story["story_key"], stage, adapter_name)
+    existing = get_pty(story["story_key"], _reuse_sid)
     reused = bool(existing and existing.alive and existing.purpose == "agent")
     if reused:
-        # 已有存活会话 —— 直接返回,不重复 spawn(避免孤儿/重复)
+        # 该 stage 已有存活会话 —— 直接返回,不重复 spawn(避免孤儿/重复)
         return {
             "ok": True,
             "reused": True,

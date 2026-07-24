@@ -10,7 +10,7 @@ def test_kill_terminates_spawned_process(tmp_path):
     from story_lifecycle.infra.terminal.pty import ManagedPty
 
     cmd = [sys.executable, "-c", "import time; time.sleep(60)"]
-    pty = ManagedPty("kill-test", cmd, str(tmp_path), purpose="test")
+    pty = ManagedPty("kill-test", story_key="S", stage="design", adapter="test", command=cmd, cwd=str(tmp_path), purpose="test")
     try:
         time.sleep(0.8)
         assert pty.alive, "process should be alive right after spawn"

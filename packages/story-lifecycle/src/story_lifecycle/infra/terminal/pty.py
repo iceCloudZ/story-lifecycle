@@ -145,17 +145,26 @@ def _close_kill_job(job):
 
 
 class ManagedPty:
-    """A single PTY process bound to a story."""
+    """A single PTY process bound to a story stage's agent session."""
 
     def __init__(
         self,
-        story_id: str,
+        session_id: str,
+        story_key: str,
+        stage: str,
+        adapter: str,
         command: list[str],
         cwd: str,
         env: dict | None = None,
         purpose: str = "shell",
     ):
-        self.story_id = story_id
+        # session_id 是 PTY 注册表的 key(= compute_session_id(story,stage,adapter)),
+        # 与 DB story_session.session_id 同源(claude)或解耦(kimi 捕获值)。详见
+        # DESIGN-session-pty-id-model.md §3.2。
+        self.session_id = session_id
+        self.story_key = story_key
+        self.stage = stage
+        self.adapter = adapter
         self.command = command
         self.cwd = cwd
         self.purpose = purpose
@@ -185,7 +194,7 @@ class ManagedPty:
             self._spawn_subprocess(env)
 
         self._read_thread = threading.Thread(
-            target=self._read_loop, daemon=True, name=f"pty-read-{self.story_id}"
+            target=self._read_loop, daemon=True, name=f"pty-read-{self.session_id}"
         )
         self._read_thread.start()
 
@@ -386,29 +395,37 @@ class ManagedPty:
 # _ptys: story_id → { session_id → ManagedPty }
 _ptys: dict[str, dict[str, ManagedPty]] = {}
 _lock = threading.Lock()
-_session_counter = 0
-
-
-def _next_session_id(story_id: str) -> str:
-    global _session_counter
-    _session_counter += 1
-    return f"pty-{story_id}-{_session_counter}"
-
-
 def spawn_pty(
-    story_id: str,
+    story_key: str,
+    stage: str,
+    adapter: str,
     command: list[str],
     cwd: str,
     env: dict | None = None,
     purpose: str = "shell",
-    session_id: str = "",
 ) -> tuple[str, ManagedPty]:
-    """Spawn a new PTY session for a story. Returns (session_id, pty)."""
+    """Spawn a new PTY session for a (story_key, stage, adapter) agent.
+
+    Returns (session_id, pty). session_id = compute_session_id(story,stage,adapter)
+    —— 与 DB story_session.session_id 同源(claude)或解耦(kimi),贯穿 DB/PTY/WS/前端
+    四层。DESIGN-session-pty-id-model.md §3.2 / 问题 1:此前 key 是 pty-{story}-{n}
+    全局计数器,与 DB uuid 永不对齐。
+    """
+    from ..db.models import compute_session_id
+
     with _lock:
-        if not session_id:
-            session_id = _next_session_id(story_id)
-        pty = ManagedPty(session_id, command, cwd, env, purpose=purpose)
-        _ptys.setdefault(story_id, {})[session_id] = pty
+        session_id = compute_session_id(story_key, stage, adapter)
+        pty = ManagedPty(
+            session_id,
+            story_key=story_key,
+            stage=stage,
+            adapter=adapter,
+            command=command,
+            cwd=cwd,
+            env=env,
+            purpose=purpose,
+        )
+        _ptys.setdefault(story_key, {})[session_id] = pty
         return session_id, pty
 
 
@@ -432,8 +449,8 @@ def list_pty_sessions(story_id: str) -> list[dict]:
         return [
             {
                 "session_id": sid,
-                "adapter": pty.purpose,
-                "stage": "",
+                "adapter": pty.adapter,
+                "stage": pty.stage,
                 "model": "",
                 "status": "running" if pty.alive else "exited",
                 "started_at": "",
@@ -481,7 +498,9 @@ def _wait_ready(pty: "ManagedPty", marker: str | None, timeout: float) -> bool:
 
 
 def ensure_agent_pty(
-    story_id: str,
+    story_key: str,
+    stage: str,
+    adapter: str,
     command: list[str],
     cwd: str,
     prompt: str,
@@ -496,9 +515,14 @@ def ensure_agent_pty(
     ``readiness_timeout``) before injecting ``prompt`` — fixes interactive-agent
     idle (slow startup swallowing the early injection). Without a marker, falls
     back to the legacy fixed ``startup_delay`` sleep.
+
+    session_id = compute_session_id(story_key, stage, adapter)(确定性),由
+    spawn_pty 算出并注册。调用方都已有三元组在手上(api/planner 两条 spawn 路径)。
     """
     session_id, pty = spawn_pty(
-        story_id,
+        story_key,
+        stage,
+        adapter,
         command,
         cwd,
         env=env,
