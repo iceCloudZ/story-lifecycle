@@ -166,9 +166,6 @@ export default function StoryDetailPage() {
 
   const actions = ACTIONS[detail.status] || []
 
-  // PRD 路径(sidebar「打开 PRD」用 + 概览头部)。从 context bundle 的 documents 里取。
-  const prdPath = (storyCtx?.documents ?? []).find((d) => d.kind === 'prd')?.ref || ''
-
   // single-pass 等 profile 创建即 active,但执行从未触发(无 _active_execution)。
   // overview 对这种 story 显示「开始执行」按钮(调 /advance 首次启动)。
   // 已在跑的(有 _active_execution)不显示,避免重复启动。
@@ -293,17 +290,6 @@ export default function StoryDetailPage() {
     }
   }
 
-  async function handleArchive() {
-    if (!window.confirm('确定归档此 Story？归档后会从默认列表中隐藏，但不会被删除。')) return
-    const r = await fetch(`/api/story/${storyKey}/archive`, { method: 'PUT' })
-    if (r.ok) {
-      refetch()
-      qc.invalidateQueries({ queryKey: ['stories'] })
-    } else {
-      alert('归档失败')
-    }
-  }
-
   return (
     <div className="story-detail-page-v2">
       <div className="sdpv2-body">
@@ -313,9 +299,8 @@ export default function StoryDetailPage() {
           activeModule={validTab}
           onModuleChange={setActiveTab}
           onNavigate={handleNavigate}
-          onArchive={handleArchive}
           onBack={() => navigate('/')}
-          prdPath={prdPath}
+          tapdUrl={detail.tapdUrl}
           onAdvance={handleAdvanceLifecycle}
         />
         <div className="sdpv2-content">

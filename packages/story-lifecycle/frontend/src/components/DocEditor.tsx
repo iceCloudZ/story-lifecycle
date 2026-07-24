@@ -143,7 +143,7 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
     <div className="doc-editor">
       {/* 顶栏 */}
       <div className="ui-card doc-editor-topbar">
-        <button className="btn btn-back" onClick={onBack}>← 返回</button>
+        <button className="btn btn-sm" onClick={onBack}>← 返回</button>
         <strong className="doc-editor-doctype">{docType}</strong>
         {mode === 'view' ? (
           <>
@@ -165,7 +165,7 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
                 ✓ 人工确认
               </button>
             )}
-            <button className="btn btn-primary" onClick={() => setMode('edit')}>编辑</button>
+            <button className="btn btn-sm btn-primary" onClick={() => setMode('edit')}>编辑</button>
           </>
         ) : (
           <>
@@ -175,10 +175,10 @@ export default function DocEditor({ storyKey, docType, onBack }: Props) {
               onChange={(e) => setTitle(e.target.value)}
               placeholder="标题"
             />
-            <button className="btn" onClick={() => setMode('view')}>预览</button>
+            <button className="btn btn-sm" onClick={() => setMode('view')}>预览</button>
           </>
         )}
-        <span className="ui-hint">v{doc?.current_version ?? '?'}</span>
+        <span className="de-version-badge">v{doc?.current_version ?? '?'}</span>
       </div>
 
       <div className="doc-editor-body">

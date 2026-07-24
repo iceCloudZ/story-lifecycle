@@ -19,10 +19,9 @@ interface Props {
   onModuleChange: (id: string) => void
   /** 交付物精准跳转:跳 tab + 可选打开特定 doc(如 spec)。 */
   onNavigate: (tab: string, doc?: string) => void
-  onArchive?: () => void
   onBack?: () => void
-  /** PRD 文件路径;有值时 sidebar 底部显示「打开 PRD」(任何 tab 都能开)。 */
-  prdPath?: string
+  /** TAPD 需求页 URL;空时按 storyKey(tapd-*)推导,都拿不到则不显示入口。 */
+  tapdUrl?: string
   /** gate 推进(进入下一 lifecycle 状态)入口;调 POST /lifecycle/advance。 */
   onAdvance?: () => void
 }
@@ -58,13 +57,14 @@ const ICON_EXTERNAL = (
   </svg>
 )
 
-const ICON_ARCHIVE = (
-  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="2.5" width="12" height="3.25" rx="0.75" />
-    <path d="M3 5.75v7.5h10v-7.5" />
-    <path d="M6.5 8.75h3" />
-  </svg>
-)
+// TAPD 需求页 URL:优先用后端给的 tapdUrl;否则按 storyKey(tapd-<fullId>)推导
+// (与 OverviewTab 头部同一规则:fullId 第 3~10 位是 workspace id)。
+function resolveTapdUrl(storyKey: string, tapdUrl?: string): string {
+  if (tapdUrl) return tapdUrl
+  const fullId = storyKey.startsWith('tapd-') ? storyKey.slice(5) : ''
+  const ws = fullId.length >= 10 ? fullId.slice(2, 10) : ''
+  return ws ? `https://www.tapd.cn/${ws}/prong/stories/view/${fullId}` : ''
+}
 
 // 交付物 key → {跳转 tab, 可选打开的 doc_type}。
 // doc 类(doc_type)→ docs tab + 打开该 doc;code → code tab;delivery → 无目标(只展示)。
@@ -97,14 +97,14 @@ const DOT_STATUS_TEXT: Record<string, string> = {
  *   - 模块导航(概览/代码/文档 tab)
  *   - 交付物导航:每项一行 = 状态点 + 标签 + 确认圈/跳过(悬停显现)。
  *     状态点表达产物/确认状态(替代旧的「有产物」小字行);点击项 = 精准跳转。
- *   - gate 推进入口(进入下一状态):未满足置灰 + 下方显示缺什么
- *   - 底部操作(PRD 打开 / 归档)
+ *   - gate 推进入口(进入下一状态):未满足时按钮+缺失原因合成锁定卡片
+ *   - 底部操作(打开 TAPD;非 TAPD story 不显示)
  *
  * 确认模式选择(NN/g + Eleken 研究):用户主动确认完成 → checkbox 是正确模式
  * (deliberate commit);产物不存在(前置条件未满足)→ 确认圈置灰禁用。
  */
 export default function StorySidebar({
-  storyKey, modules, activeModule, onModuleChange, onNavigate, onArchive, onBack, prdPath, onAdvance,
+  storyKey, modules, activeModule, onModuleChange, onNavigate, onBack, tapdUrl, onAdvance,
 }: Props) {
   const qc = useQueryClient()
 
@@ -235,9 +235,10 @@ export default function StorySidebar({
             })}
           </div>
 
-          {/* gate 推进入口:all_satisfied 可点;未满足置灰 + 下方显示缺什么 */}
+          {/* gate 推进入口:all_satisfied 可点;未满足时按钮+原因合成一个锁定卡片,
+              一眼看出「缺什么 → 所以进不去」。 */}
           {gate && (
-            <div className="ss-gate-wrap">
+            <div className={`ss-gate-wrap ${gate.all_satisfied ? 'ready' : 'locked'}`}>
               <button
                 className={`ss-gate-btn ${gate.all_satisfied ? 'ready' : 'locked'}`}
                 disabled={!gate.all_satisfied}
@@ -250,31 +251,29 @@ export default function StorySidebar({
                 </svg>
               </button>
               {!gate.all_satisfied && gateMissing.length > 0 && (
-                <div className="ss-gate-reason">还差 {gateMissing.join('、')}</div>
+                <div className="ss-gate-reason">
+                  <span className="ss-gate-reason-dot" />
+                  还差 {gateMissing.join('、')},完成后可进入
+                </div>
               )}
             </div>
           )}
         </div>
       )}
 
-      <div className="ss-bottom-actions">
-        {prdPath && (
-          <button
-            className="ss-prd-btn"
-            title={prdPath}
-            onClick={() => window.open(`file:///${prdPath.replace(/\\/g, '/')}`, '_blank', 'noopener,noreferrer')}
+      {resolveTapdUrl(storyKey, tapdUrl) && (
+        <div className="ss-bottom-actions">
+          <a
+            className="ss-tapd-btn"
+            href={resolveTapdUrl(storyKey, tapdUrl)}
+            target="_blank"
+            rel="noreferrer"
           >
             {ICON_EXTERNAL}
-            打开 PRD
-          </button>
-        )}
-        {onArchive && (
-          <button className="ss-archive-btn" onClick={onArchive} title="已上线并验证过，归档此 Story">
-            {ICON_ARCHIVE}
-            归档
-          </button>
-        )}
-      </div>
+            打开 TAPD
+          </a>
+        </div>
+      )}
     </aside>
   )
 }

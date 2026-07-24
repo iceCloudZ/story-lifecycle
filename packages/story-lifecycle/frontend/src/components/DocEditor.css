@@ -15,6 +15,17 @@
   padding: var(--space-2) var(--space-4);
 }
 .doc-editor-doctype { font-size: var(--text-lg); }
+/* 当前版本号徽章(与 btn-sm 同高,mono 数字) */
+.de-version-badge {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--gray-100);
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
 .doc-editor-title-display {
   flex: 1;
   color: var(--color-text-muted);
