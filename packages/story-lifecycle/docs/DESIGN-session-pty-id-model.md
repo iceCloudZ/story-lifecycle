@@ -6,7 +6,12 @@
 >
 > 按 AGENTS.md「架构审查触发」规则,第三次相关 bug 前先做状态机/协议设计。本文是那张设计图。
 >
-> **状态**:设计阶段,未动代码。读完按「迁移路径」分步实施。
+> **状态**:✅ **已实施完成**(Step 1-5、7,共 9 问题全修)。Step 0 实测定论 + §3.5 kimi
+> 退出捕获 + §3.6 reaper 均落地。端到端验证通过(spawn→WS 连接→list 存活态→kill→resume
+> 全链路)。Step 6(问题 5)在 Step 2d 顺手修完。遗留见文末「实施后记」。
+>
+> **实施提交**:`820a1566`(Step1)`572af674`(Step2)`63cf1cf3`(Step3)`b16f1c1f`(Step4)
+> `e379634c`(Step5)+ bundle 重建。
 
 ---
 
@@ -451,7 +456,7 @@ interface Session {
 - §3.2/§3.5 已按保守方案修订
 - 新增问题 9(捕获正则)进清单,Step 1 一并修
 
-### Step 1 — 统一 uuid5 输入串 + 抽函数 + 修 kimi 捕获正则(修问题 4、9,resume 核心)
+### Step 1 — 统一 uuid5 输入串 + 抽函数 + 修 kimi 捕获正则(修问题 4、9,resume 核心)✅
 - 新增 `compute_session_id(story_key, stage, adapter) -> str`(三字段)。
 - `api.py:713`、`planner.py:1170` 改调它,删内联 uuid5。
 - `api.py:640`(deprecated `_build_stage_launch_cmd`)也改,保持一致。
@@ -461,30 +466,30 @@ interface Session {
   - claude:交互 spawn,让自动循环 resume,确认续上历史。
   - kimi:spawn 跑完一个 stage,确认 `clean_exit_pty` 收尾时捕获到 `session_<uuid>` 并回填 DB(不再静默失败)。
 
-### Step 2 — PTY 注册表记 (stage, adapter) + 改 key 为 uuid5(修问题 1)
+### Step 2 — PTY 注册表记 (stage, adapter) + 改 key 为 uuid5(修问题 1)✅
 - `ManagedPty` 加 `stage`/`adapter` 字段(构造时传入)。
 - `spawn_pty` / `ensure_agent_pty` 接收 (story_key, stage, adapter),key 用 `compute_session_id`。
 - `_next_session_id` / `_session_counter` 删除(不再需要)。
 - `list_pty_sessions` 返回真实 stage/adapter。
 - 修问题 8:构造参数正名(`session_id` 不再伪装成 `story_id`)。
 
-### Step 3 — `api_list_sessions` 存活态查询 + 去重(修问题 2、3)
+### Step 3 — `api_list_sessions` 存活态查询 + 去重(修问题 2、3)✅
 - 按 §3.4 重写:DB 行为主,PTY alive 覆盖 status,去重不 append。
 - 返回 `pty_key` 字段(前端连 WS 用)。
 
-### Step 4 — WS handler 接受 pty_key(配合 Step 3)
+### Step 4 — WS handler 接受 pty_key(配合 Step 3)✅
 - `_pty_ws_handler` 的 `get_pty(story_id, session_id)` 现在能查到了(key 已是 uuid5)。
 - 前端 `TerminalPanel` 连 WS 用 `pty_key`(从 list 拿),不用 DB 的 cli session_id。
 
-### Step 5 — cleanup / reaper(修问题 6、7)
+### Step 5 — cleanup / reaper(修问题 6、7)✅
 - `clean_exit_pty` 后加 `kill_pty`。
 - 加 lazy reaper 或定期 reaper 清 dead 条目。
 
-### Step 6 — 修复用分支(修问题 5)
+### Step 6 — 修复用分支(修问题 5)✅(在 Step 2d 顺手修完)
 - `_ensure_story_agent_pty` 复用分支:`existing.session_id` → `existing.session_id`(属性正名后存在了)。
 - 或重写复用逻辑(按 stage/adapter 匹配,而非「第一个 alive」)。
 
-### Step 7 — 前端 status 词汇表 + 反馈(修体验)
+### Step 7 — 前端 status 词汇表 + 反馈(修体验)✅
 - `Session.status` 联合类型 `running|exited`。
 - spawn 后即时反馈(loading 态/成功提示),不等 5s 轮询。
 
@@ -496,7 +501,7 @@ interface Session {
 - **adapter 层不动**(`SessionSpec` / `start_session` 契约不变,AGENTS.md domain convention)。
 - **done file 协议不动**(stage 完成的真相源不变)。
 - **driver 生命周期不动**(`claim_story_driver` / `consume_orphan_done`,AGENTS.md domain convention)。
-- **kimi 捕获回填路径不动**(`_capture_kimi_session` → `set_session_id`)。
+- **kimi 捕获回填路径**:`_capture_kimi_session`(banner)→ `_make_kimi_sid_capturer`(退出时)改造完成,但 `set_session_id` 回填 DB 的接口不变。
 
 ---
 
@@ -531,3 +536,42 @@ interface Session {
 | 7 clean_exit 不移除 | 5 | 累积 |
 | 8 命名谎言 | 2 | 共犯 |
 | 9 kimi 捕获正则不符(kimi resume 从未工作) | 1 | **Step 0 发现,kimi resume 命脉** |
+
+---
+
+## 附录 B:实施后记(Step 1-7 完成后的实测结论 + 遗留)
+
+### 实测验证(端到端,真 claude v2.1.210 + kimi 0.29.0)
+
+| 测试项 | 结果 |
+|---|---|
+| spawn 返回 session_id = compute_session_id | ✅ `7cb5a016...`(uuid5,不再是 pty-{n}) |
+| WS 终端连接(用 spawn 返回的 sid) | ✅ 连上 + 收到 claude 输出(原「点了没反应」修复) |
+| spawn sid == list 返回 sid(轮询不切换) | ✅ 一致(claude 三层 sid 同源) |
+| list(活进程) | ✅ 单行 + status=running(问题 2/3 修复) |
+| kill → list | ✅ status 变 exited(实时存活态) |
+| 第 2 次 spawn RESUME(同 sid 续历史) | ✅ resumed:true + sid 完全相同(问题 4 修复) |
+| DB sid == compute_session_id | ✅ 一致 |
+
+### 遗留(非本次范围)
+
+1. **marker 文件 vs DB 写入耦合**(状态机层面):实测发现 DB 行被外部清掉但
+   `session_<stage>.json` marker 还在时,`is_resume=true` 但 `if not is_resume`
+   分支不写 DB 行 → 陷入「resume 但 DB 无行」的不一致(list 返回空)。这是 resume
+   判据(`marker.exists()` 或 DB sid)与 DB 写入条件的耦合,属状态机清理范围,超出
+   本次 ID 模型。**规避**:清理测试数据时 DB 行和 marker 必须一起清。
+
+2. **api 交互式 kimi 捕获**:`_spawn_story_agent_pty`(api 路径)的 PTY 生命周期不归
+   planner 管(用户自己 /exit 或前端断开),无确定退出时机。可靠的 kimi 捕获走
+   planner 全自动循环(stage-done clean_exit_pty)。api 路径的 kimi 捕获留给未来
+   PTY 死亡监听(WS 断开 hook 或 reaper 增强)。
+
+3. **旧数据**:改动前的 DB 行用旧 2 字段格式 uuid(`uuid5(story:stage)`),新 spawn
+   用 3 字段(`uuid5(story:stage:adapter)`)。新 spawn 自然覆盖旧行(同 stage upsert);
+   内存态 PTY 注册表重启即清。无需数据迁移脚本,但旧 story 首次新 spawn 会「丢」
+   旧 transcript(uuid 不同 → resume 当新会话)。可接受(一次性)。
+
+4. **reaper 范围**:lazy reaper 只在 `list_pty_sessions` 清死条目;`get_pty` 不清
+   (WS handler 需区分 4404 不存在 vs 1000 存在但死)。死条目在 list 被调时清理,
+   但若长期不调 list(只 WS 连),死条目仍累积 —— 由 Step 5b 的 clean_exit 后显式
+   kill_pty 兜底。
