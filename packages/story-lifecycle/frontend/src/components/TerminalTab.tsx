@@ -28,12 +28,15 @@ interface Props {
   onRegeneratePlan?: () => void
 }
 
+// status 只接受 running/exited — 后端 Step 3 后不再吐 DB 静态 active/completed
+// (DESIGN-session-pty-id-model.md §3.7)。联合类型防 status 词汇漂移。
+type SessionStatus = 'running' | 'exited'
 interface Session {
   session_id: string
   adapter: string
   stage: string
   model: string
-  status: string
+  status: SessionStatus
   started_at: string
 }
 
