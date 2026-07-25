@@ -1,8 +1,8 @@
 """OpenCode adapter (sst/opencode CLI)."""
 
-import json
 import logging
 import os
+import sqlite3
 from pathlib import Path
 
 from .base import BaseAdapter, SessionSpec
@@ -14,28 +14,31 @@ log = logging.getLogger(__name__)
 def _opencode_data_dir() -> Path:
     """opencode 的 per-user 数据根目录。
 
-    opencode 把会话存成三层 JSON 文件(``<data>/storage/{project,session,message,
-    part}/...``)。根目录随平台不同(对应 opencode 的 ``Global.Path.data``):
+    opencode 1.18+ 把全部会话数据存在单个 SQLite 文件 ``<data>/opencode.db``
+    (表 session/message/part/project;旧版三层 JSON 文件布局已废弃)。根目录随
+    平台不同(对应 opencode 的 ``Global.Path.data``):
 
       - Linux:   ``~/.local/share/opencode``
       - macOS:   ``~/Library/Application Support/opencode``
-      - Windows: ``%LOCALAPPDATA%\\opencode``
+      - Windows: ``~/.local/share/opencode``  ← 实测确认(opencode 在 Win 上仍用
+                   Linux 风格路径,不是 %LOCALAPPDATA%)
 
-    未实测确认的部分见 DESIGN-session-pty-id-model.md §2.5(opencode 行 TODO);
-    此处给三条平台默认值,可被 env ``OPENCODE_DATA_DIR`` 覆盖。
+    可被 env ``OPENCODE_DATA_DIR`` 覆盖。见 DESIGN-session-pty-id-model.md §2.5。
     """
     override = os.environ.get("OPENCODE_DATA_DIR")
     if override:
         return Path(override).expanduser()
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        return Path(base) / "opencode"
-    if sys_darwin():
+    if _sys_darwin():
         return Path.home() / "Library" / "Application Support" / "opencode"
+    # Linux + Windows 实测都用 ~/.local/share/opencode。
     return Path.home() / ".local" / "share" / "opencode"
 
 
-def sys_darwin() -> bool:
+def _opencode_db_path() -> Path:
+    return _opencode_data_dir() / "opencode.db"
+
+
+def _sys_darwin() -> bool:
     import platform
 
     return platform.system() == "Darwin"
@@ -50,10 +53,11 @@ class OpencodeAdapter(BaseAdapter):
     ``readiness_marker=None``)。opencode 的 TUI banner 是 ASCII art,无稳定文本
     可锚定 → 走 baked-in 正好绕开这个坑。
 
-    sid 模型 = 「CLI 自分配、文件扫描捕获」:opencode 不支持预指定 session id,
-    终端也不吐 sid;会话写进 ``<data>/storage/session/<projectID>/<sid>.json``。
-    capture_sid_post_exit 在 clean_exit 后扫该目录,按 ``time.created >= since_ts``
-    取最新 session.id 回填。详见 AGENTS.md「Session-id model」与 DESIGN §2.5。
+    sid 模型 = 「CLI 自分配、SQLite 查询捕获」:opencode 不支持预指定 session id,
+    终端也不吐 sid;会话存进 ``<data>/opencode.db`` 的 ``session`` 表(1.18+ 改用
+    SQLite,不再写三层 JSON 文件)。capture_sid_post_exit 在 clean_exit 后查该表,
+    按 ``directory = cwd AND time_created >= since_ts`` 取最新 session.id 回填。
+    详见 AGENTS.md「Session-id model」与 DESIGN §2.5。
     """
 
     name = "opencode"
@@ -138,7 +142,7 @@ class OpencodeAdapter(BaseAdapter):
     def cleanup(self, story_key: str, stage: str):
         pass
 
-    # --- sid 文件扫描捕获 ---------------------------------------------------
+    # --- sid SQLite 查询捕获 ------------------------------------------------
     def capture_sid_post_exit(
         self,
         story_key: str,
@@ -146,85 +150,70 @@ class OpencodeAdapter(BaseAdapter):
         cwd: str | None = None,
         since_ts: str | None = None,
     ) -> str | None:
-        """clean_exit 后扫 opencode 存储目录,取本次 spawn 时间窗内最新 session.id。
+        """clean_exit 后查 opencode.db,取本次 spawn 时间窗内最新 session.id。
 
-        步骤:
-          1. 反查 projectID:扫 ``<data>/storage/project/*.json``,取 ``directory``
-             规范化后等于 cwd 的 project(无 cwd 则取所有)。
-          2. 列 ``<data>/storage/session/<projectID>/*.json``,读 ``time.created``。
-          3. 过滤 ``created >= since_ts``(spawn 前的 UTC iso),取最新者。
-          4. 返回 ``info.id``(``ses_…``)。
+        opencode 1.18+ 把会话存进 ``<data>/opencode.db`` 的 ``session`` 表,字段:
+        ``id``(ses_…)、``directory``(spawn cwd)、``time_created``(epoch 毫秒)。
+        一条 SQL 取代旧版的文件扫描:
 
-        best-effort:任何一步缺目录/解析失败 → 返回 None(下次当新会话,不崩)。
+            SELECT id FROM session
+            WHERE directory = :cwd AND time_created >= :since_ms
+            ORDER BY time_created DESC LIMIT 1
+
+        ``since_ts`` 是 spawn 前记的 UTC iso(``_now_utc_iso``),转 epoch 毫秒做下界。
+        无 cwd 则放宽(全表靠 since 过滤)。best-effort:db 缺失/查询失败 → None。
         """
         try:
-            storage = _opencode_data_dir() / "storage"
-            session_root = storage / "session"
-            if not session_root.is_dir():
+            db_path = _opencode_db_path()
+            if not db_path.is_file():
                 return None
-
-            project_dirs = self._match_project_dirs(storage, cwd)
-            if not project_dirs:
-                # cwd 没匹配到 project(或没给 cwd)→ 扫全部,靠 since_ts 过滤。
-                project_dirs = [d for d in session_root.iterdir() if d.is_dir()]
-            if not project_dirs:
-                return None
-
-            best_sid = None
-            best_ts = None
-            for pdir in project_dirs:
-                for sf in pdir.glob("*.json"):
-                    created = self._session_created(sf)
-                    if created is None:
-                        continue
-                    if since_ts and created < since_ts:
-                        continue
-                    if best_ts is None or created > best_ts:
-                        best_ts = created
-                        best_sid = self._session_id(sf)
-            return best_sid
+            # 只读连接(URI mode=ro),绝不干扰 opencode 自己的写入。
+            uri = f"file:{db_path.as_posix()}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True)
+            try:
+                sql = "SELECT id FROM session"
+                clauses = []
+                params: list = []
+                if cwd:
+                    clauses.append("directory = ?")
+                    params.append(str(cwd))
+                since_ms = _iso_to_epoch_ms(since_ts) if since_ts else None
+                if since_ms is not None:
+                    clauses.append("time_created >= ?")
+                    params.append(since_ms)
+                if clauses:
+                    sql += " WHERE " + " AND ".join(clauses)
+                sql += " ORDER BY time_created DESC LIMIT 1"
+                row = conn.execute(sql, params).fetchone()
+                return row[0] if row else None
+            finally:
+                conn.close()
         except Exception as exc:  # best-effort:绝不拖垮 stage 收尾
             log.warning(
-                "[%s] opencode sid file-scan failed (%s); resume disabled for stage=%s",
+                "[%s] opencode sid sqlite-capture failed (%s); resume disabled for stage=%s",
                 story_key,
                 exc,
                 stage,
             )
             return None
 
-    @staticmethod
-    def _match_project_dirs(storage: Path, cwd: str | None) -> list[Path]:
-        session_root = storage / "session"
-        if not cwd:
-            return []
-        cwd_norm = os.path.normpath(str(cwd))
-        matched: list[Path] = []
-        for pf in (storage / "project").glob("*.json"):
-            try:
-                info = json.loads(pf.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if os.path.normpath(str(info.get("directory", ""))) == cwd_norm:
-                pid = info.get("id") or pf.stem
-                pdir = session_root / str(pid)
-                if pdir.is_dir():
-                    matched.append(pdir)
-        return matched
 
-    @staticmethod
-    def _session_created(session_file: Path) -> str | None:
-        try:
-            info = json.loads(session_file.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        ts = (info.get("time") or {}).get("created")
-        return ts if isinstance(ts, str) else None
+def _iso_to_epoch_ms(iso_ts: str) -> int | None:
+    """opencode 的 time_created 是 epoch 毫秒;planner 的 since_ts 是 UTC iso(秒精度)。
 
-    @staticmethod
-    def _session_id(session_file: Path) -> str | None:
-        try:
-            info = json.loads(session_file.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        sid = info.get("id")
-        return sid if isinstance(sid, str) else session_file.stem
+    把 iso 转成毫秒做 SQL 下界比较。容忍 'Z' / '+00:00' / 无时区(按 UTC)。
+    """
+    import datetime as _dt
+
+    s = iso_ts.strip()
+    if not s:
+        return None
+    try:
+        # 兼容 '...Z' / 带偏移 / 无时区
+        s2 = s.replace("Z", "+00:00")
+        dt = _dt.datetime.fromisoformat(s2)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_dt.timezone.utc)
+        return int(dt.timestamp() * 1000)
+    except Exception:
+        return None

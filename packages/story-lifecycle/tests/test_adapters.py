@@ -111,28 +111,32 @@ class TestOpencodeAdapter:
         assert "anthropic/claude-sonnet" in cmd
 
     def test_capture_sid_post_exit_picks_newest_in_window(self, tmp_path, monkeypatch):
-        """文件扫描捕获:在 spawn 时间窗内,按 cwd 反查 projectID,取最新 session.id。"""
+        """SQLite 查询捕获:按 cwd + time_created>=since 取最新 session.id。
+
+        opencode 1.18+ 把会话存进 opencode.db 的 session 表(directory/time_created)。
+        """
+        import sqlite3
         from story_lifecycle.knowledge.adapters.opencode import OpencodeAdapter
 
-        storage = tmp_path / "storage"
-        proj_dir = storage / "project"
-        sess_dir = storage / "session" / "proj-1"
-        proj_dir.mkdir(parents=True)
-        sess_dir.mkdir(parents=True)
-        # project.json 记录 cwd → projectID
-        (proj_dir / "proj-1.json").write_text(
-            json.dumps({"id": "proj-1", "directory": str(tmp_path)}), encoding="utf-8"
+        # 造一棵假 opencode.db,只建 capture 需要的 session 表。
+        db_path = tmp_path / "opencode.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "CREATE TABLE session (id TEXT, directory TEXT, time_created INTEGER)"
         )
-        # 旧会话(spawn 之前,created 早于 since)→ 应被过滤
-        (sess_dir / "ses_old.json").write_text(
-            json.dumps({"id": "ses_old", "time": {"created": "2026-01-01T00:00:00+00:00"}}),
-            encoding="utf-8",
+        # 旧会话(spawn 之前,created 早于 since 毫秒)→ 应被过滤
+        # since=2026-07-01T00:00:00Z ≈ 1784851200000 ms;用更小的值确保被排除。
+        conn.execute(
+            "INSERT INTO session(id, directory, time_created) VALUES (?,?,?)",
+            ("ses_old", str(tmp_path), 1783000000000),
         )
         # 本次会话(spawn 之后)
-        (sess_dir / "ses_new.json").write_text(
-            json.dumps({"id": "ses_new", "time": {"created": "2026-07-25T10:00:00+00:00"}}),
-            encoding="utf-8",
+        conn.execute(
+            "INSERT INTO session(id, directory, time_created) VALUES (?,?,?)",
+            ("ses_new", str(tmp_path), 1785000000000),
         )
+        conn.commit()
+        conn.close()
         monkeypatch.setenv("OPENCODE_DATA_DIR", str(tmp_path))
 
         a = OpencodeAdapter()
@@ -141,7 +145,8 @@ class TestOpencodeAdapter:
         )
         assert captured == "ses_new"
 
-    def test_capture_sid_no_storage_returns_none(self, tmp_path, monkeypatch):
+    def test_capture_sid_no_db_returns_none(self, tmp_path, monkeypatch):
+        """opencode.db 不存在 → None(下次当新会话,不崩)。"""
         from story_lifecycle.knowledge.adapters.opencode import OpencodeAdapter
 
         monkeypatch.setenv("OPENCODE_DATA_DIR", str(tmp_path / "nope"))

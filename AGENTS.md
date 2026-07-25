@@ -137,7 +137,7 @@ Whether a session id is known at spawn time or must be captured after is the **a
 
 - `prespecified_session_id: bool` — `True` = spawn knows the sid upfront (claude: `--session-id` with deterministic `compute_session_id(story,stage,adapter)` uuid5). `False` = CLI allocates its own id; must be captured post-spawn.
 - `make_sid_capturer(story, stage, cwd, since_ts)` — output-driven capture: returns an `on_output(text)` callback fed to `clean_exit_pty`. Used by CLIs that print the sid on exit (kimi: `To resume this session: kimi -r session_<uuid>`). Returns `None` if not applicable.
-- `capture_sid_post_exit(story, stage, cwd, since_ts) -> str | None` — file/system capture: returns the captured sid after `clean_exit_pty`. Used by CLIs that never print the sid but write it to storage files (opencode: scan `<data>/storage/session/<projectID>/*.json` for the newest session with `time.created >= since_ts`). Returns `None` if not applicable.
+- `capture_sid_post_exit(story, stage, cwd, since_ts) -> str | None` — file/system capture: returns the captured sid after `clean_exit_pty`. Used by CLIs that never print the sid but write it to storage (opencode: query `opencode.db` SQLite — `SELECT id FROM session WHERE directory=cwd AND time_created>=since`). Returns `None` if not applicable.
 
 Spawners (api.py / planner.py) read `prespecified_session_id` to decide whether to store a known sid at NEW time, and call both capture hooks at stage-done cleanup when it's `False`. They do NOT branch on `adapter_name == "claude"/"kimi"` — that scatter grew to three CLIs and was converged. See commits `1a5bfbfd` (Phase 0 abstraction), `dd89ba04` (opencode).
 
@@ -145,7 +145,7 @@ Spawners (api.py / planner.py) read `prespecified_session_id` to decide whether 
 |---|---|---|
 | claude | prespecified (uuid5) | none |
 | kimi | CLI-allocated (`session_<uuid>`) | exit-line regex (`make_sid_capturer`) |
-| opencode | CLI-allocated (`ses_…`) | storage file-scan (`capture_sid_post_exit`) |
+| opencode | CLI-allocated (`ses_…`) | SQLite query (`capture_sid_post_exit`) |
 | codex | CLI-allocated | not captured (no resume support yet) |
 
 **Anti-pattern**: re-adding `if adapter_name == "claude"` / `== "kimi"` in a spawner to special-case sid handling. Put the behavior on the adapter as a hook. See `DESIGN-session-pty-id-model.md` §2.5.

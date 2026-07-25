@@ -237,17 +237,17 @@ kimi 0.29.0 实测新建会话输出:`To resume this session: kimi -r session_98
 | **建新会话,指定 id** | ✅ `claude --session-id <uuid>` 确实能指定(转录文件以此 id 命名) | ❌ 不能预指定;但 resume 不存在的 id 会**自动新建** | ❌ **CLI 不能预指定**(server/API 层可,复杂度过高不接入) |
 | **续会话** | `claude --resume <uuid>` | `kimi --resume <uuid>`(同 `-S`/`-r`/`--session`) | `opencode --session <sid>` / `-c` 续最近 |
 | **resume 不存在的 id** | ❌ **报错** "No conversation found"(实测确认,不新建) | ✅ **自动新建**(官方原文:"a new session is created automatically") | (未实测;走「先捕获到真实 sid 再 resume」规避) |
-| **会话存储** | `~/.claude/projects/<project>/<id>.jsonl`,**cwd-scoped** | 本地文件 | `<data>/storage/session/<projectID>/<sid>.json`(三层 JSON:session/message/part) |
-| **id 怎么拿** | 启动即知(预指定) | 退出时吐 `To resume: kimi -r session_<uuid>` 行 | 终端**不吐**;扫 `<data>/storage/session/` 文件取最新 |
+| **会话存储** | `~/.claude/projects/<project>/<id>.jsonl`,**cwd-scoped** | 本地文件 | `<data>/opencode.db`(SQLite 单文件;1.18+ 取代旧三层 JSON 文件) |
+| **id 怎么拿** | 启动即知(预指定) | 退出时吐 `To resume: kimi -r session_<uuid>` 行 | 终端**不吐**;查 `opencode.db` 的 `session` 表(`directory=cwd AND time_created>=since`)取最新 |
 | **建会话命名** | `-n/--name` | 无(用 `/title`) | `--title` / TUI `/title` |
 | **prompt 投递** | `claude "query"`(baked-in) | PTY paste | `opencode --prompt "..."`(TUI 就绪后自动提交,baked-in) |
 
-**opencode 关键差异**:sid 既不能预指定、终端也不打印,只能**文件扫描捕获** —— 这是第三种 sid 模型(见 AGENTS.md「Session-id model」表)。捕获时机:stage-done `clean_exit_pty` 后调 `capture_sid_post_exit`,按 spawn 前记录的 `since_ts` 过滤出本次会话的 `time.created`,反查 projectID(cwd → `storage/project/*.json` 的 directory)取最新 `ses_…`。
+**opencode 关键差异**:sid 既不能预指定、终端也不打印,只能**SQLite 查询捕获** —— 这是第三种 sid 模型(见 AGENTS.md「Session-id model」表)。捕获时机:stage-done `clean_exit_pty` 后调 `capture_sid_post_exit`,只读连 `<data>/opencode.db` 查 `session` 表,按 `directory=cwd AND time_created>=since`(since 是 spawn 前记的 UTC iso 转毫秒)取最新 `ses_…`。**实测确认**:opencode 1.18.4 在所有平台(含 Windows)用 `~/.local/share/opencode/opencode.db`(Linux 风格路径,不是 `%LOCALAPPDATA%`),token 字段直接在 session 表列上(`tokens_input/output/reasoning/cache_read/cache_write`)。
 
 **待实测确认项**(接入首版以防御式实现,不阻塞):
-- opencode data 目录在 Windows 的确切位置(代码按 `%LOCALAPPDATA%\opencode` 默认,`OPENCODE_DATA_DIR` 可覆盖)
-- message/part 的 token usage 字段名(miner 侧防御式解析)
+- `opencode run` headless 的 prompt 投递方式(positional/stdin)
 - `--prompt` 在 PTY 下确属自动提交(源码 home.tsx sent 守卫证实,未实跑)
+- macOS 的 data 目录(代码按 `~/Library/Application Support/opencode`,未在 mac 实测)
 
 **实测验证记录**(claude v2.1.210):
 ```

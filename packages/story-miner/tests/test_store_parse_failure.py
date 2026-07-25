@@ -71,14 +71,18 @@ def test_kimi_adapter_swallowed_exception_now_logged_and_returns_none(tmp_path, 
 
 
 def test_opencode_adapter_swallowed_exception_now_logged_and_returns_none(tmp_path, caplog):
+    """opencode parse 失败(非 sqlite 文件 / 查询异常)→ log + 返回 (None,[],[])。
+
+    opencode 1.18+ 用 sqlite3.connect 打开 db;parse 外层 try/except 把任何异常
+    (file is not a database / 表缺失 / json 解析)都吞掉返回 None,store 跳过 DELETE。
+    """
     from miner.adapters.opencode import OpencodeAdapter
 
-    f = tmp_path / "s.json"
-    f.write_text("{}", encoding="utf-8")
+    f = tmp_path / "s.db"
+    f.write_text("not a sqlite database", encoding="utf-8")  # 触发 sqlite3 解析失败
 
-    with patch("builtins.open", side_effect=OSError("simulated read failure")):
-        with caplog.at_level("WARNING", logger="miner.adapters.opencode"):
-            meta, evs, tokens = OpencodeAdapter().parse(str(f), "opencode:s")
+    with caplog.at_level("WARNING", logger="miner.adapters.opencode"):
+        meta, evs, tokens = OpencodeAdapter().parse(str(f), "opencode:s")
 
     assert meta is None
     assert evs == []

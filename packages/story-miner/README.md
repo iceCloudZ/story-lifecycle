@@ -52,7 +52,7 @@ config.json        db_path + workspaces
 | Claude | `~/.claude/projects/<编码路径>/*.jsonl` |
 | Codex | `~/.codex/sessions/` |
 | Kimi | `~/.kimi-code/sessions/wd_<cwd>_<hash>/.../wire.jsonl` |
-| OpenCode | `<data>/storage/session/<projectID>/<sid>.json`（三层 JSON：session/message/part；`<data>` 随平台，见 `adapters/opencode.py`） |
+| OpenCode | `<data>/opencode.db`（SQLite 单文件；表 session/message/part，1.18+ 取代旧三层 JSON；`<data>` 随平台，见 `adapters/opencode.py`） |
 
 ## 配置
 
