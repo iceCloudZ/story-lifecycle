@@ -758,14 +758,18 @@ def _spawn_story_agent_pty(
     )
     # write session marker for NEW sessions (so next spawn resumes)
     if not is_resume:
-        # DB(claude 的 sid 已知;kimi 由调用方/捕获回填,这里占位)
+        # DB(预指定 sid 的 adapter 如 claude,sid 已知;kimi/opencode 由捕获回填,这里占位)
         if _adapter_name:
             try:
                 db.upsert_session(
                     story_key,
                     stage,
                     _adapter_name,
-                    session_id=session_uuid if _adapter_name == "claude" else None,
+                    # sid 模型是 adapter 的职责(Phase 0):prespecified_session_id=True
+                    # 的 adapter 启动即知 sid;否则 None,退出时捕获回填。
+                    session_id=session_uuid
+                    if adapter.prespecified_session_id
+                    else None,
                 )
             except Exception:
                 pass
@@ -780,10 +784,10 @@ def _spawn_story_agent_pty(
             )
         except Exception:
             pass
-        # kimi session-id 捕获:api 交互式 spawn 路径(用户手动启动)的 PTY 生命周期
+        # sid 捕获(Phase 0 抽象):api 交互式 spawn 路径(用户手动启动)的 PTY 生命周期
         # 不归 planner 管(用户自己 /exit 或前端断开),没有确定的 clean_exit 时机。
-        # 可靠的 kimi 捕获走 planner 全自动循环路径(stage-done 时 clean_exit_pty
-        # 退出捕获,planner._make_kimi_sid_capturer)。本路径暂不捕获 —— kimi 交互式
+        # 可靠的捕获走 planner 全自动循环路径(stage-done 时 clean_exit_pty 收尾,
+        # adapter.make_sid_capturer / capture_sid_post_exit)。本路径暂不捕获 —— 交互式
         # 手动启动的 session id 回填留给 PTY 死亡监听(Step 5 reaper)统一处理。
         # DESIGN-session-pty-id-model.md §3.5 / 问题 9。
     return session_id, pty, is_resume

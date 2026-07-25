@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ...infra.llm_client import get_llm, with_story_key
@@ -116,8 +117,6 @@ def _sanitize_workspace_slug(slug: str) -> str:
     separators (no traversal: the slug becomes ONE path segment under
     worktrees_root, never a nested path). Empty → "".
     """
-    import re
-
     s = (slug or "").strip()
     if not s:
         return ""
@@ -790,58 +789,13 @@ def _build_verify_history_facts(*, db, failed_adapter, gate_round, retry_limit):
         }
 
 
-# kimi 退出时吐的 resume 行:`To resume this session: kimi -r session_<uuid>`。
-# 也兼容旧 banner 格式 `Session: session_<uuid>`(防其他版本)。
-# DESIGN-session-pty-id-model.md §3.5 / 问题 9:此前只有 banner 正则且格式不符,
-# kimi resume 在 0.29.0 上从未工作过。改在 clean_exit_pty 退出时捕获(时机确定、格式准)。
-_KIMI_SESSION_RE = re.compile(
-    r"(?:kimi\s+-r\s+|Session:\s*)(session_[0-9a-fA-F-]+)"
-)
+def _now_utc_iso() -> str:
+    """UTC ISO 时间戳(秒精度),作文件扫描捕获 sid 的时间窗口下界。
 
-
-def _make_kimi_sid_capturer(story_key: str, stage: str, adapter: str):
-    """Build an ``on_output`` callback for ``clean_exit_pty`` that captures kimi's
-    session id from its exit-time ``To resume this session: kimi -r session_<uuid>``
-    line and backfills DB.
-
-    kimi 不支持预指定 id(Step 0 实测,§2.5.3),自己分配 ``session_<uuid>``,
-    只在退出时吐这行。捕获在 clean_exit_pty 收尾期间 drain 输出时触发 —— 比
-    启动 banner 捕获稳(banner 时机脆弱)。best-effort:kimi 崩溃没吐就捕获不到,
-    下次当新会话(不崩,只是不省 token)。
-
-    返回的回调累积输出到 buffer,正则匹配到就回填一次(之后短路,避免重复写)。
+    对齐 adapter.write_anchor 与 transcript 里的 UTC ts;文件扫描用它过滤
+    ``time.created >= since`` 的会话,避免抓到本次 spawn 之前的旧会话。
     """
-    buf = ""
-    done = False
-
-    def _on_output(text: str) -> None:
-        nonlocal buf, done
-        if done:
-            return
-        buf += text
-        m = _KIMI_SESSION_RE.search(buf)
-        if m:
-            captured = m.group(1)
-            done = True
-            try:
-                from ...infra.db import models as _sd
-
-                _sd.set_session_id(story_key, stage, adapter, captured)
-                log.info(
-                    "[%s] captured kimi session sid=%s stage=%s (exit-time)",
-                    story_key,
-                    captured,
-                    stage,
-                )
-            except Exception as exc:
-                log.warning(
-                    "[%s] kimi session backfill failed (%s); resume disabled for stage=%s",
-                    story_key,
-                    exc,
-                    stage,
-                )
-
-    return _on_output
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 @with_story_key()
@@ -1134,12 +1088,15 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         f"({stage})任务,完成后按其完成协议写入 done 文件。"
                     )
                     # 会话恢复回填:每阶段一个会话,同阶段重试/崩溃 resume 续上(省 token)。
-                    # claude 用确定性 sid(--session-id 主动给);kimi 由 CLI 分配,
-                    # 退出时捕获回填。查 DB 决定 NEW vs RESUME。
+                    # sid 模型是 adapter 的职责(Phase 0 抽象):prespecified_session_id=True
+                    # 的 adapter(claude)启动即知确定性 sid;否则(kimi/opencode)由 CLI 自分配,
+                    # 退出时捕获回填(make_sid_capturer / capture_sid_post_exit)。查 DB 决定
+                    # NEW vs RESUME。spawner 不再分支 adapter 名 —— 见 AGENTS.md「Session-id model」。
                     from ...infra.db import models as _sd
 
                     _prior = _sd.get_session(story_key, stage, adapter_name)
-                    _is_new_kimi = False  # 仅新 kimi 会话需退出时捕获 sid
+                    _need_sid_capture = False  # 仅新会话 + 非预指定 sid 才需捕获
+                    _spawn_ts = _now_utc_iso()  # 文件扫描捕获的时间窗口下界
                     if _prior and _prior.get("session_id"):
                         # 该阶段已建过会话 → resume(续上 transcript,不重读 prompt_file)。
                         _resume_seed = "继续上次的任务,完成后按完成协议写入 done 文件。"
@@ -1157,29 +1114,34 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             _prior["session_id"],
                         )
                     else:
-                        # 新会话。claude 给确定性 sid(compute_session_id 统一三字段);
-                        # kimi 忽略由 CLI 分配,退出时捕获回填。
-                        _new_sid = _sd.compute_session_id(story_key, stage, adapter_name)
+                        # 新会话。prespecified sid 的 adapter 给确定性 sid(compute_session_id
+                        # 统一三字段);否则忽略由 CLI 分配,退出时捕获回填。
+                        _new_sid = _sd.compute_session_id(
+                            story_key, stage, adapter_name
+                        )
                         _session_spec = adapter.start_session(
                             model=model,
                             prompt=_seed,
                             session_id=_new_sid,
                             resume=False,
                         )
-                        # 占位入库:claude 的 sid 已知;kimi 的 sid=None,spawn 后捕获回填。
+                        _has_known_sid = adapter.prespecified_session_id
+                        # 占位入库:预指定 sid 的 adapter(claude)sid 已知;否则 None,捕获回填。
                         _sd.upsert_session(
                             story_key,
                             stage,
                             adapter_name,
-                            session_id=_new_sid if adapter_name == "claude" else None,
+                            session_id=_new_sid if _has_known_sid else None,
                         )
-                        _is_new_kimi = adapter_name == "kimi"
+                        _need_sid_capture = not _has_known_sid
                         log.info(
                             "[%s] NEW session stage=%s adapter=%s sid=%s",
                             story_key,
                             stage,
                             adapter_name,
-                            _new_sid if adapter_name == "claude" else "(kimi: 待捕获)",
+                            _new_sid
+                            if _has_known_sid
+                            else f"(待捕获 since {_spawn_ts})",
                         )
                     launch_cmd = _session_spec.command
 
@@ -1373,15 +1335,15 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         env=story_env,
                     )
                     log.info("[%s] PTY session started for stage=%s", story_key, stage)
-                    # kimi session-id 回填:kimi 启动 banner 打印 `Session: session_<uuid>`,
-                    # 此时 ensure_agent_pty 的 _wait_ready 已消费到 readiness_marker
-                    # (Welcome to Kimi Code),session id 紧随其后。开个短 tap 扫剩余 banner
-                    # kimi session-id 捕获改在 stage 完成的 clean_exit_pty 收尾时做
-                    # (kimi 退出吐 'To resume this session: kimi -r session_<uuid>')。
-                    # 不再在 spawn 后扫启动 banner —— 那个时机脆弱且正则与实际输出不符
-                    # (DESIGN-session-pty-id-model.md §3.5 / 问题 9)。_is_new_kimi 标记
-                    # 传到下面 stage-done 收尾,决定是否给 clean_exit_pty 传捕获回调。
-                    # claude 无需捕获(compute_session_id 确定性 sid 主动给)。
+                    # sid 捕获改在 stage 完成的 clean_exit_pty 收尾时做(Phase 0 抽象):
+                    #   输出驱动(kimi)—— adapter.make_sid_capturer 在 clean_exit drain 退出
+                    #     输出时命中 'To resume: kimi -r session_<uuid>' 回填。
+                    #   文件扫描(opencode)—— adapter.capture_sid_post_exit 在 clean_exit 后
+                    #     扫存储文件取最新会话。
+                    # 不在 spawn 后扫启动 banner —— 那个时机脆弱且正则与实际输出不符
+                    # (DESIGN-session-pty-id-model.md §3.5 / 问题 9)。_need_sid_capture 标记
+                    # 传到下面 stage-done 收尾,决定是否捕获。
+                    # prespecified sid 的 adapter(claude)无需捕获,确定性 sid 主动给。
                     # §4.1 层1 supervisor(interactive PTY):daemon 线程跑 supervise_pty_session。
                     # run_story 在 ThreadPoolExecutor 线程里(无 asyncio loop)→ 独立 daemon 线程 + new_event_loop。
                     # pty 死时 supervise_pty_session 退出(轮询 pty.alive)。
@@ -1632,16 +1594,51 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             try:
                                 from ...infra.terminal.pty import clean_exit_pty
 
-                                # kimi:收尾期间 drain 退出输出,捕获 kimi 吐的
-                                # 'To resume this session: kimi -r session_<uuid>' 回填 DB。
-                                # claude 无需捕获(compute_session_id 确定性 sid 已在 DB)。
-                                if _is_new_kimi:
-                                    clean_exit_pty(
-                                        _agent_pty,
-                                        on_output=_make_kimi_sid_capturer(
-                                            story_key, stage, adapter_name
-                                        ),
+                                # sid 捕获(Phase 0 抽象):非预指定 sid 的新会话才捕获。
+                                #   输出驱动(kimi):adapter.make_sid_capturer 返回 on_output
+                                #     回调,在 clean_exit_pty drain 退出输出时命中 sid 行。
+                                #   文件扫描(opencode):adapter.capture_sid_post_exit 在
+                                #     clean_exit 后扫存储文件取最新会话。两者各管各的。
+                                # prespecified sid 的 adapter(claude)无需捕获,确定性 sid 已在 DB。
+                                if _need_sid_capture:
+                                    _capturer = adapter.make_sid_capturer(
+                                        story_key,
+                                        stage,
+                                        cwd=_spawn_cwd,
+                                        since_ts=_spawn_ts,
                                     )
+                                    clean_exit_pty(_agent_pty, on_output=_capturer)
+                                    _captured = adapter.capture_sid_post_exit(
+                                        story_key,
+                                        stage,
+                                        cwd=_spawn_cwd,
+                                        since_ts=_spawn_ts,
+                                    )
+                                    if _captured:
+                                        try:
+                                            from ...infra.db import models as _sd
+
+                                            _sd.set_session_id(
+                                                story_key,
+                                                stage,
+                                                adapter_name,
+                                                _captured,
+                                            )
+                                            log.info(
+                                                "[%s] captured %s session sid=%s stage=%s (file-scan)",
+                                                story_key,
+                                                adapter_name,
+                                                _captured,
+                                                stage,
+                                            )
+                                        except Exception as exc:
+                                            log.warning(
+                                                "[%s] %s session backfill failed (%s); resume disabled for stage=%s",
+                                                story_key,
+                                                adapter_name,
+                                                exc,
+                                                stage,
+                                            )
                                 else:
                                     clean_exit_pty(_agent_pty)
                             except Exception:
