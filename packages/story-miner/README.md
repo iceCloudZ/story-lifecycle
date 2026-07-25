@@ -1,6 +1,6 @@
 # story-miner
 
-把多个 coding agent（Claude Code / Codex CLI / Kimi Code …）的本地对话 transcript 归一化进 SQLite，做行为分析：工作量、工具使用、学习曲线、约束库、技术债务、知识蒸馏、失败模式、阶段成本、自动复盘。
+把多个 coding agent（Claude Code / Codex CLI / Kimi Code / OpenCode …）的本地对话 transcript 归一化进 SQLite，做行为分析：工作量、工具使用、学习曲线、约束库、技术债务、知识蒸馏、失败模式、阶段成本、自动复盘。
 
 > 本包是 [`dev-flywheel`](https://github.com/iceCloudZ/story-lifecycle) monorepo 的一部分，与 [`packages/story-lifecycle`](../story-lifecycle) 共用统一知识飞轮。当前版本：**v0.12.0**。
 
@@ -21,7 +21,7 @@ miner/
   store.py         入库（SQLite+FTS5+mtime 增量）
   story_ingest.py  解析 .story/ → stories 表
   link.py          session↔story 关联
-  adapters/        claude/codex/kimi（加新端丢文件 + __init__ 加一行）
+  adapters/        claude/codex/kimi/opencode（加新端丢文件 + __init__ 加一行）
 scripts/           分析脚本（只读 db，写 scripts/out/*.md 或反哺 hc-all）
 data/transcripts.db  本地库（gitignore，含 PII）
 config.json        db_path + workspaces
@@ -52,6 +52,7 @@ config.json        db_path + workspaces
 | Claude | `~/.claude/projects/<编码路径>/*.jsonl` |
 | Codex | `~/.codex/sessions/` |
 | Kimi | `~/.kimi-code/sessions/wd_<cwd>_<hash>/.../wire.jsonl` |
+| OpenCode | `<data>/storage/session/<projectID>/<sid>.json`（三层 JSON：session/message/part；`<data>` 随平台，见 `adapters/opencode.py`） |
 
 ## 配置
 

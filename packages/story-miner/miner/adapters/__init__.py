@@ -2,3 +2,4 @@
 from . import claude
 from . import codex
 from . import kimi
+from . import opencode

@@ -167,3 +167,119 @@ def test_token_usage_table_created(tmp_path):
     for c in ("sid", "src", "ts", "model", "input_tokens", "output_tokens",
               "cache_read_tokens", "cache_creation_tokens", "reasoning_tokens"):
         assert c in cols
+
+
+# ── opencode: 三层 JSON(session/message/part)解析 ────────────────────────────
+# PII 红线:合成 fixture,绝不内联真实对话。
+
+def _build_opencode_tree(storage, sid="ses_test", project_id="proj1",
+                         directory="D:/github/story-lifecycle"):
+    """在 storage/ 下造一棵 opencode 三层 JSON 树,返回 session.json 路径。"""
+    import json, os
+    sess_dir = os.path.join(storage, "session", project_id)
+    msg_dir = os.path.join(storage, "message", sid)
+    part_root = os.path.join(storage, "part")
+    os.makedirs(sess_dir, exist_ok=True); os.makedirs(msg_dir, exist_ok=True); os.makedirs(part_root, exist_ok=True)
+    # session.json
+    sess_f = os.path.join(sess_dir, sid + ".json")
+    with open(sess_f, "w", encoding="utf-8") as fh:
+        json.dump({
+            "id": sid, "directory": directory,
+            "summary": "fix login bug",
+            "model": "anthropic/claude-sonnet",
+            "time": {"created": "2026-07-25T10:00:00.000Z", "updated": "2026-07-25T10:05:00.000Z"},
+        }, fh)
+    # message m1 (user) + part text
+    m1 = "msg1"
+    with open(os.path.join(msg_dir, m1 + ".json"), "w", encoding="utf-8") as fh:
+        json.dump({"id": m1, "role": "user", "time_created": "2026-07-25T10:00:01.000Z"}, fh)
+    os.makedirs(os.path.join(part_root, m1), exist_ok=True)
+    with open(os.path.join(part_root, m1, "p1.json"), "w", encoding="utf-8") as fh:
+        json.dump({"type": "text", "text": "实现登录接口并补单测"}, fh)
+    # message m2 (assistant) + parts: text, tool, reasoning
+    m2 = "msg2"
+    with open(os.path.join(msg_dir, m2 + ".json"), "w", encoding="utf-8") as fh:
+        json.dump({"id": m2, "role": "assistant", "modelID": "anthropic/claude-sonnet",
+                   "time_created": "2026-07-25T10:01:00.000Z"}, fh)
+    os.makedirs(os.path.join(part_root, m2), exist_ok=True)
+    with open(os.path.join(part_root, m2, "p2.json"), "w", encoding="utf-8") as fh:
+        json.dump({"type": "reasoning", "text": "考虑用 bcrypt"}, fh)
+    with open(os.path.join(part_root, m2, "p3.json"), "w", encoding="utf-8") as fh:
+        json.dump({"type": "tool", "tool": "bash",
+                   "input": {"command": "npm test"},
+                   "state": {"status": "completed", "output": "all passed"}}, fh)
+    with open(os.path.join(part_root, m2, "p4.json"), "w", encoding="utf-8") as fh:
+        json.dump({"type": "text", "text": "已完成"}, fh)
+    # token usage on a part (防御式字段名 input/output)
+    with open(os.path.join(part_root, m2, "p5.json"), "w", encoding="utf-8") as fh:
+        json.dump({"type": "text", "text": "x",
+                   "usage": {"input": 100, "output": 40, "cache_read": 60}}, fh)
+    return sess_f
+
+
+def test_opencode_parse_three_layer(tmp_path, monkeypatch):
+    from miner.adapters.opencode import OpencodeAdapter
+    storage = str(tmp_path / "storage")
+    monkeypatch.setenv("OPENCODE_DATA_DIR", str(tmp_path))
+    sess_f = _build_opencode_tree(storage)
+
+    meta, evs, tokens = OpencodeAdapter().parse(sess_f, "opencode:ses_test")
+
+    # meta:cwd → ws,title,ts
+    # ws_of 对 D:/github/story-lifecycle 命中 'github' 关键词(WS_KEYWORDS 先匹配)。
+    assert meta is not None
+    assert meta["src"] == "opencode"
+    assert meta["cwd"] == "D:/github/story-lifecycle"
+    assert meta["ws"] == "github"
+    assert meta["title"] == "fix login bug"
+    assert meta["ts"] == "2026-07-25T10:00:00.000Z"
+    # turns:1 个真实 user 指令
+    assert meta["turns"] == 1
+    assert meta["first_ucmd"].startswith("实现登录接口")
+    # events:ucmd + think + tool + result + atext(+ 末尾 usage part 的 text)
+    kinds = [e["kind"] for e in evs]
+    assert "ucmd" in kinds and "think" in kinds and "tool" in kinds and "result" in kinds and "atext" in kinds
+    tool_ev = next(e for e in evs if e["kind"] == "tool")
+    assert tool_ev["name"] == "bash"
+    assert tool_ev["cmd"] == "npm test"
+    res_ev = next(e for e in evs if e["kind"] == "result")
+    assert res_ev["ok"] is True
+    # token:防御式解析 input/output/cache_read
+    assert len(tokens) == 1
+    assert tokens[0]["input_tokens"] == 100
+    assert tokens[0]["output_tokens"] == 40
+    assert tokens[0]["cache_read_tokens"] == 60
+    assert tokens[0]["model"] == "anthropic/claude-sonnet"
+
+
+def test_opencode_parse_no_messages_only_meta(tmp_path, monkeypatch):
+    """只有 session.json、无 message 目录 → 返回 meta(无事件),不崩。"""
+    import json, os
+    from miner.adapters.opencode import OpencodeAdapter
+    monkeypatch.setenv("OPENCODE_DATA_DIR", str(tmp_path))
+    storage = str(tmp_path / "storage")
+    sess_dir = os.path.join(storage, "session", "p1")
+    os.makedirs(sess_dir)
+    sess_f = os.path.join(sess_dir, "ses_only.json")
+    with open(sess_f, "w", encoding="utf-8") as fh:
+        json.dump({"id": "ses_only", "directory": "D:/x", "summary": "empty",
+                   "time": {"created": "2026-07-25T11:00:00.000Z"}}, fh)
+
+    meta, evs, tokens = OpencodeAdapter().parse(sess_f, "opencode:ses_only")
+    assert meta is not None
+    assert meta["title"] == "empty"
+    assert evs == [] and tokens == []
+
+
+def test_opencode_discover_yields_session_jsons(tmp_path, monkeypatch):
+    from miner.adapters.opencode import OpencodeAdapter
+    monkeypatch.setenv("OPENCODE_DATA_DIR", str(tmp_path))
+    storage = str(tmp_path / "storage")
+    _build_opencode_tree(storage, sid="ses_a")
+    _build_opencode_tree(storage, sid="ses_b", project_id="proj2")
+
+    found = list(OpencodeAdapter().discover())
+    sids = sorted(sid for _, sid in found)
+    assert sids == ["opencode:ses_a", "opencode:ses_b"]
+    assert all(p.endswith(".json") for p, _ in found)
+

@@ -70,6 +70,22 @@ def test_kimi_adapter_swallowed_exception_now_logged_and_returns_none(tmp_path, 
     assert any("parse failed" in rec.message for rec in caplog.records)
 
 
+def test_opencode_adapter_swallowed_exception_now_logged_and_returns_none(tmp_path, caplog):
+    from miner.adapters.opencode import OpencodeAdapter
+
+    f = tmp_path / "s.json"
+    f.write_text("{}", encoding="utf-8")
+
+    with patch("builtins.open", side_effect=OSError("simulated read failure")):
+        with caplog.at_level("WARNING", logger="miner.adapters.opencode"):
+            meta, evs, tokens = OpencodeAdapter().parse(str(f), "opencode:s")
+
+    assert meta is None
+    assert evs == []
+    assert tokens == []
+    assert any("parse failed" in rec.message for rec in caplog.records)
+
+
 # ── store.py: parse-first order preserves existing rows on parse failure ─────
 
 
