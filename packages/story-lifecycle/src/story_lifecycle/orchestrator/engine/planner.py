@@ -1356,6 +1356,23 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     # 的返回值拿(adapter 自己声明 prompt 怎么传,见 SessionSpec)。
                     # cwd 用 ctx.workspace_path(规划 LLM 决定的隔离空间),没有则退回主 ws。
                     _spawn_cwd = ctx.get("workspace_path") or workspace
+                    # I2 miner binding:PTY 路径也不经过 adapter.inject_prompt()(走
+                    # start_session → SessionSpec),显式补写 anchor,使 miner.link 能按
+                    # (cwd+ts) 精确回填 sessions.story_id。cwd=_spawn_cwd(code agent 的真实
+                    # cwd = worktree,link 据此匹配 claude transcript 的项目目录);workspace=
+                    # scenario workspace(miner link 扫 config.WORKSPACES 下的 anchors,
+                    # scenario ws 在 loopback 时被注册),anchor 落 scenario ws 的 .story/runs/。
+                    # 对称 headless 路径 1276 的 anchor 写。best-effort,不阻断 spawn。
+                    try:
+                        adapter.write_anchor(
+                            prompt=(_session_spec.pty_prompt if _session_spec else cli_prompt),
+                            story_key=story_key,
+                            stage=stage,
+                            cwd=_spawn_cwd,
+                            workspace=workspace,
+                        )
+                    except Exception:
+                        pass
                     # STEP 1.7b:启 PTY 两层日志(raw + events.jsonl),供卡住检测 + 飞轮。
                     # best-effort:日志目录创建失败不阻塞 spawn(logger=None 兜底)。
                     _pty_logger = None
