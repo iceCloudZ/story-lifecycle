@@ -21,6 +21,8 @@ stages:
       - research_path
       - spec_path
       - complexity
+    artifacts:
+      - story/spec.md
     next_default: [build]
 
   build:
@@ -35,6 +37,8 @@ stages:
       - plan_path
       - files_changed
       - summary
+    artifacts:
+      - git
     next_default: [verify]
 
   verify:
@@ -49,6 +53,8 @@ stages:
       - test_report_path
       - delivery_path
       - context_pack_path
+    artifacts:
+      - story/test-report.md
     next_default: []
 
 quality:

@@ -13,6 +13,8 @@ stages:
     review: false
     max_retries: 0
     expected_outputs: []
+    artifacts:
+      - story/spec.md
     next_default: [implement]
 
   implement:
@@ -22,6 +24,8 @@ stages:
     review: false
     max_retries: 0
     expected_outputs: []
+    artifacts:
+      - git
     next_default: []
 
 quality:

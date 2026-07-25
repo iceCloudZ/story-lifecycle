@@ -8,6 +8,17 @@ from pathlib import Path
 STORY_HOME = Path.home() / ".story-lifecycle"
 
 
+class ProfileValidationError(ValueError):
+    """Raised when a profile violates a hard schema contract.
+
+    Currently enforces the artifact-driven stage-completion contract
+    (DESIGN-artifact-driven-stage-completion §1.3): every stage must declare at
+    least one file-typed ``artifacts`` entry, otherwise the stage has no
+    machine-checkable ground-truth completion signal and the orchestrator would
+    fall back to the (un-trusted) self-report ``done.json`` model.
+    """
+
+
 @dataclass
 class StageConfig:
     """Single stage's fully resolved configuration.
@@ -31,6 +42,14 @@ class StageConfig:
     max_retries: int = 3
     allowed_providers: list[str] = field(default_factory=list)
     expected_outputs: list[str] = field(default_factory=list)
+    # artifacts: machine-checkable file/path/glob/"git" markers that are the
+    # ground-truth completion signal for a stage (DESIGN §1.3). Every stage MUST
+    # declare at least one — enforced by _validate_artifacts in resolve_profile.
+    # Entries are workspace-relative. Forms:
+    #   "story/spec.md"   → file path (exists + non-empty)
+    #   "story/*.md"      → glob (any match exists + non-empty)
+    #   "git"             → git status --porcelain non-empty (code changed)
+    artifacts: list[str] = field(default_factory=list)
     next_default: list[str] = field(default_factory=list)
     # Preserve any extra keys from YAML
     _extra: dict = field(default_factory=dict)
@@ -74,7 +93,10 @@ class ResolvedProfile:
 
         stages = {}
         for k, v in self.stages.items():
-            stages[k] = dataclasses.asdict(v)
+            d = dataclasses.asdict(v)
+            # _extra is internal bookkeeping; drop it from the serialized form
+            d.pop("_extra", None)
+            stages[k] = d
         return {
             "name": self.name,
             "cli": self.cli,
@@ -152,6 +174,7 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
             max_retries=stage_raw.get("max_retries", 3),
             allowed_providers=stage_raw.get("allowed_providers", []),
             expected_outputs=stage_raw.get("expected_outputs", []),
+            artifacts=stage_raw.get("artifacts", []),
             next_default=stage_raw.get("next_default", []),
             _extra={
                 k: v
@@ -171,12 +194,13 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
                     "max_retries",
                     "allowed_providers",
                     "expected_outputs",
+                    "artifacts",
                     "next_default",
                 }
             },
         )
 
-    return ResolvedProfile(
+    profile = ResolvedProfile(
         name=profile_name,
         cli=top_cli,
         model=top_model,
@@ -189,6 +213,30 @@ def resolve_profile(profile_name: str) -> ResolvedProfile:
         reviewers=raw.get("reviewers", {}),
         raw=raw,
     )
+    _validate_artifacts(profile)
+    return profile
+
+
+def _validate_artifacts(profile: "ResolvedProfile") -> None:
+    """Enforce the artifact-driven schema contract (DESIGN §1.3).
+
+    Every stage must declare at least one file-typed ``artifacts`` entry —
+    otherwise the stage has no machine-checkable completion signal and the
+    orchestrator would regress to the un-trusted self-report ``done.json``
+    model. Raises ProfileValidationError listing all offending stages at once.
+    """
+    missing = [
+        name
+        for name, stage in profile.stages.items()
+        if not stage.artifacts
+    ]
+    if missing:
+        raise ProfileValidationError(
+            "profile %r 违反成果物驱动契约(设计 §1.3):以下 stage 缺少文件类 "
+            "artifacts 声明 → %s。每个 stage 必须声明至少一个文件成果物"
+            "(文件路径/glob/\"git\"),否则编排器无机器可查的完成信号。"
+            % (profile.name, missing)
+        )
 
 
 # ---- Legacy API (kept for CLI and external callers) ----

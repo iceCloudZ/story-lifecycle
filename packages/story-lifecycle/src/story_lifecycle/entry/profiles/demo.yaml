@@ -16,6 +16,8 @@ stages:
     expected_outputs:
       - spec_path
       - complexity
+    artifacts:
+      - story/spec.md
     next_default: [implement]
 
   implement:
@@ -27,6 +29,8 @@ stages:
     expected_outputs:
       - files_changed
       - summary
+    artifacts:
+      - git
     next_default: [review]
 
   review:
@@ -36,4 +40,6 @@ stages:
     review: false
     max_retries: 1
     expected_outputs: []
+    artifacts:
+      - story/review-verdict.md
     next_default: []

@@ -35,6 +35,10 @@ stages:
       - summary
       - files_changed
       - test_report_path
+    artifacts:
+      - story/spec.md
+      - git
+      - story/test-report.md
     next_default: []
 
 quality:
