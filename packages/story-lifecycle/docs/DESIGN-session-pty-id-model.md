@@ -230,15 +230,24 @@ kimi 0.29.0 实测新建会话输出:`To resume this session: kimi -r session_98
 > 本节目的:确认 claude / kimi 两个 cli 各自的 session/resume 语义,**判断能否统一**。结论决定 §3 目标设计的形态。
 > 方法:官方文档(claude code docs + kimi-cli docs)+ 实测(claude v2.1.210)。
 
-### 2.5.1 两个 cli 的真实机制
+### 2.5.1 三个 cli 的真实机制
 
-| | claude code(实测 v2.1.210) | kimi code(官方文档) |
-|---|---|---|
-| **建新会话,指定 id** | ✅ `claude --session-id <uuid>` 确实能指定(转录文件以此 id 命名) | ❌ 不能预指定;但 resume 不存在的 id 会**自动新建** |
-| **续会话** | `claude --resume <uuid>` | `kimi --resume <uuid>`(同 `-S`/`-r`/`--session`) |
-| **resume 不存在的 id** | ❌ **报错** "No conversation found"(实测确认,不新建) | ✅ **自动新建**(官方原文:"a new session is created automatically") |
-| **会话存储** | `~/.claude/projects/<project>/<id>.jsonl`,**cwd-scoped** | 本地文件 |
-| **建会话命名** | `-n/--name` | 无(用 `/title`) |
+| | claude code(实测 v2.1.210) | kimi code(官方文档) | opencode(官方文档/源码) |
+|---|---|---|---|
+| **建新会话,指定 id** | ✅ `claude --session-id <uuid>` 确实能指定(转录文件以此 id 命名) | ❌ 不能预指定;但 resume 不存在的 id 会**自动新建** | ❌ **CLI 不能预指定**(server/API 层可,复杂度过高不接入) |
+| **续会话** | `claude --resume <uuid>` | `kimi --resume <uuid>`(同 `-S`/`-r`/`--session`) | `opencode --session <sid>` / `-c` 续最近 |
+| **resume 不存在的 id** | ❌ **报错** "No conversation found"(实测确认,不新建) | ✅ **自动新建**(官方原文:"a new session is created automatically") | (未实测;走「先捕获到真实 sid 再 resume」规避) |
+| **会话存储** | `~/.claude/projects/<project>/<id>.jsonl`,**cwd-scoped** | 本地文件 | `<data>/storage/session/<projectID>/<sid>.json`(三层 JSON:session/message/part) |
+| **id 怎么拿** | 启动即知(预指定) | 退出时吐 `To resume: kimi -r session_<uuid>` 行 | 终端**不吐**;扫 `<data>/storage/session/` 文件取最新 |
+| **建会话命名** | `-n/--name` | 无(用 `/title`) | `--title` / TUI `/title` |
+| **prompt 投递** | `claude "query"`(baked-in) | PTY paste | `opencode --prompt "..."`(TUI 就绪后自动提交,baked-in) |
+
+**opencode 关键差异**:sid 既不能预指定、终端也不打印,只能**文件扫描捕获** —— 这是第三种 sid 模型(见 AGENTS.md「Session-id model」表)。捕获时机:stage-done `clean_exit_pty` 后调 `capture_sid_post_exit`,按 spawn 前记录的 `since_ts` 过滤出本次会话的 `time.created`,反查 projectID(cwd → `storage/project/*.json` 的 directory)取最新 `ses_…`。
+
+**待实测确认项**(接入首版以防御式实现,不阻塞):
+- opencode data 目录在 Windows 的确切位置(代码按 `%LOCALAPPDATA%\opencode` 默认,`OPENCODE_DATA_DIR` 可覆盖)
+- message/part 的 token usage 字段名(miner 侧防御式解析)
+- `--prompt` 在 PTY 下确属自动提交(源码 home.tsx sent 守卫证实,未实跑)
 
 **实测验证记录**(claude v2.1.210):
 ```

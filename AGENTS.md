@@ -120,15 +120,35 @@ These are durable design contracts — not implementation details. Changing them
 
 ### Adapter prompt delivery — `SessionSpec` + `start_session`
 
-How an AI CLI (claude/codex/kimi) receives its seed prompt is the **adapter's** business, not the spawner's. All spawn paths (`continue_orchestrator_agent`, `_spawn_story_agent_pty`, `api_spawn_session`) go through one contract:
+How an AI CLI (claude/codex/kimi/opencode) receives its seed prompt is the **adapter's** business, not the spawner's. All spawn paths (`continue_orchestrator_agent`, `_spawn_story_agent_pty`, `api_spawn_session`) go through one contract:
 
 - `BaseAdapter.start_session(model, prompt, session_id, ...) -> SessionSpec`
 - `SessionSpec` carries `command` + `pty_prompt` + `readiness_marker`
 - ClaudeAdapter bakes the prompt into `command` (`claude "query"`), `pty_prompt=""`, `readiness_marker=None`
+- OpencodeAdapter bakes the prompt into `command` (`opencode --prompt "..."`, auto-submits once TUI is ready), `pty_prompt=""`, `readiness_marker=None`
 - ShellAdapter (kimi/codex) returns bare `command`, `pty_prompt=<seed>`, `readiness_marker=<CLI's ready banner>`
 - Spawners do NOT branch on adapter type — they read the spec and execute mechanically
 
 **Anti-pattern**: adding a `prompts_via_pty`/`isinstance(adapter, ClaudeAdapter)` branch in a spawner. That drifts again — happened twice before this contract landed. See commits `a32a00f6`, `c90474c5`.
+
+### Session-id model — `prespecified_session_id` + capture hooks
+
+Whether a session id is known at spawn time or must be captured after is the **adapter's** business, not the spawner's. Three models coexist; the adapter declares which via BaseAdapter hooks:
+
+- `prespecified_session_id: bool` — `True` = spawn knows the sid upfront (claude: `--session-id` with deterministic `compute_session_id(story,stage,adapter)` uuid5). `False` = CLI allocates its own id; must be captured post-spawn.
+- `make_sid_capturer(story, stage, cwd, since_ts)` — output-driven capture: returns an `on_output(text)` callback fed to `clean_exit_pty`. Used by CLIs that print the sid on exit (kimi: `To resume this session: kimi -r session_<uuid>`). Returns `None` if not applicable.
+- `capture_sid_post_exit(story, stage, cwd, since_ts) -> str | None` — file/system capture: returns the captured sid after `clean_exit_pty`. Used by CLIs that never print the sid but write it to storage files (opencode: scan `<data>/storage/session/<projectID>/*.json` for the newest session with `time.created >= since_ts`). Returns `None` if not applicable.
+
+Spawners (api.py / planner.py) read `prespecified_session_id` to decide whether to store a known sid at NEW time, and call both capture hooks at stage-done cleanup when it's `False`. They do NOT branch on `adapter_name == "claude"/"kimi"` — that scatter grew to three CLIs and was converged. See commits `1a5bfbfd` (Phase 0 abstraction), `dd89ba04` (opencode).
+
+| CLI | sid model | capture |
+|---|---|---|
+| claude | prespecified (uuid5) | none |
+| kimi | CLI-allocated (`session_<uuid>`) | exit-line regex (`make_sid_capturer`) |
+| opencode | CLI-allocated (`ses_…`) | storage file-scan (`capture_sid_post_exit`) |
+| codex | CLI-allocated | not captured (no resume support yet) |
+
+**Anti-pattern**: re-adding `if adapter_name == "claude"` / `== "kimi"` in a spawner to special-case sid handling. Put the behavior on the adapter as a hook. See `DESIGN-session-pty-id-model.md` §2.5.
 
 ### Per-story workspace — `worktrees_root` + LLM-decided slug
 

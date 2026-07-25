@@ -39,12 +39,12 @@ class TestToolSchema:
             assert "required" in params
 
     def test_adapter_enum_values(self):
-        """Adapter parameters must only accept claude/codex."""
+        """Adapter parameters must only accept the built-in CLI set."""
         for tool in ORCHESTRATOR_TOOLS:
             props = tool["function"]["parameters"]["properties"]
             if "adapter" in props:
                 assert props["adapter"]["type"] == "string"
-                assert props["adapter"]["enum"] == ["claude", "codex", "kimi"]
+                assert props["adapter"]["enum"] == ["claude", "codex", "kimi", "opencode"]
 
     def test_plan_step_required_fields(self):
         tool = next(
