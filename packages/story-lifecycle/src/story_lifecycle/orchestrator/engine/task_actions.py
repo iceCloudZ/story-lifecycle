@@ -187,30 +187,57 @@ def get_expected_outputs(action_keys: list[str]) -> list[str]:
 
 
 def build_done_protocol(stage: str, done_file: str, action_keys: list[str]) -> str:
-    """构建完成协议段(done.json 格式)。
+    """构建成果物落地协议段(STEP 1.4:替旧 done.json 自报协议)。
 
-    根据选的 task_actions 动态列出期望字段(Q3:一鱼两吃)。
+    code agent 干完活后,调 `story tool declare <doc_type> <path>` 落成果物 —— 编排器
+    据成果物落地(check_artifacts_landed)判定 stage 完成,不再靠 code agent 自写 done.json
+    自报(不可信,会撒谎/遗漏,设计 §1.2)。declare 会:① 原子写成果物 ② 版本化进 story_doc
+    ③ 写 done.json 兼容视图(给 miner,1.5 双写)④ 触发编排器感知。
+
+    根据选的 task_actions 动态推荐该 declare 哪种 doc_type(Q3:一鱼两吃)。
     """
     expected = get_expected_outputs(action_keys)
-    # 基础字段(所有 done 都有)
-    fields = {
-        "stage": stage,
-        "status": "done",
-        "summary": "完成摘要",
-        "files_changed": [],
+    # action_keys → 推荐的 doc_type(spec/research/plan/test_report/delivery)。
+    # 把 expected_output_key 映射到 story tool declare 的 doc_type 参数。
+    _out_key_to_doc_type = {
+        "spec_path": "spec",
+        "research_path": "research",
+        "plan_path": "plan",
+        "test_report_path": "test_report",
+        "delivery_path": "delivery",
     }
-    # 动态追加期望字段
+    doc_types = []
     for out_key in expected:
-        if out_key not in fields:
-            fields[out_key] = f"<{out_key}>"
+        dt = _out_key_to_doc_type.get(out_key)
+        if dt and dt not in doc_types:
+            doc_types.append(dt)
 
-    fields_str = ", ".join(f'"{k}": {v!r}' for k, v in fields.items())
-    return (
-        f"\n### 完成协议\n"
-        f"完成后必须写入文件 `{done_file}`，内容为 JSON:\n"
-        f"{{{fields_str}}}\n\n"
-        f"注意：JSON 必须是纯 JSON，不要包裹在 markdown 代码块中。"
-    )
+    lines = [
+        "\n### 成果物落地协议(替旧 done.json 自报)",
+        "干完本阶段任务后,**必须**用 `story tool` 子命令落地每个成果物,编排器据此判定 stage 完成:",
+        "  story tool declare <doc_type> <path> --summary \"一句话摘要\"",
+        "",
+        "示例:",
+        "  story tool declare spec story/spec.md --summary \"登录方案\"",
+        "  story tool declare test_report story/test-report.md --summary \"10 测全过\"",
+        "",
+        "查本 stage 还缺哪些成果物:",
+        "  story tool todo",
+        "",
+        "**不要自己写 .story/done/<stage>.json**(旧协议,已废)。declare 会原子写成果物 +",
+        "版本化 + 写 done.json 兼容视图给 miner + 触发编排器感知 —— 一次搞定。",
+    ]
+    if doc_types:
+        lines.append("")
+        lines.append("本阶段任务清单对应的成果物类型:")
+        for dt in doc_types:
+            lines.append(f"  - {dt}")
+    else:
+        lines.append("")
+        lines.append(
+            "(当前任务清单无标准 doc_type,请按 stage 约定落地文件后 declare 自定义类型)"
+        )
+    return "\n".join(lines) + "\n"
 
 
 # ---- system prompt 辅助:给 LLM 看的可选动作列表 ----

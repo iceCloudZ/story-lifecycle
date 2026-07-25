@@ -49,10 +49,13 @@ class TestExecConstraint:
         p = _build("design", tmp_path, task_actions=["write_design_doc"])
         assert "不要运行" in p or "不需要跑测试" in p
 
-    def test_done_handshake_still_present(self, tmp_path):
+    def test_artifact_declare_protocol_present(self, tmp_path):
+        """STEP 1.4:prompt 含 story tool declare 成果物落地协议(替旧 done.json 自报)。"""
         p = _build("build", tmp_path)
-        assert "完成协议" in p
-        assert ".story/done/S-1/build.json" in p
+        assert "成果物落地协议" in p
+        assert "story tool declare" in p
+        # 旧 done.json 自报协议已废,不应再出现完成协议段
+        assert "完成后必须写入文件" not in p
 
 
 class TestTaskListSection:
@@ -168,8 +171,8 @@ class TestSinglePassVerifyPrompt:
         assert "本阶段任务清单" in p
         # 允许轻量自检(不是禁测试)
         assert "轻量自检" in p or "pytest" in p
-        # 动态完成协议含 test_report_path(选了 write_test_report)
-        assert "test_report_path" in p
+        # STEP 1.4:动态成果物协议含 test_report doc_type(选了 write_test_report)
+        assert "test_report" in p
         # grill 澄清协议段在
         assert "grill-me" in p or "澄清协议" in p
 
@@ -198,24 +201,23 @@ class TestSinglePassVerifyPrompt:
         assert "grill-me" not in p_multi
         assert "澄清协议" not in p_multi
 
-    def test_done_protocol_dynamic_fields_by_task_actions(self, tmp_path):
-        """完成协议字段随 task_actions 动态(改动 2):选 write_design_doc → spec_path;
-        选 write_test_report → test_report_path;都不选 → 只基础 4 字段。"""
+    def test_artifact_protocol_dynamic_doctypes_by_task_actions(self, tmp_path):
+        """STEP 1.4:成果物协议的 doc_type 随 task_actions 动态 —— 选 write_design_doc
+        → declare spec;选 write_test_report → declare test_report;都不选 → 无标准类型。"""
         # 选了 write_design_doc + write_test_report
         p_full = _build(
             "verify",
             tmp_path,
             task_actions=["write_design_doc", "write_test_report"],
         )
-        assert "spec_path" in p_full
-        assert "test_report_path" in p_full
-        # 都不选 → 只基础字段(spec_path/test_report_path 不出现)
+        assert "spec" in p_full
+        assert "test_report" in p_full
+        # 都不选 → 无标准 doc_type 段(只 write_code 不映射到 doc_type)
         p_bare = _build("verify", tmp_path, task_actions=["write_code"])
-        assert "spec_path" not in p_bare
+        assert "无标准 doc_type" in p_bare
         assert "test_report_path" not in p_bare
-        # 基础字段始终在
-        assert "完成协议" in p_bare
-        assert "files_changed" in p_bare
+        # 成果物落地协议始终在(STEP 1.4:替旧"完成协议")
+        assert "成果物落地协议" in p_bare
 
 
 class TestSinglePassPlanningFallback:

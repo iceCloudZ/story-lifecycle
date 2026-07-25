@@ -1,10 +1,11 @@
-"""T2.3 · .done 握手轮询(超时/成功).
+"""T2.3 · 成果物落地轮询(超时/成功) — STEP 1.4 更新。
 
-测 continue_orchestrator_agent 中对 `.story/done/<key>/<stage>.json` 的轮询:
-- 成功路径:timeout 内发现 done 文件 → stage 完成
-- 超时路径:timeout 内无 done 文件 → stage 失败且不无限挂起
+测 continue_orchestrator_agent 中对 stage.artifacts 落地的轮询(替旧 done.json 轮询):
+- 成功路径:timeout 内成果物落地(spec.md 出现)→ stage 完成
+- 超时路径:timeout 内成果物没落地 → stage 失败且不无限挂起
 
 约束:不修改 pty.py;mock 时间加速轮询;mock CLI 不启动真实进程。
+headless-smoke profile 的 design stage 声明 artifacts: [story/spec.md](1.1)。
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from story_lifecycle.infra.db import models as db
-from story_lifecycle.infra.paths import stage_done_file
 from story_lifecycle.orchestrator.engine.planner import continue_orchestrator_agent, run_orchestrator_agent
 
 
@@ -82,15 +82,14 @@ def _setup_planning(story):
 
 
 def test_done_handshake_success(story, tmp_path):
-    """Done file appears within timeout -> stage completes."""
+    """成果物(spec.md)落地 → stage 完成(STEP 1.4:替 done.json 自报)。"""
     _setup_planning(story)
 
-    done_path = stage_done_file(tmp_path, story["story_key"], "design")
-    done_path.parent.mkdir(parents=True, exist_ok=True)
-    done_path.write_text(
-        json.dumps({"summary": "design done", "tests_passed": True}),
-        encoding="utf-8",
-    )
+    # STEP 1.4:完成信号是 stage.artifacts 落地(headless-smoke design → story/spec.md),
+    # 不是 done.json。code agent(或测试)落地成果物文件,planner 据此推进。
+    spec_path = tmp_path / "story" / "spec.md"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("# 设计方案\n", encoding="utf-8")
 
     mock_proc = MagicMock()
     mock_proc.poll.return_value = None
@@ -111,7 +110,7 @@ def test_done_handshake_success(story, tmp_path):
 
 
 def test_done_handshake_timeout(story, tmp_path, monkeypatch):
-    """No done file within timeout -> stage fails and loop does not hang."""
+    """成果物没落地 within timeout → stage 失败且不无限挂起。"""
     _setup_planning(story)
 
     mock_proc = MagicMock()

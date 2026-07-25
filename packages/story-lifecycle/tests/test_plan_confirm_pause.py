@@ -12,7 +12,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from story_lifecycle.infra.db import models as db
-from story_lifecycle.infra.paths import stage_done_file
 from story_lifecycle.orchestrator.engine.planner import (
     continue_orchestrator_agent,
     run_orchestrator_agent,
@@ -78,11 +77,9 @@ def test_planning_pauses_with_plan_confirmed_false(story):
 def test_continue_after_confirm_executes_actions(story, tmp_path):
     """Simulate confirm (_plan_confirmed=True) and assert continue launches CLI.
 
-    Done file is written by the Popen side_effect (at spawn time) rather than
-    pre-seeded: under the new orphan-done claim semantics (PLAN-stage-confirm-
-    gate), a pre-seeded done file would be adopted as already-completed and the
-    stage skipped — so no CLI would launch. Writing it at spawn time keeps this
-    test's original intent ("confirm → CLI launches") intact.
+    STEP 1.4:完成信号是成果物落地(headless-smoke design → story/spec.md),不是 done.json。
+    成果物由 Popen side_effect 在 spawn 时落地(而非预置):预置会被 orphan-artifacts
+    claim 当成已完成跳过 —— spawn 时落地保持本测试原意("confirm → CLI 启动")。
     """
     # Pre-plan: run planning first to get actions into context
     with patch(
@@ -106,16 +103,13 @@ def test_continue_after_confirm_executes_actions(story, tmp_path):
     mock_proc.stdout = MagicMock()
     mock_proc.stderr = MagicMock()
 
-    # Write the design done file when the CLI is spawned, so the poll loop
-    # completes immediately after launch (without pre-seeding → orphan-claim).
-    design_done = stage_done_file(tmp_path, story["story_key"], "design")
-    design_done.parent.mkdir(parents=True, exist_ok=True)
+    # 在 spawn 时落地成果物文件(headless-smoke design → story/spec.md),
+    # 让 poll loop 立即检测到成果物落地而推进(不预置 → 防 orphan-claim 跳过)。
+    spec_path = tmp_path / "story" / "spec.md"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _popen_side_effect(*args, **kwargs):
-        design_done.write_text(
-            json.dumps({"summary": "design done", "tests_passed": True}),
-            encoding="utf-8",
-        )
+        spec_path.write_text("# 设计方案\n", encoding="utf-8")
         return mock_proc
 
     with patch("subprocess.Popen", side_effect=_popen_side_effect) as mock_popen, patch(
@@ -132,5 +126,5 @@ def test_continue_after_confirm_executes_actions(story, tmp_path):
     updated = db.get_story(story["story_key"])
     ctx = json.loads(updated.get("context_json", "{}"))
     assert ctx.get("_plan_confirmed") is True
-    # design recorded as completed after its done file was produced
+    # design recorded as completed after its artifact landed
     assert "design" in ctx.get("_completed_stages", [])

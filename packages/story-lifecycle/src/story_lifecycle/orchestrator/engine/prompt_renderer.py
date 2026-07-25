@@ -76,17 +76,21 @@ def _build_stage_contract(stage: str, state: StoryState) -> str:
     else:
         cfg = get_stage_config(state.get("profile", "minimal"), stage)
     expected = cfg.get("expected_outputs", [])
+    artifacts = cfg.get("artifacts", [])
     expected_lines = "\n".join(f"- {name}" for name in expected) or "- none"
-    done_path = f".story/done/{key}/{stage}.json"
+    artifact_lines = "\n".join(f"- {a}" for a in artifacts) or "- none"
 
     return (
         "## Stage Contract\n\n"
         f"- Story Key: {key}\n"
         f"- Stage: {stage}\n"
-        f"- Done file: `{done_path}`\n"
-        "- The done file must contain raw JSON only. Do not wrap it in markdown.\n"
-        "- Do not continue into later stages after writing the done file.\n\n"
-        "### Required output fields\n\n"
+        "- 完成判定:**成果物落地**(下方 Required artifacts),编排器据此推进。\n"
+        "- 落地方式:用 `story tool declare <doc_type> <path>`(原子写+版本化+触发感知)。\n"
+        "- **不要**自己写 done.json(旧协议,已废)。\n"
+        "- 不要在 declare 成果物后继续往后跑下一 stage(编排器负责推进)。\n\n"
+        "### Required artifacts(本 stage 完成信号 — 必须全落地)\n\n"
+        f"{artifact_lines}\n\n"
+        "### Required output fields(declare 时建议带的字段名)\n\n"
         f"{expected_lines}\n"
     )
 

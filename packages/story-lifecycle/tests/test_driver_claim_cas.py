@@ -183,7 +183,12 @@ class TestConsumeOrphanDone:
         db.update_story(
             "OD1", status="paused", context_json=json.dumps(ctx), workspace=str(ws)
         )
-        # CLI wrote the done file after the driver died.
+        # STEP 1.4:完成信号是成果物落地(minimal verify → story/test-report.md),
+        # 不是 done.json 自报。code agent 落地了成果物 + 写了 done 兼容视图。
+        artifact_path = Path(str(ws)) / "story" / "test-report.md"
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text("# 测试报告\n全过\n", encoding="utf-8")
+        # done 兼容视图(story-tool declare 双写)也写一份,作 payload 来源。
         done_path = Path(str(ws)) / stage_done_file_rel("OD1", "verify")
         done_path.parent.mkdir(parents=True, exist_ok=True)
         done_path.write_text(

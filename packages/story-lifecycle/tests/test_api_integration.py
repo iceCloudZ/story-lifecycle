@@ -1038,7 +1038,9 @@ class TestInteractiveStagePrompt:
         assert "借款增加第二紧急联系人" in p  # 标题
         assert "/tmp/ip-ws/PRD.md" in p  # PRD 路径注入(让 claude 读)
         assert "mcp__lifecycle__clarify" in p or "设计维度" in p  # design 协议
-        assert ".story/done/IP-1/design.json" in p  # done 握手路径
+        # STEP 1.4:成果物落地协议(story tool declare)替旧 done.json 握手路径
+        assert "story tool declare" in p
+        assert ".story/done/IP-1/design.json" not in p  # 旧 done 握手已废
 
     def test_non_design_stage_still_builds(self, isolated_story_home):
         from story_lifecycle.orchestrator.service.api import (

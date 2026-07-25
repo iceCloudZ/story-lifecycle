@@ -890,9 +890,12 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
     # stage,resume 时从第一个未完成 launch action 开始,不重 spawn 不重跑(见 docs)。
     completed_stages = list(ctx.get("_completed_stages", []))
     if not completed_stages:
-        # 认领游离 done:用户可能手动跑出了某 stage 的 done file(如 design.json)而
-        # 从未走过自动链路(_completed_stages 为空)。扫一遍 launch actions,凡 done file
-        # 已存在的 stage 认领进 _completed_stages —— 点「开始」后不重跑。
+        # 认领游离成果物(STEP 1.4:替"认领游离 done file"):用户可能手动跑出了某 stage
+        # 的成果物(如 story/spec.md)而从未走过自动链路(_completed_stages 为空)。扫一遍
+        # launch actions,凡 stage.artifacts 全落地的 stage 认领进 _completed_stages ——
+        # 点「开始」后不重跑。完成判据是成果物落地,不再看 done file 存在性(设计 §1.2)。
+        from .artifact_check import artifacts_ready as _artifacts_ready_fn
+
         orphan_claimed = []
         for _a in actions:
             if _a.get("action") != "launch":
@@ -900,26 +903,39 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             _st = _a.get("stage")
             if not _st:
                 continue
-            _done_rel = _a.get("done_file", stage_done_file_rel(story_key, _st))
-            if (Path(workspace) / _done_rel).exists():
+            _stage_arts = list(rp.stage(_st).artifacts or [])
+            # 有 artifacts 声明 → 查落地;无声明(老 profile/测试)→ 退回 done.json 兼容视图存在性。
+            if _stage_arts:
+                _ready = _artifacts_ready_fn(_stage_arts, workspace)
+            else:
+                _done_rel = _a.get("done_file", stage_done_file_rel(story_key, _st))
+                _ready = (Path(workspace) / _done_rel).exists()
+            if _ready:
                 orphan_claimed.append(_st)
         if orphan_claimed:
             completed_stages = orphan_claimed
             ctx["_completed_stages"] = completed_stages
-            # 对每个被认领的 stage 记一次 completed 事件(读 done file 作 payload):
-            # 跳过的 stage 也要在 timeline / 质量统计里出现,与正常 done 路径一致。
+            # 对每个被认领的 stage 记一次 completed 事件(读 done 兼容视图作 payload;
+            # 没有兼容视图则合成):跳过的 stage 也要在 timeline / 质量统计里出现,与正常路径一致。
             for _st in orphan_claimed:
                 try:
                     _dp = Path(workspace) / stage_done_file_rel(story_key, _st)
-                    _dd = robust_json_parse(_dp) or {}
+                    _dd = robust_json_parse(_dp) if _dp.exists() else {}
                 except Exception:
                     _dd = {}
+                if not _dd:
+                    _dd = {
+                        "stage": _st,
+                        "status": "done",
+                        "summary": f"{_st} 成果物已落地(resume 认领)",
+                    }
                 db.log_event(story_key, _st, "completed", _dd)
             log.info(
-                "[%s] claimed orphan done files as completed: %s",
+                "[%s] claimed orphan artifacts as completed: %s",
                 story_key,
                 completed_stages,
             )
+
 
     # 算 start_idx:第一个 stage ∉ _completed_stages 的 launch action 下标。
     start_idx = 0
@@ -1085,7 +1101,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     # 对 kimi/codex(PTY paste)同样安全:seed 短,完整内容在文件里。
                     _seed = (
                         f"请读取 `{prompt_file}` 并严格按其中的说明执行本阶段"
-                        f"({stage})任务,完成后按其完成协议写入 done 文件。"
+                        f"({stage})任务,完成后用 `story tool declare` 落地成果物。"
                     )
                     # 会话恢复回填:每阶段一个会话,同阶段重试/崩溃 resume 续上(省 token)。
                     # sid 模型是 adapter 的职责(Phase 0 抽象):prespecified_session_id=True
@@ -1099,7 +1115,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     _spawn_ts = _now_utc_iso()  # 文件扫描捕获的时间窗口下界
                     if _prior and _prior.get("session_id"):
                         # 该阶段已建过会话 → resume(续上 transcript,不重读 prompt_file)。
-                        _resume_seed = "继续上次的任务,完成后按完成协议写入 done 文件。"
+                        _resume_seed = "继续上次的任务,完成后用 `story tool declare` 落地成果物。"
                         _session_spec = adapter.start_session(
                             model=model,
                             prompt=_resume_seed,
@@ -1173,6 +1189,20 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         "STORY_STAGE": stage,
                         "STORY_WORKSPACE": workspace,  # consult spawn 外援的工作区
                         "STORY_ADAPTER": adapter_name,  # consult 的 decorrelation 决策
+                    }
+                # STEP 1.4(成果物驱动):PTY(interactive_pty)路径也注入 story 上下文,
+                # 让 code agent 能调 `story tool declare` 落成果物(story-tool 从环境读
+                # STORY_KEY/STORY_STAGE/STORY_WORKSPACE 定位 story)。headless 分支已在
+                # 上方注入;PTY 分支独立注入同一组变量。
+                if story_env is None:
+                    import os as _os
+
+                    story_env = {
+                        **_os.environ,
+                        "STORY_KEY": story_key,
+                        "STORY_STAGE": stage,
+                        "STORY_WORKSPACE": workspace,
+                        "STORY_ADAPTER": adapter_name,
                     }
                 if _wants_grill and adapter_name == "claude" and headless:
                     import sys as _sys
@@ -1411,8 +1441,24 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 context_json=json.dumps(ctx, ensure_ascii=False),
             )
 
-            # 轮询 done file
+            # 轮询成果物落地(STEP 1.4:成果物驱动,替 done.json 自报)。
+            # 完成信号 = stage.artifacts 全落地(check_artifacts_landed),不再靠 code agent
+            # 自写 done.json。done.json 兼容视图(story-tool declare 双写)仍可能存在,作为
+            # miner 兼容 + payload 来源,但不是完成判据。
             done_path = Path(workspace) / done_file_rel
+            # 本 stage 声明的 artifacts(机器可查的完成信号)。profile 是权威;兜底空列表
+            # (理论上 1.1 schema 契约已拦,这里防御 —— 空 artifacts 时不阻塞,直接读 done 兼容视图)。
+            _stage_artifacts = list(rp.stage(stage).artifacts or [])
+            from .artifact_check import check_artifacts_landed as _check_artifacts
+
+            def _artifacts_ready() -> bool:
+                """本 stage 成果物是否全齐(missing 为空)。空 artifacts → 看 done 兼容视图(向后兼容老 story)。"""
+                if _stage_artifacts:
+                    missing, _ = _check_artifacts(_stage_artifacts, workspace)
+                    return not missing
+                # 兜底:无 artifacts 声明(老 story / 测试 profile)→ 退回 done.json 兼容视图存在性。
+                return done_path.exists()
+
             poll_timeout = (
                 45 * 60
             )  # 45 minutes(realtest:大 codebase 上 kimi design/build 较慢,§0.1 时间不限,留余量)
@@ -1421,11 +1467,11 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             headless_attempt = 1  # headless 重试计数（首次=1）
 
             while elapsed < poll_timeout:
-                # headless：claude 若已退出却没写 done file，提前失败（不等满 30min）
+                # headless：claude 若已退出却没产出成果物，提前失败（不等满 30min）
                 if (
                     headless_proc is not None
                     and headless_proc.poll() is not None
-                    and not done_path.exists()
+                    and not _artifacts_ready()
                 ):
                     rc = headless_proc.returncode
                     stderr_tail, stdout_tail = "", b""
@@ -1437,11 +1483,11 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             stdout_tail = headless_proc.stdout.read()[-800:]
                     except Exception:
                         pass
-                    # claude 非确定：偶发 rc!=0 退出（API 抖动/限流/崩溃）却没写 done
-                    # file → 重试，扛住瞬时抖动（共享下方 poll_timeout 预算，不另加时）。
+                    # claude 非确定：偶发 rc!=0 退出（API 抖动/限流/崩溃）却没产出成果物
+                    # → 重试，扛住瞬时抖动（共享下方 poll_timeout 预算，不另加时）。
                     if headless_attempt < HEADLESS_MAX_ATTEMPTS:
                         log.warning(
-                            "[%s] claude exited rc=%d before done file (attempt %d/%d); "
+                            "[%s] claude exited rc=%d before landing artifacts (attempt %d/%d); "
                             "re-launching. stderr=%r stdout_tail=%r",
                             story_key,
                             rc,
@@ -1477,7 +1523,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         )
                         continue
                     log.warning(
-                        "[%s] claude exited rc=%d without done file after %d attempts; "
+                        "[%s] claude exited rc=%d without landing artifacts after %d attempts; "
                         "giving up. stdout_tail=%r",
                         story_key,
                         rc,
@@ -1487,25 +1533,26 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     sm_mark_failed(
                         story_key,
                         (
-                            f"Stage {stage}: claude exited (rc={rc}) without done file "
+                            f"Stage {stage}: claude exited (rc={rc}) without landing artifacts "
                             f"after {HEADLESS_MAX_ATTEMPTS} attempts"
                         ),
                     )
                     return
-                # PTY（interactive_pty 路径）：kimi/codex 若已退出却没写 done file，
+                # PTY（interactive_pty 路径）：kimi/codex 若已退出却没产出成果物，
                 # 同样提前失败——否则进程死后 poll 循环只能傻等满 45min（且若残留
                 # 输出被误判为 pending clarification，elapsed 会被反复重置，永不超时，
                 # story 僵尸在 active）。对称 headless 的 1230 检查，但不重试（PTY
                 # 重启重，交给 decide_recovery/rescue_story 层统一换 adapter 恢复）。
                 # 容错：进程刚 spawn 时 alive 短暂为 False（启动握手期），给 30s 宽限。
+                # STEP 1.4:完成判据从 done file 换成成果物落地(check_artifacts_landed)。
                 if (
                     _agent_pty is not None
                     and elapsed > 30
                     and not _agent_pty.alive
-                    and not done_path.exists()
+                    and not _artifacts_ready()
                 ):
                     log.warning(
-                        "[%s] PTY %s exited without done file for stage=%s; "
+                        "[%s] PTY %s exited without landing artifacts for stage=%s; "
                         "marking failed (rescue layer will retry)",
                         story_key,
                         adapter_name,
@@ -1515,7 +1562,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         story_key,
                         (
                             f"Stage {stage}: {adapter_name} PTY process exited "
-                            f"without writing done file"
+                            f"without landing required artifacts"
                         ),
                     )
                     return
@@ -1544,13 +1591,32 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         elapsed = 0
                 except Exception:
                     pass  # clarify 检测失败不影响主轮询
-                # 检查 done file
-                if done_path.exists():
+                # 检查成果物落地(STEP 1.4:替 done file 自报)。
+                # 完成信号 = stage.artifacts 全齐;done.json 兼容视图(story-tool declare
+                # 双写,或老 code agent 自写)若存在则作 payload 来源,不是完成判据。
+                if _artifacts_ready():
                     try:
-                        # robust_json_parse 接收 Path（内部自读，并容忍 markdown 包裹/
-                        # 半写文件：解析失败会抛异常，由下方 except 捕获后轮询重试，
-                        # 等 claude 把 done file 写完整再消费）。
-                        done_data = robust_json_parse(done_path) or {}
+                        # done_data 优先读 done.json 兼容视图(story-tool declare 写的,
+                        # 含 spec_path/summary/files_changed 给 miner + story_document 登记);
+                        # 没有兼容视图(code agent 直接写成果物文件没调 declare)→ 合成最小 payload。
+                        if done_path.exists():
+                            # robust_json_parse 接收 Path(容忍 markdown 包裹/半写,失败抛异常
+                            # 由 except 捕获轮询重试 —— 但成果物已齐,重试只是等 done 视图写完整,
+                            # 不影响完成判定)。
+                            done_data = robust_json_parse(done_path) or {}
+                        else:
+                            # 合成 done_data:成果物已齐但无 done 兼容视图(代码 agent 直接
+                            # 写文件未调 story-tool)。files_changed 列出已落地的成果物路径,
+                            # 让 _register_stage_outputs 能登记。
+                            _missing, _landed = _check_artifacts(
+                                _stage_artifacts, workspace
+                            )
+                            done_data = {
+                                "stage": stage,
+                                "status": "done",
+                                "summary": f"{stage} 成果物落地(未走 declare)",
+                                "files_changed": list(_landed),
+                            }
                         db.log_event(story_key, stage, "completed", done_data)
                         # BUG #17: 登记 stage 产出文件进 story_document(纯确定性,
                         # 让前端「文档」卡片可追溯)。失败不阻塞主流程。
@@ -1563,10 +1629,10 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                 stage,
                             )
                         log.info(
-                            f"[{story_key}] Stage {stage} completed: "
+                            f"[{story_key}] Stage {stage} completed (artifacts landed): "
                             f"{done_data.get('summary', '')[:100]}"
                         )
-                        # 保留 done file 作为阶段完成证据：real-E2E asserters 与
+                        # 保留 done file(兼容视图)作为阶段完成证据：real-E2E asserters 与
                         # 审计都需要事后读取 {stage}.json。每个 stage 的 done 路径唯一，
                         # 重跑由 reset_workspace 清理 done/ 目录，无需在此 unlink。
                         # 记进度(PLAN-stage-confirm-gate):追加当前 stage 到 _completed_stages
@@ -2090,7 +2156,7 @@ def _build_cli_prompt(
 **不要自己创建 worktree 或切换分支**——隔离环境已由编排层准备完毕。
 直接 `cd` 到上述 worktree 路径，在对应分支上写代码即可。
 
-**硬约束**：若发现 worktree 路径不存在或分支异常，**立即停止**，将错误写入完成协议的 `summary` 字段并把 `status` 设为 `"error"`，不要尝试在主分支或其他分支上继续。
+**硬约束**：若发现 worktree 路径不存在或分支异常，**立即停止**，不要尝试在主分支或其他分支上继续。不要 `story tool declare` 成果物(本阶段没产出有效结果)。
 """
     elif project_section:
         worktree_section = f"""
@@ -2108,7 +2174,7 @@ def _build_cli_prompt(
 - 方式 A（独立目录，推荐用于多项目并行）： `git -C <repo_path> worktree add <新路径> <分支>` 或基于基线 `git -C <repo_path> worktree add -b <分支> <新路径> <基线>`
 - 方式 B（在主仓库切分支）： `git -C <repo_path> checkout -b <分支> <基线>`（已有则 `git -C <repo_path> checkout <分支>`）
 
-**硬约束**：若 git 操作失败（分支已存在且冲突、无权限、仓库不可写等），**立即停止后续工作**，将错误写入完成协议的 `summary` 字段并把 `status` 设为 `"error"`，不要尝试在错误的分支或主分支上继续。
+**硬约束**：若 git 操作失败（分支已存在且冲突、无权限、仓库不可写等），**立即停止后续工作**，不要尝试在错误的分支或主分支上继续。不要 `story tool declare` 成果物(本阶段没产出有效结果)。
 """
     elif workspace_path:
         # 规划 LLM 决定的 per-story 隔离工作空间(无项目绑定场景):后端建了空目录,
@@ -2132,7 +2198,7 @@ cd ./hc-config
 
 **不要**直接在主工作区的项目里改 —— 必须先 worktree add 到 `{workspace_path}` 下,在 feature 分支上改。
 
-**硬约束**：若 git worktree add 失败(分支冲突、仓库不可写),立即停止,把错误写入完成协议的 `summary` + `status="error"`,不要在主分支继续。
+**硬约束**：若 git worktree add 失败(分支冲突、仓库不可写),立即停止,不要在主分支继续。不要 `story tool declare` 成果物(本阶段没产出有效结果)。
 """
 
     # 执行约束:由 task_actions 内容决定(替 _is_single_stage 硬编码)。
@@ -2145,9 +2211,9 @@ cd ./hc-config
     exec_constraint_section = _build_constraint(_task_actions)
     # 任务清单:LLM 选的动作 → prompt 里的有序步骤(按 order 排序)
     task_list_section = _build_task_list(_task_actions)
-    # 完成协议:动态字段(选了 write_test_report → test_report_path;write_design_doc
-    # → spec_path)。一鱼两吃:task_actions 既驱动任务清单,又驱动 done 协议字段,
-    # 让 CLI 提前知道要交什么(否则 done 校验无源失败)。
+    # 成果物落地协议(STEP 1.4:替旧 done.json 自报协议):一鱼两吃 —— task_actions 既
+    # 驱动任务清单,又驱动该 declare 哪种 doc_type(选了 write_test_report → declare
+    # test_report;write_design_doc → declare spec)。让 CLI 提前知道要交什么成果物。
     done_protocol_section = build_done_protocol(stage, done_file, _task_actions)
 
     return f"""## 任务: {stage}

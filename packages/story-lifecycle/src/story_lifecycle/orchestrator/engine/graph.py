@@ -368,23 +368,25 @@ def find_ready_interactive_stories() -> list[str]:
     return ready
 
 
-def consume_orphan_done(story_key: str) -> bool:
-    """Detect and consume done files written while no driver was watching.
+def consume_orphan_artifacts(story_key: str) -> bool:
+    """Detect and claim stage artifacts that landed while no driver was watching.
 
-    Scenario this fixes: user emergency-stops the driver (or it crashes), but
-    the CLI keeps running in its PTY and finishes the stage — writing
-    ``.story/done/<key>/<stage>.json``. Without a driver polling, the done file
-    sits there orphaned and the story stays stuck in paused/planning forever.
+    STEP 1.4(替 consume_orphan_done):完成信号从 done.json 自报换成成果物落地
+    (DESIGN-artifact-driven-stage-completion 附录 A)。Scenario this fixes: user
+    emergency-stops the driver (or it crashes), but the code agent keeps running
+    and finishes the stage — landing the required ``stage.artifacts`` files.
+    Without a driver polling, those artifacts sit there orphaned and the story
+    stays stuck in paused/planning forever.
 
     Called from GET /api/story/{key} (every detail-page load) as a passive
-    reconciliation: if there's a done file for the current stage that hasn't
-    been claimed into ``_completed_stages``, claim it + write the completed
+    reconciliation: if the current stage's ``artifacts`` are all landed but not
+    yet claimed into ``_completed_stages``, claim it + write the completed
     event + advance the story state. No-op if the driver is actively running
     (driver's own poll loop owns that case) or nothing's orphaned.
 
-    Returns True if any done file was consumed (caller may want to refetch).
+    Returns True if any stage was claimed (caller may want to refetch).
     """
-    # Don't compete with a live driver — its poll loop handles done files.
+    # Don't compete with a live driver — its poll loop handles artifact polling.
     if is_story_running(story_key):
         return False
     # Also defer if driver_claim is held by a live PID (cross-process driver
@@ -410,12 +412,24 @@ def consume_orphan_done(story_key: str) -> bool:
     if is_terminal(story.get("status")):
         return False
 
+    # 解析 profile 拿每个 stage 的 artifacts(完成信号)。
+    from .profile_loader import resolve_profile
+
+    try:
+        rp = resolve_profile(story.get("profile") or "minimal")
+    except Exception:
+        log.exception(
+            "[%s] resolve_profile failed in orphan consume; aborting", story_key
+        )
+        return False
+
     actions = ctx.get("_agent_actions") or []
     completed_stages = list(ctx.get("_completed_stages") or [])
     changed = False
 
     from ...infra.json_helpers import robust_json_parse
     from ...infra.paths import stage_done_file_rel
+    from .artifact_check import check_artifacts_landed
 
     for action in actions:
         if action.get("action") != "launch":
@@ -423,15 +437,36 @@ def consume_orphan_done(story_key: str) -> bool:
         stage = action.get("stage")
         if not stage or stage in completed_stages:
             continue
+        stage_artifacts = list(rp.stage(stage).artifacts or [])
+        if not stage_artifacts:
+            # 无 artifacts 声明(老 profile / 测试 profile)→ 退回 done.json 兼容视图存在性。
+            done_rel = action.get("done_file") or stage_done_file_rel(story_key, stage)
+            ready = (Path(workspace) / done_rel).exists()
+        else:
+            missing, _ = check_artifacts_landed(stage_artifacts, workspace)
+            ready = not missing
+        if not ready:
+            continue
+        # Orphan artifacts found — claim it.
+        # 读 done.json 兼容视图(story-tool declare 双写)作 payload;没有则合成。
         done_rel = action.get("done_file") or stage_done_file_rel(story_key, stage)
         done_path = Path(workspace) / done_rel
-        if not done_path.exists():
-            continue
-        # Orphan done found — claim it.
         try:
-            done_data = robust_json_parse(done_path) or {}
+            done_data = robust_json_parse(done_path) or {} if done_path.exists() else {}
         except Exception:
             done_data = {}
+        if not done_data:
+            _m, landed = (
+                check_artifacts_landed(stage_artifacts, workspace)
+                if stage_artifacts
+                else ([], [])
+            )
+            done_data = {
+                "stage": stage,
+                "status": "done",
+                "summary": f"{stage} 成果物落地(orphan 认领)",
+                "files_changed": list(landed),
+            }
         completed_stages.append(stage)
         db.log_event(story_key, stage, "completed", done_data)
         # Register stage outputs (story_document + story_doc versioning), same
@@ -445,7 +480,7 @@ def consume_orphan_done(story_key: str) -> bool:
                 stage,
             )
         log.info(
-            "[%s] consumed orphan done file for stage=%s (driver was not running)",
+            "[%s] consumed orphan artifacts for stage=%s (driver was not running)",
             story_key,
             stage,
         )
@@ -472,6 +507,11 @@ def consume_orphan_done(story_key: str) -> bool:
             context_json=json.dumps(ctx, ensure_ascii=False),
         )
     return True
+
+
+# 向后兼容别名:AGENTS.md「Driver lifecycle」段曾用 consume_orphan_done 名字。
+# 信号源从 done 换成 artifacts(设计附录 A),但调用点(GET /api/story/{key})不变。
+consume_orphan_done = consume_orphan_artifacts
 
 
 def order_ready_stories(story_keys: list[str]) -> list[str]:
