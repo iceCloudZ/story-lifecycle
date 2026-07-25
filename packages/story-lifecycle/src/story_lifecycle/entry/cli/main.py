@@ -143,6 +143,7 @@ def cli(ctx, serve, host, port, fix_deps):
             "advance",
             "done",
             "calendar",
+            "tool",
         ):
             # STORY_SKIP_FIRST_RUN: 测试 / CI 用 —— 跳过 setup wizard 拦截。
             # consult 等命令在 fake 模式(STORY_CONSULT_FAKE)下不需要真 LLM,
@@ -545,6 +546,10 @@ cli.add_command(diagnostics)
 from .plan_cmd import plan  # noqa: E402
 
 cli.add_command(plan)
+
+from .story_tool import tool as story_tool_group  # noqa: E402
+
+cli.add_command(story_tool_group, name="tool")
 
 if __name__ == "__main__":
     cli()

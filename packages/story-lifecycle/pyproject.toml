@@ -55,6 +55,7 @@ dev = [
 
 [project.scripts]
 story = "story_lifecycle.entry.cli.main:cli"
+story-tool = "story_lifecycle.entry.cli.story_tool:main"
 
 
 [tool.pytest.ini_options]
