@@ -182,6 +182,9 @@ def test_compute_session_id_three_field():
     # 与旧 2 字段格式不同(回归保护:不能再退回 2 字段)
     old_2field = str(uuid.uuid5(uuid.NAMESPACE_DNS, "S:design"))
     assert db.compute_session_id("S", "design", "claude") != old_2field
+    # 新增 opencode 也走三字段:与 claude/kimi 区分(同 stage 不同 adapter 不同 sid)
+    assert db.compute_session_id("S", "design", "opencode") != db.compute_session_id("S", "design", "claude")
+    assert db.compute_session_id("S", "design", "opencode") != db.compute_session_id("S", "design", "kimi")
 
 
 def test_story_session_db_crud(isolated_story_home):

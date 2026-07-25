@@ -85,3 +85,19 @@ def test_three_modes_share_same_executable_and_story_intent(prompt_text, story):
     assert "-p" in headless_argv
     assert prompt_text in interactive_argv
     assert story["title"] in release["content"]
+
+
+def test_opencode_headless_uses_run_subcommand(prompt_text):
+    """opencode headless 走 `opencode run`(无 TUI),带 --auto 与 --model。
+
+    与 claude `-p`(prompt 经 stdin)不同:opencode run 的 prompt 走位置参数/runner
+    协议;此处只验启动 argv 形态(可当 consult reviewer)。
+    """
+    from story_lifecycle.knowledge.adapters.opencode import OpencodeAdapter
+
+    argv = OpencodeAdapter().headless_launch_cmd(model="anthropic/claude-sonnet", prompt=prompt_text)
+    assert argv is not None
+    assert "opencode" in argv[0]
+    assert argv[1] == "run"
+    assert "--auto" in argv
+    assert "anthropic/claude-sonnet" in argv

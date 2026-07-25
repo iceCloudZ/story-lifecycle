@@ -17,7 +17,7 @@ ORCHESTRATOR_TOOLS = [
                 "properties": {
                     "adapter": {
                         "type": "string",
-                        "enum": ["claude", "codex", "kimi"],
+                        "enum": ["claude", "codex", "kimi", "opencode"],
                         "description": "CLI 工具",
                     },
                     "stage": {
@@ -45,7 +45,7 @@ ORCHESTRATOR_TOOLS = [
                 "properties": {
                     "adapter": {
                         "type": "string",
-                        "enum": ["claude", "codex", "kimi"],
+                        "enum": ["claude", "codex", "kimi", "opencode"],
                     },
                     "stage": {"type": "string"},
                     "focus": {

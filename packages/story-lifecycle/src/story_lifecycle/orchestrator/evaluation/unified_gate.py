@@ -119,7 +119,7 @@ def run_unified_verify_gate(
         "retry_count": retry_count,
         "max_retries": max_retries,
         "current_adapter": adapter_name,
-        "available_adapters": ["claude", "codex", "kimi"],
+        "available_adapters": ["claude", "codex", "kimi", "opencode"],
     }
 
     # 2. 一次 LLM 调用

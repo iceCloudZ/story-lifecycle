@@ -12,6 +12,7 @@ console = Console()
 _ADAPTER_EXECUTABLES = {
     "claude": "claude",
     "codex": "codex",
+    "opencode": "opencode",
 }
 
 

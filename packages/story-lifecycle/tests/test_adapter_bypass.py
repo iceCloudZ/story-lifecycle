@@ -6,6 +6,7 @@ codex/kimi 在源头用 CLI flag 堵权限提问(自动批准),claude 走 superv
 
 from story_lifecycle.knowledge.adapters.codex import CodexAdapter
 from story_lifecycle.knowledge.adapters.claude import ClaudeAdapter
+from story_lifecycle.knowledge.adapters.opencode import OpencodeAdapter
 from story_lifecycle.knowledge.adapters.shell import ShellAdapter
 
 
@@ -13,6 +14,11 @@ def test_codex_bypass_flags_has_full_auto():
     flags = CodexAdapter().bypass_flags()
     assert isinstance(flags, list)
     assert "--full-auto" in flags  # codex 自动批准
+
+
+def test_opencode_bypass_flags_has_auto():
+    """opencode --auto:自动批准未显式 deny 的权限(deny 规则仍生效)。"""
+    assert OpencodeAdapter().bypass_flags() == ["--auto"]
 
 
 def test_claude_bypass_flags_empty():

@@ -3957,7 +3957,7 @@ def api_update_action_adapter(
             status_code=409,
             detail=f"can only change adapter before plan confirm (lifecycle_state={story.get('lifecycle_state')})",
         )
-    if req.adapter not in ("claude", "codex", "kimi"):
+    if req.adapter not in ("claude", "codex", "kimi", "opencode"):
         raise HTTPException(status_code=400, detail=f"unknown adapter: {req.adapter}")
 
     import json

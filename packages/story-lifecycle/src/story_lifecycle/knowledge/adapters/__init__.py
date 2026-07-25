@@ -3,12 +3,14 @@
 from .base import BaseAdapter
 from .claude import ClaudeAdapter
 from .codex import CodexAdapter
+from .opencode import OpencodeAdapter
 from .shell import ShellAdapter, _load_adapter_configs
 
 __all__ = [
     "BaseAdapter",
     "ClaudeAdapter",
     "CodexAdapter",
+    "OpencodeAdapter",
     "ShellAdapter",
     "get_adapter",
 ]
@@ -16,7 +18,11 @@ __all__ = [
 
 def get_adapter(name: str) -> BaseAdapter:
     """Get adapter by name. Checks builtins first, then adapters.yaml."""
-    builtin = {"claude": ClaudeAdapter, "codex": CodexAdapter}
+    builtin = {
+        "claude": ClaudeAdapter,
+        "codex": CodexAdapter,
+        "opencode": OpencodeAdapter,
+    }
     cls = builtin.get(name.lower())
     if cls:
         return cls()

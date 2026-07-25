@@ -44,7 +44,9 @@ SPAWN_REVIEWER_TOOL = {
             "properties": {
                 "adapter": {
                     "type": "string",
-                    "enum": ["claude", "kimi"],  # codex 无 headless,见 DESIGN §3.6
+                    # 仅列支持 headless 的 CLI(codex 无 headless,见 DESIGN §3.6)。
+                    # opencode 有 `opencode run`,可当 reviewer。
+                    "enum": ["claude", "kimi", "opencode"],
                     "description": (
                         "Which CLI to spawn. MUST differ from the consulting code "
                         "agent's adapter for decorrelation."

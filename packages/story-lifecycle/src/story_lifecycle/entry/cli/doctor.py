@@ -60,6 +60,16 @@ CLI_TOOLS = {
         },
         "homepage": "https://github.com/google-gemini/gemini-cli",
     },
+    "opencode": {
+        "name": "OpenCode",
+        "check": lambda: _which("opencode"),
+        "install_hint": "curl -fsSL https://opencode.ai/install | bash",
+        "install_cmds": {
+            "_shell": "curl -fsSL https://opencode.ai/install | bash",
+            "npm": ["npm", "install", "-g", "opencode-ai"],
+        },
+        "homepage": "https://opencode.ai",
+    },
 }
 
 INFRA_TOOLS = {
