@@ -18,7 +18,6 @@ stages:
     order: 1
     description: "代码调研与方案设计"
     cli: claude
-    skill: "/brainstorming"
     confirm: true
     review: false
     max_retries: 2
@@ -32,7 +31,7 @@ stages:
   build:
     order: 2
     description: "实施计划与编码实现"
-    cli: kimi  # BUG #19: 编码用 kimi(对齐 realtest.yaml,用户确认 2026-07-13)
+    cli: opencode  # 编码用 opencode(2026-07-25 从 kimi 切换)
     confirm: true
     review: false
     max_retries: 3
