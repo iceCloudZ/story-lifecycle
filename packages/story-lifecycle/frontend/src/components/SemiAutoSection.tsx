@@ -65,10 +65,11 @@ export default function SemiAutoSection({ storyKey }: { storyKey: string }) {
   }
 
   // 复制 resume 文案。不同 CLI 指令不同:
-  //   claude: --resume <id>(或 -c 续当前目录最近会话)
-  //   kimi:   -S <id>        (或 --session <id>; -c 续当前目录最近会话)
+  //   claude:   --resume <id>(或 -c 续当前目录最近会话)
+  //   kimi:     -S <id>        (或 --session <id>; -c 续当前目录最近会话)
+  //   opencode: --session <id>(或 -c 续最近会话)
   // 已回写 id → 生成可直接执行的命令(按回写的 adapter 选 CLI)。
-  // 未回写 → 给带占位符的模板 + 两种 CLI 都列出来,让用户填 id 自己选。
+  // 未回写 → 给带占位符的模板 + 各 CLI 都列出来,让用户填 id 自己选。
   async function copyResumeCmd() {
     const sid = sessionRow?.session_id
     const adapter = sessionRow?.adapter || ''
@@ -79,19 +80,25 @@ export default function SemiAutoSection({ storyKey }: { storyKey: string }) {
     let text: string
     if (sid) {
       // 已回写:按回写的 adapter 生成确切命令。
-      const cmd = adapter === 'kimi' ? `kimi -S ${sid}` : `claude --resume ${sid}`
+      const cmd =
+        adapter === 'kimi'
+          ? `kimi -S ${sid}`
+          : adapter === 'opencode'
+            ? `opencode --session ${sid}`
+            : `claude --resume ${sid}`
       text =
         cwdHint +
         `# 续接 ${storyKey} 的 ${sessionRow?.stage || ''} 会话(${adapter})\n` +
         cmd
     } else {
-      // 未回写:给模板 + 两 CLI 都列,用户填 id 自己选。
+      // 未回写:给模板 + 各 CLI 都列,用户填 id 自己选。
       text =
         cwdHint +
         `# 续接 ${storyKey} 会话 —— 把 <id> 换成你的会话 id:\n` +
-        `#   claude:  claude --resume <id>     (id 从 ~/.claude/projects/ 最新 jsonl 文件名取)\n` +
-        `#   kimi:    kimi -S <id>             (id 从启动 banner 的 Session: session_xxx 取)\n` +
-        `#   或不填 id:claude -c / kimi -c    (续当前目录最近一次会话)\n`
+        `#   claude:   claude --resume <id>     (id 从 ~/.claude/projects/ 最新 jsonl 文件名取)\n` +
+        `#   kimi:     kimi -S <id>             (id 从启动 banner 的 Session: session_xxx 取)\n` +
+        `#   opencode: opencode --session <id>  (id 从 <data>/storage/session/ 最新文件名取)\n` +
+        `#   或不填 id:claude -c / kimi -c / opencode -c  (续当前目录最近一次会话)\n`
     }
     await navigator.clipboard.writeText(text)
     flash('resume')

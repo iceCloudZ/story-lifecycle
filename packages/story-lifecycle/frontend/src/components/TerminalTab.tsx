@@ -8,8 +8,9 @@ const ADAPTER_ICON: Record<string, string> = {
   claude: '🟠',
   codex: '🟢',
   kimi: '🔵',
+  opencode: '🟣',
 }
-const ADAPTERS = ['claude', 'codex', 'kimi']
+const ADAPTERS = ['claude', 'codex', 'kimi', 'opencode']
 
 interface Props {
   storyKey: string
