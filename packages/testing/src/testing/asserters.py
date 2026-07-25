@@ -132,8 +132,16 @@ def run_miner_loopback(workspace):
     ws = os.path.normpath(str(workspace))
     # 子进程内：cwd 上 sys.path[0] → import miner 拿到 monorepo；进程内把 ws 加进
     # config（不动 config.json 文件），再跑 store(--since-days 2) + link()。
+    #
+    # STEP 1 fix:code agent 的 cwd 是 worktree(ctx.workspace_path,LLM 决定的 slug),
+    # 不一定是 ws(scenario workspace)。claude 把 transcript 写到 ~/.claude/projects/
+    # <encoded-cwd>/,miner store 按配置的 WORKSPACES + CLAUDE_ENCODINGS 扫描。若 worktree
+    # 不在 encodings 里,store 拿不到 transcript → link 绑不上。这里自发现:扫
+    # ~/.claude/projects/ 下最近(2 天内)有会话的项目目录,把它们的 encoding 全注册进
+    # miner config,让 store 能覆盖 worktree cwd(story-lifecycle per-story workspace 模型
+    # 引入的 cwd 偏离 ws 的场景)。
     wrapper = (
-        "import sys\n"
+        "import sys, os, glob, time\n"
         "sys.path.insert(0, '.')\n"
         "from miner import config, store, link\n"
         "from miner.adapters import claude\n"
@@ -142,6 +150,18 @@ def run_miner_loopback(workspace):
         "if ws not in config.WORKSPACES: config.WORKSPACES = list(config.WORKSPACES) + [ws]\n"
         "if enc not in config.CLAUDE_ENCODINGS: config.CLAUDE_ENCODINGS = list(config.CLAUDE_ENCODINGS) + [enc]\n"
         "if enc not in claude.ENCODINGS: claude.ENCODINGS = list(claude.ENCODINGS) + [enc]\n"
+        "# 自发现最近(2 天)有会话的 claude 项目目录,注册其 encoding(worktree cwd 偏离 ws)\n"
+        "projects_dir = os.path.expanduser('~/.claude/projects')\n"
+        "cutoff = time.time() - 2*24*3600\n"
+        "for proj in glob.glob(os.path.join(projects_dir, '*')):\n"
+        "  if not os.path.isdir(proj): continue\n"
+        "  jsonls = glob.glob(os.path.join(proj, '*.jsonl'))\n"
+        "  if not jsonls: continue\n"
+        "  if max(os.path.getmtime(j) for j in jsonls) < cutoff: continue\n"
+        "  pname = os.path.basename(proj)\n"
+        "  if pname in config.CLAUDE_ENCODINGS: continue\n"
+        "  config.CLAUDE_ENCODINGS = list(config.CLAUDE_ENCODINGS) + [pname]\n"
+        "  if pname not in claude.ENCODINGS: claude.ENCODINGS = list(claude.ENCODINGS) + [pname]\n"
         "print('miner loopback subprocess using:', store.__file__)\n"
         "store.main(['--since-days', '2'])\n"
         "link.link()\n"
