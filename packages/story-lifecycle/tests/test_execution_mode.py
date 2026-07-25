@@ -322,3 +322,31 @@ def test_advance_does_not_restart_active_running_story(isolated_story_home, tmp_
     # 已在跑 → 不触发 start(返回默认 ok,无 status 字段)
     assert r.json() == {"ok": True}
     started.assert_not_called()
+
+
+def test_spawn_session_unknown_adapter_returns_400(isolated_story_home, tmp_path):
+    """POST /sessions/spawn 传未知 adapter → 400(不是 500)。
+
+    get_adapter 对未知名抛 ValueError(消息含 builtin/configured 名单)。原先未捕获
+    直接冒泡成 500;现在转成 400 + 透传消息,让前端能据此提示用户。
+    """
+    from starlette.testclient import TestClient
+
+    from story_lifecycle.orchestrator.service.api import app
+
+    db.upsert_story(
+        "SPAWN-400-1",
+        workspace=str(tmp_path),
+        profile="minimal",
+        current_stage="design",
+        status="active",
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/api/story/SPAWN-400-1/sessions/spawn",
+        json={"adapter": "totally-bogus-cli"},
+    )
+    assert r.status_code == 400, f"expected 400, got {r.status_code}: {r.text}"
+    # 消息透传 get_adapter 的报错(含 builtin 名单,帮用户纠错)
+    assert "Unknown CLI adapter" in r.json()["detail"]
+    assert "claude" in r.json()["detail"]  # builtin 列表里至少有 claude

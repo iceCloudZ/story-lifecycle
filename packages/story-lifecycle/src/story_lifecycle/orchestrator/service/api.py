@@ -508,7 +508,12 @@ def api_spawn_session(story_key: str, req: SpawnSessionRequest = None):
         from ..engine.planner import resolve_stage_adapter
 
         adapter_name = resolve_stage_adapter(s, _stage, action=_action)
-    adapter = get_adapter(adapter_name)
+    try:
+        adapter = get_adapter(adapter_name)
+    except ValueError as exc:
+        # 未知 adapter:get_adapter 抛 ValueError(消息含 builtin/configured 名单)。
+        # 这是客户端错误(用户传了非法 adapter)→ 400,不是 500。原先未捕获直接 500。
+        raise HTTPException(status_code=400, detail=str(exc))
     model = req.model or "sonnet"
     # adapter-aware spawn:claude 走 prompt-in-cmd,kimi/codex 走 PTY 注入。
     # 老逻辑直接 spawn_pty(command),对 kimi 来说 command 不带 prompt → 空会话。
