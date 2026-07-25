@@ -1,5 +1,6 @@
 """ShellAdapter — config-driven adapter for any AI CLI tool."""
 
+import re
 import shlex
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,18 @@ _DEFAULT_READINESS_MARKERS: dict[str, str] = {
     # kimi-code prints this banner once the TUI is up; `>` alone is too generic
     # (matches shell prompts). "Welcome to Kimi Code" is unique to kimi startup.
     "kimi": "Welcome to Kimi Code",
+}
+
+# Built-in session-id capture / resume 配置(Phase 0 抽象:从 planner.py 的
+# _KIMI_SESSION_RE + 硬编码 -S 搬到这里)。kimi 在退出时吐
+# `To resume this session: kimi -r session_<uuid>`(或旧 banner `Session: <uuid>`),
+# 由 make_sid_capturer 正则捕获回填。yaml 的 exit_sid_regex / resume_flag 覆盖默认。
+_DEFAULT_EXIT_SID_REGEX: dict[str, str] = {
+    "kimi": r"(?:kimi\s+-r\s+|Session:\s*)(session_[0-9a-fA-F-]+)",
+}
+_DEFAULT_RESUME_FLAG: dict[str, list[str]] = {
+    # kimi resume: `kimi -S <id>`。-S 是 --session 的短形式。
+    "kimi": ["-S"],
 }
 
 
@@ -102,9 +115,15 @@ class ShellAdapter(BaseAdapter):
         if model_flag and model:
             cmd += [model_flag, model]
         cmd += self.bypass_flags()
-        # resume:kimi -S <id>。仅 kimi(_name 通常是 'kimi');其他 shell CLI 无 resume。
-        if resume and session_id and self._name.lower() == "kimi":
-            cmd += ["-S", session_id]
+        # resume:config 的 resume_flag(kimi 默认 ["-S"]);其他 shell CLI 无 resume。
+        # 优先级:yaml resume_flag → _DEFAULT_RESUME_FLAG → 无。
+        if resume and session_id:
+            resume_flag = (
+                self._config.get("resume_flag")
+                or _DEFAULT_RESUME_FLAG.get(self._name.lower())
+            )
+            if resume_flag:
+                cmd += list(resume_flag) + [session_id]
         return cmd
 
     def start_session(
@@ -116,10 +135,11 @@ class ShellAdapter(BaseAdapter):
         resume: bool = False,
     ) -> SessionSpec:
         """shell CLI 的 SessionSpec:prompt 走 PTY paste(pty_prompt),command 由
-        interactive_launch_cmd 构建(含 resume 的 -S <id> for kimi)。
+        interactive_launch_cmd 构建(含 resume 的 -S <id> for kimi;Phase 0 起由
+        config/yaml resume_flag 驱动)。
 
         与 base.start_session 的区别:base 用 launch_cmd 直接 split(绕过
-        interactive_launch_cmd),这里走 interactive_launch_cmd 才能把 -S 标志带上。
+        interactive_launch_cmd),这里走 interactive_launch_cmd 才能把 resume_flag 带上。
         """
         command = self.interactive_launch_cmd(
             model,
@@ -139,6 +159,56 @@ class ShellAdapter(BaseAdapter):
     def bypass_flags(self) -> list[str]:
         # 从 adapters.yaml 的 bypass_flags 读(kimi: ["--auto"] / ["-y"];aider: [])。
         return list(self._config.get("bypass_flags", []) or [])
+
+    def _exit_sid_pattern(self) -> re.Pattern | None:
+        # 优先级:yaml exit_sid_regex → _DEFAULT_EXIT_SID_REGEX(kimi)→ None。
+        raw = self._config.get("exit_sid_regex") or _DEFAULT_EXIT_SID_REGEX.get(
+            self._name.lower()
+        )
+        return re.compile(raw) if raw else None
+
+    def make_sid_capturer(self, story_key: str, stage: str, cwd: str | None = None,
+                          since_ts: str | None = None):
+        """kimi 退出时吐的 resume 行捕获。
+
+        kimi 退出时打印 ``To resume this session: kimi -r session_<uuid>``(也兼容
+        旧 banner ``Session: session_<uuid>``)。返回的 on_output 回调累积 clean_exit_pty
+        drain 的输出,正则命中即回填 DB(幂等、命中后短路)。
+
+        搬自 planner._make_kimi_sid_capturer(DESIGN-session-pty-id-model.md §3.5 /
+        问题 9):此前只有 banner 正则且格式不符,kimi resume 在 0.29.0 上从未工作过,
+        改在退出时捕获(时机确定、格式准)。best-effort:kimi 崩溃没吐就捕获不到,
+        下次当新会话(不崩,只是不省 token)。
+        """
+        pattern = self._exit_sid_pattern()
+        if pattern is None:
+            return None
+
+        buf = ""
+        done = False
+
+        def _on_output(text: str) -> None:
+            nonlocal buf, done
+            if done:
+                return
+            buf += text
+            m = pattern.search(buf)
+            if m:
+                captured = m.group(1)
+                done = True
+                try:
+                    from ...infra.db import models as _sd
+
+                    _sd.set_session_id(story_key, stage, self._name, captured)
+                except Exception as exc:  # best-effort,绝不拖垮 clean_exit
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "[%s] %s session backfill failed (%s); resume disabled for stage=%s",
+                        story_key, self._name, exc, stage,
+                    )
+
+        return _on_output
 
     def headless_launch_cmd(self, model: str, prompt: str) -> list[str] | None:
         """Headless mode launch command.

@@ -129,24 +129,43 @@ def test_kimi_resume_without_session_id_is_noop():
 
 
 def test_kimi_session_capture_regex_exit_line():
-    """_KIMI_SESSION_RE 能从 kimi 退出时的 resume 行解析 session_<uuid>。
+    """ShellAdapter._exit_sid_pattern 能从 kimi 退出时的 resume 行解析 session_<uuid>。
 
     kimi 0.29.0 退出吐 'To resume this session: kimi -r session_<uuid>'(实测确认,
     DESIGN-session-pty-id-model.md §2.5.3)。旧正则匹配 'Session: <sid>' banner
-    格式,与实际输出不符 → 从未工作(问题 9)。
+    格式,与实际输出不符 → 从未工作(问题 9)。Phase 0 起正则从 planner 搬进 ShellAdapter。
     """
-    from story_lifecycle.orchestrator.engine.planner import _KIMI_SESSION_RE
+    kimi = _kimi_adapter()
+    pattern = kimi._exit_sid_pattern()
+    assert pattern is not None
 
     # 实测的真实退出输出格式
     exit_line = "To resume this session: kimi -r session_9807484b-4963-435b-ac07-1f59562f5bb1"
-    m = _KIMI_SESSION_RE.search(exit_line)
+    m = pattern.search(exit_line)
     assert m is not None
     assert m.group(1) == "session_9807484b-4963-435b-ac07-1f59562f5bb1"
     # 也兼容旧 banner 格式(Session: <sid>),防其他 kimi 版本
     banner = "│  Session:   session_a273ffaa-8630-4315-96c1-4beca972b7db      │"
-    assert _KIMI_SESSION_RE.search(banner).group(1) == "session_a273ffaa-8630-4315-96c1-4beca972b7db"
+    assert pattern.search(banner).group(1) == "session_a273ffaa-8630-4315-96c1-4beca972b7db"
     # 不匹配无关行
-    assert _KIMI_SESSION_RE.search("│  Model:     K3") is None
+    assert pattern.search("│  Model:     K3") is None
+
+
+def test_prespecified_session_id_capability():
+    """sid 模型是 adapter 的职责(Phase 0):claude 预指定、kimi 不预指定。
+
+    spawner(api.py/planner.py)只读 adapter.prespecified_session_id 决定 NEW 时是否给 sid、
+    是否在 stage-done 收尾时捕获,不再分支 adapter 名 —— 见 AGENTS.md「Session-id model」。
+    """
+    assert ClaudeAdapter().prespecified_session_id is True
+    assert _kimi_adapter().prespecified_session_id is False
+    # BaseAdapter 默认 False(基类未声明即「须捕获」)
+    assert _kimi_adapter().capture_sid_post_exit("S", "design") is None
+    # kimi 走输出捕获(make_sid_capturer 非空),不走文件扫描(capture_sid_post_exit 返回 None)
+    assert _kimi_adapter().make_sid_capturer("S", "design") is not None
+    # claude 两种捕获都不需要
+    assert ClaudeAdapter().make_sid_capturer("S", "design") is None
+    assert ClaudeAdapter().capture_sid_post_exit("S", "design") is None
 
 
 def test_compute_session_id_three_field():
@@ -191,20 +210,19 @@ def test_story_session_db_crud(isolated_story_home):
 
 
 def test_kimi_sid_capturer_writes_db(isolated_story_home):
-    """_make_kimi_sid_capturer 从退出输出解析 session_<uuid> 并回填 DB。
+    """ShellAdapter.make_sid_capturer 从退出输出解析 session_<uuid> 并回填 DB。
 
     DESIGN-session-pty-id-model.md §3.5 / 问题 9:捕获改在 clean_exit_pty 退出时,
     kimi 退出吐 'To resume this session: kimi -r session_<uuid>'。捕获器是
-    on_output 回调,被 clean_exit_pty 在 drain 输出时调用。
+    on_output 回调,被 clean_exit_pty 在 drain 输出时调用。Phase 0 起从 planner 搬进
+    ShellAdapter(由 config exit_sid_regex / kimi 默认正则驱动)。
     """
-    from story_lifecycle.orchestrator.engine.planner import _make_kimi_sid_capturer
-
     # 占位行(模拟 spawn 前的 upsert_session(sid=None))
     db.upsert_session("S2", "design", "kimi", session_id=None)
     assert db.get_session("S2", "design", "kimi")["session_id"] is None
 
     # 模拟 clean_exit_pty drain 的退出输出(分块喂,模拟真实流式)
-    capturer = _make_kimi_sid_capturer("S2", "design", "kimi")
+    capturer = _kimi_adapter().make_sid_capturer("S2", "design", "kimi")
     capturer("• 完成\n\n")
     capturer("To resume this session: kimi -r session_9807484b-4963-435b-ac07-1f59562f5bb1\n")
 
@@ -217,10 +235,8 @@ def test_kimi_sid_capturer_no_resume_line_is_noop(isolated_story_home):
 
     失败降级:下次当新会话(DESIGN-session-pty-id-model.md §3.5)。
     """
-    from story_lifecycle.orchestrator.engine.planner import _make_kimi_sid_capturer
-
     db.upsert_session("S3", "build", "kimi", session_id=None)
-    capturer = _make_kimi_sid_capturer("S3", "build", "kimi")
+    capturer = _kimi_adapter().make_sid_capturer("S3", "build", "kimi")
     # 只有普通输出,没有 resume 行
     capturer("• 做了一些事\n[Process killed]\n")
 
@@ -231,10 +247,8 @@ def test_kimi_sid_capturer_no_resume_line_is_noop(isolated_story_home):
 
 def test_kimi_sid_capturer_idempotent(isolated_story_home):
     """捕获器匹配到一次后短路,不再重复回填(避免多次 set_session_id)。"""
-    from story_lifecycle.orchestrator.engine.planner import _make_kimi_sid_capturer
-
     db.upsert_session("S4", "verify", "kimi", session_id=None)
-    capturer = _make_kimi_sid_capturer("S4", "verify", "kimi")
+    capturer = _kimi_adapter().make_sid_capturer("S4", "verify", "kimi")
     # 喂两次 resume 行
     capturer("To resume this session: kimi -r session_aaaa-1111\n")
     capturer("To resume this session: kimi -r session_bbbb-2222\n")

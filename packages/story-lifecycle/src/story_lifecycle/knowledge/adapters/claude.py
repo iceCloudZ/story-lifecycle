@@ -14,6 +14,10 @@ class ClaudeAdapter(BaseAdapter):
     # _wait_ready 空等 30s 才注入)。用 alternation 兼容多版本。
     readiness_marker = r"[>❯]"
 
+    # claude 用 --session-id 主动给确定性 sid(compute_session_id 三字段 uuid5),
+    # 启动即知,无需事后捕获。
+    prespecified_session_id = True
+
     def switch_provider(self, provider: str) -> str | None:
         # No-op: provider switching is not supported for the Claude CLI.
         # (Previously this shelled out to `cc use <provider>` via bash -c with an

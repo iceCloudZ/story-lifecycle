@@ -49,6 +49,38 @@ class BaseAdapter(ABC):
     # sleep. Subclasses override with their CLI's input-prompt regex.
     readiness_marker: str | None = None
 
+    # --- Session-id model (Phase 0 抽象) -------------------------------------
+    # 会话 id 是「启动时已知」还是「CLI 自分配、事后捕获」是 adapter 的职责,
+    # 不是 spawner 的。两类:
+    #   prespecified=True  → 启动即知(claude --session-id 主动给确定性 uuid5)。
+    #   prespecified=False → CLI 自分配,kimi 在退出时吐 'To resume: kimi -r <sid>'
+    #                        行(走 make_sid_capturer 正则捕获);opencode 把 sid 写进
+    #                        存储文件(走 capture_sid_post_exit 文件扫描)。
+    # spawner(api.py / planner.py)只读这个标志决定 NEW 时是否给 sid,以及在
+    # stage-done 收尾时调用捕获钩子 —— 不再 `if adapter_name == "claude"/"kimi"`。
+    # 见 AGENTS.md「Session-id model」契约;DESIGN-session-pty-id-model.md §2.5。
+    prespecified_session_id: bool = False
+
+    def make_sid_capturer(self, story_key: str, stage: str, cwd: str | None = None,
+                          since_ts: str | None = None):
+        """输出驱动捕获:返回 ``on_output(text) -> None`` 回调(喂给
+        ``clean_exit_pty``),或 ``None``。
+
+        CLI 在退出时把 sid 吐到终端的覆写(kimi)。回调内自行回填 DB(幂等、命中后短路)。
+        默认 ``None`` —— 不依赖输出捕获(prespecified=True 的 CLI,或走文件扫描的 CLI)。
+        """
+        return None
+
+    def capture_sid_post_exit(self, story_key: str, stage: str, cwd: str | None = None,
+                              since_ts: str | None = None) -> str | None:
+        """退出后文件/系统捕获:返回捕获到的 sid 或 ``None``。
+
+        CLI 把 sid 存在文件系统里的覆写(opencode:扫 ``<data>/storage/session/`` 取
+        ``time.created >= since_ts`` 的最新 session)。返回值由 spawner 回填 DB。
+        默认 ``None`` —— 不走文件捕获。与 make_sid_capturer 互不依赖,可只实现其一。
+        """
+        return None
+
     def start_session(
         self,
         model: str,
