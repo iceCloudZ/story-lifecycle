@@ -157,6 +157,7 @@ class ManagedPty:
         cwd: str,
         env: dict | None = None,
         purpose: str = "shell",
+        logger=None,
     ):
         # session_id 是 PTY 注册表的 key(= compute_session_id(story,stage,adapter)),
         # 与 DB story_session.session_id 同源(claude)或解耦(kimi 捕获值)。详见
@@ -168,6 +169,9 @@ class ManagedPty:
         self.command = command
         self.cwd = cwd
         self.purpose = purpose
+        # STEP 1.7b:可选 PtyLogger(raw.log + events.jsonl 两层日志)。None 时不记日志
+        # (兼容老调用点 + 测试)。传入时 _distribute 记 output,write 记 injection。
+        self._logger = logger
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=512)
         self._taps: list[
             asyncio.Queue
@@ -259,6 +263,12 @@ class ManagedPty:
 
         Drop oldest on full to avoid blocking the read thread.
         """
+        # STEP 1.7b:两层日志(raw + events.jsonl),best-effort。
+        if self._logger is not None:
+            try:
+                self._logger.log_output(data)
+            except Exception:  # noqa: BLE001 — 日志失败不能炸 PTY 主流程
+                pass
         for q in [self._queue, *self._taps]:
             try:
                 q.put_nowait(data)
@@ -316,6 +326,12 @@ class ManagedPty:
     def write(self, data: bytes):
         if not self._process:
             return
+        # STEP 1.7b:记编排器注入(主线程 write → PTY),dir=injection,让飞轮分清谁说的。
+        if self._logger is not None:
+            try:
+                self._logger.log_injection(data)
+            except Exception:  # noqa: BLE001
+                pass
         try:
             if self._mode == "winpty":
                 self._process.write(data.decode("utf-8", errors="replace"))
@@ -405,6 +421,7 @@ def spawn_pty(
     cwd: str,
     env: dict | None = None,
     purpose: str = "shell",
+    logger=None,
 ) -> tuple[str, ManagedPty]:
     """Spawn a new PTY session for a (story_key, stage, adapter) agent.
 
@@ -412,6 +429,8 @@ def spawn_pty(
     —— 与 DB story_session.session_id 同源(claude)或解耦(kimi),贯穿 DB/PTY/WS/前端
     四层。DESIGN-session-pty-id-model.md §3.2 / 问题 1:此前 key 是 pty-{story}-{n}
     全局计数器,与 DB uuid 永不对齐。
+
+    STEP 1.7b:可选 logger(PtyLogger)传给 ManagedPty,启两层日志(raw + events.jsonl)。
     """
     from ..db.models import compute_session_id
 
@@ -426,6 +445,7 @@ def spawn_pty(
             cwd=cwd,
             env=env,
             purpose=purpose,
+            logger=logger,
         )
         _ptys.setdefault(story_key, {})[session_id] = pty
         return session_id, pty
@@ -532,6 +552,7 @@ def ensure_agent_pty(
     startup_delay: float = 2.0,
     readiness_marker: str | None = None,
     readiness_timeout: float = 30.0,
+    logger=None,
 ) -> tuple[str, ManagedPty]:
     """Start a new agent PTY session. Returns (session_id, pty).
 
@@ -542,6 +563,8 @@ def ensure_agent_pty(
 
     session_id = compute_session_id(story_key, stage, adapter)(确定性),由
     spawn_pty 算出并注册。调用方都已有三元组在手上(api/planner 两条 spawn 路径)。
+
+    STEP 1.7b:可选 logger(PtyLogger)透传给 spawn_pty → ManagedPty,启两层日志。
     """
     session_id, pty = spawn_pty(
         story_key,
@@ -551,6 +574,7 @@ def ensure_agent_pty(
         cwd,
         env=env,
         purpose="agent",
+        logger=logger,
     )
     if readiness_marker:
         _wait_ready(pty, readiness_marker, readiness_timeout)

@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Callable
 
 log = logging.getLogger(__name__)
@@ -29,6 +30,15 @@ log = logging.getLogger(__name__)
 # pty.alive 轮询周期。真实 ManagedPty 进程死时 _read_loop 退出但**不往 tap 推 sentinel**,
 # 故 supervise_pty_session 用 wait_for 超时后检查 pty.alive 退出,避免 task 永久阻塞。
 _POLL_SECONDS = 1.0
+
+# STEP 1.7c:规则卡住检测阈值(DESIGN §4.3,纯确定性零 LLM)。
+# 超时无新输出(秒):code agent 在 N 秒内没产新输出 → 视为卡住。可被环境变量
+# STORY_STUCK_TIMEOUT 覆盖(planner / 测试注入)。默认 300s(5min)—— 触发事故是
+# design 卡 25min,300s 留足正常思考余量又不至于让事故再跑 25min 才被发现。
+_DEFAULT_STUCK_TIMEOUT = 300
+STUCK_TIMEOUT_SECONDS = int(os.environ.get("STORY_STUCK_TIMEOUT", _DEFAULT_STUCK_TIMEOUT))
+# events.jsonl 里连续 K 条 error 行 → 反复报错(卡住信号)。
+STUCK_REPEATED_ERRORS = 5
 
 
 def decide_response(
@@ -260,3 +270,123 @@ def _parse_decision(raw: str) -> dict:
         text = "\n".join(lines).strip()
     data = json.loads(text)
     return {"choice": data["choice"], "reason": data["reason"]}
+
+
+# ---------------------------------------------------------------------------
+# STEP 1.7c:规则卡住检测 + escalate_human(纯确定性,零 LLM)。
+# DESIGN-artifact-driven-stage-completion §4.3 / STEP 1 子任务 1.7。
+#
+# 红线:STEP 1 的卡住检测是**纯规则 + escalate_human,零 LLM**。
+# 不动 supervisor 的 LLM 判定(那是 STEP 2)。这里只:规则判卡住 → 落 awaiting_confirm
+# 事件 + 桌面通知,不调 LLM。这是 Resolver(规则检测)层,Handler 执行副作用。
+# ---------------------------------------------------------------------------
+
+
+def detect_stuck(
+    *,
+    last_output_ts: float | None,
+    now_ts: float,
+    process_alive: bool,
+    events: list[dict] | None = None,
+    timeout_seconds: float | None = None,
+) -> dict | None:
+    """Pure rule-based stuck detector (Resolver,零 LLM)。
+
+    Args:
+        last_output_ts: code agent 最后一次产输出的时间戳(epoch 秒)。None = 从未产输出。
+        now_ts: 当前时间戳(epoch 秒)。
+        process_alive: code agent 进程是否还活着。
+        events: 可选,events.jsonl 最近若干条(查反复报错用)。None 时不查 error 规则。
+        timeout_seconds: 无新输出超时阈值(默认 STUCK_TIMEOUT_SECONDS)。
+
+    Returns:
+        None = 没卡住;dict = 卡住了,含 {"reason", "duration", "rule"} 给 escalate。
+        reason 是给人看的中文卡因(纯规则判,非 LLM 诊断 —— 那是 STEP 2)。
+
+    三条规则(任一命中即卡住):
+      1. 超时无新输出:process 活着但 last_output 距 now > timeout → idle 卡死。
+      2. 进程活但从未输出(last_output_ts is None)+ 已过宽限期(>60s)→ 启动卡死。
+      3. 反复报错:events.jsonl 末尾连续 >= STUCK_REPEATED_ERRORS 条 error → 错误循环。
+    """
+    timeout = timeout_seconds if timeout_seconds is not None else STUCK_TIMEOUT_SECONDS
+
+    # 规则 3:反复报错(连续 error 行)。
+    if events:
+        tail = events[-(STUCK_REPEATED_ERRORS + 5):]  # 多看几条防抖
+        consecutive_err = 0
+        for ev in reversed(tail):
+            ev_type = str(ev.get("type", "")).lower()
+            ev_text = str(ev.get("text", "")).lower()
+            if "error" in ev_type or "error" in ev_text or "traceback" in ev_text:
+                consecutive_err += 1
+                if consecutive_err >= STUCK_REPEATED_ERRORS:
+                    return {
+                        "rule": "repeated_errors",
+                        "reason": f"反复报错(events.jsonl 末尾连续 {consecutive_err} 条 error)",
+                        "duration": 0,
+                        "consecutive_errors": consecutive_err,
+                    }
+            else:
+                break  # 连续中断,重新数
+
+    # 规则 1 / 2:超时无新输出。process 不活 → 不算"卡住"(那是死了,归别处处理)。
+    if not process_alive:
+        return None
+    if last_output_ts is None:
+        # 从未输出。给 60s 启动宽限(claude/opencode 启动慢)。
+        return None  # 启动宽限由调用方用 now_ts - spawn_ts 单独判,这里只看"有过输出后卡住"
+    idle = now_ts - last_output_ts
+    if idle > timeout:
+        return {
+            "rule": "no_output_timeout",
+            "reason": f"超时无新输出(idle {int(idle)}s > {int(timeout)}s)",
+            "duration": int(idle),
+        }
+    return None
+
+
+def escalate_stuck(
+    *,
+    story_key: str,
+    stage: str,
+    adapter: str,
+    detection: dict,
+    log_event_fn: Callable,
+    notify_fn: Callable[[str, str], None] | None = None,
+) -> None:
+    """Handler:规则检测到卡住 → 落 awaiting_confirm 事件 + 桌面通知(零 LLM)。
+
+    复用 awaiting_confirm 事件类型(前端 / 人已知这个语义"需人介入"),payload 含
+    stuck_reason / rule / duration。notify_fn 注入(默认调本包 notify.send)。
+
+    STEP 1 不调 LLM —— 纯规则检测 + 人升级。LLM 卡因诊断是 STEP 2(调度点②)。
+    """
+    if notify_fn is None:
+        from .notify import send as notify_fn
+    payload = {
+        "adapter": adapter,
+        "stuck": True,
+        "rule": detection.get("rule", "unknown"),
+        "stuck_reason": detection.get("reason", ""),
+        "duration": detection.get("duration", 0),
+    }
+    log_event_fn(
+        story_key,
+        stage=stage,
+        event_type="awaiting_confirm",
+        payload=payload,
+    )
+    try:
+        notify_fn(
+            f"[{story_key}] {adapter} 卡住需介入",
+            f"({stage}) {detection.get('reason', '')[:120]}",
+        )
+    except Exception:  # noqa: BLE001 — 通知 best-effort
+        log.debug("stuck notify failed (non-fatal)", exc_info=True)
+    log.warning(
+        "[%s/%s] stuck detected (%s): %s — escalated to human",
+        story_key,
+        stage,
+        detection.get("rule"),
+        detection.get("reason"),
+    )

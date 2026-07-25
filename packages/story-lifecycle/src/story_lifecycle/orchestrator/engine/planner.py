@@ -1352,6 +1352,23 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     # 的返回值拿(adapter 自己声明 prompt 怎么传,见 SessionSpec)。
                     # cwd 用 ctx.workspace_path(规划 LLM 决定的隔离空间),没有则退回主 ws。
                     _spawn_cwd = ctx.get("workspace_path") or workspace
+                    # STEP 1.7b:启 PTY 两层日志(raw + events.jsonl),供卡住检测 + 飞轮。
+                    # best-effort:日志目录创建失败不阻塞 spawn(logger=None 兜底)。
+                    _pty_logger = None
+                    try:
+                        from ...infra.terminal.pty_logger import PtyLogger
+
+                        _pty_logger = PtyLogger(story_key, stage, _spawn_cwd)
+                        # 回填 story_session.pty_log_ref(执行轨迹)。
+                        try:
+                            db.update_session_trace(
+                                story_key, stage, adapter_name,
+                                pty_log_ref=_pty_logger.log_ref,
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                    except Exception:  # noqa: BLE001
+                        log.debug("PtyLogger init failed (non-fatal)", exc_info=True)
                     _pty_session, _agent_pty = ensure_agent_pty(
                         story_key,
                         stage,
@@ -1363,6 +1380,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             _session_spec.readiness_marker if _session_spec else None
                         ),
                         env=story_env,
+                        logger=_pty_logger,
                     )
                     log.info("[%s] PTY session started for stage=%s", story_key, stage)
                     # sid 捕获改在 stage 完成的 clean_exit_pty 收尾时做(Phase 0 抽象):
@@ -1465,6 +1483,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             poll_interval = 5  # seconds
             elapsed = 0
             headless_attempt = 1  # headless 重试计数（首次=1）
+            # STEP 1.7c:规则卡住检测状态。_stuck_escalated 防同一卡住状态反复 escalate
+            # (每次 poll 都查会刷屏);卡住解除(有新输出)后重置,允许下次再卡再报。
+            _stuck_escalated = False
 
             while elapsed < poll_timeout:
                 # headless：claude 若已退出却没产出成果物，提前失败（不等满 30min）
@@ -1591,6 +1612,55 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         elapsed = 0
                 except Exception:
                     pass  # clarify 检测失败不影响主轮询
+                # STEP 1.7c:规则卡住检测(纯确定性零 LLM,DESIGN §4.3)。
+                # 读 events.jsonl 末尾取 last_output_ts + 反复报错信号;PTY 路径才查
+                # (headless 无 PTY 日志)。卡住 → escalate_human(awaiting_confirm + 通知)。
+                # 红线:不调 LLM。每 stage 同一卡住只 escalate 一次(_stuck_escalated 去重)。
+                if _agent_pty is not None and _pty_logger is not None and elapsed > 30:
+                    try:
+                        from ...infra.terminal.pty_logger import read_events as _read_ev
+                        from .supervisor import detect_stuck, escalate_stuck
+
+                        _evs = _read_ev(_pty_logger.log_dir, limit=50)
+                        _last_ts = None
+                        for _ev in reversed(_evs):
+                            if _ev.get("dir") == "output":
+                                _ts_str = _ev.get("ts", "")
+                                # ISO ts → epoch 秒(粗解析,够排序/超时判)
+                                try:
+                                    from datetime import datetime as _dt
+
+                                    _last_ts = _dt.fromisoformat(
+                                        _ts_str.replace("Z", "+00:00")
+                                    ).timestamp()
+                                except (ValueError, TypeError):
+                                    pass
+                                break
+                        _proc_alive = _agent_pty.alive
+                        _det = detect_stuck(
+                            last_output_ts=_last_ts,
+                            now_ts=time.time(),
+                            process_alive=_proc_alive,
+                            events=_evs,
+                        )
+                        if _det and not _stuck_escalated:
+                            escalate_stuck(
+                                story_key=story_key,
+                                stage=stage,
+                                adapter=adapter_name,
+                                detection=_det,
+                                log_event_fn=db.log_event,
+                            )
+                            _stuck_escalated = True
+                            if _pty_logger is not None:
+                                _pty_logger.log_event(
+                                    "stuck_detected", _det.get("reason", ""),
+                                    rule=_det.get("rule", ""),
+                                )
+                        elif not _det:
+                            _stuck_escalated = False  # 解除卡住 → 允许下次再卡再报
+                    except Exception:  # noqa: BLE001 — 卡住检测失败不影响主轮询
+                        log.debug("stuck detection failed (non-fatal)", exc_info=True)
                 # 检查成果物落地(STEP 1.4:替 done file 自报)。
                 # 完成信号 = stage.artifacts 全齐;done.json 兼容视图(story-tool declare
                 # 双写,或老 code agent 自写)若存在则作 payload 来源,不是完成判据。

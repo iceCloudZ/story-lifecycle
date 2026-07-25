@@ -577,6 +577,23 @@ def init_db():
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_ss_story_stage ON story_session(story_key, stage)"
         )
+        # STEP 1.7a: story_session 扩展执行轨迹(DESIGN §4.10)。
+        # attempt/outcome/failure_reason 记每阶段会话结果;artifacts_prod 存本阶段产出
+        # 的成果物 JSON 清单;pty_log_ref 指 .story/runs/<key>/pty_<stage>/ 日志目录。
+        # 幂等迁移(列已存在则跳过)。
+        for _col, _type in (
+            ("attempt", "INTEGER"),
+            ("outcome", "TEXT"),
+            ("failure_reason", "TEXT"),
+            ("artifacts_prod", "TEXT"),
+            ("pty_log_ref", "TEXT"),
+        ):
+            try:
+                conn.execute(
+                    f"ALTER TABLE story_session ADD COLUMN {_col} {_type}"
+                )
+            except Exception:
+                pass  # column already exists
 
 
 # -------- CRUD helpers --------
@@ -2486,6 +2503,55 @@ def complete_session(story_key: str, stage: str, adapter: str) -> None:
             "UPDATE story_session SET status = 'completed', updated_at = ? "
             "WHERE story_key = ? AND stage = ? AND adapter = ?",
             (now, story_key, stage, adapter),
+        )
+
+
+def update_session_trace(
+    story_key: str,
+    stage: str,
+    adapter: str,
+    *,
+    attempt: int | None = None,
+    outcome: str | None = None,
+    failure_reason: str | None = None,
+    artifacts_prod: list[str] | None = None,
+    pty_log_ref: str | None = None,
+) -> None:
+    """更新 story_session 的执行轨迹字段(STEP 1.7a,DESIGN §4.10)。
+
+    所有参数可选 —— 只更新给定的字段,None 的不动。artifacts_prod 传 list(序列化成
+    JSON)。无对应 session 行时静默 no-op(防御:某些路径 session 未建)。
+    """
+    import json as _json
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sets: list[str] = []
+    vals: list = []
+    if attempt is not None:
+        sets.append("attempt = ?")
+        vals.append(int(attempt))
+    if outcome is not None:
+        sets.append("outcome = ?")
+        vals.append(outcome)
+    if failure_reason is not None:
+        sets.append("failure_reason = ?")
+        vals.append(failure_reason)
+    if artifacts_prod is not None:
+        sets.append("artifacts_prod = ?")
+        vals.append(_json.dumps(artifacts_prod, ensure_ascii=False))
+    if pty_log_ref is not None:
+        sets.append("pty_log_ref = ?")
+        vals.append(pty_log_ref)
+    if not sets:
+        return  # 没字段要更新
+    sets.append("updated_at = ?")
+    vals.append(now)
+    vals.extend([story_key, stage, adapter])
+    with _db() as conn:
+        conn.execute(
+            f"UPDATE story_session SET {', '.join(sets)} "
+            "WHERE story_key = ? AND stage = ? AND adapter = ?",
+            vals,
         )
 
 
