@@ -24,22 +24,46 @@ except ImportError:  # pragma: no cover - testing package standalone fallback
 
 
 def _stage_done(result: StoryRunResult, stage: str):
+    """STEP 1.4:stage 完成 = 该 stage 被执行 + done.json 兼容视图存在(story-tool
+    declare 双写,作 miner 兼容 + 完成证据)。兼容视图缺失也接受(代码 agent 直接
+    写文件未走 declare)—— 只要 stage 被执行(sr is not None)且后续产物断言过即可。
+
+    旧契约:done_file 是 code agent 自报(已废)。新契约:成果物落地才是完成信号,
+    done.json 兼容视图是 declare 双写副产物(miner 兼容),可能存在也可能不存在。
+    """
     sr = result.stage(stage)
     assert sr is not None, f"stage {stage} 未执行"
-    assert sr.done_file.exists(), f"{stage} done_file 缺失: {sr.done_file}"
+    # done.json 兼容视图:存在更好(miner 兼容),不存在不阻塞(成果物落地才是判据)。
+    if not sr.done_file.exists():
+        import logging
+
+        logging.getLogger("testing.asserters").debug(
+            "%s done.json 兼容视图缺失(非致命 —— 成果物驱动新协议,declare 未走)",
+            stage,
+        )
     return sr
 
 
 def assert_design(result, workspace, story_key):
-    """design: done_file + context 下有 spec/research 类 .md 产物。"""
+    """design: spec 落地(story/spec.md 成果物)+ done.json 兼容视图(若 declare 走了)。
+
+    STEP 1.4:完成判据是成果物落地(story/spec.md)。context 下 .md 是旧产物兜底。
+    """
     _stage_done(result, "design")
-    ctx = Path(workspace) / ".story" / "context" / safe_segment(story_key)
-    mds = list(ctx.glob("*.md")) if ctx.exists() else []
-    assert mds, f"design 产物缺失（{ctx} 下无 .md）"
+    # 新判据:story/spec.md 成果物落地(story-tool declare 写或 code agent 直接写)
+    spec = Path(workspace) / "story" / "spec.md"
+    spec_landed = spec.exists() and spec.stat().st_size > 0
+    if not spec_landed:
+        # 兜底:旧产物(context 下 .md)也接受(过渡期 code agent 可能仍走旧习惯)
+        ctx = Path(workspace) / ".story" / "context" / safe_segment(story_key)
+        mds = list(ctx.glob("*.md")) if ctx.exists() else []
+        assert mds, (
+            f"design 成果物缺失(story/spec.md 不存在且 {ctx} 下无 .md 兜底)"
+        )
 
 
 def assert_implement(result, workspace, story_key):
-    """implement: done_file + calculator.py 生成且非空（AI 写了实现）。"""
+    """implement: calculator.py 生成且非空（AI 写了实现）。"""
     _stage_done(result, "implement")
     calc = Path(workspace) / "calculator.py"
     assert calc.exists(), "calculator.py 未生成（AI 没写实现）"
@@ -47,7 +71,7 @@ def assert_implement(result, workspace, story_key):
 
 
 def assert_verify(result, workspace, story_key):
-    """verify: done_file + 真实跑 calculator 的 pytest 全过（17 测试）。"""
+    """verify: 真实跑 calculator 的 pytest 全过（17 测试）。"""
     _stage_done(result, "verify")
     r = subprocess.run(
         ["python", "-m", "pytest", str(Path(workspace) / "tests"), "-q"],
