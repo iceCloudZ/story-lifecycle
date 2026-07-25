@@ -551,5 +551,9 @@ from .story_tool import tool as story_tool_group  # noqa: E402
 
 cli.add_command(story_tool_group, name="tool")
 
+from .migrate_done_to_artifact import migrate_done_cmd  # noqa: E402
+
+cli.add_command(migrate_done_cmd)
+
 if __name__ == "__main__":
     cli()
