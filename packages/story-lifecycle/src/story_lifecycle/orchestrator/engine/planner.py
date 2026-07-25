@@ -894,6 +894,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
         # 的成果物(如 story/spec.md)而从未走过自动链路(_completed_stages 为空)。扫一遍
         # launch actions,凡 stage.artifacts 全落地的 stage 认领进 _completed_stages ——
         # 点「开始」后不重跑。完成判据是成果物落地,不再看 done file 存在性(设计 §1.2)。
+        from .artifact_check import build_evidence_candidates as _build_ev_cands
         from .artifact_check import artifacts_ready as _artifacts_ready_fn
 
         orphan_claimed = []
@@ -904,9 +905,12 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             if not _st:
                 continue
             _stage_arts = list(rp.stage(_st).artifacts or [])
-            # 有 artifacts 声明 → 查落地;无声明(老 profile/测试)→ 退回 done.json 兼容视图存在性。
+            # 有 artifacts 声明 → 查落地(含 evidence 候选兜底);无声明 → 退回 done.json 兼容视图。
             if _stage_arts:
-                _ready = _artifacts_ready_fn(_stage_arts, workspace)
+                _ev = _build_ev_cands(_stage_arts, workspace, story_key, title)
+                _ready = _artifacts_ready_fn(
+                    _stage_arts, workspace, evidence_candidates=_ev
+                )
             else:
                 _done_rel = _a.get("done_file", stage_done_file_rel(story_key, _st))
                 _ready = (Path(workspace) / _done_rel).exists()
@@ -1467,12 +1471,22 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             # 本 stage 声明的 artifacts(机器可查的完成信号)。profile 是权威;兜底空列表
             # (理论上 1.1 schema 契约已拦,这里防御 —— 空 artifacts 时不阻塞,直接读 done 兼容视图)。
             _stage_artifacts = list(rp.stage(stage).artifacts or [])
+            from .artifact_check import (
+                build_evidence_candidates as _build_ev_cands,
+            )
             from .artifact_check import check_artifacts_landed as _check_artifacts
+
+            # evidence 候选路径(robust 兜底,设计 §7.6):code agent 可能写到 story
+            # evidence 目录(story_evidence_root 向上找 AGENTS.md 脱离 workspace)或用别名
+            # 文件名(design.md vs spec.md)。为每个文件类 artifact 列出候选,check 时兜底命中。
+            _ev_cands = _build_ev_cands(_stage_artifacts, workspace, story_key, title)
 
             def _artifacts_ready() -> bool:
                 """本 stage 成果物是否全齐(missing 为空)。空 artifacts → 看 done 兼容视图(向后兼容老 story)。"""
                 if _stage_artifacts:
-                    missing, _ = _check_artifacts(_stage_artifacts, workspace)
+                    missing, _ = _check_artifacts(
+                        _stage_artifacts, workspace, evidence_candidates=_ev_cands
+                    )
                     return not missing
                 # 兜底:无 artifacts 声明(老 story / 测试 profile)→ 退回 done.json 兼容视图存在性。
                 return done_path.exists()
@@ -2121,6 +2135,78 @@ def resolve_stage_adapter(
     return "claude"
 
 
+def _build_artifacts_obligation(
+    stage: str, profile_stages: dict, story_dir
+) -> str:
+    """STEP 1.4 强化:把本 stage 必须产出的文件(绝对路径)放 prompt 最显眼处。
+
+    code agent(claude)验证发现:即使文末有 declare 协议段,也可能不调 declare 也不
+    写约定路径的文件(实测把 design 写成 design.md 而非 spec.md,或写到别的目录)。
+    本段在 Story 信息紧下方用**绝对路径 + 红色警告语气**列清楚:必须产出哪些文件、
+    写到哪里、两条等价落地方式(declare / 直接 Write)。
+
+    artifacts 来自 profile stage.artifacts(1.1 schema 契约)。文件类 artifact 给绝对
+    路径(story_dir 下的 canonical 文件名);git 类给"必须有未提交改动"。
+    """
+    cfg = profile_stages.get(stage) if profile_stages else None
+    artifacts = []
+    if cfg:
+        # profile_stages 可能是 StageConfig dataclass 或 dict(两路调用)
+        arts = getattr(cfg, "artifacts", None)
+        if arts is None and isinstance(cfg, dict):
+            arts = cfg.get("artifacts")
+        artifacts = list(arts or [])
+    if not artifacts:
+        return ""
+
+    # artifact 路径 → canonical 文件名(story_dir 下的绝对路径)
+    from .artifact_check import _ARTIFACT_TO_DOC_TYPE
+    from ...infra.story_paths import doc_filename
+
+    lines = [
+        "",
+        "### ⚠️ 本阶段必须产出的文件(完成判据 —— 不产出这些 stage 不算完成)",
+        "",
+        "编排器**只看下列文件是否落地**(不看你是否说「完成了」)。任一缺失,stage 永远卡住。",
+        "两条等价落地方式(任选其一,推荐第 1 条):",
+        "  1. `story tool declare <doc_type> <相对路径>`(原子写 + 版本化 + 自动落正确位置)",
+        "  2. 直接 Write 到下列**绝对路径**(code agent 不调 declare 时用这条)",
+        "",
+    ]
+    file_artifacts = []
+    has_git = False
+    for art in artifacts:
+        if art == "git":
+            has_git = True
+            continue
+        doc_type = _ARTIFACT_TO_DOC_TYPE.get(art)
+        if doc_type:
+            fname = doc_filename(doc_type)
+            abs_path = f"{story_dir}/{fname}"
+            file_artifacts.append((art, doc_type, abs_path))
+        else:
+            file_artifacts.append((art, None, None))
+
+    for art, doc_type, abs_path in file_artifacts:
+        if abs_path:
+            lines.append(f"- **必写文件**: `{abs_path}`(非空)")
+            if doc_type:
+                lines.append(f"  - declare 方式: `story tool declare {doc_type} {art}`")
+                lines.append("  - 或直接 Write 到上面的绝对路径(内容非空)")
+        else:
+            lines.append(f"- **必落地**: `{art}`")
+    if has_git:
+        lines.append("- **必须有未提交的代码改动**(`git status` 非空)")
+
+    lines.append("")
+    lines.append(
+        "**不要**用别的文件名(如 design.md 而非 spec.md)或别的目录 —— "
+        "编排器只查上面列的绝对路径。写完确认文件存在且非空再退出。"
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _build_cli_prompt(
     *,
     story_key: str,
@@ -2286,13 +2372,21 @@ cd ./hc-config
     # test_report;write_design_doc → declare spec)。让 CLI 提前知道要交什么成果物。
     done_protocol_section = build_done_protocol(stage, done_file, _task_actions)
 
+    # STEP 1.4 强化(验证发现):code agent 不一定调 story tool declare,也不一定写到
+    # 约定路径。把"本阶段必须产出的文件"绝对路径提到 prompt 最显眼位置(Story 信息
+    # 紧下方),并给两条等价落地方式(declare / 直接 Write),让 code agent 必落其一。
+    # artifacts_obligation_section 用绝对路径消除歧义(evidence 目录 vs workspace)。
+    artifacts_obligation_section = _build_artifacts_obligation(
+        stage, profile_stages, story_dir
+    )
+
     return f"""## 任务: {stage}
 
 ### Story 信息
 - Key: {story_key}
 - 标题: {title}
 - Story 证据目录: {story_dir}
-
+{artifacts_obligation_section}
 ### 阶段说明
 {stage_desc}
 {prd_section}

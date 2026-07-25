@@ -83,13 +83,21 @@ def _git_has_changes(workspace: Path) -> bool:
 
 
 def check_artifacts_landed(
-    artifacts: list[str], workspace: str
+    artifacts: list[str],
+    workspace: str,
+    *,
+    evidence_candidates: dict[str, list[str]] | None = None,
 ) -> tuple[list[str], list[str]]:
     """检查一组 artifacts 是否落地。
 
     Args:
         artifacts: stage 声明的成果物标记(文件路径/glob/"git"),workspace 相对。
         workspace: 工作区根(absolute path string)。
+        evidence_candidates: 可选 — {artifact: [额外查找的绝对路径列表]}。code agent
+            可能把成果物写到 story evidence 目录(story_doc_path 解析的 canonical 位置,
+            因 story_evidence_root 会向上找 AGENTS.md 而脱离 workspace)。这里允许为
+            每个 artifact 列出额外的绝对路径候选,任一存在+非空就算落地(robust 兜底,
+            设计 §7.6 "code agent 不调 story-tool → 降级自己写文件")。
 
     Returns:
         (missing, landed) —— 两个 list,元素是 artifact 字符串本身。
@@ -102,6 +110,7 @@ def check_artifacts_landed(
         return [], []
 
     ws = Path(workspace)
+    extra = evidence_candidates or {}
     missing: list[str] = []
     landed: list[str] = []
 
@@ -116,6 +125,13 @@ def check_artifacts_landed(
             ok = _glob_landed(ws, artifact)
         else:
             ok = _file_landed(ws / artifact)
+            # 兜底:workspace 相对路径没落地 → 查 evidence 候选(code agent 可能写到
+            # story evidence 目录或用别的文件名如 design.md)。
+            if not ok:
+                for cand in extra.get(artifact, []):
+                    if _file_landed(Path(cand)):
+                        ok = True
+                        break
 
         if ok:
             landed.append(artifact)
@@ -125,7 +141,66 @@ def check_artifacts_landed(
     return missing, landed
 
 
-def artifacts_ready(artifacts: list[str], workspace: str) -> bool:
+def artifacts_ready(
+    artifacts: list[str], workspace: str, *, evidence_candidates=None
+) -> bool:
     """便捷谓词:成果物全齐(missing 为空)→ True。"""
-    missing, _ = check_artifacts_landed(artifacts, workspace)
+    missing, _ = check_artifacts_landed(
+        artifacts, workspace, evidence_candidates=evidence_candidates
+    )
     return not missing
+
+
+# artifact 路径 → doc_type 映射(用于 evidence_candidates 查找)。
+# "story/spec.md" → "spec"; "story/test-report.md" → "test_report"。
+_ARTIFACT_TO_DOC_TYPE = {
+    "story/spec.md": "spec",
+    "story/test-report.md": "test_report",
+    "story/research.md": "research",
+    "story/plan.md": "plan",
+    "story/delivery.md": "delivery",
+    "story/review-verdict.md": "review_verdict",
+}
+
+# doc_type 可能的 evidence 文件名(code agent 常见别名,robust 兜底):
+#   spec → spec.md / design.md(code agent 爱用 design 命名)
+#   test_report → test-report.md / test_report.md
+_DOC_TYPE_FILENAMES = {
+    "spec": ["spec.md", "design.md"],
+    "test_report": ["test-report.md", "test_report.md", "testreport.md"],
+    "research": ["research.md"],
+    "plan": ["plan.md"],
+    "delivery": ["delivery.md"],
+    "review_verdict": ["review-verdict.md", "review_verdict.md"],
+}
+
+
+def build_evidence_candidates(
+    artifacts: list[str], workspace: str, story_key: str, title: str = ""
+) -> dict[str, list[str]]:
+    """为每个 artifact 构建 evidence-dir 候选绝对路径列表(robust 兜底)。
+
+    code agent 可能直接写 story evidence 目录(story_doc_path 解析的 canonical 位置,
+    因 story_evidence_root 向上找 AGENTS.md 而脱离 workspace),也可能用别名文件名
+    (design.md 而非 spec.md)。本函数为每个文件类 artifact 列出 evidence 候选,
+    让 check_artifacts_landed 在 workspace 相对路径没落地时能兜底命中。
+
+    返回 {artifact: [abs_path, ...]}。git / glob 类 artifact 不需要(返回空列表)。
+    """
+    from ...infra.story_paths import story_evidence_dir
+
+    try:
+        evidence_dir = story_evidence_dir(workspace, story_key, title)
+    except Exception:  # noqa: BLE001
+        return {}
+
+    candidates: dict[str, list[str]] = {}
+    for artifact in artifacts:
+        if not isinstance(artifact, str) or artifact == "git" or _is_glob(artifact):
+            continue
+        doc_type = _ARTIFACT_TO_DOC_TYPE.get(artifact)
+        if not doc_type:
+            continue
+        names = _DOC_TYPE_FILENAMES.get(doc_type, [])
+        candidates[artifact] = [str(evidence_dir / name) for name in names]
+    return candidates

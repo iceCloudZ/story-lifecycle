@@ -429,8 +429,10 @@ def consume_orphan_artifacts(story_key: str) -> bool:
 
     from ...infra.json_helpers import robust_json_parse
     from ...infra.paths import stage_done_file_rel
+    from .artifact_check import build_evidence_candidates as _build_ev_cands
     from .artifact_check import check_artifacts_landed
 
+    story_title = story.get("title", "") or ""
     for action in actions:
         if action.get("action") != "launch":
             continue
@@ -443,7 +445,10 @@ def consume_orphan_artifacts(story_key: str) -> bool:
             done_rel = action.get("done_file") or stage_done_file_rel(story_key, stage)
             ready = (Path(workspace) / done_rel).exists()
         else:
-            missing, _ = check_artifacts_landed(stage_artifacts, workspace)
+            _ev = _build_ev_cands(stage_artifacts, workspace, story_key, story_title)
+            missing, _ = check_artifacts_landed(
+                stage_artifacts, workspace, evidence_candidates=_ev
+            )
             ready = not missing
         if not ready:
             continue

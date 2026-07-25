@@ -189,3 +189,65 @@ def test_invalid_entries_treated_as_missing(tmp_path):
     )
     assert "" in missing
     assert "story/spec.md" in missing  # spec.md 没建
+
+
+# ---- evidence_candidates 兜底(STEP 1.4 强化) ----
+
+
+def test_evidence_candidate_fallback_when_workspace_path_missing(tmp_path):
+    """workspace 相对路径没落地,但 evidence 候选有 → landed(robust 兜底)。
+
+    场景:code agent 把 spec 写到 story evidence 目录(story_evidence_root 向上找
+    AGENTS.md 脱离 workspace),而非 workspace/story/spec.md。
+    """
+    ev_path = tmp_path / "evidence" / "spec.md"
+    ev_path.parent.mkdir(parents=True)
+    ev_path.write_text("设计\n", encoding="utf-8")
+    # workspace/story/spec.md 不存在
+    cands = {"story/spec.md": [str(ev_path)]}
+    missing, landed = check_artifacts_landed(
+        ["story/spec.md"], str(tmp_path), evidence_candidates=cands
+    )
+    assert missing == []
+    assert landed == ["story/spec.md"]
+
+
+def test_evidence_candidate_alias_filename_design_md(tmp_path):
+    """code agent 用别名 design.md 而非 spec.md → evidence 候选含别名也能命中。"""
+    ev_design = tmp_path / "evidence" / "design.md"
+    ev_design.parent.mkdir(parents=True)
+    ev_design.write_text("设计\n", encoding="utf-8")
+    cands = {"story/spec.md": [str(tmp_path / "evidence" / "spec.md"), str(ev_design)]}
+    missing, landed = check_artifacts_landed(
+        ["story/spec.md"], str(tmp_path), evidence_candidates=cands
+    )
+    assert missing == []
+
+
+def test_build_evidence_candidates_returns_canonical_paths(tmp_path):
+    """build_evidence_candidates 为 spec artifact 返回 evidence_dir 下 spec.md + design.md。"""
+    from story_lifecycle.orchestrator.engine.artifact_check import (
+        build_evidence_candidates,
+    )
+
+    cands = build_evidence_candidates(
+        ["story/spec.md", "git"], str(tmp_path), "K1", title="t"
+    )
+    assert "story/spec.md" in cands
+    # spec → spec.md + design.md 别名
+    paths = cands["story/spec.md"]
+    assert any(p.endswith("spec.md") for p in paths)
+    assert any(p.endswith("design.md") for p in paths)
+    # git artifact 不需要候选
+    assert "git" not in cands
+
+
+def test_evidence_candidate_empty_when_artifact_not_in_map(tmp_path):
+    """未知 artifact 路径(不在 _ARTIFACT_TO_DOC_TYPE)→ 无候选(只查 workspace 相对)。"""
+    from story_lifecycle.orchestrator.engine.artifact_check import (
+        build_evidence_candidates,
+    )
+
+    cands = build_evidence_candidates(["custom/file.md"], str(tmp_path), "K1")
+    # 未知映射 → 不在候选里(防御)
+    assert "custom/file.md" not in cands
