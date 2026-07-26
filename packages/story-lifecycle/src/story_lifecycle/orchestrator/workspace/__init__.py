@@ -1,10 +1,9 @@
 """Workspace sub-package — project scanning/profiling/probing/registry,
-resource locking, branch naming, doctor-paths checks, and worktree management.
+branch naming, doctor-paths checks, and worktree management.
 
-Stage-1 layer partition (ISS-010): ``project_scan`` / ``project_profile`` /
-``project_probe`` / ``project_registry`` / ``resource_lock`` / ``branch_naming``
-/ ``doctor_paths`` moved here from the orchestrator root, and the existing
-``worktree/`` sub-package nested under it as ``workspace.worktree``.
+``project_scan`` / ``project_profile`` / ``project_probe`` / ``project_registry``
+/ ``branch_naming`` / ``doctor_paths`` 在此子包,``worktree/`` 嵌套为
+``workspace.worktree``。
 
 ``paths.py`` deliberately stays at the orchestrator root — it is a cross-layer
 shared utility (used by ④ knowledge, benchmarks, cli, orchestrator), so it is

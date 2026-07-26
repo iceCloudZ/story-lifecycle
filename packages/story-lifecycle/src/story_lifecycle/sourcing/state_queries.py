@@ -2,7 +2,7 @@
 
 Grok-build §2.2:xai-chat-state 把读(queries.rs,``&self`` 纯函数)和写
 (mutations.rs,``&mut self`` 必产 event)分开。本模块是读侧:所有函数**只读不写**,
-签名 ``-> X`` 不带 DB 调用。写侧见 ``state_mutations.py``。
+签名 ``-> X`` 不带 DB 调用。写侧见 ``state_machine.py``。
 
 planner.py 的状态转移块(1535-1630)原本把"读拓扑/判能否转移/写 DB/log_event"全混在
 一个嵌套块里。本模块抽出纯决策部分,让 planner 只负责"调 query → 收结果 → 持久化"。

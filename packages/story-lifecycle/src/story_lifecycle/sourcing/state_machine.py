@@ -9,8 +9,7 @@ mutation 函数,禁止在调用方裸调 ``db.update_story(status=...)``。
 截断 ``[:500]`` 有的没截;有的 paused 写 pause_reason 有的忘写)。收口后副作用只在一处。
 
 与 CQRS 读侧(state_queries)的关系:本模块是写侧(mutation),只负责"怎么变 + 副作用"。
-"能不能变 / 变成什么"的决策在调用方(它们知道触发条件),或 lifecycle_state 维度
-靠 state_mutations.decide_state_transition()。
+"能不能变 / 变成什么"的决策在调用方(它们知道触发条件)。
 """
 
 from __future__ import annotations

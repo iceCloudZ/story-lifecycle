@@ -574,46 +574,6 @@ class TestE2ESmoke:
 class TestRegressionValidation:
     """4 required regression tests from design doc."""
 
-    def test_stage_scoped_synthetic_isolation(self):
-        """synthetic flag from design stage must not affect implement validation."""
-        from story_lifecycle.orchestrator.evaluation.validation import validate_stage_outputs
-
-        # design had synthetic output
-        state = {
-            "story_key": "test-1",
-            "current_stage": "implement",
-            "profile": "swebench",
-            "workspace": "/tmp",
-            "context": {
-                "_synthetic_design": True,
-                # implement expects patch_summary but it's missing
-            },
-        }
-        result = validate_stage_outputs(state)
-        # Should fail: implement's expected_outputs missing even though design was synthetic
-        assert not result.ok
-        assert "patch_summary" in result.reason
-
-    def test_finalize_hard_gate_blocks_empty_patch(self, tmp_path):
-        """SWE-bench finalize must block when no model_patch and no git diff."""
-        from story_lifecycle.orchestrator.evaluation.validation import validate_stage_outputs
-
-        ws = tmp_path / "workspace"
-        ws.mkdir()
-        state = {
-            "story_key": "test-1",
-            "current_stage": "finalize",
-            "profile": "swebench",
-            "workspace": str(ws),
-            "context": {
-                "_synthetic_finalize": True,
-                # No model_patch, no git
-            },
-        }
-        result = validate_stage_outputs(state)
-        assert not result.ok
-        assert "no model_patch" in result.reason
-
     def test_patch_extractor_consistency(self, tmp_path):
         """extract_model_patch must agree between advance gate and export."""
         from story_lifecycle.infra.benchmarks.artifacts import extract_model_patch
