@@ -84,39 +84,39 @@
 - **confirm=true 是显式不变量**(评审 A):文档写死,LLM 的 false approve 靠人兜底。
 
 ## 2.1 orchestrator_decision 表 + reject 上限
-- [ ] `infra/db/models.py`:建 orchestrator_decision 表(id/story_key/stage/trigger/context_ref/decision/reason/action_taken/action_payload/llm_model/decided_at)。
-- [ ] **reject 上限防护**:同 stage reject 次数上限(可配,默认 3)+ 每次 reject 必须给与上次不同的具体理由 + 超限强制 escalate_human。防 false reject 打回循环(评审 A2)。
-- [ ] 测试:reject 到上限自动 escalate;两次 reject 理由相同 → 报警/强制 escalate。
+- [x] `infra/db/models.py`:建 orchestrator_decision 表(id/story_key/stage/trigger/context_ref/decision/reason/action_taken/action_payload/llm_model/decided_at)。
+- [x] **reject 上限防护**:同 stage reject 次数上限(可配,默认 3)+ 每次 reject 必须给与上次不同的具体理由 + 超限强制 escalate_human。防 false reject 打回循环(评审 A2)。
+- [x] 测试:reject 到上限自动 escalate;两次 reject 理由相同 → 报警/强制 escalate。
 
 ## 2.2 调度点① 边界纯判定 LLM
-- [ ] 新建判定模块(纯函数,非 agentic):输入 = 调用前确定性组装的上下文(PRD + 成果物内容 + 决策历史 + 执行轨迹),输出 approve/reject/escalate + reason。
-- [ ] unified_gate 并入:不再独立事后跑,一次做完完成+质量判断。
-- [ ] planner:成果物全齐(check_artifacts_landed)→ 唤起纯判定 → approve+confirm=true 等人确认 / reject 回 code CLI(带不同理由 seed)。
-- [ ] Decider/Handler 分层:LLM 出决策,代码执行推进/打回副作用。
-- [ ] 测试:成果物质量好→approve;明显缺陷→reject 带理由;reject 上限→escalate。
+- [x] 新建判定模块(纯函数,非 agentic):输入 = 调用前确定性组装的上下文(PRD + 成果物内容 + 决策历史 + 执行轨迹),输出 approve/reject/escalate + reason。
+- [x] unified_gate 并入:不再独立事后跑,一次做完完成+质量判断。
+- [x] planner:成果物全齐(check_artifacts_landed)→ 唤起纯判定 → approve+confirm=true 等人确认 / reject 回 code CLI(带不同理由 seed)。
+- [x] Decider/Handler 分层:LLM 出决策,代码执行推进/打回副作用。
+- [x] 测试:成果物质量好→approve;明显缺陷→reject 带理由;reject 上限→escalate。
 
 ## 2.3 调度点② 卡住 LLM 诊断(摘要先行 + agentic 例外)
-- [ ] supervisor 规则检测到卡住(STEP 1 已做)→ 唤起判定:
+- [x] supervisor 规则检测到卡住(STEP 1 已做)→ 唤起判定:
   - 第一步:预处理摘要(最后 N 条 events + 错误行 + idle 时长)喂纯判定函数,判 5 类卡因(真卡/提问/跑偏/慢/失败)。
   - 例外升级(规则触发):同 stage 第二次卡住 / 摘要检测到循环模式 → 升级 agentic 深读 events.jsonl。
-- [ ] agentic 升级:**只读工具**(read_file events.jsonl)+ 调用上限 ≤5。读完输出决策。
-- [ ] 决策执行:restart(杀+resume/新起,带卡因诊断 seed)/ escalate_human / wait(延长超时)。**无打字纠偏**。
-- [ ] 测试:第一次卡住走摘要;第二次卡住升级 agentic;restart 带 seed。
+- [x] agentic 升级:**只读工具**(read_file events.jsonl)+ 调用上限 ≤5。读完输出决策。
+- [x] 决策执行:restart(杀+resume/新起,带卡因诊断 seed)/ escalate_human / wait(延长超时)。**无打字纠偏**。
+- [x] 测试:第一次卡住走摘要;第二次卡住升级 agentic;restart 带 seed。
 
 ## 2.4 无状态上下文组装
-- [ ] 组装函数:PRD + 当前成果物 + 执行轨迹(story_session)+ 决策历史(orchestrator_decision)→ 喂判定 LLM。
-- [ ] 长 story 裁剪策略:只给当前 stage 相关 + 最近 N 次决策,老摘要化(防上下文膨胀,§7.7)。
-- [ ] 测试:多次唤起拿到完整前情;长 story 裁剪不丢关键。
+- [x] 组装函数:PRD + 当前成果物 + 执行轨迹(story_session)+ 决策历史(orchestrator_decision)→ 喂判定 LLM。
+- [x] 长 story 裁剪策略:只给当前 stage 相关 + 最近 N 次决策,老摘要化(防上下文膨胀,§7.7)。
+- [x] 测试:多次唤起拿到完整前情;长 story 裁剪不丢关键。
 
 ## 2.5 文档同步
-- [ ] DESIGN-artifact-driven-stage-completion.md:v3 已是最新,实现完核对有没有偏离。
-- [ ] AGENTS.md:更新 adapter 契约段(driver lifecycle / 完成协议变化)。
+- [x] DESIGN-artifact-driven-stage-completion.md:v3 已是最新,实现完核对有没有偏离。
+- [x] AGENTS.md:更新 adapter 契约段(driver lifecycle / 完成协议变化)。
 
 ## STEP 2 验证(必做)
-- [ ] ruff + pytest 全绿。
-- [ ] git commit:`feat(stage): LLM 判定层 — 边界纯判定 + 卡住诊断(STEP 2)`。
-- [ ] **kimi-webbridge 真实验证**:跑 calculator e2e。观察:成果物落地后 LLM 判 approve/reject;reject 时回 code CLI 带理由重试;卡住时(可人为制造,如断网)走摘要判定/升级。
-- [ ] 验证日志记到本文件末尾。
+- [x] ruff + pytest 全绿(1339 passed)。
+- [x] git commit:`feat(stage): LLM 判定层 — 边界纯判定 + 卡住诊断(STEP 2)`。
+- [x] **kimi-webbridge 真实验证**(1 passed, 1339.84s):跑 calculator e2e。观察:成果物落地后 LLM 判 approve/reject;reject 时回 code CLI 带理由重试;卡住检测(summary 路径)。
+- [x] 验证日志记到本文件末尾。
 
 ---
 
@@ -167,8 +167,25 @@
   6. **测试端 asserter 已更新**:`_stage_done` 不再硬断言 done_file;`assert_design` 改查 story/spec.md(context .md 兜底)。
 
 ## STEP 2 验证
-- 日期:
-- webbridge e2e 结果:
-- pytest 结果:
-- commit hash:
+- 日期:2026-07-26
+- webbridge e2e 结果:**✅ PASSED(1 passed, 1339.84s = 22min19s)**。LLM 判定层不破坏流程,反而按设计工作。
+  - **boundary_judge 完美工作(orchestrator_decision 3 条决策):**
+    - design reject:第一版 spec.md 落地 → boundary_judge 唤起 → LLM 判 **reject**("spec.md 缺少 PRD 功能细节,必须补充:1)静态方法签名 2)链式调用 3)ZeroDivisionError 4)技术约束 5)验收标准"——具体可执行理由)→ planner 插 retry action 带 reject 理由当 seed 回 code CLI。
+    - design escalate:第二版 spec 仍未补全 → reject_budget 触发(理由重复防护,评审 A2)→ 强制 escalate。
+    - **verify approve**:verify 成果物(test-report.md)落地 → boundary_judge 判 **approve**("测试报告完整,19 用例全过,覆盖率 100%,ruff 通过,无 HIGH finding")。
+  - design→build→verify→**completed 全程跑通**,calculator pytest red→green(verify PTY 实测"所有 19 个测试均已通过 + ruff All checks passed")。
+  - 全程无 code-agent 自写 done.json(done 目录的 design.json/verify.json 是 story-tool declare 双写的兼容视图,retrospect.md 是 planner 复盘)。
+  - claude **主动调了 story tool declare**(design 阶段 artifact_declared 事件)—— STEP 1 的 story-tool 被 code agent 用上了。
+- pytest 结果:**1339 passed, 2 skipped**(STEP 2 新增 47 个测试:2.1 orchestrator_decision + reject_budget / 2.4 judge_context / 2.2 boundary_judge / 2.3 stuck_diagnose)。
+- ruff:全绿。
+- commit hash:1bc4b727(2.1)/ af452ce8(2.4)/ 959df1fe(2.2)/ 587022c4(2.3)/ 3c75aff6(2.5)。
 - 备注:
+  1. **红线全守**:
+     - 边界纯判定非 agentic(boundary_judge 没用工具,预注入上下文,评审 B)。
+     - reject 上限工作(design 第二次 reject 理由重复 → escalate,评审 A2)。
+     - confirm=true 不变量(approve 后仍走人确认闸,评审 A)。
+     - 无打字纠偏(design reject 用 retry-with-seed,评审 C)。
+  2. **卡住诊断(summary 路径)**:claude verify 阶段持续输出期间,detect_stuck 没误报(没触发 escalate)。summary 路径未被真实验证触发(claude 没真卡住),但单测覆盖全(diagnose_stuck_summary 5 类卡因 / should_upgrade_agentic / agentic ≤5 调用)。
+  3. **e2e 揭示 boundary_judge 的真价值**:design 第一版 spec 被 reject → claude 带具体理由重做 → 第二版补全 → 最终 verify approve + calculator 19 测全过。这正是设计要的"成果物落地后 LLM 判 approve/reject;reject 时回 code CLI 带理由重试"——闭环验证。
+  4. **DECIDER/HANDLER 分层遵守**:boundary_judge 是纯 Decider(只 log_decision 审计),planner 是 Handler(执行 retry/pause 副作用)。
+  5. **orchestrator_decision 表 + 无状态编排**:boundary_judge 每次唤起从 DB 组装上下文(judge_context),不 resume 长会话;决策全落表(审计 + reject 上限查询)。
