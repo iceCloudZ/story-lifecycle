@@ -1733,6 +1733,67 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             f"[{story_key}] Stage {stage} completed (artifacts landed): "
                             f"{done_data.get('summary', '')[:100]}"
                         )
+                        # STEP 2.2:调度点① 边界纯判定 LLM(成果物全齐后判完成+质量)。
+                        # 非破坏性集成:approve → 走原 confirm-gate(不变);reject → 插 retry
+                        # action 回 code CLI(带 reject reason 作 seed),不标 completed;escalate
+                        # → 走原 paused 等人。judge_boundary 是纯 Decider,无副作用(除 log_decision)。
+                        # 红线:approve 不自动推进(confirm=true 不变量,§4.2)。
+                        try:
+                            from ..evaluation.boundary_judge import judge_boundary
+
+                            _bj = judge_boundary(
+                                story_key=story_key,
+                                stage=stage,
+                                workspace=workspace,
+                                ctx=ctx,
+                                artifacts=_stage_artifacts,
+                                adapter=adapter_name,
+                            )
+                            if _bj["decision"] == "reject":
+                                # reject → 回 code CLI 重做(带 reject reason 当 seed)。
+                                # 对称 verify-gate 的 retry 路径(planner.py:2036)。
+                                log.info(
+                                    "[%s] boundary judge reject: %s → 重做 stage=%s",
+                                    story_key, _bj["reason"][:80], stage,
+                                )
+                                _retry = {
+                                    "action": "launch",
+                                    "stage": stage,
+                                    "adapter": adapter_name,
+                                    "focus": f"上轮 boundary judge reject:{_bj['reason']}",
+                                    "done_file": stage_done_file_rel(story_key, stage),
+                                }
+                                actions.insert(idx + 1, _retry)
+                                ctx["_agent_actions"] = actions
+                                db.update_story(
+                                    story_key,
+                                    context_json=json.dumps(ctx, ensure_ascii=False),
+                                )
+                                db.log_event(
+                                    story_key, stage, "boundary_reject_retry",
+                                    {"reason": _bj["reason"], "next_stage": stage},
+                                )
+                                # 不 break 进 completed 分支;继续 while 让 idx+1 的 retry 跑。
+                                # 但先清本 stage 进程(同 verify-gate retry 收尾)。
+                                if headless_proc is not None:
+                                    _kill_headless(headless_proc)
+                                if _agent_pty is not None:
+                                    try:
+                                        from ...infra.terminal.pty import clean_exit_pty
+
+                                        clean_exit_pty(_agent_pty)
+                                        _agent_pty.kill()
+                                        from ...infra.terminal.pty import kill_pty
+
+                                        kill_pty(story_key, _agent_pty.session_id)
+                                    except Exception:
+                                        pass
+                                break  # 出 poll while,外层 while 取 idx+1 retry action
+                        except Exception:
+                            log.exception(
+                                "[%s] boundary judge failed (non-fatal, 继续 confirm 路径)",
+                                story_key,
+                            )
                         # 保留 done file(兼容视图)作为阶段完成证据：real-E2E asserters 与
                         # 审计都需要事后读取 {stage}.json。每个 stage 的 done 路径唯一，
                         # 重跑由 reset_workspace 清理 done/ 目录，无需在此 unlink。
