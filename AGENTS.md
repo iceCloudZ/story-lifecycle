@@ -161,14 +161,35 @@ Code agents run in an isolated per-story workspace, not the main monorepo:
 
 **LLM decides the slug, backend builds the dir** (no side effects in the model call — replayable). The agent decides *which projects* to bring in (it's closest to the need). See commit `8ddc3501`.
 
-### Driver lifecycle — dead-PID recovery + passive done-file consumption
+### Driver lifecycle — dead-PID recovery + passive artifact consumption
 
 Two invariants that must hold, both learned from a stuck-story incident (commit `56583154`):
 
 1. **A dead driver must not lock the story forever.** `claim_story_driver` checks `_driver_pid_alive(token)` before failing CAS — if the holding PID is gone, a new driver may seize. Windows uses `OpenProcess(SYNCHRONIZE)` via ctypes (`os.kill(pid, 0)` returns `WinError 87` regardless of liveness — do not use it). POSIX uses `os.kill(pid, 0)`.
-2. **A CLI that self-completes while no driver is watching must still advance state.** `consume_orphan_done(story_key)` scans for done files not in `_completed_stages` and claims them. Triggered from `GET /api/story/{key}` — opening the detail page unsticks a story whose CLI finished after an emergency-stop. No-op when a driver is live (its poll loop owns that case) or the story is finished.
+2. **A CLI that self-completes while no driver is watching must still advance state.** `consume_orphan_artifacts(story_key)` scans for stage `artifacts` that have landed (via `check_artifacts_landed`) but aren't yet in `_completed_stages` and claims them. Triggered from `GET /api/story/{key}` — opening the detail page unsticks a story whose CLI finished after an emergency-stop. No-op when a driver is live (its poll loop owns that case) or the story is finished. (`consume_orphan_done` is kept as a backward-compat alias.)
 
-**Hard rule**: the driver assumes "CLI lifecycle ⊆ driver lifecycle". Any path that breaks this (interactive manual run, emergency-stop, crash) must have a reconciliation entry. `consume_orphan_done` is that entry; don't add a second one.
+**Hard rule**: the driver assumes "CLI lifecycle ⊆ driver lifecycle". Any path that breaks this (interactive manual run, emergency-stop, crash) must have a reconciliation entry. `consume_orphan_artifacts` is that entry; don't add a second one.
+
+### Artifact-driven stage completion — done.json 砍掉 + 成果物落地是完成信号
+
+Stage completion no longer relies on the code agent self-reporting via `done.json` (un-trusted — it lies and omits, real incident: design ran 25min without producing done). The completion signal is now **artifacts landing** (DESIGN-artifact-driven-stage-completion v3):
+
+- Every stage MUST declare ≥1 file-typed `artifacts` in its profile (`artifacts: [path|glob|"git"]`), enforced at profile load by `_validate_artifacts` (`ProfileValidationError` if missing). This is the schema contract (§1.3).
+- `check_artifacts_landed(artifacts, workspace, evidence_candidates=...)` is the pure completion checker: file exists+non-empty / glob match / `git status --porcelain` non-empty. `evidence_candidates` is a robust fallback for code agents that write to the story-evidence dir or use alias filenames (e.g. `design.md` vs `spec.md`).
+- Code agents land artifacts via `story tool declare <doc_type> <path>` (atomic write + `story_doc` versioning + done.json compat view for miner + `artifact_declared` event). Agents that don't call declare but write the file directly are still detected (§7.6 fallback).
+- Planner poll loop: `done_path.exists()` → `check_artifacts_landed`. PTY path writes `anchors.jsonl` for miner binding (symmetric to headless).
+- **Anti-pattern**: re-adding a `done_path.exists()` / done-file completion check, or making code agents write done.json. See DESIGN-artifact-driven-stage-completion §6.
+
+### LLM 判定层 — 边界纯判定 + 卡住诊断(STEP 2,DESIGN §4.1-4.3)
+
+On top of the artifact loop, two LLM dispatch points (DESIGN v3 §4):
+
+1. **调度点① 边界纯判定 (`boundary_judge.judge_boundary`)** — artifacts landed → pure judgment function (approve/reject/escalate), **non-agentic** (no read_file/query_db tools; context pre-injected via `assemble_judge_context`). `unified_gate` merged in. **`confirm=true` is an explicit invariant**: approve does NOT auto-advance — it still goes through the human confirm-gate; LLM false-approves are caught by human (§评审 A). Reject budget (`check_reject_budget`): ≤3 rejects per stage + each reject reason must differ from the prior, else force-escalate (防打回循环,§评审 A2).
+2. **调度点② 卡住诊断 (`stuck_diagnose`)** — supervisor rule-detected stuck (STEP 1 `detect_stuck`) → summary-first pure judgment (`diagnose_stuck_summary`, 5 卡因) → rule-triggered agentic exception (`diagnose_stuck_agentic`, only `read_file` + ≤5 calls; triggers: 2nd stuck in same stage / loop pattern). Decisions: restart-with-seed / escalate / wait. **No typed correction** (评审 C — restart-with-seed replaces it).
+
+All decisions logged to `orchestrator_decision` table (无状态编排前提 + 审计载体,§4.6/§4.9). Decider/Handler layering: judgment modules are pure Deciders (only `log_decision` side-effect); planner is the Handler executing advance/retry/pause.
+
+- **Anti-pattern**: giving boundary judge read_file/query_db tools (边界 agentic 买不到能力,评审 B);typed correction / PTY injection to fix a stuck agent (时序脆弱 + 单次带歪防不住,评审 C);auto-advancing on LLM approve without the confirm-gate.
 
 ### `task_actions` drives stage semantics — not stage name, not prompt keywords
 
