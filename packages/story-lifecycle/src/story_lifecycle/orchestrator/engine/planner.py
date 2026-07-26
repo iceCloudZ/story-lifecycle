@@ -644,8 +644,7 @@ def _repair_spec_to_action(
 ) -> dict | None:
     """REFACTOR §5.3.4:把 unified_gate 的 repair_action spec 转 planner 可 insert 的 action dict。
 
-    替旧 build_repair_action(transition_decision → action)。
-    字段映射:kind(action→kind) / reason / new_adapter(新增,替硬编码轮转) / rescue_stage。
+    字段映射:kind(action→kind) / reason / new_adapter / rescue_stage。
     """
     from ...infra.story_paths import safe_segment
 
@@ -747,46 +746,6 @@ def _register_stage_outputs(story_key: str, stage: str, done_data: dict) -> None
                 stage,
                 ref,
             )
-
-
-def _build_verify_history_facts(*, db, failed_adapter, gate_round, retry_limit):
-    """层5 回注:查全局决策事件 → reflect playbook → transition ``history_facts``。
-
-    飞轮闭环:历史 recovery 换 adapter 成功 → reflect 沉淀规则 → 当前 verify-gate
-    失败时 ``same_failure_swap_succeeded=True`` → decide_transition 选 swap_approach。
-    任何异常 → 安全兜底(不阻塞 verify-gate 主流程)。
-    """
-    try:
-        from ..learning.reflection import build_transition_history_facts
-
-        raw = db.get_recent_events_by_type(
-            ["recovery_action", "judge_verdict", "transition_decision"], limit=100
-        )
-        parsed = []
-        for r in raw:
-            try:
-                payload = json.loads(r.get("payload") or "{}")
-            except Exception:
-                payload = {}
-            parsed.append(
-                {
-                    "story_key": r.get("story_key", ""),
-                    "event_type": r.get("event_type", ""),
-                    "payload": payload,
-                }
-            )
-        return build_transition_history_facts(
-            events=parsed,
-            failed_adapter=failed_adapter,
-            gate_round=gate_round,
-            retry_limit=retry_limit,
-        )
-    except Exception:
-        return {
-            "failure_count_on_stage": gate_round,
-            "max_retries": retry_limit,
-            "same_failure_swap_succeeded": False,
-        }
 
 
 def _now_utc_iso() -> str:
@@ -2160,7 +2119,6 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 ctx["last_verify_summary"] = done_data.get("summary", "")
                 ctx["last_done_data"] = done_data  # §4.2:喂给 unified gate 作 context
                 # REFACTOR §5.3:统一 gate(一次 LLM:质量判断 + finding + decision + repair)
-                # 替原 run_verify_gate + decide_transition + build_repair_action 三步。
                 from ..evaluation.unified_gate import run_unified_verify_gate
 
                 gate_result = run_unified_verify_gate(

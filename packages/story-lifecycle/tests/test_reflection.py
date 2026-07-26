@@ -129,26 +129,6 @@ class TestBuildTransitionHistoryFacts:
         assert hf["same_failure_swap_succeeded"] is False
         assert hf["failure_count_on_stage"] == 2
 
-    def test_feeds_decide_transition_to_swap_approach(self):
-        """端到端:history_facts 让 decide_transition 返回 swap_approach(非 retry)。"""
-        from story_lifecycle.orchestrator.engine.transition import decide_transition
-
-        events = [
-            ev("recovery_action", "S-x", action="retry_new_adapter",
-               failed_adapter="codex", new_adapter="claude"),
-            ev("judge_verdict", "S-x", passed=True),
-        ]
-        hf = build_transition_history_facts(
-            events=events, failed_adapter="codex", gate_round=1, retry_limit=3
-        )
-        decision = decide_transition(
-            gate_decision={"pass": False, "rework_point": "verify"},
-            failure_mode="quality",
-            history_facts=hf,
-        )
-        assert decision["action"] == "swap_approach"
-
-
 # ============================================================================
 # REFACTOR §5.1 — reflect 扩展规则 + write_playbook_file 落库 + persist_playbook
 # ============================================================================
