@@ -76,20 +76,22 @@ src/story_lifecycle/
 
 ```
 orchestrator/
-├── engine/        FC 核心: planner, agent_tools, graph, stage_graph, graph_patch,
-│                  router, meta_planner, policy_engine, shadow_router, execution,
-│                  profile_loader, prompt_renderer, prompt_sections, stage_library,
-│                  demo_tool, notify
-├── evaluation/    gate, evaluator_loop, quality, review_feedback, semantic,
-│                  test_source, validation
+├── engine/        FC 核心: planner, graph, router, execution, supervisor,
+│                  profile_loader, prompt_renderer, prompt_sections, notify,
+│                  recovery, consult_runner, consult_orchestrator, awaiting_detector,
+│                  scheduler, task_actions, claude_stream, artifact_check, artifact_declare
+├── evaluation/    unified_gate, boundary_judge, stuck_diagnose, reject_budget,
+│                  quality, review_feedback, semantic, validation
+├── context/       judge_context, resolver, snapshot, pack, auto_discovery（成果物驱动 +
+│                  ③只读 story 解析）
 ├── service/       api, story_service, sync_service, delivery, prd_generator
 ├── workspace/     project_scan, project_profile, project_probe, project_registry,
 │                  resource_lock, branch_naming, doctor_paths, worktree/
-├── observability/ debug_packet, diagnostics, events
-├── learning/      seed_pipeline, seeds（quality-flywheel seeding）
-├── context/       resolver, snapshot, pack, release_prompt, auto_discovery（③只读 story 解析）
+├── observability/ debug_packet, diagnostics, events, prompt_export
+├── learning/      reflection, seed_pipeline, seeds（playbook 持久化 + quality-flywheel seeding）
 ├── nodes/         thin facade（__init__ re-export engine 模块 + 常量，保 nodes.xxx 调用兼容）
-└── entry.py       （根级 — service.api + observability.debug_packet 共用；paths.py 已下沉 infra/，见 ISS-013）
+└── entry.py       （根级 — CLI exit state 检测，service.api + observability.debug_packet 用；
+                    paths.py 已下沉 infra/，见 ISS-013）
 ```
 
 **依赖方向**：`learning → engine → evaluation`；`service → {context, engine, evaluation, nodes, observability, workspace}`；`observability → evaluation`；`evaluation → nodes`；`nodes/context → engine`。无反向边 → **无循环**。

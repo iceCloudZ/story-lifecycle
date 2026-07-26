@@ -4,15 +4,15 @@
 决定救法:换 adapter 重试 / 降级人工 / 跳过 stage / 上交人 / 终止。
 
 **纯 Decider(§2.2 #1)**:零副作用,不读 DB、不写文件、不起进程。规则驱动(策略确定);
-``recovery_facts`` 注入历史/上限(可测)。LLM / policy_engine 可后置扩展,但基础救法无需 LLM
-(recovery 频次低 + 规则更稳;守 §2.2 #7 限频)。
+``recovery_facts`` 注入历史/上限(可测)。基础救法无需 LLM(recovery 频次低 + 规则更稳;
+守 §2.2 #7 限频)。
 
 action 取值:
 - ``retry_new_adapter``:瞬时错,未达上限 → 换 adapter 重试(带 ``new_adapter``)。
 - ``escalate_human``:auth/config 错,或高价值(P0/P1)story 反复失败 → 上交人。
 - ``downgrade_to_manual``:中价值(P2)story 达上限 → 降级人工接手(不丢,但不烧机)。
 - ``skip_stage``:低价值(P3+)story 达上限 → 跳过该 stage。
-- ``abort``:policy_engine 判定彻底无解(本基础版不主动触发,留给 policy 接入)。
+- ``abort``:彻底无解(本基础版不主动触发)。
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """consult orchestrator —— 编排 LLM 的 FC loop,决定 spawn / synthesize / finalize。
 
-**复用 ``replanner.replan()`` 的 loop 骨架**(读 tool_calls → 执行 → 塞回 messages → 再调),
-但输入/输出/工具完全不同(DESIGN §4.4):
+标准 FC loop 骨架(读 tool_calls → 执行 → 塞回 messages → 再调),但输入/输出/工具
+完全不同(DESIGN §4.4):
 - 输入:code agent 的 consult 请求(question/context/urgency)
 - 工具:spawn_reviewer(调 consult_runner.run_consult_sync) + finalize_advice(终止信号)
 - 输出:advisory 文本(str) + 诊断字段
@@ -24,7 +24,7 @@ import json
 import time
 from typing import Callable
 
-# ── FC 工具 schema(对齐 agent_tools.py 的 OpenAI FC 格式)──────────────
+# ── FC 工具 schema(OpenAI Function Calling 格式)──────────────
 
 SPAWN_REVIEWER_TOOL = {
     "type": "function",

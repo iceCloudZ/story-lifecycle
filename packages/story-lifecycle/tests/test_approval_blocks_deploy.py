@@ -1,27 +1,21 @@
-"""T3.3 approval_queue 阻塞部署 -- 现状澄清测试。
+"""/api/approvals 端点现状澄清测试。
 
 任务卡要求验证 deploy stage 在无 approval 时阻塞。调查发现:
-1. stage_library.py 的 deploy 确实定义了 requires_human=True。
-2. 但所有内置 profile(minimal/strict/demo/headless-smoke/realtest/swebench)的 stages
+1. 所有内置 profile(minimal/strict/demo/headless-smoke/realtest/swebench)的 stages
    列表里都没有 deploy;实际执行流程由 profile 决定,因此 deploy 默认不会被调度。
-3. /api/approvals 端点存在,但它返回的是 pending findings(质量飞轮的待处理发现),
+2. /api/approvals 端点存在,但它返回的是 pending findings(质量飞轮的待处理发现),
    不是部署审批队列。
-4. 当前代码没有一处检查 StageDefinition.requires_human 来阻塞 stage 执行。
 
-因此本卡的目标转为 记录现状并锁定契约:
-- deploy 定义保留 requires_human=True(未来启用时的语义标记)。
-- 默认 profile 不启用 deploy(避免误触发生产部署)。
-- /api/approvals 返回 findings(现有行为不变)。
+(原 stage_library.py 的 deploy StageDefinition 契约断言已随 phase6 死代码团删除 ——
+ stage_library 整模块零生产引用,其 requires_human 标记无人消费。)
 
-本测试不模拟不存在的阻塞逻辑,而是把这些现状断言下来,防止未来有人把 deploy
-偷偷加进默认 profile 或把 requires_human 误删。
+本测试不模拟不存在的阻塞逻辑,而是把 /api/approvals 的现状断言下来,防止未来
+有人改端点语义。
 """
 
 import pytest
 from fastapi.testclient import TestClient
 
-from story_lifecycle.orchestrator.engine.profile_loader import resolve_profile
-from story_lifecycle.orchestrator.engine.stage_library import get_stage_definition
 from story_lifecycle.orchestrator.service.api import app
 from story_lifecycle.infra.db import models as db
 
@@ -42,35 +36,22 @@ def client(isolated_story_home):
     return TestClient(app)
 
 
-class TestDeployStageDefinition:
-    """deploy stage 在 stage_library 中的定义契约。"""
-
-    def test_deploy_requires_human(self):
-        """deploy 阶段必须标记为需要人参与。"""
-        stage_def = get_stage_definition("deploy")
-        assert stage_def is not None
-        assert stage_def.requires_human is True
-        assert stage_def.category.value == "deployment"
-        assert stage_def.risk.value == "critical"
-
-    def test_other_human_stages_also_require_human(self):
-        """human_review / architecture_review 同样 requires_human(参照组)。"""
-        for name in ("human_review", "architecture_review"):
-            assert get_stage_definition(name).requires_human is True
-
-
 class TestDeployNotInDefaultProfiles:
-    """默认 profile 不启用 deploy,这是当前 不阻塞也安全 的根因。"""
+    """默认 profile 不启用 deploy。"""
 
     @pytest.mark.parametrize("profile_name", BUILTIN_PROFILES)
     def test_deploy_not_in_profile_stages(self, profile_name):
         """所有内置 profile 的 stages 里都没有 deploy。"""
+        from story_lifecycle.orchestrator.engine.profile_loader import resolve_profile
+
         profile = resolve_profile(profile_name)
         assert "deploy" not in profile.stages
 
     @pytest.mark.parametrize("profile_name", BUILTIN_PROFILES)
     def test_deploy_not_in_next_default(self, profile_name):
         """next_default 也不指向 deploy,防止隐式进入。"""
+        from story_lifecycle.orchestrator.engine.profile_loader import resolve_profile
+
         profile = resolve_profile(profile_name)
         for cfg in profile.stages.values():
             assert "deploy" not in cfg.next_default

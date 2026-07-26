@@ -7,7 +7,7 @@ Maps to the six boundary rules in ``docs/module-architecture/02-modules-overview
 3. adapters <-> miner 通过 anchors.jsonl 文件契约通信 -> anchor round-trip
 4. SOFT 缝 try/except 降级 -> re-export T4.3 tests
 5. infra 零内部 import -> config.py / json_helpers.py only stdlib + yaml
-6. HITL 是横切不是 stage -> clarify/approval/supervisor 不在 stage_library
+6. HITL 是横切不是 stage -> (原 stage_library 契约随 phase6 死代码团删除)
 
 The re-export pattern keeps the original test files (and their original
 commit history / blame) alive while providing a single ``tests/invariants/``
@@ -24,11 +24,6 @@ from pathlib import Path
 import pytest
 
 from story_lifecycle.knowledge.adapters.base import BaseAdapter
-from story_lifecycle.orchestrator.engine.stage_library import (
-    BUILTIN_STAGES,
-    StageCategory,
-    get_stage_definition,
-)
 
 # ── re-exports: keep original files runnable, centralize invariants here ──
 
@@ -168,39 +163,6 @@ class TestInfraZeroInternalImport:
             )
 
 
-# ── invariant #6: HITL is cross-cutting, not a stage ──
-
-
-class TestHitlCrossCuttingNotStage:
-    """clarify / approval / supervisor must not be modeled as stage_library stages.
-
-    HITL concerns are blocking points embedded in the execution flow (MCP
-    clarify server, API approval endpoints, supervisor decisions). They must not
-    appear as atomic stages in the built-in stage catalog.
-    """
-
-    @pytest.mark.parametrize("hitl_name", ["clarify", "approval", "supervisor", "hitl"])
-    def test_hitl_names_are_not_builtin_stages(self, hitl_name):
-        """没有名为 clarify / approval / supervisor / hitl 的 stage。"""
-        assert get_stage_definition(hitl_name) is None
-
-    def test_no_hitl_category_in_stage_library(self):
-        """StageCategory 中没有 HITL 专用分类。"""
-        categories = {member.value for member in StageCategory}
-        assert "hitl" not in categories
-        assert "clarify" not in categories
-        assert "approval" not in categories
-
-    def test_builtin_stages_do_not_contain_hitl_keywords(self):
-        """所有内置 stage 名称都不含 HITL 关键字。"""
-        hitl_keywords = {"clarify", "approval", "supervisor", "hitl", "mcp"}
-        for name in BUILTIN_STAGES:
-            for kw in hitl_keywords:
-                assert kw not in name, (
-                    f"built-in stage {name!r} contains HITL keyword {kw!r}"
-                )
-
-
 # ── invariant #7: consult runner return-shape contract (DESIGN §8.3) ──
 
 
@@ -295,102 +257,3 @@ class TestConsultOrchestratorContract:
         assert "terminated_by" in result
         assert isinstance(result["terminated_by"], str)
         assert result["terminated_by"]
-
-
-# ── invariant #9: replanner action shape vs planner consumer alignment (DESIGN §4.4) ──
-
-
-class TestReplannerActionShapeAlignment:
-    """``replanner._tool_call_to_action`` 产出的 action 结构必须与
-    ``continue_orchestrator_agent`` 消费端一致(DESIGN §4.4 对齐表)。
-
-    防 §4.4 对齐表漂移:若 replanner 产出的 ``{action: "launch", adapter, stage,
-    focus, done_file}`` 字段名改了,planner 消费端读 ``action.get("action") == "launch"``
-    就会失效 → 静默跳过 stage。本契约锁住字段名。
-    """
-
-    def test_plan_step_tool_call_produces_launch_action_with_required_fields(self):
-        from story_lifecycle.orchestrator.engine.replanner import _tool_call_to_action
-
-        tc = {
-            "id": "c1",
-            "type": "function",
-            "function": {
-                "name": "plan_step",
-                "arguments": {
-                    "stage": "implement",
-                    "adapter": "kimi",
-                    "focus": "do X",
-                },
-            },
-        }
-        action = _tool_call_to_action(tc, "STORY-1")
-        assert action is not None
-        # 消费端读这些字段(planner.py:947 if action.get("action") == "launch")
-        assert action["action"] == "launch"
-        assert action["stage"] == "implement"
-        assert action["adapter"] == "kimi"
-        assert action["focus"] == "do X"
-        assert action["done_file"] == ".story/done/STORY-1/implement.json"
-
-    def test_skip_stage_tool_call_produces_skip_action_with_required_fields(self):
-        from story_lifecycle.orchestrator.engine.replanner import _tool_call_to_action
-
-        tc = {
-            "id": "c2",
-            "type": "function",
-            "function": {
-                "name": "skip_stage",
-                "arguments": {"stage": "release", "reason": "low value"},
-            },
-        }
-        action = _tool_call_to_action(tc, "STORY-2")
-        assert action is not None
-        # 消费端读这些字段(planner.py:939 if action.get("action") == "skip")
-        assert action["action"] == "skip"
-        assert action["stage"] == "release"
-        assert action["reason"] == "low value"
-
-    def test_replanner_loop_returns_action_list_compatible_with_consumer(self):
-        """``replan`` 端到端:产出的 list 里每条 action 都是 consumer 可读形态。"""
-        from story_lifecycle.orchestrator.engine.replanner import replan
-
-        state = {"n": 0}
-
-        def fake_invoke(messages, tools, **kw):
-            state["n"] += 1
-            if state["n"] == 1:
-                return {
-                    "message": {"role": "assistant", "content": ""},
-                    "tool_calls": [
-                        {
-                            "id": "c1",
-                            "type": "function",
-                            "function": {
-                                "name": "plan_step",
-                                "arguments": {"stage": "verify", "adapter": "claude"},
-                            },
-                        }
-                    ],
-                    "content": "",
-                }
-            # 第二次空 → break
-            return {
-                "message": {"role": "assistant", "content": "done"},
-                "tool_calls": [],
-                "content": "done",
-            }
-
-        actions = replan(
-            story_facts={"story_key": "S-3", "stage": "verify"},
-            feedback={"stage": "verify", "reason": "x"},
-            prior_actions=[],
-            invoke_with_tools=fake_invoke,
-            tools=[],
-        )
-        assert len(actions) == 1
-        a = actions[0]
-        # 消费端契约:必须能用 .get("action") 读出来
-        assert a.get("action") == "launch"
-        assert a.get("stage") == "verify"
-        assert a.get("adapter") == "claude"
