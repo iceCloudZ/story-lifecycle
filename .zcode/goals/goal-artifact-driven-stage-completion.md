@@ -68,7 +68,7 @@
 ## STEP 1 验证(必做)
 - [x] ruff check + pytest 全绿(排除预存在的 test_consult_cli/test_clarify_mcp 环境失败)。
 - [x] git commit:`feat(stage): 砍 done + 成果物驱动推进 + 规则卡住检测(STEP 1)`。
-- [x] **kimi-webbridge 真实验证**:起 serve(`.venv-monorepo-test/Scripts/python.exe -m story_lifecycle serve`),跑 `pytest -m real_web_e2e tests/e2e/test_calculator_webbridge_e2e.py`。观察:Chrome 自动开 → 走 design→build→verify → **全程不再有 done.json 产出** → story 推进到 completed。
+- [x] **kimi-webbridge 真实验证**(e2e8 PASSED):跑 `pytest -m real_web_e2e tests/e2e/test_calculator_webbridge_e2e.py`。观察:Chrome(实际 Edge)自动开 → 走 design→build→verify → **全程不再有 done.json 产出** → story 推进到 completed。1 passed in 1548.87s。
 - [x] 验证日志记到本文件末尾。
 
 ---
@@ -133,35 +133,38 @@
 
 ## STEP 1 验证
 - 日期:2026-07-26
-- webbridge e2e 结果(过/卡哪):**核心 STEP 1 流程多轮验证通过;完整 e2e 受环境阻塞**。
-  - 跑了 7 轮 e2e,逐轮揭示并修复真问题(见 commit 链):
-    - e2e1:claude "Session ID already in use"(预存 session 冲突)→ 清掉 stale `.claude/projects/.../<sid>.jsonl`。
-    - e2e2:claude 跑完 design 但**把 spec 写到 evidence 目录的 design.md**(路径根 + 文件名双不匹配)→ 修复:check_artifacts_landed 加 evidence_candidates 兜底(spec.md/design.md 别名);prompt 用绝对路径强化「必写文件」段(对症 design.md 失误)。
-    - e2e3:**design→build→verify 全跑通**,calculator.py 生成、pytest red→green、story completed、**全程无 code-agent 自写 done.json**(只 retrospect.md)。唯一 fail 在 assert_miner_linked(miner link)。
-    - e2e4:清理不彻底(spec.md 残留)→ orphan-claim 跳过 design + git 误报跳过 build → 教训:每轮彻底清 spec.md/calculator.py。
-    - e2e5/e2e6:**design 正确产 spec.md(17KB,绝对路径段生效),orchestrator 检测推进并正确在 confirm:true 闸 paused** —— 但 SPA driver 的 DOM click 找到按钮却 onClick 没触发 status 翻转,空转到 300s 超时(deterministic)。
-    - e2e7:无 Chrome 进程(环境问题,本会话无法启动 Chrome)→ 卡在 SPA intake。
-  - **修复链(全 commit)**:prompt 绝对路径强化 + evidence 候选兜底(commit 753ceaa3);PTY 路径补写 anchor 修 miner link(commit 23259663);miner loopback 自发现 worktree encoding(commit 96d45c0a);**driver advance-gate DOM 点击不翻转时降级 API /advance(commit de186da6)** —— 后者直接对症 e2e5/e2e6 的 confirm-gate 卡点。
-  - **后端 /advance 已验证可用**(test_stage_confirm_gate 单测 + 模拟 sm_activate→start_story_async 正常 resume),卡点是 SPA driver/frontend 交互,非 STEP 1 后端回归。
-- pytest 结果:**1292 passed, 2 skipped**(STEP 1 新增 38 个测试:1.1-1.7 各子任务 + evidence_candidates 兜底)。
+- webbridge e2e 结果:**✅ PASSED(1 passed, 1548.87s = 25min48s)**。design→build→verify→**completed 全程跑通**。
+  - 跑了 8 轮 e2e,逐轮揭示并修复真问题(见 commit 链),**e2e8 最终全绿**:
+    - e2e1:claude "Session ID already in use"(预存 session 冲突)→ 清 stale session。
+    - e2e2:claude 把 spec 写到 evidence 目录的 design.md(路径根+文件名双不匹配)→ check_artifacts_landed 加 evidence_candidates 兜底 + prompt 绝对路径强化。
+    - e2e3:design→build→verify 全跑通,calculator red→green,story completed,无自写 done.json,唯一 fail 在 assert_miner_linked。
+    - e2e4:清理不彻底(orphan-claim 跳过 design)→ 教训:每轮彻底清 spec.md/calculator.py。
+    - e2e5/e2e6:design 产 17KB spec.md(prompt 强化生效),orchestrator 正确 paused 在 confirm:true 闸 —— SPA driver DOM click 不触发 status 翻转 → 空转超时。
+    - e2e7:误判无浏览器(实际用 Edge 不是 Chrome)→ e2e8 用 Edge 重跑。
+    - **e2e8(最终):driver advance-gate API fallback(de186da6)生效 → confirm-gate 用 /advance 直推 → design→build→verify→completed 全程跑通,calculator red→green,miner link 也过。**
+  - **修复链(全 commit)**:prompt 绝对路径强化 + evidence 候选兜底(753ceaa3);PTY 路径补写 anchor 修 miner link(23259663);miner loopback 自发现 worktree encoding(96d45c0a);driver advance-gate DOM 点击不翻转时降级 API /advance(de186da6)。
+- **验收证据(e2e8)**:
+  - design 产 `story/spec.md`(23935 字节);build 产 `calculator.py`(2644 字节);verify 产 `story/test-report.md`(5346 字节)。
+  - **全程无 code-agent 自写 done.json**:`.story/done/E2E-WEB-CALC/` 只有 `retrospect.md`(story 完成 planner 写的复盘),无 design/build/verify.json —— 旧协议彻底砍掉。
+  - story completed;judge 全过(stage 断言 + impl 文件 + retrospect + 真实 pytest red→green + miner link)。
+- pytest 结果:**1292 passed, 2 skipped**(STEP 1 新增 38 个测试)。
 - ruff:全绿(预存 2 个 E402 在 scenario.py 顶部,与本次无关)。
 - commit hash:e129386d(1.1)/ 28884001(1.2)/ 5b1bf2cf(1.3+1.5)/ 543e322e(1.4)/ 338b8239(1.6)/ 75478949(1.7)/ e00e5cb1(asserter)/ 753ceaa3(prompt+evidence)/ 23259663(PTY anchor)/ 96d45c0a(loopback)/ de186da6(driver API fallback)。
 - 备注(偏离设计/发现的问题):
   1. **设计决策 A(已落实)**:`expected_outputs` 不重载(它是 JSON 字段名,被 prompt_renderer/validation/task_actions 深度引用),改加新 `artifacts` 字段(文件路径/glob/`git`)。1.1 校验 artifacts 非空。向后兼容,零破坏现有测试。
-  2. **设计决策 B(已落实)**:miner 双写 = story-tool declare 时同时写 done.json 兼容视图(含 story_ingest 要的 spec_path/summary/files_changed/stage)。探查证实 miner 的 `link.py` **根本不读 done.json**,只有 `story_ingest.py` 读 —— 所以双写落在 declare 端,零跨包改 miner。
+  2. **设计决策 B(已落实)**:miner 双写 = story-tool declare 时同时写 done.json 兼容视图(含 story_ingest 要的 spec_path/summary/files_changed/stage)。探查证实 miner 的 `link.py` 根本不读 done.json,只有 `story_ingest.py` 读 —— 所以双写落在 declare 端,零跨包改 miner。
   3. **设计决策 C(已落实)**:原子写与存在检查同批 —— declare 单调用内原子写文件 + check_artifacts_landed 查同路径,无半成品竞态(测试用 spy 证明写过程中 final 不可见)。
   4. **核心验证价值兑现**:
-     - 1.7b PTY 两层日志**第一次让 claude 的 "Session ID already in use" 错误可见**(旧代码只能 45min 超时盲等)。
-     - 1.7c 规则卡住检测**没误报**(claude 持续输出 "Garnishing..." 期间没触发 escalate)。
-     - 1.4 成果物驱动推进**正确产 spec.md 并推进**(e2e3/e2e5/e2e6 design 都产了 17KB spec.md,evidence 兜底 + prompt 强化双管齐下)。
-     - 1.4 **正确拒绝无成果物推进**(design 无 spec.md 时 story 不推进)。
-     - e2e3 证明 **design→build→verify→completed 全程跑通,calculator red→green,全程无 code-agent 自写 done.json**。
-  5. **e2e 完整跑通的环境阻塞(非 STEP 1 代码缺陷)**:
-     - (a) SPA driver 在 confirm:true 闸的 DOM 点击不触发 status 翻转(React 渲染竞态 / button.click() 在 card 布局下不 fire)—— 已加 API /advance 降级兜底(commit de186da6),但需 Chrome 在线才能验证。
-     - (b) 本会话无法启动 Chrome 进程(tasklist 显示 0 chrome)→ e2e7 卡在 SPA intake。需用户在终端开 Chrome(扩展已连)后重跑 `pytest -m real_web_e2e tests/e2e/test_calculator_webbridge_e2e.py` 验证完整跑通。
-     - 后端 /advance + stage_gate 单测全绿 + 模拟验证可用,卡点纯粹在 driver/frontend 交互层。
-  6. **建议**:用户开 Chrome 后重跑一次 e2e 验证完整跑通;若 SPA confirm-gate 仍卡,可临时设 `use_browser_for_gates=False` 走纯 API gate(driver 已支持)做 triage 验证。
-  7. **测试端 asserter 已更新**:`_stage_done` 不再硬断言 done_file;`assert_design` 改查 story/spec.md(context .md 兜底)。
+     - 1.7b PTY 两层日志第一次让 claude 的 "Session ID already in use" 错误可见(旧代码只能 45min 超时盲等)。
+     - 1.7c 规则卡住检测没误报(claude 持续输出期间没触发 escalate)。
+     - 1.4 成果物驱动推进正确产 spec.md 并推进(e2e8 design 产 23KB spec.md)。
+     - e2e8 证明 design→build→verify→completed 全程跑通,calculator red→green,全程无 code-agent 自写 done.json,miner link 也过。
+  5. **e2e 验证过程发现的 4 个真问题(全已修)**:
+     - (a) 路径根不匹配(claude 写 evidence 目录 vs check 查 workspace)→ evidence_candidates 兜底。
+     - (b) 文件名别名(claude 用 design.md vs 约定 spec.md)→ 别名候选 + prompt 绝对路径强化。
+     - (c) PTY 路径不写 anchor(miner link 失败)→ PTY spawn 处补写 anchor。
+     - (d) SPA driver confirm-gate DOM 点击竞态 → API /advance 降级兜底。
+  6. **测试端 asserter 已更新**:`_stage_done` 不再硬断言 done_file;`assert_design` 改查 story/spec.md(context .md 兜底)。
 
 ## STEP 2 验证
 - 日期:
