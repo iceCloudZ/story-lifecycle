@@ -1675,19 +1675,99 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             events=_evs,
                         )
                         if _det and not _stuck_escalated:
-                            escalate_stuck(
-                                story_key=story_key,
-                                stage=stage,
-                                adapter=adapter_name,
-                                detection=_det,
-                                log_event_fn=db.log_event,
-                            )
-                            _stuck_escalated = True
-                            if _pty_logger is not None:
-                                _pty_logger.log_event(
-                                    "stuck_detected", _det.get("reason", ""),
-                                    rule=_det.get("rule", ""),
+                            # STEP 2.3:调度点② 卡住 LLM 诊断(摘要先行 + agentic 例外)。
+                            # STEP 1 的 escalate_stuck 升级为:diagnose_stuck_summary →
+                            # (规则触发)diagnose_stuck_agentic → 决策(restart/escalate/wait)。
+                            # 红线:无打字纠偏(restart-with-seed 替代,评审 C)。
+                            try:
+                                from ..evaluation.stuck_diagnose import (
+                                    diagnose_stuck_agentic as _diag_agentic,
                                 )
+                                from ..evaluation.stuck_diagnose import (
+                                    diagnose_stuck_summary as _diag_summary,
+                                )
+                                from ..evaluation.stuck_diagnose import (
+                                    should_upgrade_agentic as _should_upgrade,
+                                )
+
+                                _facts = {"adapter": adapter_name, "stage": stage}
+                                if _should_upgrade(
+                                    story_key, stage, _det, events=_evs
+                                ):
+                                    _diag = _diag_agentic(
+                                        story_key=story_key, stage=stage,
+                                        detection=_det,
+                                        events_path=str(_pty_logger.events_path),
+                                        story_facts=_facts,
+                                    )
+                                else:
+                                    _diag = _diag_summary(
+                                        story_key=story_key, stage=stage,
+                                        detection=_det, events=_evs,
+                                        story_facts=_facts,
+                                    )
+                                _action = _diag.get("action", "escalate")
+                            except Exception:  # noqa: BLE001 — 诊断失败兜底 escalate
+                                log.exception(
+                                    "[%s/%s] stuck diagnose failed, fallback escalate",
+                                    story_key, stage,
+                                )
+                                _action = "escalate"
+                                _diag = {"action": "escalate", "seed": "", "reason": "诊断失败"}
+
+                            # 执行决策(Handler 副作用)
+                            if _action == "wait":
+                                # slow 类:延长超时,重置 elapsed 让 code agent 继续。
+                                log.info(
+                                    "[%s/%s] stuck diagnose: wait (slow) — 重置 poll 超时",
+                                    story_key, stage,
+                                )
+                                elapsed = 0
+                            elif _action == "restart":
+                                # 杀 + 带 seed 重起(插 retry action,无打字纠偏)。
+                                log.info(
+                                    "[%s/%s] stuck diagnose: restart (seed=%s)",
+                                    story_key, stage, (_diag.get("seed") or "")[:80],
+                                )
+                                _retry = {
+                                    "action": "launch",
+                                    "stage": stage,
+                                    "adapter": adapter_name,
+                                    "focus": f"卡住诊断 restart:{_diag.get('reason','')};seed:{_diag.get('seed','')}",
+                                    "done_file": stage_done_file_rel(story_key, stage),
+                                }
+                                actions.insert(idx + 1, _retry)
+                                ctx["_agent_actions"] = actions
+                                db.update_story(
+                                    story_key,
+                                    context_json=json.dumps(ctx, ensure_ascii=False),
+                                )
+                                if _agent_pty is not None:
+                                    try:
+                                        _agent_pty.kill()
+                                    except Exception:
+                                        pass
+                                _stuck_escalated = True
+                                if _pty_logger is not None:
+                                    _pty_logger.log_event(
+                                        "stuck_restart", _diag.get("reason", ""),
+                                        seed=_diag.get("seed", "")[:200],
+                                    )
+                                break  # 出 poll while,外层 while 取 idx+1 retry
+                            else:  # escalate
+                                escalate_stuck(
+                                    story_key=story_key,
+                                    stage=stage,
+                                    adapter=adapter_name,
+                                    detection=_det,
+                                    log_event_fn=db.log_event,
+                                )
+                                _stuck_escalated = True
+                                if _pty_logger is not None:
+                                    _pty_logger.log_event(
+                                        "stuck_detected", _det.get("reason", ""),
+                                        rule=_det.get("rule", ""),
+                                    )
                         elif not _det:
                             _stuck_escalated = False  # 解除卡住 → 允许下次再卡再报
                     except Exception:  # noqa: BLE001 — 卡住检测失败不影响主轮询
