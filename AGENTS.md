@@ -170,6 +170,22 @@ Two invariants that must hold, both learned from a stuck-story incident (commit 
 
 **Hard rule**: the driver assumes "CLI lifecycle ⊆ driver lifecycle". Any path that breaks this (interactive manual run, emergency-stop, crash) must have a reconciliation entry. `consume_orphan_artifacts` is that entry; don't add a second one.
 
+### Story execution entry — 规划在前，执行在后（`_agent_actions` 必须先有）
+
+执行一个 story 的**正确顺序**是先生成规划、再确认启动，不能直接跳到执行：
+
+1. `POST /api/story/{key}/plan/stream` 或 `/plan/regenerate` → `planner.run_orchestrator_agent` 调 LLM 产出 `_agent_actions`（写进 `context_json`），`_plan_confirmed=False`
+2. `POST /api/story/{key}/plan/confirm` → 设 `_plan_confirmed=True` + `sm_activate(lifecycle_state="开发")` + `start_story_async`
+3. `start_story_async` → `run_story` → `continue_orchestrator_agent` 读 `ctx._agent_actions` 逐个执行
+
+`continue_orchestrator_agent`（`planner.py`）开头直接 `actions = ctx.get("_agent_actions", [])`，**空就 `sm_mark_failed(story_key, "No actions to execute")`**——没有任何 auto-generate plan 的兜底。
+
+- `PUT /api/story/{key}/advance` 的 `active` 分支会直接 `start_story_async`（注释说"single-pass 等 profile 创建即 active，但执行从未触发"），**但不检查 `_agent_actions` 是否存在**。所以 `story create` 后若不先走规划端点就直接 advance，必崩 "No actions to execute"。
+- `start_story_async`（`graph.py`）的 docstring 撒谎说 "Otherwise it auto-generates a plan first"——**代码里没有这个逻辑**，是过时描述。
+- failed 的 story 复位重跑：`POST /plan/regenerate` 是 `failed → active` 的唯一合法通道（清旧 `_agent_actions` + `sm_activate` + 重跑 planner）。`/restore` 只清 `deleted_at`、`/advance` 对 failed 是 no-op、`/abort` 再标一次 failed，都不能用于重跑。
+
+**Anti-pattern**：`story create` 后直接 `PUT /advance` 想跑，或相信 `start_story_async` docstring 的 "auto-generate"。任何 profile（含 single-pass）都必须先走 `/plan/stream` 或 `/plan/regenerate`。真实事件（2026-07-27）：single-pass story 直接 advance → "No actions to execute" failed。
+
 ### Artifact-driven stage completion — done.json 砍掉 + 成果物落地是完成信号
 
 Stage completion no longer relies on the code agent self-reporting via `done.json` (un-trusted — it lies and omits, real incident: design ran 25min without producing done). The completion signal is now **artifacts landing** (DESIGN-artifact-driven-stage-completion v3):

@@ -30,6 +30,33 @@
 - **全自动 FC** — `service/api.py:/plan/stream` → `engine/planner.py:run_orchestrator_agent`（Function-Calling 循环，`llm.invoke_with_tools`）写 `_agent_actions` + `_plan_confirmed=False` → 暂停 → 前端 confirm → `/plan/confirm` → `engine/graph.py:start_story_async` → `continue_orchestrator_agent` 循环执行 actions：launch via `adapters/`（yml 配置）+ `terminal/pty.py` 管 CLI 进程 → 轮询 `.done` → `evaluation/gate.py:run_verify_gate` 硬闸 → advance / retry / fail。**LLM 驱动自己的重试**（planner 重新插入 launch action），**无 Python repair-loop 函数**——`evaluation/evaluator_loop.py` 只是 repair-packet 构造器。
 - **半自动** — `service/api.py:/context/release-prompt` → `context/release_prompt.py` 渲染提示词（ContextResolver）→ 用户拷贝给 code-agent（Claude/Codex）→ `story-context` skill 回填产物。**不走 `engine/planner`**。
 
+### FC 模式的实时监控 — `events.jsonl` 是首选
+
+全自动 FC 跑起来后，**观察 CLI 实时行为的最佳手段是 tail PTY 日志文件**，不是轮询 DB：
+
+- **`<spawn_cwd>/.story/runs/<story_key>/pty_<stage>/events.jsonl`** — 结构化、剥 ANSI、秒级落盘。每行 `{ts, dir, type, text}`：
+  - `dir=output` = CLI 产出（claude/kimi 的思考、工具调用、输出）
+  - `dir=injection` = 编排器注入（区分谁说的）
+  - `dir=system` = stuck 检测等系统事件（`type=stuck_detected` / `stuck_restart`）
+  - `tail -f` 即可秒级盯 CLI 行为，比 DB 审计快得多
+- **`<spawn_cwd>/.story/runs/<story_key>/pty_<stage>/raw.log`** — 字节保真（含 ANSI 颜色/光标），调试终端渲染问题用
+- `spawn_cwd` = `ctx.workspace_path`（规划 LLM 决定的 `D:/worktrees/<slug>/`），退回 story 主 `workspace`。`PtyLogger`（`infra/terminal/pty_logger.py`）的 workspace 参数收的是这个 cwd，不是 `story.workspace` 字段——两者可能不同（见下 workspace 字段注意事项）
+- 仅 planner 自主 spawn 路径创建 PtyLogger；交互式手动 spawn（`/sessions/spawn`）**不落这两层日志**
+
+DB `event_log` 是**分钟级审计载体**（`supervisor_decision` / `awaiting_confirm` / `gate_decision` / `boundary_*` / `completed`），不自动从 PTY 提取，是各模块显式 `db.log_event` 落的。监控实时进度用 events.jsonl，事后审计/复盘用 event_log。
+
+### adapter 自动 recovery — 崩了/卡住自动换 adapter
+
+`continue_orchestrator_agent` 的 poll 循环里有两层 recovery，都**不改代码、只切 adapter 重跑**：
+
+1. **stuck 检测 → restart（同 adapter）**：`detect_stuck`（`supervisor.py`，纯规则：300s 无输出 / 启动 60s 无输出 / 末 5 条连 error）命中 → `diagnose_stuck_summary`（LLM 摘要判定）→ 决策 `wait`/`restart`/`escalate`。`restart` = 杀当前 PTY + 插入 retry action（同 adapter）+ 带 seed 重起，无打字纠偏。
+2. **stage 失败 → rescue（换 adapter）**：poll 循环抛异常或 PTY 退出未落地 → `run_story` 的 `except` 捕获 → `decide_recovery` / `rescue_story` 决策 `retry_new_adapter`（如 claude→kimi），落 `recovery_action` 事件。这是上层（`graph.py`）的兜底，attempt 计数（默认 1/3）。
+
+关键：**recovery 不持久化当前 adapter 的进度**——切 adapter 后新 CLI 从头跑（kimi 不会继承 claude 的上下文）。所以 claude 已 declare 的产物（如 spec.md）会保留，但 kimi 得自己重新探索代码。
+
+**反模式**：把 recovery 当成"正常的多 adapter 协作"。它是故障兜底，正常路径不该频繁触发。频繁触发说明 adapter 选型或 prompt 有问题。
+
+
 ---
 
 ## story-lifecycle 包内分层（5 层 · 物理目录）
