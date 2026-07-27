@@ -70,6 +70,12 @@ pytest -m real_e2e tests/e2e
 
 `testpaths` covers: each package's `tests/` + root `tests/contracts` + `tests/integration` + `tests/e2e`. Root `tests/` is the **cross-package layer** (contracts/integration/e2e) — it does NOT belong to any single package; do not move it into a package.
 
+### Real-story 跑测跟踪（人工盯全程）
+
+跑真实 story 测全流程时,**进度跟踪进** `packages/story-lifecycle/docs/test-runs/`(总表 `README.md` + 每次一份 `RUN-<key>-<date>.md` 详情)。完整操作流程(怎么盯 PTY、卡住判据、怎么记)见 `.claude/skills/run-real-story-test/SKILL.md`——触发词"跑真实story/测全流程/盯一下/看进度"。serve 启停见 `run-story-serve` skill。
+
+**这套机制不是单元测试**(那走 pytest),是**人工端到端走查**:跑一个真实需求 story 穿过编排器,盯 PTY 秒级行为,把发现的 bug(BUGLOG 级)+ 沉淀的 skill 候选记下来。详情模板在 `test-runs/_TEMPLATE.md`。
+
 ## Where things live
 
 ```
