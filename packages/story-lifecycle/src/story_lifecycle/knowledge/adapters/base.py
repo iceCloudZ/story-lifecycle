@@ -91,6 +91,22 @@ class BaseAdapter(ABC):
         """
         return None
 
+    def capture_sid_live(
+        self,
+        story_key: str,
+        stage: str,
+        cwd: str | None = None,
+        since_ts: str | None = None,
+    ) -> str | None:
+        """运行中文件/系统捕获(可选):返回扫描到的 sid 或 ``None``。
+
+        会话运行期间就能从存储里读到 sid 的 CLI 覆写(kimi:扫
+        ``~/.kimi-code/sessions/``,spawn 即建目录)。由 sid_capture 的 live
+        轮询线程周期调用,扫到即回填 DB —— 运行中的会话也能 resume/attach,
+        不用等退出。默认 ``None`` —— 不支持运行中捕获。
+        """
+        return None
+
     def start_session(
         self,
         model: str,

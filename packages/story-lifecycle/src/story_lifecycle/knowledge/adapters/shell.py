@@ -46,6 +46,63 @@ _DEFAULT_RESUME_FLAG: dict[str, list[str]] = {
 }
 
 
+def _parse_since_epoch(since_ts: str | None) -> float:
+    """now_utc_iso 的 "%Y-%m-%dT%H:%M:%SZ" → epoch 秒。解析失败返回 0(不过滤)。"""
+    if not since_ts:
+        return 0.0
+    try:
+        from datetime import datetime, timezone
+
+        return (
+            datetime.strptime(since_ts, "%Y-%m-%dT%H:%M:%SZ")
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+    except Exception:
+        return 0.0
+
+
+def scan_kimi_session_id(cwd: str | None, since_ts: str | None) -> str | None:
+    """扫 kimi 磁盘会话目录,返回 since_ts 之后最新的 ``session_<uuid>`` 或 None。
+
+    kimi CLI 把每个会话写在 ``~/.kimi-code/sessions/wd_<cwd basename>_<hash>/
+    session_<uuid>/``(spawn 时即创建,不用等退出)。这是退出正则之外的第二路
+    捕获(双保险):运行中可扫(live 回填,UI resume/attach 不再等退出),
+    崩溃没吐 resume 行也可扫(post-exit 兜底)。
+
+    best-effort:hash 算法未公开,按 basename 前缀匹配 + mtime 窗口过滤。同名
+    basename 目录并发 spawn 理论上会取到隔壁会话(取最新),但交互式 story 的
+    cwd 是 per-story workspace,实际不撞。目录结构是 kimi 内部实现,版本升级
+    可能变 —— 扫描失败只是退回"退出正则"单路,不崩。
+
+    ``cwd`` 为空时返回 None:无前缀可匹配时扫全部 wd_ 目录会把无关会话
+    (比如用户自己交互开的 kimi)错误回填给 story,宁可不捕获。
+    """
+    if not cwd:
+        return None
+    try:
+        root = Path.home() / ".kimi-code" / "sessions"
+        if not root.is_dir():
+            return None
+        prefix = f"wd_{Path(cwd).name}_"
+        since_epoch = _parse_since_epoch(since_ts)
+        best_name: str | None = None
+        best_mtime = 0.0
+        for wd_dir in root.glob(prefix + "*"):
+            if not wd_dir.is_dir():
+                continue
+            for sess in wd_dir.glob("session_*"):
+                try:
+                    mtime = sess.stat().st_mtime
+                except OSError:
+                    continue
+                if mtime >= since_epoch and (best_name is None or mtime > best_mtime):
+                    best_name, best_mtime = sess.name, mtime
+        return best_name
+    except Exception:
+        return None
+
+
 class ShellAdapter(BaseAdapter):
     """Generic shell adapter — driven by adapters.yaml config.
 
@@ -216,6 +273,30 @@ class ShellAdapter(BaseAdapter):
                     )
 
         return _on_output
+
+    def capture_sid_live(
+        self,
+        story_key: str,
+        stage: str,
+        cwd: str | None = None,
+        since_ts: str | None = None,
+    ) -> str | None:
+        """kimi 运行中扫描磁盘会话目录(双保险之一):spawn 即建目录,不用等退出。"""
+        if self._name.lower() != "kimi":
+            return None
+        return scan_kimi_session_id(cwd, since_ts)
+
+    def capture_sid_post_exit(
+        self,
+        story_key: str,
+        stage: str,
+        cwd: str | None = None,
+        since_ts: str | None = None,
+    ) -> str | None:
+        """kimi 崩溃没吐 resume 行时的兜底(双保险之二):扫磁盘会话目录。"""
+        if self._name.lower() != "kimi":
+            return None
+        return scan_kimi_session_id(cwd, since_ts)
 
     def headless_launch_cmd(self, model: str, prompt: str) -> list[str] | None:
         """Headless mode launch command.

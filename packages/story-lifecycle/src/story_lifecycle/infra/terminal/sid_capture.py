@@ -7,9 +7,12 @@
 - 输出行捕获(kimi):``make_sid_capturer`` 返回 on_output 回调,CLI 退出时把
   sid 吐到终端(``To resume this session: kimi -r session_<uuid>``)→ 挂 daemon
   线程消费 ``pty.add_tap()``,实时喂回调(命中即回填 DB)。
+- 运行中文件扫描(kimi 双保险):``capture_sid_live`` 从磁盘存储扫 sid
+  (``~/.kimi-code/sessions/``,spawn 即建目录)→ live 轮询线程扫到即回填,
+  运行中的会话也能 resume/attach,不用等退出。
 - 文件/系统捕获(opencode):CLI 不吐 sid,但把会话写进存储(``opencode.db``
   SQLite)→ 挂 post-exit watcher,PTY 死亡后调 ``capture_sid_post_exit``,
-  返回非空即回填 DB。
+  返回非空即回填 DB。kimi 也实现此钩子作崩溃兜底(没吐 resume 行时扫目录)。
 
 谁用:api 交互式 spawn 路径(``api._spawn_story_agent_pty``)。它的 PTY 由用户
 自行 /exit,planner 的 stage-done 捕获钩(clean_exit_pty + 同一组 adapter 钩子)
@@ -67,6 +70,9 @@ def arm_sid_capture(
     if on_output is not None:
         _start_sid_capture_tap(pty, on_output)
 
+    _start_live_scan_capture(
+        adapter, pty, story_key=story_key, stage=stage, cwd=cwd or None, since_ts=since
+    )
     _start_post_exit_capture(
         adapter, pty, story_key=story_key, stage=stage, cwd=cwd or None, since_ts=since
     )
@@ -114,6 +120,36 @@ def _start_sid_capture_tap(pty, on_output) -> None:
 
     threading.Thread(
         target=_drain, daemon=True, name=f"sid-capture-{pty.session_id}"
+    ).start()
+
+
+def _start_live_scan_capture(
+    adapter, pty, *, story_key: str, stage: str, cwd: str | None, since_ts: str
+) -> None:
+    """Daemon 线程:会话运行中周期调 capture_sid_live,扫到即回填 DB。
+
+    对未覆写该钩子的 adapter(默认返回 None)只是 2s 空轮询,代价可忽略 ——
+    策略判断留在 adapter(对齐 post-exit watcher 的哲学)。DB 已有 sid(退出
+    正则先命中)即提前退出;PTY 死亡后由 post-exit watcher 做最后一次尝试。
+    """
+    adapter_name = getattr(adapter, "name", "") or ""
+
+    def _poll() -> None:
+        try:
+            while pty.alive:
+                row = db.get_session(story_key, stage, adapter_name)
+                if row and row.get("session_id"):
+                    return
+                sid = adapter.capture_sid_live(story_key, stage, cwd, since_ts)
+                if sid:
+                    db.set_session_id(story_key, stage, adapter_name, sid)
+                    return
+                time.sleep(2)
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
+
+    threading.Thread(
+        target=_poll, daemon=True, name=f"sid-live-scan-{pty.session_id}"
     ).start()
 
 

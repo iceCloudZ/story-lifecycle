@@ -149,13 +149,13 @@ Spawners (api.py / planner.py) read `prespecified_session_id` to decide whether 
 
 Two spawn-path corollaries (2026-07-27, `tapd-1144381896001067713` incident):
 
-- **Interactive spawn path captures via `arm_sid_capture`** (`infra/terminal/sid_capture.py`) — the single strategy executor for all three sid models on PTY spawn paths: prespecified → no-op; output-driven (kimi) → daemon thread drains `pty.add_tap()` into `make_sid_capturer`'s `on_output`; file-scan (opencode) → post-exit watcher calls `capture_sid_post_exit` after PTY death and backfills DB. The api interactive path (`_spawn_story_agent_pty`) arms it at NEW-spawn time (its PTY exits on the user's own `/exit`, so planner's stage-done hooks never fire). `since_ts` must be captured **before** spawn (opencode's `time_created` is the CLI start moment). Resume-spawned sessions skip arming (DB already has the sid).
+- **Interactive spawn path captures via `arm_sid_capture`** (`infra/terminal/sid_capture.py`) — the single strategy executor for all three sid models on PTY spawn paths: prespecified → no-op; output-driven (kimi) → daemon thread drains `pty.add_tap()` into `make_sid_capturer`'s `on_output`; file-scan (opencode) → post-exit watcher calls `capture_sid_post_exit` after PTY death and backfills DB. kimi additionally gets a **live scan** (`capture_sid_live`, polling `~/.kimi-code/sessions/` every 2s) so a running session's sid lands in DB without waiting for exit — the exit-line regex remains as second path (双保险). The api interactive path (`_spawn_story_agent_pty`) arms it at NEW-spawn time (its PTY exits on the user's own `/exit`, so planner's stage-done hooks never fire). `since_ts` must be captured **before** spawn (opencode's `time_created` is the CLI start moment). Resume-spawned sessions skip arming (DB already has the sid).
 - **`attach_id` is the WS attach credential, not the DB sid.** For CLI-allocated adapters the DB sid stays empty while the session runs, so `GET /api/story/{key}/sessions` returns `attach_id` (the live PTY's registry id = `compute_session_id`) alongside `session_id`. The frontend must attach via `attach_id` and treat `session_id` as the resume credential only. Resume requires a **captured** sid (or a prespecified sid + marker): never pass the uuid5 fallback to a CLI-allocated adapter's resume flag (`kimi -S <uuid5>` points at a nonexistent session).
 
 | CLI | sid model | capture |
 |---|---|---|
 | claude | prespecified (uuid5) | none |
-| kimi | CLI-allocated (`session_<uuid>`) | exit-line regex (`make_sid_capturer`) |
+| kimi | CLI-allocated (`session_<uuid>`) | exit-line regex (`make_sid_capturer`) + 磁盘扫描双保险(`capture_sid_live` 运行中扫 `~/.kimi-code/sessions/`,`capture_sid_post_exit` 崩溃兜底) |
 | opencode | CLI-allocated (`ses_…`) | SQLite query (`capture_sid_post_exit`) |
 | codex | CLI-allocated | not captured (no resume support yet) |
 

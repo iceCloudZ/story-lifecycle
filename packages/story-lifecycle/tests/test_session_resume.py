@@ -161,11 +161,16 @@ def test_prespecified_session_id_capability():
     assert _kimi_adapter().prespecified_session_id is False
     # BaseAdapter 默认 False(基类未声明即「须捕获」)
     assert _kimi_adapter().capture_sid_post_exit("S", "design") is None
-    # kimi 走输出捕获(make_sid_capturer 非空),不走文件扫描(capture_sid_post_exit 返回 None)
+    # kimi 双保险:输出捕获(make_sid_capturer)+ 磁盘扫描(capture_sid_live /
+    # capture_sid_post_exit,扫 ~/.kimi-code/sessions/)。cwd 为空时扫描安全返回
+    # None(无前缀会把无关会话错误回填)。
     assert _kimi_adapter().make_sid_capturer("S", "design") is not None
-    # claude 两种捕获都不需要
+    assert _kimi_adapter().capture_sid_live("S", "design", None, None) is None
+    assert _kimi_adapter().capture_sid_post_exit("S", "design", None, None) is None
+    # claude 不需要任何捕获钩子
     assert ClaudeAdapter().make_sid_capturer("S", "design") is None
     assert ClaudeAdapter().capture_sid_post_exit("S", "design") is None
+    assert ClaudeAdapter().capture_sid_live("S", "design", None, None) is None
 
 
 def test_compute_session_id_three_field():
