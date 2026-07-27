@@ -13,6 +13,7 @@ remote_url points to GitLab; falls back to local ``git diff`` otherwise.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -128,9 +129,14 @@ def _pick_repo_and_branches(
       prepared (state=unprepared or path missing on disk), fall back to the project's
       main ``repo_path`` and leave ``worktree_path=None`` so the caller can flag the
       fallback. The story's own ``workspace`` dir is irrelevant here.
-    - ``project_id`` None: legacy behaviour — use ``story.workspace`` if it's a git
-      repo, else the first bound project whose ``repo_path`` is a git repo. Branches
-      come from the first binding that defines them.
+    - ``project_id`` None: legacy behaviour — resolve the story workspace
+      (preferring ``context_json.workspace_path``, the planner-created per-story
+      workspace, over the intake-provided ``story.workspace`` column, which may
+      point at an old workspace in handoff/rerun scenarios). The workspace root
+      itself is usually not a repo — the agent runs ``git worktree add`` for each
+      project inside it — so immediate children are scanned for a git checkout.
+      Falls back to the first bound project whose ``repo_path`` is a git repo.
+      Branches come from the first binding that defines them.
     """
     story = get_story(story_key)
     if not story:
@@ -161,12 +167,44 @@ def _pick_repo_and_branches(
         return repo, source_branch, base_branch, resolved_project_id, worktree_path
 
     # Legacy: no project_id — workspace existence matters here (it's the diff target).
-    workspace = story.get("workspace", "")
-    if not workspace or not Path(workspace).exists():
-        raise ValueError(f"invalid workspace: {workspace}")
+    # context_json.workspace_path 优先于 story.workspace 列:后者是 intake 时定的,
+    # 接手/rerun 场景下可能指向旧 workspace(真实事件 2026-07-27:local-amountraise-rerun
+    # 的 workspace 列指向旧 run 目录,里面只有 agent 误 git init 的空仓)。
+    try:
+        ctx = json.loads(story.get("context_json") or "{}")
+    except (TypeError, ValueError):
+        ctx = {}
+    legacy_workspace = story.get("workspace", "")
 
-    repo = Path(workspace)
-    if not (repo / ".git").exists():
+    repo: Path | None = None
+    workspace_exists = False
+    for candidate_str in (ctx.get("workspace_path") or "", legacy_workspace):
+        if not candidate_str:
+            continue
+        candidate = Path(candidate_str)
+        if not candidate.exists():
+            continue
+        workspace_exists = True
+        if (candidate / ".git").exists():
+            repo = candidate
+            break
+        # workspace 根通常不是仓 — agent 在其中 git worktree add 各项目仓
+        # (AGENTS.md「Per-story workspace」约定)。扫一层子目录找 agent 的 checkout;
+        # 找到即视为 worktree(diff 目标),前端据此不再显示「worktree 未就绪」。
+        child = next(
+            (c for c in sorted(candidate.iterdir()) if c.is_dir() and (c / ".git").exists()),
+            None,
+        )
+        if child is not None:
+            repo = child
+            worktree_path = str(child)
+            break
+
+    if not workspace_exists:
+        raise ValueError(f"invalid workspace: {legacy_workspace}")
+
+    if repo is None:
+        # workspace 存在但本身和一层子目录都不是仓 → 回退到绑定项目的主仓。
         for sp in bindings:
             proj = get_project(sp.get("project_id"))
             if not proj:
@@ -175,10 +213,11 @@ def _pick_repo_and_branches(
             if candidate.exists() and (candidate / ".git").exists():
                 repo = candidate
                 resolved_project_id = sp.get("project_id")
+                worktree_path = None  # 回退主仓,不是 agent 的 checkout
                 break
 
-    if not (repo / ".git").exists():
-        raise ValueError(f"workspace is not a git repository: {workspace}")
+    if repo is None:
+        raise ValueError(f"workspace is not a git repository: {legacy_workspace}")
 
     # Branches: first binding that defines them (preserves legacy precedence).
     source_branch = ""

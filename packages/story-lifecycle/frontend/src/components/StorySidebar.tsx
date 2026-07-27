@@ -67,13 +67,13 @@ function resolveTapdUrl(storyKey: string, tapdUrl?: string): string {
 }
 
 // 交付物 key → {跳转 tab, 可选打开的 doc_type}。
-// doc 类(doc_type)→ docs tab + 打开该 doc;code → code tab;delivery → 无目标(只展示)。
+// doc 类(doc_type)→ docs tab + 打开该 doc;code → code tab。
 const DELIV_TARGET: Record<string, { tab: string; doc?: string }> = {
   prd: { tab: 'docs', doc: 'prd' },
   spec: { tab: 'docs', doc: 'spec' },
   code: { tab: 'code' },
   test_report: { tab: 'docs', doc: 'test_report' },
-  // delivery: 无目标,只展示状态
+  delivery: { tab: 'docs', doc: 'delivery' },
 }
 
 // doc 类交付物(spec/test_report/prd)走 docApi.confirm(写 story_doc);

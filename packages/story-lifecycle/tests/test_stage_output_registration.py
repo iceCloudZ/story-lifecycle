@@ -154,3 +154,34 @@ def test_unknown_stage_skipped():
     _register_stage_outputs(
         "TEST-REG-006", "unknown_stage", {"files_changed": ["x.md"]}
     )
+
+
+def test_verify_stage_registers_files_by_real_doc_type():
+    """files_changed 里能反查出 doc_type 的文件必须按真实类型登记,不按 stage kind。
+
+    回归(2026-07-27 local-amountraise-rerun):verify 阶段的 delivery.md 被按
+    stage kind(test_report)登记,delivery 内容三次覆盖 story_doc 里的真测试报告。
+    """
+    from story_lifecycle.orchestrator.engine.planner import (
+        _register_stage_outputs,
+    )
+    from story_lifecycle.infra.db import models as db
+
+    _setup_story(db, "TEST-REG-007")
+    db.upsert_story(
+        "TEST-REG-007",
+        title="verify test",
+        workspace="/tmp/test",
+        profile="minimal",
+        current_stage="verify",
+        status="active",
+    )
+    _register_stage_outputs(
+        "TEST-REG-007",
+        "verify",
+        {"files_changed": ["story/123/test-report.md", "story/123/delivery.md"]},
+    )
+    docs = db.get_story_documents("TEST-REG-007")
+    by_ref = {d["ref"]: d["kind"] for d in docs}
+    assert by_ref["story/123/test-report.md"] == "test_report"
+    assert by_ref["story/123/delivery.md"] == "delivery"

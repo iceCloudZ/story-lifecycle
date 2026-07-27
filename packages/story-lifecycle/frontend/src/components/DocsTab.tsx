@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { docApi, type DocListItem } from '../api/client'
@@ -16,6 +16,12 @@ export default function DocsTab({ storyKey }: { storyKey: string }) {
   const [searchParams, setSearchParams] = useSearchParams()
   // 初始 editing 从 URL doc 参数取(sidebar 交付物点击跳来);默认 null 走列表。
   const [editing, setEditing] = useState<string | null>(searchParams.get('doc'))
+  // URL doc 参数变化要同步进来:已在 docs tab 时再点侧栏另一个交付物,组件不
+  // 重挂载,只靠 useState 惰性初始值会停在旧文档。
+  const urlDoc = searchParams.get('doc')
+  useEffect(() => {
+    setEditing(urlDoc)
+  }, [urlDoc])
   const [newType, setNewType] = useState('')
   const [newTitle, setNewTitle] = useState('')
 
@@ -28,6 +34,8 @@ export default function DocsTab({ storyKey }: { storyKey: string }) {
   if (editing) {
     return (
       <DocEditor
+        // key 强制切换 doc 时重挂载,避免上一个文档的编辑态残留。
+        key={editing}
         storyKey={storyKey}
         docType={editing}
         onBack={() => {

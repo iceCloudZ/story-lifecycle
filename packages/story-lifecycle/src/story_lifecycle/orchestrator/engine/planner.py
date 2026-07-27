@@ -740,10 +740,15 @@ def gate_spec_reason(repair_spec: dict) -> str:
 def _register_stage_outputs(story_key: str, stage: str, done_data: dict) -> None:
     """把 stage done 产出的文件登记进 story_document(BUG #17)。
 
-    纯确定性:读 done_data["files_changed"],按 stage 推导 kind,调
-    db.create_document(幂等)。让前端「文档」卡片可追溯 design/plan/test_report。
+    纯确定性:读 done_data["files_changed"],按文件名反查 doc_type(查不到
+    才回退 stage 默认 kind),调 db.create_document(幂等)。让前端「文档」
+    卡片可追溯 design/plan/test_report。
 
     - 过滤 .story/done/*.json(done 握手文件本身不算文档)。
+    - 文件名能反查出已知 doc_type 的(delivery.md→delivery 等)按真实类型
+      登记 — 同阶段多 doc_type 时,若一律按 stage kind 登记,后落地的文件会
+      覆盖前者的内容(真实事件 2026-07-27:verify 的 delivery.md 被登记成
+      test_report,local-amountraise-rerun 的测试报告内容被交付文档覆盖)。
     - files_changed 为空时,也读 done_data 的显式路径字段(spec_path 等)兜底。
     - stage 不在 _STAGE_DOC_KIND 里则跳过(防御)。
     """
@@ -752,6 +757,7 @@ def _register_stage_outputs(story_key: str, stage: str, done_data: dict) -> None
         return
 
     from ...infra.db import models as db  # 延迟 import(避免循环)
+    from ...infra.story_paths import doc_type_for_filename
 
     paths: list[str] = []
     for f in done_data.get("files_changed") or []:
@@ -764,6 +770,7 @@ def _register_stage_outputs(story_key: str, stage: str, done_data: dict) -> None
             paths.append(v)
 
     for ref in paths:
+        ref_kind = doc_type_for_filename(Path(ref).name) or kind
         # Unified dual-write: legacy story_document (ref) + new story_doc
         # (full content versioned). Both are best-effort; going through the
         # shared helper keeps the two tables in sync (see doc_sync).
@@ -774,7 +781,7 @@ def _register_stage_outputs(story_key: str, stage: str, done_data: dict) -> None
 
             register_doc_dual_write(
                 story_key,
-                kind,
+                ref_kind,
                 ref,
                 change_reason=f"AI {stage} 阶段产出",
                 author="ai",

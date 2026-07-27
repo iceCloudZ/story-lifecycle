@@ -75,6 +75,19 @@ def doc_filename(doc_type: str) -> str:
     return _DOC_FILENAMES.get(doc_type, f"{doc_type}.md")
 
 
+def doc_type_for_filename(filename: str) -> str | None:
+    """Reverse of :func:`doc_filename` for KNOWN types ('delivery.md'→'delivery').
+
+    Returns None when the basename isn't a canonical doc filename — callers must
+    NOT guess a custom type from an arbitrary ``{type}.md`` name (that would
+    misclassify ordinary markdown files as docs).
+    """
+    for dt, fn in _DOC_FILENAMES.items():
+        if fn == filename:
+            return dt
+    return None
+
+
 def story_doc_path(
     workspace: str | Path, story_key: str, doc_type: str, title: str = ""
 ) -> Path:

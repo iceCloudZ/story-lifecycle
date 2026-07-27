@@ -5,6 +5,7 @@ repo_path, falls back to repo_path when worktree is unprepared/missing, and
 the response carries project_id/repo_path/worktree_path for the frontend.
 """
 
+import json
 import subprocess
 
 import pytest
@@ -98,6 +99,37 @@ class TestPickRepoAndBranches:
         repo, src, base, pid, wt = _pick_repo_and_branches("S", None)
         assert str(repo) == str(ws)
         assert wt is None   # legacy path never reports a worktree
+
+    def test_no_project_id_prefers_context_workspace_path(
+        self, isolated_story_home, tmp_path
+    ):
+        """接手/rerun 场景回归(2026-07-27 local-amountraise-rerun):
+        story.workspace 列指向旧 workspace(被误 git init 的空仓),
+        context_json.workspace_path 才是本次执行的 workspace — 必须优先后者。"""
+        old_ws = tmp_path / "old-ws"
+        _make_git_repo(old_ws)  # 旧 workspace 本身也是仓,但不能选它
+        new_ws = tmp_path / "new-ws"
+        child = new_ws / "hc-limit"
+        _make_git_repo(child)  # agent 在新 workspace 里 worktree add 的项目仓
+        db.create_story(story_key="S", title="t", workspace=str(old_ws))
+        db.upsert_story("S", context_json=json.dumps({"workspace_path": str(new_ws)}))
+
+        repo, src, base, pid, wt = _pick_repo_and_branches("S", None)
+        assert str(repo) == str(child)
+        assert wt == str(child)  # 子 worktree → 前端不再显示「worktree 未就绪」
+
+    def test_no_project_id_discovers_child_worktree(
+        self, isolated_story_home, tmp_path
+    ):
+        """workspace 根不是仓(agent 在其中 git worktree add 了项目仓)→ 扫一层子目录。"""
+        ws = tmp_path / "ws"
+        child = ws / "proj"
+        _make_git_repo(child)
+        db.create_story(story_key="S", title="t", workspace=str(ws))
+
+        repo, src, base, pid, wt = _pick_repo_and_branches("S", None)
+        assert str(repo) == str(child)
+        assert wt == str(child)
 
 
 class TestGetStoryWorkspaceDiffFields:
