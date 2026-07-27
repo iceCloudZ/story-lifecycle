@@ -79,10 +79,29 @@ class TestPtyWebSocketCloseCodes:
         pty = _fake_pty("STORY-1", alive=True)
         pty_mod._ptys["STORY-1"] = {"pty-alive": pty}
 
-        # Put a chunk into the PTY queue; the handler will forward it.
-        pty._queue.put_nowait(b"hello terminal")
+        # Output that landed before the WS attach goes into scrollback; the
+        # handler replays it first so a fresh attach sees recent output.
+        pty._distribute(b"hello terminal")
 
         client = TestClient(app)
         with client.websocket_connect("/ws/pty/STORY-1/pty-alive") as ws:
             data = ws.receive_bytes()
             assert data == b"hello terminal"
+
+    def test_reconnect_replays_scrollback(self, isolated_pty_registry):
+        """Tab 切换后重连:先回放 scrollback,再直播新输出(此前重连 = 黑屏)。"""
+        pty = _fake_pty("STORY-1", alive=True)
+        pty_mod._ptys["STORY-1"] = {"pty-live": pty}
+
+        pty._distribute(b"line-1\r\n")
+        pty._distribute(b"line-2\r\n")
+
+        client = TestClient(app)
+        # 第一次 attach:回放全部历史
+        with client.websocket_connect("/ws/pty/STORY-1/pty-live") as ws:
+            assert ws.receive_bytes() == b"line-1\r\nline-2\r\n"
+        # 断开期间又有新输出
+        pty._distribute(b"line-3\r\n")
+        # 第二次 attach(模拟切 tab 回来):回放含断开期间的输出
+        with client.websocket_connect("/ws/pty/STORY-1/pty-live") as ws:
+            assert ws.receive_bytes() == b"line-1\r\nline-2\r\nline-3\r\n"

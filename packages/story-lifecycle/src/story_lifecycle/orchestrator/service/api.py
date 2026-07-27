@@ -293,10 +293,20 @@ async def _pty_ws_handler(ws: WebSocket, story_id: str, session_id: str = ""):
         await ws.close(code=1000)
         return
 
+    # 每连接一个 tap(广播副本),不再竞争性消费主 _queue:多客户端各自收全量,
+    # 旧连接残留的 reader 也不会偷走新连接的输出。
+    tap = pty.add_tap()
+
     async def read_and_send():
+        # 先回放 scrollback:tab 切换/刷新后的重连能补回屏幕内容(此前 attach
+        # 只转发新输出,空闲会话重连 = 黑屏)。tap 在回放前注册,回放期间到的
+        # 新输出进 tap 随后续直播发出,不丢。
+        backlog = pty.scrollback()
+        if backlog:
+            await ws.send_bytes(backlog)
         while pty.alive:
             try:
-                data = await asyncio.wait_for(pty._queue.get(), timeout=0.5)
+                data = await asyncio.wait_for(tap.get(), timeout=0.5)
                 await ws.send_bytes(data)
             except asyncio.TimeoutError:
                 continue
@@ -334,6 +344,8 @@ async def _pty_ws_handler(ws: WebSocket, story_id: str, session_id: str = ""):
         await asyncio.gather(read_and_send(), recv_and_write())
     except Exception:
         pass
+    finally:
+        pty.remove_tap(tap)
 
 
 @app.websocket("/ws/pty/{story_id}/{session_id}")

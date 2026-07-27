@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from typing import Callable, Optional
 
 
@@ -28,6 +29,11 @@ def _has_winpty() -> bool:
 
 def _has_unix_pty() -> bool:
     return sys.platform not in ("win32", "emscripten") and hasattr(os, "fork")
+
+
+# WS attach 回放的上限:保留最近 ~256KB 输出(足够重绘屏幕 + 一段历史),
+# 超长的 CLI 会话也不至于无限占内存。
+_SCROLLBACK_MAX_BYTES = 256 * 1024
 
 
 # ---- Windows Job Object: kill the whole process tree on .kill() ----
@@ -175,7 +181,11 @@ class ManagedPty:
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=512)
         self._taps: list[
             asyncio.Queue
-        ] = []  # 旁路 taps(supervisor 等),每条输出复制一份
+        ] = []  # 旁路 taps(supervisor / WS handler / sid 捕获),每条输出复制一份
+        # scrollback 环形缓冲:WS attach 时回放,让 tab 切换/刷新后的重连能补回
+        # 屏幕内容(此前 attach 只转发新输出,空闲会话重连 = 黑屏)。
+        self._scrollback: deque[bytes] = deque()
+        self._scrollback_size = 0
         self._alive = True
         self._process: object | None = None
         self._read_thread: threading.Thread | None = None
@@ -259,7 +269,7 @@ class ManagedPty:
             self._alive = False
 
     def _distribute(self, data: bytes) -> None:
-        """Put data to main queue (Web Board) + all taps (supervisor).
+        """Put data to scrollback + main queue + all taps.
 
         Drop oldest on full to avoid blocking the read thread.
         """
@@ -269,6 +279,11 @@ class ManagedPty:
                 self._logger.log_output(data)
             except Exception:  # noqa: BLE001 — 日志失败不能炸 PTY 主流程
                 pass
+        # scrollback:WS attach 回放用,超 cap 从头部截。
+        self._scrollback.append(data)
+        self._scrollback_size += len(data)
+        while self._scrollback_size > _SCROLLBACK_MAX_BYTES and self._scrollback:
+            self._scrollback_size -= len(self._scrollback.popleft())
         for q in [self._queue, *self._taps]:
             try:
                 q.put_nowait(data)
@@ -281,6 +296,10 @@ class ManagedPty:
                     q.put_nowait(data)
                 except asyncio.QueueFull:
                     pass
+
+    def scrollback(self) -> bytes:
+        """最近输出(WS attach 时回放,重绘客户端屏幕)。"""
+        return b"".join(self._scrollback)
 
     def add_tap(self, maxsize: int = 512) -> asyncio.Queue:
         """Register a tap queue that receives a copy of every output chunk.

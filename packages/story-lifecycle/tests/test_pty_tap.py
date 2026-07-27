@@ -54,3 +54,32 @@ class TestRemoveTap:
         # 主 queue FIFO: before 仍在(remove 不影响主 queue),after 紧随
         assert pty._queue.get_nowait() == b"before"
         assert pty._queue.get_nowait() == b"after"
+
+
+class TestScrollback:
+    def test_accumulates_output_for_replay(self):
+        """scrollback() 按序返回全部历史输出(WS attach 回放用)。"""
+        pty = _fake_pty()
+
+        pty._distribute(b"aaa")
+        pty._distribute(b"bbb")
+
+        assert pty.scrollback() == b"aaabbb"
+
+    def test_caps_at_max_bytes_dropping_oldest(self):
+        """超过 cap 从头部截断,保留最近的输出。"""
+        from story_lifecycle.infra.terminal.pty import _SCROLLBACK_MAX_BYTES
+
+        pty = _fake_pty()
+        chunk = b"x" * 1024
+        for _ in range(_SCROLLBACK_MAX_BYTES // 1024 + 8):
+            pty._distribute(chunk)
+
+        back = pty.scrollback()
+        assert len(back) <= _SCROLLBACK_MAX_BYTES
+        assert back == chunk * (len(back) // 1024)  # 尾部是最近的完整 chunk
+
+    def test_empty_scrollback(self):
+        """无输出时 scrollback 为空字节串(attach 直接进直播)。"""
+        pty = _fake_pty()
+        assert pty.scrollback() == b""
