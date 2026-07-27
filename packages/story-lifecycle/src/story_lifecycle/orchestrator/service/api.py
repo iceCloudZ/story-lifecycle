@@ -598,6 +598,7 @@ def _build_interactive_stage_prompt(story: dict, stage: str) -> str:
         task_actions=_default_actions,
         grill=True if _is_single else False,  # single-pass 默认 grill(对齐 fallback)
         is_single_stage=_is_single,
+        seed_context=ctx.get("seed_context", ""),
     )
 
 
@@ -3321,6 +3322,7 @@ def api_confirm_deliverable(story_key: str, deliv_key: str):
 class StartStoryRequest(BaseModel):
     project_ids: list[int] = []
     content: str = ""  # PRD / 需求正文，开始开发时必填，design 阶段注入给 CLI
+    seed_context: str = ""  # 接手中途需求:已有工作说明,写入 context_json.seed_context
     branch: str = ""  # 预生成的分支名（由 intake preview 产出），保存时直接复用
 
 
@@ -3631,10 +3633,15 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
     intake_state = story.get("intake_state", "ready")
     req = req or StartStoryRequest()
 
+    # 接手中途需求:用户可能只填了 seed_context(已有工作说明)没填 PRD content。
+    # 用 seed_context 兜底当 PRD 正文——接手说明本身描述了需求,写成 PRD 文件后
+    # design/verify 阶段的 prd_path 注入仍能工作。用户填了 content 则 content 优先。
+    effective_content = req.content or req.seed_context
+
     # Intake: user-provided PRD wins; otherwise source-backed stories can ask the
     # built-in PRD generator LLM to prepare or route PRD creation.
     prd_content, intake_error = _prepare_intake_prd_content(
-        story_key, story, req.content
+        story_key, story, effective_content
     )
     if intake_error:
         return intake_error
@@ -3670,6 +3677,11 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
         prd_file.parent.mkdir(parents=True, exist_ok=True)
         prd_file.write_text(prd_content, encoding="utf-8")
         db.update_context(story_key, "prd_path", str(prd_file))
+        # 接手中途需求:把 seed_context 写进 context_json,供规划 LLM
+        # (run_orchestrator_agent)和执行 prompt(_build_cli_prompt 的
+        # "### 已有工作(接手)" section)读取。
+        if req.seed_context.strip():
+            db.update_context(story_key, "seed_context", req.seed_context.strip())
         existing_prd = [
             d for d in db.get_story_documents(story_key) if d.get("kind") == "prd"
         ]

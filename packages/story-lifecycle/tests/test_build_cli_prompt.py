@@ -58,6 +58,36 @@ class TestExecConstraint:
         assert "完成后必须写入文件" not in p
 
 
+class TestSeedContextSection:
+    """接手中途需求:seed_context → "### 已有工作(接手)" section。
+
+    镜像 prd_section 的条件渲染模式——字段空就不出 section,新建 story 零影响。
+    """
+
+    def test_seed_context_renders_section(self, tmp_path):
+        """传 seed_context → prompt 含 "### 已有工作(接手)" + 内容。"""
+        p = _build("verify", tmp_path, seed_context="已有 spec.md,代码写到一半,差测试")
+        assert "### 已有工作(接手)" in p
+        assert "已有 spec.md" in p
+
+    def test_empty_seed_context_omits_section(self, tmp_path):
+        """不传 seed_context → prompt 不含接手 section(新建 story 零影响)。"""
+        p = _build("verify", tmp_path)
+        assert "### 已有工作(接手)" not in p
+
+    def test_seed_section_after_prd_section(self, tmp_path):
+        """接手 section 在 PRD section 之后(transcript 之前)。"""
+        p = _build(
+            "verify",
+            tmp_path,
+            prd_path="/fake/prd.md",
+            seed_context="接手说明内容",
+        )
+        idx_prd = p.index("### PRD / 需求详情")
+        idx_seed = p.index("### 已有工作(接手)")
+        assert idx_prd < idx_seed
+
+
 class TestTaskListSection:
     """task_actions → 任务清单段(按 order 排序)。"""
 

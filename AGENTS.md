@@ -186,6 +186,26 @@ Two invariants that must hold, both learned from a stuck-story incident (commit 
 
 **Anti-pattern**：`story create` 后直接 `PUT /advance` 想跑，或相信 `start_story_async` docstring 的 "auto-generate"。任何 profile（含 single-pass）都必须先走 `/plan/stream` 或 `/plan/regenerate`。真实事件（2026-07-27）：single-pass story 直接 advance → "No actions to execute" failed。
 
+### 接手中途需求 — handoff 模式（`seed_context`）
+
+接手一个外部已开始的需求（story 没建、部分成果物已在 workspace）：
+
+- 前端 `IntakeStartModal` 顶部 `.ui-chip` 模式切换选「接手中途需求」→ 默认切 `single-pass` profile（单阶段包干，agent 审阅已有 + 补全缺口）
+- 「接手说明」文字（做到哪了、还差什么）→ `/start` body 的 `seed_context` → `context_json.seed_context`
+- 已有成果物（`spec.md`/代码/测试报告）由**用户自己放进 workspace 目录**，不做文件上传。`check_artifacts_landed` 会自然看见它们
+- handoff 模式 PRD 可选：用户没填 `content` 时，后端用 `seed_context` 兜底当 PRD 正文（`api.py` `/start` handler 的 `effective_content = req.content or req.seed_context`），否则 `_prepare_intake_prd_content` 会因 `content_required` 挡住
+
+`seed_context` 注入**两个 LLM 调度点**（这是关键——之前规划 LLM 根本不读 `context_json`）：
+
+1. **规划 LLM**（`run_orchestrator_agent`）：读 `ctx.get("seed_context")` → 拼进 `_build_agent_user_message` 的「接手说明」段。让规划 LLM 知道这是接手需求，决定 `workspace_slug`/`task_actions` 时有依据
+2. **执行 prompt**（`_build_cli_prompt`）：`### 已有工作(接手)` section（紧跟 `### PRD` 之后）。agent 跑起来时直接看见接手说明
+
+单阶段包干语义：agent 审阅已有工作 + 补全缺口，三件 artifact（`story/spec.md`, `git`, `story/test-report.md`）齐全即完成。**不是 orphan-claim 跳过**（那是 minimal 多阶段的机制——spec 在跳 design、git 有改动跳 build）。
+
+**顺带修的潜伏 bug**（2026-07-27）：`run_orchestrator_agent` 原代码 `content = story.get("content","")`（`planner.py`）读的是**不存在的 DB 列**（`content` 不在 `VALID_COLUMNS`）→ 永远空串 → 规划 LLM 从来看不到任何 intake material，只凭 title 一个字面量做规划。改成从 `context_json.prd_path` 读 PRD 文件前 3000 字（`_read_prd_snippet` helper，best-effort 失败返空不阻塞规划）。
+
+**Anti-pattern**：在 `/create`（`CreateStoryRequest`）加 `seed_context`。`/create` 的 `content` 字段已经是死的（handler 不转发，见 `api.py` create_story）——在死字段旁加新字段风险高。`/start` 才是 intake material 的规范入口（已有 `content` → PRD 文件 + `context_json.prd_path` 的完整链路）。
+
 ### Artifact-driven stage completion — done.json 砍掉 + 成果物落地是完成信号
 
 Stage completion no longer relies on the code agent self-reporting via `done.json` (un-trusted — it lies and omits, real incident: design ran 25min without producing done). The completion signal is now **artifacts landing** (DESIGN-artifact-driven-stage-completion v3):

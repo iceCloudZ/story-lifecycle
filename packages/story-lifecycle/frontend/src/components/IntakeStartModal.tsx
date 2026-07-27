@@ -23,6 +23,7 @@ export type IntakeConfirmInput = {
   workspace: string
   projectIds: number[]
   content: string
+  seedContext: string
   branch: string
 }
 
@@ -74,7 +75,7 @@ export function useIntakeStart() {
       const r = await fetch(`/api/story/${storyKey}/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_ids: input.projectIds, content: input.content, branch: input.branch }),
+        body: JSON.stringify({ project_ids: input.projectIds, content: input.content, seed_context: input.seedContext, branch: input.branch }),
       })
       if (!r.ok) {
         let err: Record<string, unknown>
@@ -141,6 +142,10 @@ export function IntakeStartModal({ story, notice, onClose, onConfirm }: {
   const [previewStartedAt, setPreviewStartedAt] = useState<number | null>(null)
   const [localNotice, setLocalNotice] = useState<StartNotice | null>(null)
   const [branch, setBranch] = useState('')
+  // 接手中途需求模式:新建(默认) vs 接手。接手模式默认 single-pass profile,
+  // 显示"接手说明"字段(已有工作描述),已有的 spec.md/代码由用户自己放进 workspace。
+  const [mode, setMode] = useState<'new' | 'handoff'>('new')
+  const [seedContext, setSeedContext] = useState('')
   const activeNotice = localNotice || notice
 
   useEffect(() => {
@@ -253,7 +258,12 @@ export function IntakeStartModal({ story, notice, onClose, onConfirm }: {
   }
 
   function handleConfirm() {
-    if (isNew && (!key.trim() || !workspace.trim() || !content.trim())) return
+    // handoff 模式:接手说明必填,PRD 可选(后端用 seed_context 兜底当 PRD 正文)。
+    // 新建模式:PRD(content)必填。
+    if (isNew) {
+      if (!key.trim() || !workspace.trim()) return
+      if (mode === 'handoff' ? !seedContext.trim() : !content.trim()) return
+    }
     setLoading(true)
     Promise.resolve(onConfirm({
       key: key.trim(),
@@ -262,6 +272,7 @@ export function IntakeStartModal({ story, notice, onClose, onConfirm }: {
       workspace: workspace.trim(),
       projectIds: selectedProjects,
       content,
+      seedContext,
       branch,
     })).finally(() => setLoading(false))
   }
@@ -296,6 +307,25 @@ export function IntakeStartModal({ story, notice, onClose, onConfirm }: {
           {story ? story.title : '创建 Story、选择工作区，并准备 PRD 后进入规划'}
         </p>
         <div className="modal-body">
+          {isNew && (
+            <div className="modal-mode-switch">
+              <button
+                type="button"
+                className={`ui-chip${mode === 'new' ? ' active' : ''}`}
+                onClick={() => setMode('new')}
+              >
+                新建需求
+              </button>
+              <button
+                type="button"
+                className={`ui-chip${mode === 'handoff' ? ' active' : ''}`}
+                onClick={() => { setMode('handoff'); setProfile('single-pass') }}
+                title="接手外部已开始的需求。已有 spec.md/代码请先放进工作区目录"
+              >
+                接手中途需求
+              </button>
+            </div>
+          )}
           {isNew && (
             <div className="modal-story-fields">
               <div className="story-id-field">
@@ -450,10 +480,29 @@ export function IntakeStartModal({ story, notice, onClose, onConfirm }: {
               若 TAPD 正文包含截图但无法自动识别，可手动上传截图，读取需求时会一并传给 AI 分析。
             </p>
           </div>
+          {mode === 'handoff' && (
+            <div className="modal-seed-context">
+              <label className="modal-prd-label">
+                接手说明 <span className="req">*</span>
+              </label>
+              <textarea
+                className="modal-prd-input"
+                value={seedContext}
+                onChange={(e) => setSeedContext(e.target.value)}
+                placeholder="已有工作描述、做到哪了、还差什么。已有的 spec.md/代码请先放进选定的工作区目录。"
+                rows={5}
+              />
+              <p className="ui-hint">
+                已有成果物(spec.md/代码/测试报告)请先放进工作区目录,这里填文字说明即可。
+                后端会把这段说明同时注入规划 LLM 和执行 prompt 的"### 已有工作(接手)"section。
+              </p>
+            </div>
+          )}
           <div className="modal-prd">
             <div className="modal-prd-head">
               <label className="modal-prd-label">
-                Story 内容 / PRD {isNew && <span className="req">*</span>}
+                Story 内容 / PRD {isNew && mode === 'new' && <span className="req">*</span>}
+                {isNew && mode === 'handoff' && <span className="modal-prd-optional">（接手模式可选）</span>}
               </label>
               {!uploaded && (
                 <label className="modal-prd-upload" title="上传本地 .md/.txt 文件">
@@ -495,7 +544,7 @@ export function IntakeStartModal({ story, notice, onClose, onConfirm }: {
           <button className="btn" onClick={onClose}>取消</button>
           <button
             className="btn btn-primary"
-            disabled={(isNew && (!key.trim() || !workspace.trim() || !content.trim())) || loading}
+            disabled={(isNew && (!key.trim() || !workspace.trim() || (mode === 'handoff' ? !seedContext.trim() : !content.trim()))) || loading}
             onClick={handleConfirm}
           >
             {loading ? '处理中...' : '准备 PRD 并进入规划'}

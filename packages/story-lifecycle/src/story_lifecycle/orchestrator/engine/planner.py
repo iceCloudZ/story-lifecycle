@@ -236,6 +236,26 @@ schema:
 - 直接输出 JSON，第一个字符必须是 {{，不要有 ```json 或任何前缀"""
 
 
+def _read_prd_snippet(prd_path: str, limit: int = 3000) -> str:
+    """读取 PRD 文件前 ``limit`` 字给规划 LLM 看。
+
+    best-effort:任何失败(路径空/文件不存在/编码错误)都返空串,不抛——
+    规划 LLM 没 PRD 摘录也能基于 title+seed_context 工作。
+
+    这是为了让 PRD 正文进入规划 LLM 的 user_msg(BUG FIX 2026-07-27:
+    原来读不存在的 story.content 列,永远空串)。
+    """
+    if not prd_path:
+        return ""
+    try:
+        from pathlib import Path
+
+        text = Path(prd_path).read_text(encoding="utf-8", errors="ignore")
+        return text[:limit]
+    except Exception:  # noqa: BLE001 — best-effort,绝不阻塞规划
+        return ""
+
+
 def _build_agent_user_message(
     *,
     story_key: str,
@@ -243,14 +263,24 @@ def _build_agent_user_message(
     content: str,
     workspace: str = "",
     profile_stages: dict | None = None,
+    seed_context: str = "",
 ) -> str:
-    """构建 Agent 的初始 user message。"""
+    """构建 Agent 的初始 user message。
+
+    ``content``:PRD 正文摘录(前 3000 字),让规划 LLM 看到真实需求内容而非只看标题。
+    ``seed_context``:接手中途需求的"已有工作说明"——做到哪了、还差什么。
+    两者都来自 context_json(见 run_orchestrator_agent 的读取逻辑)。
+    """
     parts = [
         "## 需求信息",
         f"标题: {title}",
     ]
     if content:
         parts.append(f"内容:\n{content[:3000]}")
+    if seed_context:
+        parts.append(
+            f"接手说明(已有工作 / 做到哪了 / 还差什么):\n{seed_context[:3000]}"
+        )
     if workspace:
         parts.append(f"工作目录: {workspace}")
 
@@ -315,9 +345,21 @@ def run_orchestrator_agent(
         raise ValueError(f"Story not found: {story_key}")
 
     title = story.get("title", "")
-    content = story.get("content", "")
     workspace = story.get("workspace", "")
     profile_name = story.get("profile", "minimal")
+
+    # 读 context_json 取 seed_context(接手说明)和 prd_path(→ PRD 正文摘录)。
+    # BUG FIX(2026-07-27):原代码 `content = story.get("content","")` 读的是不存在的
+    # DB 列(story 表无 content 列,VALID_COLUMNS 不含它)→ 永远空串 → 规划 LLM 从来看
+    # 不到任何 intake material,只凭 title 一个字面量做规划。改成从 context_json 读真实值。
+    ctx = {}
+    try:
+        ctx_raw = story.get("context_json", "{}") or "{}"
+        ctx = json.loads(ctx_raw) if isinstance(ctx_raw, str) else (ctx_raw or {})
+    except (ValueError, TypeError):
+        ctx = {}
+    seed_context = ctx.get("seed_context", "") or ""
+    content = _read_prd_snippet(ctx.get("prd_path", ""))
 
     # 解析 profile 获取阶段列表(adapter 路由来源,模型不参与)
     profile_stages = None
@@ -347,6 +389,7 @@ def run_orchestrator_agent(
         content=content,
         workspace=workspace,
         profile_stages=profile_stages,
+        seed_context=seed_context,
     )
 
     # 单次 LLM 调用(替 10 轮 FC 循环)
@@ -1028,6 +1071,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 task_actions=action.get("task_actions", []),
                 grill=action.get("grill", False),
                 is_single_stage=len(profile_stages) <= 1,
+                seed_context=ctx.get("seed_context", ""),
             )
 
             # 写入 prompt 文件
@@ -2368,6 +2412,7 @@ def _build_cli_prompt(
     task_actions: list[str] | None = None,
     grill: bool = False,
     is_single_stage: bool = False,
+    seed_context: str = "",
 ) -> str:
     """构建给 CLI 的执行 prompt。
 
@@ -2398,6 +2443,13 @@ def _build_cli_prompt(
         prd_section = (
             f"\n### PRD / 需求详情\n请读取 PRD 文件了解完整需求: `{prd_path}`\n"
         )
+
+    # 接手中途需求:已有工作说明(纯文字,内联)。与 PRD 的区别——PRD 是"需求是什么",
+    # seed_context 是"已经做到哪了、还差什么"。镜像 prd_section 的条件渲染模式:
+    # 字段空就不出 section,新建 story 零影响。
+    seed_section = ""
+    if seed_context:
+        seed_section = f"\n### 已有工作(接手)\n{seed_context}\n"
 
     # Quality checklist injection for verify stage (uses existing quality_checklist slot
     # semantics without touching prompt_renderer vars_map).
@@ -2534,6 +2586,7 @@ cd ./hc-config
 ### 阶段说明
 {stage_desc}
 {prd_section}
+{seed_section}
 {transcript_section}
 {knowledge_section}
 {dimensions_section}

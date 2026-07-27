@@ -55,6 +55,30 @@
   overflow-y: auto;
 }
 
+/* 模式切换(新建 / 接手中途需求)— .ui-chip 通用胶囊 */
+.modal-mode-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* 接手说明区(复用 modal-prd 的 input 视觉) */
+.modal-seed-context {
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.modal-seed-context .modal-prd-input {
+  /* textarea 复用 PRD 输入框样式(已在 .modal-prd-input 定义) */
+}
+.modal-prd-optional {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-weight: 400;
+  margin-left: 4px;
+}
+
 .modal-story-fields {
   display: grid;
   grid-template-columns: minmax(140px, 1fr) minmax(160px, 2fr);
