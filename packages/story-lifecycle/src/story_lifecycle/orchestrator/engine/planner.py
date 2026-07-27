@@ -1473,6 +1473,12 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             poll_interval = 5  # seconds
             elapsed = 0
             headless_attempt = 1  # headless 重试计数（首次=1）
+            # done_data 只在 _artifacts_ready() 块内赋值(成果物落地后)。这里先置 None,
+            # 让 poll 退出后的 verify-gate 能区分"完成落地"(有 done_data)与
+            # "restart/stuck break"(没落地,done_data 仍是 None) — 后者必须跳过 gate,
+            # 否则 2119 行 done_data.get(...) 会 UnboundLocalError(2026-07-27 真实事件:
+            # claude 被判 stuck → restart break → 落到 verify-gate → 崩 → 强制切 adapter)。
+            done_data = None
             # STEP 1.7c:规则卡住检测状态。_stuck_escalated 防同一卡住状态反复 escalate
             # (每次 poll 都查会刷屏);卡住解除(有新输出)后重置,允许下次再卡再报。
             _stuck_escalated = False
@@ -2110,8 +2116,10 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 sm_mark_failed(story_key, f"Stage {stage} timed out")
                 return
 
-            # Verify-stage quality gate: HIGH findings block and trigger repair round
-            if stage == "verify":
+            # Verify-stage quality gate: HIGH findings block and trigger repair round.
+            # 只在成果物真正落地(done_data 非 None)时跑。restart/stuck break 路径
+            # done_data 仍是 None(见上方初始化注释)→ 跳过 gate,由 idx+=1 取 retry action 重跑。
+            if stage == "verify" and done_data is not None:
                 stage_cfg = profile_stages.get(stage)
                 max_retries = (
                     stage_cfg.max_retries if hasattr(stage_cfg, "max_retries") else 2

@@ -245,6 +245,154 @@ def test_planner_interactive_spawn_passes_read_file_seed_not_full_prompt(
     assert "设计冷却结清还款计划更新" in full  # focus 段在完整 prompt 里
 
 
+def test_continue_verify_skips_gate_when_stuck_restart_no_artifacts(
+    isolated_story_home, tmp_path, monkeypatch
+):
+    """Regression: verify 阶段被 stuck-diagnose 判 restart 时,done_data 未赋值,
+    poll 循环 break 后落到 verify-gate 块 → 旧代码 ``done_data.get(...)`` 抛
+    UnboundLocalError → 强制切 adapter(2026-07-27 真实事件:claude 跑 24min 产出
+    spec.md,被误判 stuck → restart → 崩 → 切 kimi)。
+
+    修复:poll 循环前初始化 ``done_data = None``,verify-gate 加守卫
+    ``if stage == "verify" and done_data is not None``。restart 路径 done_data 仍
+    None → 跳过 gate → idx+=1 取 retry action 重跑(本测试 mock 让 retry 也快速结束)。
+
+    本测试锁定:restart break 后(1)不抛 UnboundLocalError,(2)插入 retry action。
+    """
+    import json as _json
+    import time as _time
+    from unittest.mock import MagicMock
+
+    from story_lifecycle.infra.db import models as db
+    from story_lifecycle.infra.terminal import pty as pty_mod
+    from story_lifecycle.knowledge import adapters as adapters_mod
+    from story_lifecycle.knowledge.adapters.base import SessionSpec
+    from story_lifecycle.orchestrator.engine import planner
+    from story_lifecycle.orchestrator.engine import supervisor as sup_mod
+
+    db.upsert_story(
+        "RESTART-1",
+        workspace=str(tmp_path),
+        profile="single-pass",  # 单 stage=verify,直接命中 verify-gate 块
+        current_stage="verify",
+        title="restart 回归",
+    )
+    db.update_story(
+        "RESTART-1",
+        context_json=_json.dumps(
+            {
+                "_plan_confirmed": True,
+                "_agent_actions": [
+                    {
+                        "action": "launch",
+                        "adapter": "claude",
+                        "stage": "verify",
+                        "focus": "verify 提额事件",
+                        "task_actions": ["write_code", "run_tests"],
+                        "done_file": ".story/done/RESTART-1/verify.json",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    class FakeAdapter:
+        name = "claude"
+        # claude 契约:启动即知确定性 sid(planner 1107 读这个标志)。
+        prespecified_session_id = True
+        readiness_marker = None
+
+        def start_session(self, model, prompt="", session_id="", session_name="", resume=False):
+            return SessionSpec(
+                command=["claude-fake"], pty_prompt="", readiness_marker=None
+            )
+
+        def inject_prompt(self, prompt, story_key, stage):
+            return None
+
+        def write_anchor(self, story_key, stage, cwd, prompt_hash):
+            return None
+
+        def make_sid_capturer(self, *a, **kw):
+            return None
+
+        def capture_sid_post_exit(self, *a, **kw):
+            return None
+
+    monkeypatch.setattr(adapters_mod, "get_adapter", lambda name: FakeAdapter())
+
+    # 占位 pty:alive=True 避开 1565 的"PTY 退出未落地"早退;让控制流走到 stuck 检测。
+    _fake_pty = MagicMock()
+    _fake_pty.alive = True
+    _fake_pty.kill = MagicMock()
+
+    def _fake_ensure(*a, **kw):
+        return ("sess-restart", _fake_pty)
+
+    monkeypatch.setattr(pty_mod, "ensure_agent_pty", _fake_ensure)
+
+    # PtyLogger 占位:stuck 检测前置要求 _pty_logger is not None。
+    _fake_logger = MagicMock()
+    _fake_logger.log_dir = str(tmp_path / "pty_verify")
+    _fake_logger.events_path = str(tmp_path / "pty_verify" / "events.jsonl")
+    _fake_logger.log_event = MagicMock()
+    import story_lifecycle.infra.terminal.pty_logger as plog_mod
+    monkeypatch.setattr(plog_mod, "PtyLogger", lambda *a, **kw: _fake_logger)
+
+    # read_events 返回一条 output 事件(让 _last_ts 能解析,避免 None 干扰)。
+    def _fake_read_events(log_dir, limit=50):
+        return [{"ts": "2026-07-27T00:00:00Z", "dir": "output", "type": "text", "text": "x"}]
+    monkeypatch.setattr(plog_mod, "read_events", _fake_read_events)
+
+    # detect_stuck:判定卡死(返回非空)→ 进 diagnose 分支。
+    monkeypatch.setattr(
+        sup_mod, "detect_stuck", lambda **kw: {"rule": "no_output_timeout", "reason": "静默"}
+    )
+    # escalate_stuck:restart 不走这条(走 diagnose),但同模块 import 时一起 mock 避免副作用。
+    monkeypatch.setattr(sup_mod, "escalate_stuck", lambda **kw: None)
+
+    # diagnose 路径:should_upgrade=False(走 summary)→ summary 返回 restart。
+    import story_lifecycle.orchestrator.evaluation.stuck_diagnose as diag_mod
+    monkeypatch.setattr(diag_mod, "should_upgrade_agentic", lambda *a, **kw: False)
+    monkeypatch.setattr(
+        diag_mod,
+        "diagnose_stuck_summary",
+        lambda **kw: {"action": "restart", "seed": "从检查点重试", "reason": "静默超时"},
+    )
+
+    # time.sleep 加速:poll 循环靠 elapsed += poll_interval(=5)累加,sleep 本身可空操作。
+    # 不落地任何 artifact(模拟 restart 场景:卡死,产物未齐)。
+    monkeypatch.setattr(_time, "sleep", lambda _s: None)
+
+    # 关键断言:旧代码这里抛 UnboundLocalError;修复后应正常返回(retry action 也会被
+    # 外层 while 取到再走一遍,但 ensure_agent_pty 占位 + sleep 加速会让它快速循环)。
+    # 为避免 retry 无限循环,让第二次 spawn 后 pty.alive=False 触发 1565 早退 return。
+    _spawn_count = {"n": 0}
+
+    def _fake_ensure_counted(*a, **kw):
+        _spawn_count["n"] += 1
+        _p = MagicMock()
+        # 第二次(retry)让 pty 已死 → 1565 早退 return,结束外层 while
+        _p.alive = (_spawn_count["n"] == 1)
+        return (f"sess-{_spawn_count['n']}", _p)
+
+    monkeypatch.setattr(pty_mod, "ensure_agent_pty", _fake_ensure_counted)
+
+    # 不应抛 UnboundLocalError
+    planner.continue_orchestrator_agent("RESTART-1", headless=False)
+
+    # restart 应插入了 retry action(原 1 个 → 现 ≥2 个)
+    story = db.get_story("RESTART-1")
+    import json as _j
+    ctx = _j.loads(story["context_json"])
+    actions = ctx.get("_agent_actions", [])
+    assert len(actions) >= 2, f"restart 应插入 retry action,实际 {len(actions)} 个: {actions}"
+    # retry action 的 focus 带 restart 标记
+    retry = actions[1]
+    assert "restart" in retry.get("focus", ""), f"retry action focus 异常: {retry}"
+
+
 # ---- /advance 端点:active-unstarted 分支(single-pass 创建即 active 但从未启动) ----
 
 
