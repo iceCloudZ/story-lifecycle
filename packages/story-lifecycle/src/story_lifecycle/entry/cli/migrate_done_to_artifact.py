@@ -93,7 +93,9 @@ def migrate_done_to_artifact(
                     pass
         # 兜底:用 done.json 的 summary 作 content
         if not content:
-            content = payload.get("summary", "") or f"{stage} 阶段产出(迁移自 done.json)"
+            content = (
+                payload.get("summary", "") or f"{stage} 阶段产出(迁移自 done.json)"
+            )
 
         doc_type = _stage_to_doc_type(stage)
 
@@ -156,9 +158,7 @@ def migrate_done_to_artifact(
     default=None,
     help="工作区根(默认 cwd)。扫该工作区下 .story/done/<key>/*.json",
 )
-@click.option(
-    "--dry-run", is_flag=True, help="只打印会迁移什么,不真写 story_doc"
-)
+@click.option("--dry-run", is_flag=True, help="只打印会迁移什么,不真写 story_doc")
 def migrate_done_cmd(workspace, dry_run):
     """扫存量 story 的 done.json → story_doc 版本化记录(STEP 1.6)。
 
@@ -170,7 +170,9 @@ def migrate_done_cmd(workspace, dry_run):
     db.init_db()
     ws = workspace or str(Path.cwd())
     console.print(f"[cyan]扫描工作区:[/] {ws}")
-    console.print(f"[cyan]模式:[/] {'dry-run(不写)' if dry_run else '迁移(写 story_doc)'}")
+    console.print(
+        f"[cyan]模式:[/] {'dry-run(不写)' if dry_run else '迁移(写 story_doc)'}"
+    )
     console.print()
 
     result = migrate_done_to_artifact(ws, dry_run=dry_run, db_module=db)

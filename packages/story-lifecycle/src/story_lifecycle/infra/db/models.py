@@ -589,9 +589,7 @@ def init_db():
             ("pty_log_ref", "TEXT"),
         ):
             try:
-                conn.execute(
-                    f"ALTER TABLE story_session ADD COLUMN {_col} {_type}"
-                )
+                conn.execute(f"ALTER TABLE story_session ADD COLUMN {_col} {_type}")
             except Exception:
                 pass  # column already exists
         # STEP 2.1: orchestrator_decision 决策审计表(DESIGN §4.9)。
@@ -2625,10 +2623,18 @@ def log_decision(
                 action_taken, action_payload, llm_model, decided_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                story_key, stage, trigger, context_ref, decision, reason,
+                story_key,
+                stage,
+                trigger,
+                context_ref,
+                decision,
+                reason,
                 action_taken,
-                _json.dumps(action_payload, ensure_ascii=False) if action_payload else None,
-                llm_model, now,
+                _json.dumps(action_payload, ensure_ascii=False)
+                if action_payload
+                else None,
+                llm_model,
+                now,
             ),
         )
     return int(cur.lastrowid)

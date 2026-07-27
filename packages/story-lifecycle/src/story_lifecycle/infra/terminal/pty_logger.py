@@ -29,7 +29,9 @@ from pathlib import Path
 log = logging.getLogger("story-lifecycle.pty_logger")
 
 # ANSI 转义序列(CSI / OSC / 字符集切换 / 单字符 shift)。复用 awaiting_detector 的模式。
-_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[=>]")
+_ANSI_RE = re.compile(
+    r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[=>]"
+)
 
 
 def _strip_ansi(text: str) -> str:

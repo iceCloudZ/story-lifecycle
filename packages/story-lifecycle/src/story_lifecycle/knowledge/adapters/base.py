@@ -61,8 +61,13 @@ class BaseAdapter(ABC):
     # 见 AGENTS.md「Session-id model」契约;DESIGN-session-pty-id-model.md §2.5。
     prespecified_session_id: bool = False
 
-    def make_sid_capturer(self, story_key: str, stage: str, cwd: str | None = None,
-                          since_ts: str | None = None):
+    def make_sid_capturer(
+        self,
+        story_key: str,
+        stage: str,
+        cwd: str | None = None,
+        since_ts: str | None = None,
+    ):
         """输出驱动捕获:返回 ``on_output(text) -> None`` 回调(喂给
         ``clean_exit_pty``),或 ``None``。
 
@@ -71,8 +76,13 @@ class BaseAdapter(ABC):
         """
         return None
 
-    def capture_sid_post_exit(self, story_key: str, stage: str, cwd: str | None = None,
-                              since_ts: str | None = None) -> str | None:
+    def capture_sid_post_exit(
+        self,
+        story_key: str,
+        stage: str,
+        cwd: str | None = None,
+        since_ts: str | None = None,
+    ) -> str | None:
         """退出后文件/系统捕获:返回捕获到的 sid 或 ``None``。
 
         CLI 把 sid 存在文件系统里的覆写(opencode:扫 ``<data>/storage/session/`` 取

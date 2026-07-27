@@ -36,7 +36,9 @@ _POLL_SECONDS = 1.0
 # STORY_STUCK_TIMEOUT 覆盖(planner / 测试注入)。默认 300s(5min)—— 触发事故是
 # design 卡 25min,300s 留足正常思考余量又不至于让事故再跑 25min 才被发现。
 _DEFAULT_STUCK_TIMEOUT = 300
-STUCK_TIMEOUT_SECONDS = int(os.environ.get("STORY_STUCK_TIMEOUT", _DEFAULT_STUCK_TIMEOUT))
+STUCK_TIMEOUT_SECONDS = int(
+    os.environ.get("STORY_STUCK_TIMEOUT", _DEFAULT_STUCK_TIMEOUT)
+)
 # events.jsonl 里连续 K 条 error 行 → 反复报错(卡住信号)。
 STUCK_REPEATED_ERRORS = 5
 
@@ -312,7 +314,7 @@ def detect_stuck(
 
     # 规则 3:反复报错(连续 error 行)。
     if events:
-        tail = events[-(STUCK_REPEATED_ERRORS + 5):]  # 多看几条防抖
+        tail = events[-(STUCK_REPEATED_ERRORS + 5) :]  # 多看几条防抖
         consecutive_err = 0
         for ev in reversed(tail):
             ev_type = str(ev.get("type", "")).lower()
@@ -334,7 +336,9 @@ def detect_stuck(
         return None
     if last_output_ts is None:
         # 从未输出。给 60s 启动宽限(claude/opencode 启动慢)。
-        return None  # 启动宽限由调用方用 now_ts - spawn_ts 单独判,这里只看"有过输出后卡住"
+        return (
+            None  # 启动宽限由调用方用 now_ts - spawn_ts 单独判,这里只看"有过输出后卡住"
+        )
     idle = now_ts - last_output_ts
     if idle > timeout:
         return {

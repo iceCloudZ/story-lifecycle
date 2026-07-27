@@ -92,19 +92,30 @@ def judge_boundary(
         llm = get_llm()
     if not llm.api_key:
         log.warning("[%s/%s] no LLM api_key, fallback approve", story_key, stage)
-        return _fallback_approve(story_key, stage, cref, db_module, reason="LLM 不可用,默认 approve 让人兜底")
+        return _fallback_approve(
+            story_key, stage, cref, db_module, reason="LLM 不可用,默认 approve 让人兜底"
+        )
 
     prompt = _build_boundary_prompt(story_key, stage, judge_ctx, ctx)
     try:
-        result = llm.invoke_structured(prompt, BoundaryDecision, temperature=0.1, timeout=90)
+        result = llm.invoke_structured(
+            prompt, BoundaryDecision, temperature=0.1, timeout=90
+        )
         decision = result.decision
         reason = result.reason or f"boundary judge: {decision}"
         verdict = result.verdict
         findings = result.findings or []
         llm_model = getattr(llm, "model", "")
     except Exception as exc:
-        log.warning("[%s/%s] boundary judge LLM failed, fallback approve: %s", story_key, stage, exc)
-        return _fallback_approve(story_key, stage, cref, db_module, reason=f"LLM 调用失败:{exc}")
+        log.warning(
+            "[%s/%s] boundary judge LLM failed, fallback approve: %s",
+            story_key,
+            stage,
+            exc,
+        )
+        return _fallback_approve(
+            story_key, stage, cref, db_module, reason=f"LLM 调用失败:{exc}"
+        )
 
     # 3. reject 上限防护(§4.9 / 评审 A2)
     if decision == "reject":
@@ -114,28 +125,43 @@ def judge_boundary(
         if not budget["allow"]:
             log.warning(
                 "[%s/%s] reject 被 reject_budget 拦(force=%s, warn=%s)→ 强制 escalate",
-                story_key, stage, budget["force"], budget["warn"],
+                story_key,
+                stage,
+                budget["force"],
+                budget["warn"],
             )
             decision = "escalate"
-            reason = f"reject 被防打回循环拦:{budget['warn']};原 reject 理由:{reason[:120]}"
+            reason = (
+                f"reject 被防打回循环拦:{budget['warn']};原 reject 理由:{reason[:120]}"
+            )
 
     # 4. 落 orchestrator_decision(审计)
     action_taken = _action_taken_for(decision)
     try:
         rid = db_module.log_decision(
-            story_key, stage, "boundary_judge", decision,
-            reason=reason, context_ref=cref,
+            story_key,
+            stage,
+            "boundary_judge",
+            decision,
+            reason=reason,
+            context_ref=cref,
             action_taken=action_taken,
             action_payload={"verdict": verdict, "findings_count": len(findings)},
             llm_model=llm_model,
         )
     except Exception as exc:  # noqa: BLE001 — 审计 best-effort
-        log.warning("[%s/%s] log_decision failed (non-fatal): %s", story_key, stage, exc)
+        log.warning(
+            "[%s/%s] log_decision failed (non-fatal): %s", story_key, stage, exc
+        )
         rid = 0
 
     log.info(
         "[%s/%s] boundary judge: %s (verdict=%s) — %s",
-        story_key, stage, decision, verdict, reason[:120],
+        story_key,
+        stage,
+        decision,
+        verdict,
+        reason[:120],
     )
     return {
         "decision": decision,
@@ -160,7 +186,10 @@ def _fallback_approve(
     """
     try:
         rid = db_module.log_decision(
-            story_key, stage, "boundary_judge", "approve",
+            story_key,
+            stage,
+            "boundary_judge",
+            "approve",
             reason=f"[FALLBACK] {reason}",
             context_ref=cref,
             action_taken="fallback_approve",
@@ -227,8 +256,8 @@ def _build_boundary_prompt(
     # 执行轨迹
     sess = trace.get("session") or {}
     trace_text = (
-        f"adapter={sess.get('adapter','?')}, attempt={sess.get('attempt','?')}, "
-        f"outcome={sess.get('outcome','?')}, failure_reason={sess.get('failure_reason') or '(无)'}"
+        f"adapter={sess.get('adapter', '?')}, attempt={sess.get('attempt', '?')}, "
+        f"outcome={sess.get('outcome', '?')}, failure_reason={sess.get('failure_reason') or '(无)'}"
     )
 
     # verify 专属:open findings + playbook

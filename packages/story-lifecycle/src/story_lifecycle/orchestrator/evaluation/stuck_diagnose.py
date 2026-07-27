@@ -77,13 +77,14 @@ def should_upgrade_agentic(
             "stuck_agentic",
         }
         prior_stuck = sum(
-            1
-            for d in stuck_decisions
-            if d.get("trigger") in stuck_triggers
+            1 for d in stuck_decisions if d.get("trigger") in stuck_triggers
         )
         if prior_stuck >= 1:
             log.info(
-                "[%s/%s] 升级 agentic:同 stage 已卡过 %d 次", story_key, stage, prior_stuck
+                "[%s/%s] 升级 agentic:同 stage 已卡过 %d 次",
+                story_key,
+                stage,
+                prior_stuck,
             )
             return True
     except Exception as exc:  # noqa: BLE001
@@ -142,7 +143,7 @@ def diagnose_stuck_summary(
         from ...infra.db import models as db_module
 
     summary = _preprocess_summary(detection, events)
-    facts_text = f"adapter={story_facts.get('adapter','?')}, stage={stage}, idle={detection.get('duration',0)}s"
+    facts_text = f"adapter={story_facts.get('adapter', '?')}, stage={stage}, idle={detection.get('duration', 0)}s"
 
     if llm is None:
         from ...infra.llm_client import get_llm
@@ -156,23 +157,51 @@ def diagnose_stuck_summary(
 
     prompt = _build_summary_prompt(summary, facts_text)
     try:
-        result = llm.invoke_structured(prompt, StuckDiagnosis, temperature=0.1, timeout=60)
+        result = llm.invoke_structured(
+            prompt, StuckDiagnosis, temperature=0.1, timeout=60
+        )
         cause = result.cause
         action = result.action
         seed = result.seed
         reason = result.reason or f"summary diagnose: {cause}"
         llm_model = getattr(llm, "model", "")
     except Exception as exc:
-        log.warning("[%s/%s] summary diagnose LLM failed, fallback escalate: %s", story_key, stage, exc)
-        return _fallback_escalate(story_key, stage, detection, db_module, f"LLM 失败:{exc}")
+        log.warning(
+            "[%s/%s] summary diagnose LLM failed, fallback escalate: %s",
+            story_key,
+            stage,
+            exc,
+        )
+        return _fallback_escalate(
+            story_key, stage, detection, db_module, f"LLM 失败:{exc}"
+        )
 
     rid = _log_stuck_decision(
-        db_module, story_key, stage, "stuck_summary", action, reason, cause, seed, llm_model
+        db_module,
+        story_key,
+        stage,
+        "stuck_summary",
+        action,
+        reason,
+        cause,
+        seed,
+        llm_model,
     )
-    log.info("[%s/%s] stuck summary diagnose: %s → %s (%s)", story_key, stage, cause, action, reason[:80])
+    log.info(
+        "[%s/%s] stuck summary diagnose: %s → %s (%s)",
+        story_key,
+        stage,
+        cause,
+        action,
+        reason[:80],
+    )
     return {
-        "cause": cause, "action": action, "seed": seed, "reason": reason,
-        "trigger": "stuck_summary", "logged_decision_id": rid,
+        "cause": cause,
+        "action": action,
+        "seed": seed,
+        "reason": reason,
+        "trigger": "stuck_summary",
+        "logged_decision_id": rid,
     }
 
 
@@ -226,8 +255,16 @@ def diagnose_stuck_agentic(
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "文件路径"},
-                    "offset": {"type": "integer", "description": "起始行(0-based)", "default": 0},
-                    "limit": {"type": "integer", "description": "读多少行", "default": 50},
+                    "offset": {
+                        "type": "integer",
+                        "description": "起始行(0-based)",
+                        "default": 0,
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "读多少行",
+                        "default": 50,
+                    },
                 },
                 "required": ["path"],
             },
@@ -244,8 +281,8 @@ def diagnose_stuck_agentic(
         {
             "role": "user",
             "content": (
-                f"story={story_key} stage={stage} adapter={story_facts.get('adapter','?')}\n"
-                f"规则检测:{detection.get('reason','?')}\n"
+                f"story={story_key} stage={stage} adapter={story_facts.get('adapter', '?')}\n"
+                f"规则检测:{detection.get('reason', '?')}\n"
                 f"events.jsonl 路径:{events_path}\n\n"
                 f"用 read_file 查 events.jsonl 中段(行 50-200 区间,summary 没看到的),"
                 f"找出真正卡因,然后给决策。最多调 5 次 read_file。"
@@ -283,23 +320,53 @@ def diagnose_stuck_agentic(
                     {"role": "assistant", "content": "", "tool_calls": [tc]}
                 )
                 messages.append(
-                    {"role": "tool", "tool_call_id": tc.get("id", ""), "content": tool_result[:2000]}
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": tool_result[:2000],
+                    }
                 )
         else:
             # 用满 5 次还没出最终答案 → escalate
             reason = "agentic 用满 5 次调用仍未确诊 → 转人"
             action = "escalate"
     except Exception as exc:
-        log.warning("[%s/%s] agentic diagnose failed, fallback escalate: %s", story_key, stage, exc)
-        return _fallback_escalate(story_key, stage, detection, db_module, f"agentic 失败:{exc}")
+        log.warning(
+            "[%s/%s] agentic diagnose failed, fallback escalate: %s",
+            story_key,
+            stage,
+            exc,
+        )
+        return _fallback_escalate(
+            story_key, stage, detection, db_module, f"agentic 失败:{exc}"
+        )
 
     rid = _log_stuck_decision(
-        db_module, story_key, stage, "stuck_agentic", action, reason, cause, seed, llm_model
+        db_module,
+        story_key,
+        stage,
+        "stuck_agentic",
+        action,
+        reason,
+        cause,
+        seed,
+        llm_model,
     )
-    log.info("[%s/%s] stuck agentic diagnose: %s → %s (%s)", story_key, stage, cause, action, reason[:80])
+    log.info(
+        "[%s/%s] stuck agentic diagnose: %s → %s (%s)",
+        story_key,
+        stage,
+        cause,
+        action,
+        reason[:80],
+    )
     return {
-        "cause": cause, "action": action, "seed": seed, "reason": reason,
-        "trigger": "stuck_agentic", "logged_decision_id": rid,
+        "cause": cause,
+        "action": action,
+        "seed": seed,
+        "reason": reason,
+        "trigger": "stuck_agentic",
+        "logged_decision_id": rid,
     }
 
 
@@ -323,7 +390,11 @@ def _preprocess_summary(detection: dict, events: list[dict] | None) -> dict:
         "reason": detection.get("reason"),
         "idle_seconds": detection.get("duration", 0),
         "last_events": [
-            {"ts": e.get("ts"), "dir": e.get("dir"), "text": (e.get("text") or "").strip()[:150]}
+            {
+                "ts": e.get("ts"),
+                "dir": e.get("dir"),
+                "text": (e.get("text") or "").strip()[:150],
+            }
             for e in tail
         ],
         "error_lines": error_lines[-5:],  # 最近 5 条错误
@@ -339,13 +410,13 @@ def _build_summary_prompt(summary: dict, facts_text: str) -> str:
 {facts_text}
 
 ## 规则检测结果
-{summary.get('reason', '?')}(规则:{summary.get('rule')})
+{summary.get("reason", "?")}(规则:{summary.get("rule")})
 
-## 最后 {len(summary.get('last_events', []))} 条 events
-{_json.dumps(summary.get('last_events', []), ensure_ascii=False, indent=2)}
+## 最后 {len(summary.get("last_events", []))} 条 events
+{_json.dumps(summary.get("last_events", []), ensure_ascii=False, indent=2)}
 
 ## 错误行(若有)
-{_json.dumps(summary.get('error_lines', []), ensure_ascii=False)}
+{_json.dumps(summary.get("error_lines", []), ensure_ascii=False)}
 
 ## 5 类卡因
 - truly_stuck:真卡死(无进展,可能死锁/无限循环)
@@ -400,10 +471,15 @@ def _log_stuck_decision(
     """落 orchestrator_decision(审计,trigger=stuck_summary/stuck_agentic)。"""
     try:
         return db_module.log_decision(
-            story_key, stage, trigger, action,
+            story_key,
+            stage,
+            trigger,
+            action,
             reason=reason,
             action_taken=f"cause={cause}",
-            action_payload={"cause": cause, "seed": seed[:500]} if seed else {"cause": cause},
+            action_payload={"cause": cause, "seed": seed[:500]}
+            if seed
+            else {"cause": cause},
             llm_model=llm_model,
         )
     except Exception as exc:  # noqa: BLE001
@@ -416,12 +492,22 @@ def _fallback_escalate(
 ) -> dict:
     """LLM 不可用时:规则 detection 的 reason 直接转 escalate(零 LLM 兜底)。"""
     rid = _log_stuck_decision(
-        db_module, story_key, stage, "stuck_summary", "escalate",
+        db_module,
+        story_key,
+        stage,
+        "stuck_summary",
+        "escalate",
         f"[FALLBACK] {reason};规则:{detection.get('reason')}",
-        "failed", "", "",
+        "failed",
+        "",
+        "",
     )
     return {
-        "cause": "failed", "action": "escalate", "seed": "",
-        "reason": f"[FALLBACK] {reason}", "trigger": "stuck_summary",
-        "logged_decision_id": rid, "fallback": True,
+        "cause": "failed",
+        "action": "escalate",
+        "seed": "",
+        "reason": f"[FALLBACK] {reason}",
+        "trigger": "stuck_summary",
+        "logged_decision_id": rid,
+        "fallback": True,
     }

@@ -225,16 +225,12 @@ def _validate_artifacts(profile: "ResolvedProfile") -> None:
     orchestrator would regress to the un-trusted self-report ``done.json``
     model. Raises ProfileValidationError listing all offending stages at once.
     """
-    missing = [
-        name
-        for name, stage in profile.stages.items()
-        if not stage.artifacts
-    ]
+    missing = [name for name, stage in profile.stages.items() if not stage.artifacts]
     if missing:
         raise ProfileValidationError(
             "profile %r 违反成果物驱动契约(设计 §1.3):以下 stage 缺少文件类 "
             "artifacts 声明 → %s。每个 stage 必须声明至少一个文件成果物"
-            "(文件路径/glob/\"git\"),否则编排器无机器可查的完成信号。"
+            '(文件路径/glob/"git"),否则编排器无机器可查的完成信号。'
             % (profile.name, missing)
         )
 

@@ -73,7 +73,9 @@ def check_reject_budget(
     except Exception as exc:  # noqa: BLE001 — 查询失败安全放行(不阻塞主流程)
         log.warning(
             "[%s/%s] count_decisions failed, allowing reject: %s",
-            story_key, stage, exc,
+            story_key,
+            stage,
+            exc,
         )
         return {"allow": True, "force": None, "warn": None, "count": 0}
 
@@ -81,7 +83,10 @@ def check_reject_budget(
     if count >= budget:
         log.warning(
             "[%s/%s] reject 上限已达 %d/%d → 强制 escalate(防打回循环)",
-            story_key, stage, count, budget,
+            story_key,
+            stage,
+            count,
+            budget,
         )
         return {
             "allow": False,
@@ -100,10 +105,15 @@ def check_reject_budget(
     prev_rejects = [d for d in decisions if d.get("decision") == "reject"]
     if prev_rejects:
         last_reason = prev_rejects[0].get("reason", "")
-        if _normalize_reason(last_reason) == _normalize_reason(new_reason) and new_reason:
+        if (
+            _normalize_reason(last_reason) == _normalize_reason(new_reason)
+            and new_reason
+        ):
             log.warning(
                 "[%s/%s] reject 理由与上次重复(%r)→ judge 抖,强制 escalate",
-                story_key, stage, new_reason,
+                story_key,
+                stage,
+                new_reason,
             )
             return {
                 "allow": False,

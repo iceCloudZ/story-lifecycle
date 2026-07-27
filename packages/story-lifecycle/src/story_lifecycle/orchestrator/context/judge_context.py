@@ -87,7 +87,9 @@ def assemble_judge_context(
                 )
 
     # 3. 执行轨迹(当前 stage 的 session)
-    ctx["execution_trace"] = _assemble_trace(story_key, stage, adapter, workspace, db_module)
+    ctx["execution_trace"] = _assemble_trace(
+        story_key, stage, adapter, workspace, db_module
+    )
 
     # 4. 决策历史(最近 MAX_DECISIONS 条,§7.7 裁剪)
     try:
@@ -149,13 +151,24 @@ def _assemble_trace(
         # <spawn_cwd>/.story/runs/<key>/pty_<stage>/events.jsonl。这里 best-effort 读
         # workspace 下的(可能不准,但 boundary_judge 主要用 PRD+成果物+决策,events 是
         # stuck_diagnose 自己读的)。
-        events_path = Path(workspace) / ".story" / "runs" / story_key / f"pty_{stage}" / "events.jsonl"
+        events_path = (
+            Path(workspace)
+            / ".story"
+            / "runs"
+            / story_key
+            / f"pty_{stage}"
+            / "events.jsonl"
+        )
         if events_path.exists():
             from ...infra.terminal.pty_logger import read_events
 
             events = read_events(events_path, limit=MAX_EVENTS_FOR_TRACE)
             trace["recent_events"] = [
-                {"ts": e.get("ts"), "dir": e.get("dir"), "text": (e.get("text") or "")[:200]}
+                {
+                    "ts": e.get("ts"),
+                    "dir": e.get("dir"),
+                    "text": (e.get("text") or "")[:200],
+                }
                 for e in events
             ]
     except Exception as exc:  # noqa: BLE001

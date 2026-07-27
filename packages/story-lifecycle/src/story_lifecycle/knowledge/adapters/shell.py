@@ -118,9 +118,8 @@ class ShellAdapter(BaseAdapter):
         # resume:config 的 resume_flag(kimi 默认 ["-S"]);其他 shell CLI 无 resume。
         # 优先级:yaml resume_flag → _DEFAULT_RESUME_FLAG → 无。
         if resume and session_id:
-            resume_flag = (
-                self._config.get("resume_flag")
-                or _DEFAULT_RESUME_FLAG.get(self._name.lower())
+            resume_flag = self._config.get("resume_flag") or _DEFAULT_RESUME_FLAG.get(
+                self._name.lower()
             )
             if resume_flag:
                 cmd += list(resume_flag) + [session_id]
@@ -167,8 +166,13 @@ class ShellAdapter(BaseAdapter):
         )
         return re.compile(raw) if raw else None
 
-    def make_sid_capturer(self, story_key: str, stage: str, cwd: str | None = None,
-                          since_ts: str | None = None):
+    def make_sid_capturer(
+        self,
+        story_key: str,
+        stage: str,
+        cwd: str | None = None,
+        since_ts: str | None = None,
+    ):
         """kimi 退出时吐的 resume 行捕获。
 
         kimi 退出时打印 ``To resume this session: kimi -r session_<uuid>``(也兼容
@@ -205,7 +209,10 @@ class ShellAdapter(BaseAdapter):
 
                     logging.getLogger(__name__).warning(
                         "[%s] %s session backfill failed (%s); resume disabled for stage=%s",
-                        story_key, self._name, exc, stage,
+                        story_key,
+                        self._name,
+                        exc,
+                        stage,
                     )
 
         return _on_output

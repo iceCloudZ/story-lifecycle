@@ -899,7 +899,6 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 completed_stages,
             )
 
-
     # 算 start_idx:第一个 stage ∉ _completed_stages 的 launch action 下标。
     start_idx = 0
     for _i, _a in enumerate(actions):
@@ -1078,7 +1077,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     _spawn_ts = _now_utc_iso()  # 文件扫描捕获的时间窗口下界
                     if _prior and _prior.get("session_id"):
                         # 该阶段已建过会话 → resume(续上 transcript,不重读 prompt_file)。
-                        _resume_seed = "继续上次的任务,完成后用 `story tool declare` 落地成果物。"
+                        _resume_seed = (
+                            "继续上次的任务,完成后用 `story tool declare` 落地成果物。"
+                        )
                         _session_spec = adapter.start_session(
                             model=model,
                             prompt=_resume_seed,
@@ -1324,7 +1325,11 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     # 对称 headless 路径 1276 的 anchor 写。best-effort,不阻断 spawn。
                     try:
                         adapter.write_anchor(
-                            prompt=(_session_spec.pty_prompt if _session_spec else cli_prompt),
+                            prompt=(
+                                _session_spec.pty_prompt
+                                if _session_spec
+                                else cli_prompt
+                            ),
                             story_key=story_key,
                             stage=stage,
                             cwd=_spawn_cwd,
@@ -1342,7 +1347,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         # 回填 story_session.pty_log_ref(执行轨迹)。
                         try:
                             db.update_session_trace(
-                                story_key, stage, adapter_name,
+                                story_key,
+                                stage,
+                                adapter_name,
                                 pty_log_ref=_pty_logger.log_ref,
                             )
                         except Exception:  # noqa: BLE001
@@ -1656,49 +1663,58 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                 )
 
                                 _facts = {"adapter": adapter_name, "stage": stage}
-                                if _should_upgrade(
-                                    story_key, stage, _det, events=_evs
-                                ):
+                                if _should_upgrade(story_key, stage, _det, events=_evs):
                                     _diag = _diag_agentic(
-                                        story_key=story_key, stage=stage,
+                                        story_key=story_key,
+                                        stage=stage,
                                         detection=_det,
                                         events_path=str(_pty_logger.events_path),
                                         story_facts=_facts,
                                     )
                                 else:
                                     _diag = _diag_summary(
-                                        story_key=story_key, stage=stage,
-                                        detection=_det, events=_evs,
+                                        story_key=story_key,
+                                        stage=stage,
+                                        detection=_det,
+                                        events=_evs,
                                         story_facts=_facts,
                                     )
                                 _action = _diag.get("action", "escalate")
                             except Exception:  # noqa: BLE001 — 诊断失败兜底 escalate
                                 log.exception(
                                     "[%s/%s] stuck diagnose failed, fallback escalate",
-                                    story_key, stage,
+                                    story_key,
+                                    stage,
                                 )
                                 _action = "escalate"
-                                _diag = {"action": "escalate", "seed": "", "reason": "诊断失败"}
+                                _diag = {
+                                    "action": "escalate",
+                                    "seed": "",
+                                    "reason": "诊断失败",
+                                }
 
                             # 执行决策(Handler 副作用)
                             if _action == "wait":
                                 # slow 类:延长超时,重置 elapsed 让 code agent 继续。
                                 log.info(
                                     "[%s/%s] stuck diagnose: wait (slow) — 重置 poll 超时",
-                                    story_key, stage,
+                                    story_key,
+                                    stage,
                                 )
                                 elapsed = 0
                             elif _action == "restart":
                                 # 杀 + 带 seed 重起(插 retry action,无打字纠偏)。
                                 log.info(
                                     "[%s/%s] stuck diagnose: restart (seed=%s)",
-                                    story_key, stage, (_diag.get("seed") or "")[:80],
+                                    story_key,
+                                    stage,
+                                    (_diag.get("seed") or "")[:80],
                                 )
                                 _retry = {
                                     "action": "launch",
                                     "stage": stage,
                                     "adapter": adapter_name,
-                                    "focus": f"卡住诊断 restart:{_diag.get('reason','')};seed:{_diag.get('seed','')}",
+                                    "focus": f"卡住诊断 restart:{_diag.get('reason', '')};seed:{_diag.get('seed', '')}",
                                     "done_file": stage_done_file_rel(story_key, stage),
                                 }
                                 actions.insert(idx + 1, _retry)
@@ -1715,7 +1731,8 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                 _stuck_escalated = True
                                 if _pty_logger is not None:
                                     _pty_logger.log_event(
-                                        "stuck_restart", _diag.get("reason", ""),
+                                        "stuck_restart",
+                                        _diag.get("reason", ""),
                                         seed=_diag.get("seed", "")[:200],
                                     )
                                 break  # 出 poll while,外层 while 取 idx+1 retry
@@ -1730,7 +1747,8 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                 _stuck_escalated = True
                                 if _pty_logger is not None:
                                     _pty_logger.log_event(
-                                        "stuck_detected", _det.get("reason", ""),
+                                        "stuck_detected",
+                                        _det.get("reason", ""),
                                         rule=_det.get("rule", ""),
                                     )
                         elif not _det:
@@ -1799,7 +1817,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                 # 对称 verify-gate 的 retry 路径(planner.py:2036)。
                                 log.info(
                                     "[%s] boundary judge reject: %s → 重做 stage=%s",
-                                    story_key, _bj["reason"][:80], stage,
+                                    story_key,
+                                    _bj["reason"][:80],
+                                    stage,
                                 )
                                 _retry = {
                                     "action": "launch",
@@ -1815,7 +1835,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                     context_json=json.dumps(ctx, ensure_ascii=False),
                                 )
                                 db.log_event(
-                                    story_key, stage, "boundary_reject_retry",
+                                    story_key,
+                                    stage,
+                                    "boundary_reject_retry",
                                     {"reason": _bj["reason"], "next_stage": stage},
                                 )
                                 # 不 break 进 completed 分支;继续 while 让 idx+1 的 retry 跑。
@@ -2259,9 +2281,7 @@ def resolve_stage_adapter(
     return "claude"
 
 
-def _build_artifacts_obligation(
-    stage: str, profile_stages: dict, story_dir
-) -> str:
+def _build_artifacts_obligation(stage: str, profile_stages: dict, story_dir) -> str:
     """STEP 1.4 强化:把本 stage 必须产出的文件(绝对路径)放 prompt 最显眼处。
 
     code agent(claude)验证发现:即使文末有 declare 协议段,也可能不调 declare 也不

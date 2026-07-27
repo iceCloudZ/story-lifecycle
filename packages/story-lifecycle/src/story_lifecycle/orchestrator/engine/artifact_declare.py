@@ -156,7 +156,9 @@ def declare_artifact(
         except Exception:  # noqa: BLE001 — local_path 是 informational
             pass
     except Exception:  # noqa: BLE001 — 版本化 best-effort,不阻塞成果物落地
-        log.exception("upsert_story_doc failed for %s/%s (non-fatal)", story_key, doc_type)
+        log.exception(
+            "upsert_story_doc failed for %s/%s (non-fatal)", story_key, doc_type
+        )
 
     # ---- 3. done.json 兼容视图(miner 双写兼容,1.5 红线) ----
     done_view = _write_done_compat_view(
@@ -247,5 +249,7 @@ def _write_done_compat_view(
         atomic_write(done_path, json.dumps(payload, ensure_ascii=False, indent=2))
         return str(done_path)
     except Exception:  # noqa: BLE001 — 兼容视图 best-effort(成果物已落地,这是双写兼容层)
-        log.exception("write done.json compat view failed (non-fatal) for %s/%s", story_key, stage)
+        log.exception(
+            "write done.json compat view failed (non-fatal) for %s/%s", story_key, stage
+        )
         return None

@@ -54,7 +54,9 @@ def workspace():
 @tool.command()
 @click.argument("doc_type")
 @click.argument("path")
-@click.option("--summary", "-s", default="", help="一句话摘要(进 done.json + story_doc)")
+@click.option(
+    "--summary", "-s", default="", help="一句话摘要(进 done.json + story_doc)"
+)
 @click.option(
     "--content",
     "content",
@@ -78,7 +80,11 @@ def declare(doc_type, path, summary, content, files_changed):
     """
     from ...orchestrator.engine.artifact_declare import declare_artifact
 
-    fc = [s.strip() for s in files_changed.split(",") if s.strip()] if files_changed else None
+    fc = (
+        [s.strip() for s in files_changed.split(",") if s.strip()]
+        if files_changed
+        else None
+    )
     try:
         result = declare_artifact(
             doc_type=doc_type,
@@ -116,9 +122,7 @@ def todo():
     st = os.environ.get("STORY_STAGE", "")
     ws = os.environ.get("STORY_WORKSPACE", "") or str(os.getcwd())
     if not sk or not st:
-        console.print(
-            "[yellow]⚠ 不在 story 上下文里(STORY_KEY/STORY_STAGE 未设)。[/]"
-        )
+        console.print("[yellow]⚠ 不在 story 上下文里(STORY_KEY/STORY_STAGE 未设)。[/]")
         raise SystemExit(1)
 
     story = db.get_story(sk)
@@ -132,7 +136,9 @@ def todo():
     stage_cfg = rp.stage(st)
     artifacts = stage_cfg.artifacts
     if not artifacts:
-        console.print(f"[yellow]stage {st} 未声明 artifacts(profile={profile_name})。[/]")
+        console.print(
+            f"[yellow]stage {st} 未声明 artifacts(profile={profile_name})。[/]"
+        )
         return
 
     missing, landed = check_artifacts_landed(artifacts, ws)
