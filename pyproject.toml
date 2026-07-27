@@ -18,7 +18,9 @@ keywords = ["ai", "agent", "workflow", "knowledge", "devtools"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
-    "ruff>=0.11.0",
+    # pin ruff <0.16:0.16 默认规则集扩大(BLE/S/I/UP 等加入默认),历史代码 612 处
+    # 不符。0.16 适配是独立任务。当前对齐本地 0.15.x + 上次成功 CI 0.15.22。
+    "ruff>=0.11.0,<0.16",
 ]
 
 [tool.hatch.build.targets.wheel]
