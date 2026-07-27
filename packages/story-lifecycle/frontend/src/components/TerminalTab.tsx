@@ -34,12 +34,18 @@ interface Props {
 type SessionStatus = 'running' | 'exited'
 interface Session {
   session_id: string
+  /** WS attach 凭据:活 PTY 的注册表 id。kimi 运行期 DB sid 未捕获(""),靠它 attach。 */
+  attach_id: string
   adapter: string
   stage: string
   model: string
   status: SessionStatus
   started_at: string
 }
+
+// chip 的稳定 key:kimi 运行期 DB sid 为空,用 attach_id 兜底。
+const chipKeyOf = (s: Session) =>
+  s.session_id || s.attach_id || `${s.stage}-${s.adapter}`
 
 // 可恢复状态:删了概览的「继续执行」横幅后,恢复入口收到这里。
 // paused/failed/blocked/aborted 都调 PUT /advance 重启全自动编排循环。
@@ -54,7 +60,8 @@ export default function TerminalTab({
   onAdapterChange, onConfirmPlan, onRegeneratePlan,
 }: Props) {
   const [sessions, setSessions] = useState<Session[]>([])
-  const [activeSession, setActiveSession] = useState<string | null>(null)
+  // 选中的会话 chip(chipKeyOf 值):running → attach;exited → 展示 resume 入口。
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [resuming, setResuming] = useState(false)
   const [showHistory, setShowHistory] = useState(true)
   // stage 卡片视图:当前选中 stage(默认 currentStage,fallback 首个)。
@@ -95,12 +102,13 @@ export default function TerminalTab({
   useEffect(() => {
     if (!stage) return
     const match = sessions.find((s) => s.stage === stage)
-    if (match) setActiveSession(match.session_id)
+    if (match) setSelectedKey(chipKeyOf(match))
   }, [stage, sessions])
 
   async function handleSpawn() {
     // adapter 留空 → 后端 resolve_stage_adapter 从 _agent_actions 拿用户在 plan UI
     // 选的 adapter(老逻辑硬编码 claude,导致 plan 改 kimi 这里还 spawn claude)。
+    // 后端对活 PTY 有复用检查:已存在会话时返回现有 id(reused),不起重复进程。
     setSpawning(true)
     try {
       const r = await fetch(`/api/story/${storyKey}/sessions/spawn`, {
@@ -110,18 +118,24 @@ export default function TerminalTab({
       })
       if (r.ok) {
         const data = await r.json()
-        setActiveSession(data.session_id)
+        setSelectedKey(data.session_id)
         fetchSessions()
       } else {
+        const detail = await r.json().then((b) => b?.detail).catch(() => '') || r.statusText
         // Fallback: try legacy single-PTY spawn
         const r2 = await fetch(`/api/pty/${storyKey}/spawn`, { method: 'POST' })
         if (r2.ok) {
           const data2 = await r2.json()
-          setActiveSession(data2.session_id || storyKey)
+          setSelectedKey(data2.session_id || storyKey)
           fetchSessions()
+        } else {
+          // 此前失败被静默吞掉(「启动终端没反应」),必须给用户可见反馈。
+          alert(`启动终端失败: ${detail}`)
         }
       }
-    } catch { /* ignore */ } finally {
+    } catch (e) {
+      alert(`启动终端失败: ${e instanceof Error ? e.message : e}`)
+    } finally {
       setSpawning(false)
     }
   }
@@ -181,10 +195,10 @@ export default function TerminalTab({
     const hasSession = stageSessions.length > 0
     const canEditAdapter = !!editable && !!onAdapterChange && !hasSession
 
-    // 该 stage 选中 session(running 优先)。
+    // 该 stage 选中 session:attach 该 stage 的活 PTY(用 attach_id —— kimi 运行期
+    // DB sid 未捕获为空,注册表 id 才是 WS 凭据)。
     const stageActiveSessionId =
-      stageSessions.find((s) => s.session_id === activeSession)?.session_id ||
-      stageSessions.find((s) => s.status === 'running')?.session_id ||
+      stageSessions.find((s) => s.status === 'running' && s.attach_id)?.attach_id ||
       null
 
     const showConfirm = status === 'planning' && !isConfirmed
@@ -295,15 +309,20 @@ export default function TerminalTab({
     ? sessions.filter((s) => s.stage === stage)
     : sessions
 
-  // Auto-select only a RUNNING session. Never auto-pick an exited session,
-  // because that causes the terminal to reconnect to a dead PTY forever.
+  // 选中 chip;无选中时回落到 running 会话(auto-attach)。从不自动选 exited
+  // 会话 —— 那会让终端永远重连一个死 PTY。
+  const selected =
+    visibleSessions.find((s) => chipKeyOf(s) === selectedKey) || null
+  const runningSession =
+    visibleSessions.find((s) => s.status === 'running' && s.attach_id) || null
+  const effective = selected || runningSession
+  // attach 目标:仅 running 会话可 attach(attach_id 是活 PTY 的注册表 id)。
   const activeSessionId =
-    activeSession ||
-    visibleSessions.find((s) => s.status === 'running')?.session_id ||
-    null
+    effective && effective.status === 'running' ? effective.attach_id : null
+  const exitedSession = effective && effective.status !== 'running' ? effective : null
 
   // 当前选中会话的 stage(喂给 DialogHistory,只看该 stage 的历史)。
-  const noPlanActiveStage = sessions.find((s) => s.session_id === activeSessionId)?.stage || stage || ''
+  const noPlanActiveStage = effective?.stage || stage || ''
 
   return (
     <div className="tab-content terminal-tab">
@@ -311,10 +330,10 @@ export default function TerminalTab({
       <div className="tt-session-tabs">
         {visibleSessions.map((s) => (
           <button
-            key={s.session_id}
-            className={`tt-session-tab ${s.session_id === activeSessionId ? 'active' : ''} ${s.status !== 'running' ? 'tt-exited' : ''}`}
-            onClick={() => setActiveSession(s.session_id)}
-            title={s.status === 'running' ? '运行中' : '已退出'}
+            key={chipKeyOf(s)}
+            className={`tt-session-tab ${effective && chipKeyOf(s) === chipKeyOf(effective) ? 'active' : ''} ${s.status !== 'running' ? 'tt-exited' : ''}`}
+            onClick={() => setSelectedKey(chipKeyOf(s))}
+            title={s.status === 'running' ? '运行中,点击接入' : (s.session_id ? '已退出,点击可恢复会话' : '已退出,无可恢复 id')}
           >
             <span className={`tt-adapter-dot ${s.adapter === 'claude' ? 'claude' : 'kimi'}`} />
             <span className="tt-session-label">
@@ -350,14 +369,30 @@ export default function TerminalTab({
         <div className="tt-terminal-pane">
           {activeSessionId ? (
             <TerminalPanel storyKey={storyKey} sessionId={activeSessionId} autoConnect />
+          ) : exitedSession ? (
+            <div className="tt-no-session">
+              <p>{exitedSession.stage ? `${exitedSession.stage} · ${exitedSession.adapter}` : exitedSession.adapter} 会话已退出</p>
+              {exitedSession.session_id ? (
+                <>
+                  <p className="tt-hint">session id 已捕获,可恢复原会话继续。</p>
+                  <button className="btn btn-primary" onClick={handleSpawn} disabled={spawning}>
+                    {spawning ? '启动中…' : '↻ 恢复会话'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="tt-hint">退出前未捕获 session id,无法恢复;可启动新会话继续工作。</p>
+                  <button className="btn btn-primary" onClick={handleSpawn} disabled={spawning}>
+                    {spawning ? '启动中…' : '启动新会话'}
+                  </button>
+                </>
+              )}
+            </div>
           ) : (
             <div className="tt-no-session">
               <p>{stage ? `${stage} 阶段没有 CLI 会话` : '当前没有运行中的 CLI 会话'}</p>
-              {visibleSessions.length > 0 && (
-                <p className="tt-hint">点击上方历史会话可查看最终输出,或启动新会话继续工作。</p>
-              )}
-              <button className="btn btn-primary" onClick={handleSpawn}>
-                启动终端
+              <button className="btn btn-primary" onClick={handleSpawn} disabled={spawning}>
+                {spawning ? '启动中…' : '启动终端'}
               </button>
             </div>
           )}

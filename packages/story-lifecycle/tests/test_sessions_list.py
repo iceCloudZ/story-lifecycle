@@ -119,3 +119,41 @@ def test_empty_when_no_db_rows(monkeypatch):
 
     result = api.api_list_sessions("S1")
     assert result["sessions"] == []  # 不 append PTY-only 行
+
+
+def test_attach_id_from_live_pty(monkeypatch):
+    """kimi 运行期 DB sid 未捕获(None) → attach_id 下发活 PTY 的注册表 id。
+
+    回归(2026-07-27 tapd-1144381896001067713):session_id="" 时前端 chip
+    setActiveSession("") 是 falsy → 永不渲染 TerminalPanel,「点不进去」。
+    attach_id 是 /ws/pty/{story}/{id} 能用的凭据(compute_session_id)。
+    """
+    _stub_story(monkeypatch)
+    _stub_db_sessions(
+        monkeypatch,
+        [{"session_id": None, "adapter": "kimi", "stage": "verify",
+          "created_at": "t1"}],
+    )
+    _stub_pty_sessions(monkeypatch, [("verify", "kimi", True)])
+
+    result = api.api_list_sessions("S1")
+    s = result["sessions"][0]
+    assert s["session_id"] == ""        # DB 占位语义不变
+    assert s["status"] == "running"
+    assert s["attach_id"] == "pty-key"  # WS attach 凭据
+
+
+def test_attach_id_empty_when_no_live_pty(monkeypatch):
+    """无活 PTY → attach_id 为空(前端据此走 resume 入口,不 attach 死会话)。"""
+    _stub_story(monkeypatch)
+    _stub_db_sessions(
+        monkeypatch,
+        [{"session_id": "session_abc", "adapter": "kimi", "stage": "verify",
+          "created_at": "t1"}],
+    )
+    _stub_pty_sessions(monkeypatch, [("verify", "kimi", False)])
+
+    result = api.api_list_sessions("S1")
+    s = result["sessions"][0]
+    assert s["status"] == "exited"
+    assert s["attach_id"] == ""

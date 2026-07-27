@@ -385,22 +385,25 @@ def api_list_sessions(story_key: str):
     if not s:
         raise HTTPException(404, "Story not found")
     db_sessions = db.list_sessions_for_story(story_key)
-    # 建 (stage, adapter) → PTY 存活态 映射。
-    pty_alive_by_key: dict[tuple[str, str], bool] = {}
+    # 建 (stage, adapter) → PTY 行 映射。
+    pty_by_key: dict[tuple[str, str], dict] = {}
     for p in list_pty_sessions(story_key):
-        pty_alive_by_key[(p.get("stage", ""), p.get("adapter", ""))] = (
-            p.get("status") == "running"
-        )
+        pty_by_key[(p.get("stage", ""), p.get("adapter", ""))] = p
     result = []
     for row in db_sessions:
         stage = row.get("stage", "")
         adapter = row.get("adapter", "")
         # PTY 存活态覆盖 status:PTY 有该 (stage,adapter) 活进程 → running,否则 exited。
         # DB 的 status 是静态业务态(active/completed),不反映进程存活,不进前端 status。
-        alive = pty_alive_by_key.get((stage, adapter))
+        pty_row = pty_by_key.get((stage, adapter))
+        alive = bool(pty_row and pty_row.get("status") == "running")
         result.append(
             {
                 "session_id": row.get("session_id") or "",
+                # attach_id:WS attach 凭据。kimi 这类 CLI 自分配 sid 的 adapter,
+                # DB sid 退出时才捕获回填,运行期间是 "";活 PTY 的注册表 id
+                # (compute_session_id)才是 /ws/pty/{story}/{id} 能用的凭据。
+                "attach_id": pty_row.get("session_id", "") if alive else "",
                 "adapter": adapter,
                 "stage": stage,
                 "model": "",
@@ -515,6 +518,20 @@ def api_spawn_session(story_key: str, req: SpawnSessionRequest = None):
         # 这是客户端错误(用户传了非法 adapter)→ 400,不是 500。原先未捕获直接 500。
         raise HTTPException(status_code=400, detail=str(exc))
     model = req.model or "sonnet"
+    # 复用检查:该 (story, stage, adapter) 已有存活 agent PTY 时直接返回现有
+    # session,不重复 spawn(对齐 _ensure_story_agent_pty;此前每次点击都新起
+    # 进程并覆盖注册表条目,旧进程泄漏)。用户点「启动终端」想看的往往就是
+    # driver 正在跑的那个会话 —— 复用即可 attach。
+    _stage = s.get("current_stage", "design") or "design"
+    _reuse_sid = db.compute_session_id(story_key, _stage, adapter_name)
+    existing = get_pty(story_key, _reuse_sid)
+    if existing and existing.alive and existing.purpose == "agent":
+        return {
+            "session_id": existing.session_id,
+            "ok": True,
+            "resumed": False,
+            "reused": True,
+        }
     # adapter-aware spawn:claude 走 prompt-in-cmd,kimi/codex 走 PTY 注入。
     # 老逻辑直接 spawn_pty(command),对 kimi 来说 command 不带 prompt → 空会话。
     session_id, _, is_resume = _spawn_story_agent_pty(s, adapter, model)
@@ -689,6 +706,49 @@ def _build_stage_launch_cmd(story: dict, adapter, model: str) -> tuple[list[str]
     return cmd, False
 
 
+def _start_sid_capture_tap(pty, on_output) -> None:
+    """Daemon 线程:消费 PTY 输出 tap,实时喂 sid 捕获回调。
+
+    同步轮询 ``tap.get_nowait()``(对齐 ``_wait_ready`` 的消费模式,不依赖事件
+    循环);PTY 死亡且 tap 排空后 remove_tap 退出。best-effort:任何异常只结束
+    线程,绝不影响 PTY 主流程。用于 api 交互式 spawn 路径 —— 它的 PTY 由用户
+    自行 /exit,planner 的 stage-done 捕获钩不到(见 _spawn_story_agent_pty)。
+    """
+    import threading
+    import time as _time
+
+    tap = pty.add_tap()
+
+    def _drain() -> None:
+        try:
+            while True:
+                got = False
+                while True:
+                    try:
+                        chunk = tap.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    got = True
+                    if isinstance(chunk, (bytes, bytearray)):
+                        on_output(chunk.decode("utf-8", errors="replace"))
+                    else:
+                        on_output(str(chunk))
+                if not pty.alive and not got:
+                    break
+                _time.sleep(0.2)
+        except Exception:  # noqa: BLE001 — 捕获失败不拖垮 PTY
+            pass
+        finally:
+            try:
+                pty.remove_tap(tap)
+            except Exception:  # noqa: BLE001
+                pass
+
+    threading.Thread(
+        target=_drain, daemon=True, name=f"sid-capture-{pty.session_id}"
+    ).start()
+
+
 def _spawn_story_agent_pty(
     story: dict, adapter, model: str
 ) -> tuple[str, object, bool]:
@@ -735,7 +795,13 @@ def _spawn_story_agent_pty(
         / f"session_{stage}.json"
     )
     _db_row = db.get_session(story_key, stage, _adapter_name) if _adapter_name else None
-    is_resume = bool((_db_row and _db_row.get("session_id")) or marker.exists())
+    _prespecified = bool(getattr(adapter, "prespecified_session_id", False))
+    # resume 判据:DB 有捕获 sid;或 prespecified sid 的 adapter(claude, sid 是
+    # 确定性 uuid5)且 marker 在。CLI 自分配 sid 的 adapter(kimi)只有 marker 而
+    # 无捕获 sid 时不能 resume —— 否则 `-S <uuid5>` 指向一个不存在的会话。
+    is_resume = bool(
+        (_db_row and _db_row.get("session_id")) or (_prespecified and marker.exists())
+    )
     # resume 时用 DB 里捕获的 id(kimi)或确定性 uuid5(claude);否则用新 uuid5。
     _use_sid = (
         _db_row["session_id"] if _db_row and _db_row.get("session_id") else session_uuid
@@ -762,6 +828,17 @@ def _spawn_story_agent_pty(
         if spec.readiness_marker is None and not spec.pty_prompt
         else 2.0,
     )
+    # sid 捕获(Phase 0 抽象):api 交互式 spawn 路径的 PTY 生命周期不归 planner 管
+    # (用户自己 /exit 或前端断开),没有确定的 clean_exit 时机 —— planner 路径的
+    # stage-done 捕获钩不到这里。挂 daemon 线程消费 PTY 输出 tap,实时喂
+    # adapter.make_sid_capturer 的 on_output(kimi 退出时吐
+    # 'To resume this session: kimi -r session_<uuid>' → 命中即回填 DB)。
+    # prespecified sid 的 adapter(claude)启动即知 sid,无需捕获。
+    # DESIGN-session-pty-id-model.md §3.5 / 问题 9。
+    if _adapter_name and not _prespecified:
+        _capturer = adapter.make_sid_capturer(story_key, stage, spawn_cwd, None)
+        if _capturer is not None:
+            _start_sid_capture_tap(pty, _capturer)
     # write session marker for NEW sessions (so next spawn resumes)
     if not is_resume:
         # DB(预指定 sid 的 adapter 如 claude,sid 已知;kimi/opencode 由捕获回填,这里占位)
@@ -772,7 +849,7 @@ def _spawn_story_agent_pty(
                     stage,
                     _adapter_name,
                     # sid 模型是 adapter 的职责(Phase 0):prespecified_session_id=True
-                    # 的 adapter 启动即知 sid;否则 None,退出时捕获回填。
+                    # 的 adapter 启动即知 sid;否则 None,由 tap 捕获线程回填。
                     session_id=session_uuid
                     if adapter.prespecified_session_id
                     else None,
@@ -790,12 +867,6 @@ def _spawn_story_agent_pty(
             )
         except Exception:
             pass
-        # sid 捕获(Phase 0 抽象):api 交互式 spawn 路径(用户手动启动)的 PTY 生命周期
-        # 不归 planner 管(用户自己 /exit 或前端断开),没有确定的 clean_exit 时机。
-        # 可靠的捕获走 planner 全自动循环路径(stage-done 时 clean_exit_pty 收尾,
-        # adapter.make_sid_capturer / capture_sid_post_exit)。本路径暂不捕获 —— 交互式
-        # 手动启动的 session id 回填留给 PTY 死亡监听(Step 5 reaper)统一处理。
-        # DESIGN-session-pty-id-model.md §3.5 / 问题 9。
     return session_id, pty, is_resume
 
 

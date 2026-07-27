@@ -147,6 +147,11 @@ Whether a session id is known at spawn time or must be captured after is the **a
 
 Spawners (api.py / planner.py) read `prespecified_session_id` to decide whether to store a known sid at NEW time, and call both capture hooks at stage-done cleanup when it's `False`. They do NOT branch on `adapter_name == "claude"/"kimi"` — that scatter grew to three CLIs and was converged. See commits `1a5bfbfd` (Phase 0 abstraction), `dd89ba04` (opencode).
 
+Two spawn-path corollaries (2026-07-27, `tapd-1144381896001067713` incident):
+
+- **Interactive spawn path captures via PTY tap.** The api interactive path (`_spawn_story_agent_pty`) has no stage-done cleanup, so planner's capture hooks never fire for it. It starts a daemon thread (`_start_sid_capture_tap`) that drains a `pty.add_tap()` queue into `make_sid_capturer`'s `on_output` in real time. Without this, a kimi sid is never backfilled and resume is impossible.
+- **`attach_id` is the WS attach credential, not the DB sid.** For CLI-allocated adapters the DB sid stays empty while the session runs, so `GET /api/story/{key}/sessions` returns `attach_id` (the live PTY's registry id = `compute_session_id`) alongside `session_id`. The frontend must attach via `attach_id` and treat `session_id` as the resume credential only. Resume requires a **captured** sid (or a prespecified sid + marker): never pass the uuid5 fallback to a CLI-allocated adapter's resume flag (`kimi -S <uuid5>` points at a nonexistent session).
+
 | CLI | sid model | capture |
 |---|---|---|
 | claude | prespecified (uuid5) | none |
