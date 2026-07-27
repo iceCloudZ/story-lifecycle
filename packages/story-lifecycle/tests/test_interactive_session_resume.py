@@ -22,9 +22,11 @@ class _FakePty:
         self.alive = alive
         self.purpose = purpose
         self.tap = asyncio.Queue()
+        self.tap_added = False
         self.tap_removed = False
 
     def add_tap(self, maxsize=512):
+        self.tap_added = True
         return self.tap
 
     def remove_tap(self, tap):
@@ -122,12 +124,25 @@ def test_resume_with_captured_sid(monkeypatch, tmp_path):
     assert adapter.calls[0]["session_id"] == "session_abc123"
 
 
-def test_tap_capture_backfills_kimi_sid():
-    """交互式 PTY 输出含 kimi 退出行 → tap 线程实时捕获并回填 DB。
+def _wait_session_id(story_key: str, stage: str, adapter: str, timeout: float = 5):
+    """轮询 DB 直到 sid 回填(daemon 线程异步写)。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        row = db.get_session(story_key, stage, adapter)
+        sid = row.get("session_id") if row else None
+        if sid:
+            return sid
+        time.sleep(0.05)
+    return None
 
-    走真实 ShellAdapter.make_sid_capturer + 真实 DB(隔离 STORY_HOME)。
+
+def test_tap_capture_backfills_kimi_sid():
+    """输出行捕获模型(kimi):PTY 输出含退出行 → 策略 arm 的 tap 线程回填 DB。
+
+    走真实 ShellAdapter + arm_sid_capture + 真实 DB(隔离 STORY_HOME)。
     """
     from story_lifecycle.knowledge.adapters import get_adapter
+    from story_lifecycle.infra.terminal import sid_capture
 
     db.upsert_story(
         "S1", title="t", workspace="/tmp", profile="minimal",
@@ -135,29 +150,71 @@ def test_tap_capture_backfills_kimi_sid():
     )
     db.upsert_session("S1", "verify", "kimi", session_id=None)
 
-    adapter = get_adapter("kimi")
-    on_output = adapter.make_sid_capturer("S1", "verify", None, None)
-    assert on_output is not None  # kimi 必须有退出行捕获
-
     pty = _FakePty()
-    api._start_sid_capture_tap(pty, on_output)
+    sid_capture.arm_sid_capture(
+        get_adapter("kimi"), pty, story_key="S1", stage="verify"
+    )
+    assert pty.tap_added  # 输出行捕获 → 挂了 tap 线程
     pty.tap.put_nowait(
         "若干输出\nTo resume this session: kimi -r session_deadbeef\n".encode()
     )
     pty.alive = False  # 进程退出,线程应排空 tap 后摘除并退出
 
-    deadline = time.time() + 5
-    captured = None
-    while time.time() < deadline:
-        row = db.get_session("S1", "verify", "kimi")
-        captured = row.get("session_id") if row else None
-        if captured:
-            break
-        time.sleep(0.05)
-    assert captured == "session_deadbeef"
+    assert _wait_session_id("S1", "verify", "kimi") == "session_deadbeef"
 
     # 线程应已退出并摘除 tap
     deadline = time.time() + 5
     while not pty.tap_removed and time.time() < deadline:
         time.sleep(0.05)
     assert pty.tap_removed
+
+
+def test_post_exit_capture_backfills_opencode_sid():
+    """文件扫描捕获模型(opencode):PTY 死亡后 capture_sid_post_exit 回填 DB。"""
+    from story_lifecycle.infra.terminal import sid_capture
+
+    db.upsert_story(
+        "S2", title="t", workspace="/tmp", profile="minimal",
+        current_stage="build", status="active",
+    )
+    db.upsert_session("S2", "build", "opencode", session_id=None)
+
+    class _OpencodeLike:
+        name = "opencode"
+        prespecified_session_id = False
+
+        def make_sid_capturer(self, *a, **k):
+            return None  # opencode 终端不吐 sid
+
+        def capture_sid_post_exit(self, story_key, stage, cwd, since_ts):
+            return "ses_xyz789"  # 模拟查 opencode.db 命中
+
+    pty = _FakePty()
+    sid_capture.arm_sid_capture(
+        _OpencodeLike(), pty, story_key="S2", stage="build"
+    )
+    assert not pty.tap_added  # 无输出行捕获 → 不挂 tap
+    pty.alive = False  # 死亡后 watcher 调 capture_sid_post_exit
+
+    assert _wait_session_id("S2", "build", "opencode") == "ses_xyz789"
+
+
+def test_prespecified_adapter_arms_nothing():
+    """prespecified sid 模型(claude):sid 在 NEW 时已入库,不 arm 任何捕获。"""
+    from story_lifecycle.infra.terminal import sid_capture
+
+    class _ClaudeLike:
+        name = "claude"
+        prespecified_session_id = True
+
+        def make_sid_capturer(self, *a, **k):
+            raise AssertionError("prespecified adapter 不应调捕获钩子")
+
+        def capture_sid_post_exit(self, *a, **k):
+            raise AssertionError("prespecified adapter 不应调捕获钩子")
+
+    pty = _FakePty()
+    sid_capture.arm_sid_capture(
+        _ClaudeLike(), pty, story_key="S3", stage="design"
+    )
+    assert not pty.tap_added

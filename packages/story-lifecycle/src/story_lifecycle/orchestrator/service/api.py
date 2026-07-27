@@ -31,6 +31,7 @@ from ...infra.terminal.pty import (
     kill_pty,
     list_pty_sessions,
 )
+from ...infra.terminal.sid_capture import arm_sid_capture, now_utc_iso
 from ..engine.graph import (
     start_story_async,
     recover_orphan_stories,
@@ -706,49 +707,6 @@ def _build_stage_launch_cmd(story: dict, adapter, model: str) -> tuple[list[str]
     return cmd, False
 
 
-def _start_sid_capture_tap(pty, on_output) -> None:
-    """Daemon 线程:消费 PTY 输出 tap,实时喂 sid 捕获回调。
-
-    同步轮询 ``tap.get_nowait()``(对齐 ``_wait_ready`` 的消费模式,不依赖事件
-    循环);PTY 死亡且 tap 排空后 remove_tap 退出。best-effort:任何异常只结束
-    线程,绝不影响 PTY 主流程。用于 api 交互式 spawn 路径 —— 它的 PTY 由用户
-    自行 /exit,planner 的 stage-done 捕获钩不到(见 _spawn_story_agent_pty)。
-    """
-    import threading
-    import time as _time
-
-    tap = pty.add_tap()
-
-    def _drain() -> None:
-        try:
-            while True:
-                got = False
-                while True:
-                    try:
-                        chunk = tap.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                    got = True
-                    if isinstance(chunk, (bytes, bytearray)):
-                        on_output(chunk.decode("utf-8", errors="replace"))
-                    else:
-                        on_output(str(chunk))
-                if not pty.alive and not got:
-                    break
-                _time.sleep(0.2)
-        except Exception:  # noqa: BLE001 — 捕获失败不拖垮 PTY
-            pass
-        finally:
-            try:
-                pty.remove_tap(tap)
-            except Exception:  # noqa: BLE001
-                pass
-
-    threading.Thread(
-        target=_drain, daemon=True, name=f"sid-capture-{pty.session_id}"
-    ).start()
-
-
 def _spawn_story_agent_pty(
     story: dict, adapter, model: str
 ) -> tuple[str, object, bool]:
@@ -816,6 +774,9 @@ def _spawn_story_agent_pty(
         session_name=session_name,
         resume=is_resume,
     )
+    # 文件扫描捕获的时间窗口下界必须在 spawn 前取(opencode 的 session 行
+    # time_created 是 CLI 启动那一刻,spawn 后取会把它漏掉;对齐 planner._spawn_ts)。
+    _spawn_ts = now_utc_iso()
     session_id, pty = ensure_agent_pty(
         story_key,
         stage,
@@ -828,17 +789,15 @@ def _spawn_story_agent_pty(
         if spec.readiness_marker is None and not spec.pty_prompt
         else 2.0,
     )
-    # sid 捕获(Phase 0 抽象):api 交互式 spawn 路径的 PTY 生命周期不归 planner 管
-    # (用户自己 /exit 或前端断开),没有确定的 clean_exit 时机 —— planner 路径的
-    # stage-done 捕获钩不到这里。挂 daemon 线程消费 PTY 输出 tap,实时喂
-    # adapter.make_sid_capturer 的 on_output(kimi 退出时吐
-    # 'To resume this session: kimi -r session_<uuid>' → 命中即回填 DB)。
-    # prespecified sid 的 adapter(claude)启动即知 sid,无需捕获。
-    # DESIGN-session-pty-id-model.md §3.5 / 问题 9。
-    if _adapter_name and not _prespecified:
-        _capturer = adapter.make_sid_capturer(story_key, stage, spawn_cwd, None)
-        if _capturer is not None:
-            _start_sid_capture_tap(pty, _capturer)
+    # sid 捕获策略(三种 sid 模型统一入口,见 infra/terminal/sid_capture.py):
+    # prespecified(claude)启动即知 sid 无需捕获;输出行捕获(kimi)走 PTY tap
+    # 线程;文件扫描捕获(opencode)走 post-exit watcher。api 交互式路径的 PTY 由
+    # 用户自行 /exit,planner 的 stage-done 捕获钩不到,必须在 spawn 时 arm。
+    # resume 的会话 DB 已有 sid,无需重复捕获。
+    if _adapter_name and not is_resume:
+        arm_sid_capture(
+            adapter, pty, story_key=story_key, stage=stage, cwd=spawn_cwd, since_ts=_spawn_ts
+        )
     # write session marker for NEW sessions (so next spawn resumes)
     if not is_resume:
         # DB(预指定 sid 的 adapter 如 claude,sid 已知;kimi/opencode 由捕获回填,这里占位)
