@@ -215,6 +215,18 @@ def test_story_session_db_crud(isolated_story_home):
     # complete
     db.complete_session("S1", "design", "claude")
     assert db.get_session("S1", "design", "claude")["status"] == "completed"
+    # delete_session:单条删(给 story+stage+adapter)
+    db.delete_session("S1", "design", "claude")
+    assert db.get_session("S1", "design", "claude") is None
+    # 别的行不受影响
+    assert db.get_session("S1", "design", "kimi") is not None
+    # delete_session:整 story 删(只给 story_key)
+    db.delete_session("S1")
+    assert db.get_session("S1", "design", "kimi") is None
+    assert db.list_sessions_for_story("S1") == []
+    # 无匹配行 no-op 不崩
+    db.delete_session("S1", "design", "claude")
+    db.delete_session("NOPE")
 
 
 def test_kimi_sid_capturer_writes_db(isolated_story_home):

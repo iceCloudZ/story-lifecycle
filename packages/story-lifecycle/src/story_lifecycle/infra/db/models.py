@@ -2532,6 +2532,34 @@ def complete_session(story_key: str, stage: str, adapter: str) -> None:
         )
 
 
+def delete_session(
+    story_key: str, stage: str = "", adapter: str = ""
+) -> None:
+    """删除 story_session 记录,供 kill_pty 杀进程后清悬空记录用。
+
+    防御「kill 进程不清 DB → spawn resume 拿死 sid 崩」(real-run 2026-07-28
+    tapd-1144381896001066735 事件:claude 被紧急停止,story_session 行残留
+    status=active,下次 confirm spawn 走 resume 传死 sid,claude 立报
+    "No conversation found" 秒退)。违反 driver 不变式「CLI 生命周期 ⊆ driver
+    生命周期」,此处补上缺失的「杀进程 = 清记录」环节。
+
+    给定 (story_key, stage, adapter) 删单条;只给 story_key 删该 story 全部行;
+    对齐 kill_pty 的「单 sid / 全 story」两种签名。无匹配行静默 no-op。
+    """
+    with _db() as conn:
+        if stage and adapter:
+            conn.execute(
+                "DELETE FROM story_session "
+                "WHERE story_key = ? AND stage = ? AND adapter = ?",
+                (story_key, stage, adapter),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM story_session WHERE story_key = ?",
+                (story_key,),
+            )
+
+
 def update_session_trace(
     story_key: str,
     stage: str,

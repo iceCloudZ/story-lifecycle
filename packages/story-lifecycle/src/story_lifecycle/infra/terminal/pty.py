@@ -615,17 +615,42 @@ def kill_pty(story_id: str, session_id: str = ""):
 
     For an *immediate* teardown use this. For a transcript-flushing teardown
     (let claude `/exit` cleanly before killing) use ``cleanup_all`` instead.
+
+    同步清理 DB ``story_session`` 悬空记录:杀进程必须连带清 DB 记录,否则下次
+    spawn 会拿死 sid 走 resume 崩(real-run 2026-07-28 tapd-1144381896001066735:
+    emergency-stop 杀了 claude 但 story_session 残留 status=active → confirm spawn
+    resume 死 sid → claude "No conversation found" 秒退)。driver 不变式
+    「CLI 生命周期 ⊆ driver 生命周期」的回收环节。
     """
+    # 锁内收集要清的 (story, stage, adapter) 三元组;锁外做 DB 删除(避免 I/O 持锁)。
+    triples: list[tuple[str, str, str]] = []
     with _lock:
         sessions = _ptys.get(story_id, {})
         if session_id:
             pty = sessions.pop(session_id, None)
             if pty:
                 pty.kill()
+                triples.append((pty.story_key, pty.stage, pty.adapter))
         else:
             for pty in sessions.values():
                 pty.kill()
+                triples.append((pty.story_key, pty.stage, pty.adapter))
             sessions.clear()
+
+    # 清 DB 悬空记录(best-effort:DB 不可用不应阻塞 kill 本身)。
+    # session_id 路径只清那一条三元组;全 story 路径按 story 维度删——兜底覆盖
+    # 内存里没有 PTY 条目但 DB 有悬空行的情况(进程已自然死亡被 reaper 清掉、
+    # 或只 upsert 了 DB 没真 spawn PTY 的 adapter)。
+    try:
+        from ..db.models import delete_session
+
+        if session_id:
+            for _story, _stage, _adapter in triples:
+                delete_session(_story, _stage, _adapter)
+        else:
+            delete_session(story_id)
+    except Exception:
+        pass
 
 
 # Clean-exit teardown tunables. Exported as module constants so tests can zero
