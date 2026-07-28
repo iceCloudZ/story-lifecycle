@@ -23,6 +23,7 @@ import json
 import logging
 
 from ..infra.db import models as db
+from ..infra.story_paths import resolve_doc_type_aliases
 from .lifecycle_state import LifecycleState
 
 log = logging.getLogger(__name__)
@@ -151,7 +152,14 @@ def check_deliverables(
         confirmed = False
 
         if d.get("doc_type"):
-            doc = db.get_story_doc(story_key, d["doc_type"])
+            # code agent 可能用别名 doc_type 落库(spec 落成 design),逐个候选试。
+            # canonical 优先(spec),命中即停;否则试别名(design)。任一存在即视为
+            # 该成果物已落地 —— 否则 design.md 写了却显示"暂无产物"(2026-07-28 事件)。
+            doc = None
+            for cand in resolve_doc_type_aliases(d["doc_type"]):
+                doc = db.get_story_doc(story_key, cand)
+                if doc:
+                    break
             exists = doc is not None
             confirmed = bool(doc and doc.get("confirmed_by"))
         elif d.get("diff_check"):

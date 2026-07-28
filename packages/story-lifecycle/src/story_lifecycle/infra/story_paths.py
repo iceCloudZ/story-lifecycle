@@ -133,6 +133,28 @@ def doc_type_for_filename(filename: str) -> str | None:
     return None
 
 
+# canonical doc_type → alias doc_types(code agent 实际会用的非规范名)。
+# 单一真相源:deliverables gate / artifact_check evidence / 文档查看都经此解析,
+# 避免 design 落库后 spec gate 显示"暂无产物"(2026-07-28 真实事件:
+# tapd-...1066924 设计文档 doc_type=design 但 deliverables 只查 spec)。
+# 系统此前在 4 处各写各的副本(artifact_check._DOC_TYPE_FILENAMES /
+# planner._STAGE_DOC_KIND / migrate_done / detector._SPEC_DIRS),集中到此处。
+DOC_TYPE_ALIASES: dict[str, list[str]] = {
+    "spec": ["design"],  # code agent 爱用 design.md 命名(planner prompt 明确叫它别用)
+    # test_report / prd / delivery 无已知 doc_type 别名(DB 里就是规范名)。
+}
+
+
+def resolve_doc_type_aliases(doc_type: str) -> list[str]:
+    """Return ``[canonical, *aliases]`` lookup candidates for a doc_type.
+
+    Canonical first; for unknown doc_types returns ``[doc_type]`` (single).
+    Callers (e.g. deliverables gate) iterate these against ``get_story_doc``
+    so a ``design``-registered doc satisfies the ``spec`` deliverable.
+    """
+    return [doc_type, *DOC_TYPE_ALIASES.get(doc_type, [])]
+
+
 def story_doc_path(
     workspace: str | Path, story_key: str, doc_type: str, title: str = ""
 ) -> Path:

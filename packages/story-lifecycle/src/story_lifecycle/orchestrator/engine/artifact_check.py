@@ -21,6 +21,8 @@ import logging
 import subprocess
 from pathlib import Path
 
+from ...infra.story_paths import DOC_TYPE_ALIASES, doc_filename
+
 log = logging.getLogger("story-lifecycle.artifact_check")
 
 # git status 子进程超时(秒)。工作区可能很大(.git 慢),给宽松上限但必须有界,
@@ -232,11 +234,20 @@ _ARTIFACT_TO_DOC_TYPE = {
     "story/review-verdict.md": "review_verdict",
 }
 
-# doc_type 可能的 evidence 文件名(code agent 常见别名,robust 兜底):
-#   spec → spec.md / design.md(code agent 爱用 design 命名)
-#   test_report → test-report.md / test_report.md
+# doc_type 可能的 evidence 文件名(code agent 常见别名,robust 兜底)。
+# 真相源:doc_type→doc_type 别名(spec→design)在 story_paths.DOC_TYPE_ALIASES,
+# 此处的 spec→design.md 行通过 _alias_filenames 派生,避免副本漂移。其余是
+# 同 doc_type 的文件名变体(test_report.md / testreport.md 是下划线/连字符写法),
+# 不属 doc_type 别名,保留为常量。
+
+
+def _alias_filenames(doc_type: str) -> list[str]:
+    """doc_type 的 alias 文件名(从 DOC_TYPE_ALIASES 派生,如 spec→[design.md])。"""
+    return [doc_filename(a) for a in DOC_TYPE_ALIASES.get(doc_type, [])]
+
+
 _DOC_TYPE_FILENAMES = {
-    "spec": ["spec.md", "design.md"],
+    "spec": [doc_filename("spec"), *_alias_filenames("spec")],  # spec.md, design.md
     "test_report": ["test-report.md", "test_report.md", "testreport.md"],
     "research": ["research.md"],
     "plan": ["plan.md"],

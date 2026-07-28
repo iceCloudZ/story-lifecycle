@@ -253,6 +253,22 @@ def test_evidence_candidate_empty_when_artifact_not_in_map(tmp_path):
     assert "custom/file.md" not in cands
 
 
+def test_doc_type_filenames_derived_from_alias_truth_source():
+    """_DOC_TYPE_FILENAMES 的 spec→design.md 行从 DOC_TYPE_ALIASES 派生(非副本)。
+
+    回归(2026-07-28):design.md filename 别名此前硬编码在 artifact_check,跟
+    deliverables 的 doc_type 别名是两套副本。集中到 story_paths.DOC_TYPE_ALIASES 后,
+    artifact_check 的 filename 版应派生自它 —— 改 DOC_TYPE_ALIASES 即两边同步。
+    """
+    from story_lifecycle.infra.story_paths import DOC_TYPE_ALIASES, doc_filename
+    from story_lifecycle.orchestrator.engine.artifact_check import _DOC_TYPE_FILENAMES
+
+    # spec 的候选 = [canonical filename] + [alias doc_type 的 filename]
+    expected_spec = ["spec.md"] + [doc_filename(a) for a in DOC_TYPE_ALIASES["spec"]]
+    assert _DOC_TYPE_FILENAMES["spec"] == expected_spec
+    assert "design.md" in _DOC_TYPE_FILENAMES["spec"]
+
+
 # ---- resolve_artifact_paths / read_artifact_content(统一真相源) ----
 # real-run tapd-1144381896001066735:spec.md 落 evidence 子目录,各检查点口径不一
 # (完成判据说齐了 / done_data 空 / judge 读空)。resolver 是统一入口。
