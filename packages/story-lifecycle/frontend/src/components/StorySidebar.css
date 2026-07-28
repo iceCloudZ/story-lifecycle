@@ -23,7 +23,8 @@
   margin: var(--space-2) var(--space-2) 0;
   padding: 6px var(--space-3);
   border: none;
-  border-radius: var(--radius-md);
+  /* 胶囊圆角,与全站 chip/导航条目一致(原 radius-md 近直角,风格不统一) */
+  border-radius: var(--radius-full);
   background: transparent;
   color: var(--color-text-muted);
   font-family: inherit;
@@ -52,7 +53,7 @@
   gap: var(--space-2);
   padding: 7px var(--space-3);
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   background: transparent;
   color: var(--color-text-muted);
   font-family: inherit;
@@ -121,7 +122,7 @@
 
 /* 单个交付物:单行(状态点 + 标签 + 右侧控件) */
 .ss-deliv-item {
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   transition: background 0.12s;
 }
 .ss-deliv-item:hover {
@@ -293,7 +294,7 @@
   gap: 6px;
   padding: 8px var(--space-3);
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   font-family: inherit;
   font-size: var(--text-sm);
   font-weight: 600;
@@ -350,7 +351,7 @@
   width: 100%;
   padding: 6px var(--space-3);
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   background: transparent;
   color: var(--color-text-faint);
   font-family: inherit;

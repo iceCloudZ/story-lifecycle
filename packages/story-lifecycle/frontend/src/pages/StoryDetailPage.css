@@ -283,9 +283,10 @@
   scroll-margin-top: var(--space-4);
   display: flex;
   flex-direction: column;
-  /* 视口高度的 55%,给终端 + 历史足够的可视区;小屏保底 420px。 */
-  height: 55vh;
-  min-height: 420px;
+  /* 终端黑框要高必须整卡加高:卡内标题/stage chip 栏/focus 块吃掉 ~180px 固定开销。
+     120vh 让黑框 ≈ 1000px+(约为原 55vh 的 3 倍);页面本身可滚动,不会再半截挡在视口外。 */
+  height: 120vh;
+  min-height: 900px;
 }
 .ot-terminal-section > .ot-terminal-title {
   flex-shrink: 0;
