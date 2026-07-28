@@ -63,7 +63,8 @@ export default function TerminalTab({
   // 选中的会话 chip(chipKeyOf 值):running → attach;exited → 展示 resume 入口。
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [resuming, setResuming] = useState(false)
-  const [showHistory, setShowHistory] = useState(true)
+  // 默认隐藏历史:全宽留给终端,需要时点「对话历史」展开。
+  const [showHistory, setShowHistory] = useState(false)
   // stage 卡片视图:当前选中 stage(默认 currentStage,fallback 首个)。
   const [activeStage, setActiveStage] = useState<string>(
     currentStage || stages[0]?.name || ''
