@@ -739,7 +739,7 @@ def _spawn_story_agent_pty(
     """
     import json as _json
 
-    from ...infra.story_paths import safe_story_path
+    from ...infra.story_paths import build_story_spawn_env, safe_story_path
 
     workspace = story.get("workspace", "")
     story_key = story["story_key"]
@@ -789,6 +789,10 @@ def _spawn_story_agent_pty(
     # 文件扫描捕获的时间窗口下界必须在 spawn 前取(opencode 的 session 行
     # time_created 是 CLI 启动那一刻,spawn 后取会把它漏掉;对齐 planner._spawn_ts)。
     _spawn_ts = now_utc_iso()
+    # spawn env:与 planner 两条路径同源(build_story_spawn_env),让交互式 PTY
+    # spawn 的 code agent 也能跑 `story consult` / `story tool declare`。此前这里
+    # 不传 env → 子进程继承 serve 进程环境,什么 STORY_* 都没有 → declare 直接
+    # ValueError 缺 story_key;且 STORY_TITLE 漏注入 → evidence 子目录退化成 "-需求"。
     session_id, pty = ensure_agent_pty(
         story_key,
         stage,
@@ -796,6 +800,7 @@ def _spawn_story_agent_pty(
         spec.command,
         spawn_cwd,
         spec.pty_prompt,
+        env=build_story_spawn_env(story, stage, _adapter_name),
         readiness_marker=spec.readiness_marker,
         startup_delay=0
         if spec.readiness_marker is None and not spec.pty_prompt

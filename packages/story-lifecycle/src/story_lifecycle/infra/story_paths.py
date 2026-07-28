@@ -17,6 +17,51 @@ class UnsafePathError(ValueError):
     """
 
 
+# ---------------------------------------------------------------------------
+# Story spawn-env: env-var names are the single source of truth here.
+#
+# Producer (spawners via build_story_spawn_env) and consumer
+# (artifact_declare._story_ctx reads these to locate the evidence dir by
+# title-slug) MUST use the same names — previously planner.py hardcoded the
+# strings and STORY_TITLE was missing, so declare() computed slug from empty
+# title and fell back to literal "需求". See commit history (STORY_TITLE 漏注入).
+# ---------------------------------------------------------------------------
+ENV_STORY_KEY = "STORY_KEY"
+ENV_STORY_STAGE = "STORY_STAGE"
+ENV_STORY_WORKSPACE = "STORY_WORKSPACE"
+ENV_STORY_ADAPTER = "STORY_ADAPTER"
+ENV_STORY_TITLE = "STORY_TITLE"  # 可选,用于 story evidence 目录命名
+
+
+def build_story_spawn_env(story: dict, stage: str, adapter_name: str) -> dict:
+    """Build the spawn env for a code agent (claude/kimi/opencode/codex).
+
+    Single source for all spawn paths (planner headless + planner PTY +
+    api interactive PTY). Layers on ``os.environ`` so the child keeps the
+    serve process' environment and adds the five STORY_* vars:
+
+    - STORY_KEY / STORY_STAGE / STORY_WORKSPACE / STORY_ADAPTER: locate the
+      story so downstream ``story tool declare`` / ``story consult`` / MCP
+      clarify server can resolve it.
+    - STORY_TITLE: used by ``artifact_declare._story_ctx`` →
+      :func:`story_short_slug` to name the evidence subdir
+      (``<key>-<title-slug>/``). Without it the slug falls back to literal
+      "需求", drifting from the PRD's subdir which is built with the real
+      title (incident 2026-07-28: same story had artifacts across
+      ``-事件中心新增提额成功事件`` / ``-需求`` / bare ``story/``).
+    """
+    import os
+
+    return {
+        **os.environ,
+        ENV_STORY_KEY: story.get("story_key", ""),
+        ENV_STORY_STAGE: stage or "",
+        ENV_STORY_WORKSPACE: story.get("workspace", ""),
+        ENV_STORY_ADAPTER: adapter_name or "",
+        ENV_STORY_TITLE: story.get("title", ""),
+    }
+
+
 def story_numeric_id(story_key: str) -> str:
     """Return the last numeric component of a story key, or the key itself."""
     matches = re.findall(r"\d+", story_key or "")

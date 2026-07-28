@@ -86,13 +86,17 @@ class _FakeAdapter:
         return None
 
 
-def _stub_spawn_deps(monkeypatch, db_row):
+def _stub_spawn_deps(monkeypatch, db_row, capture=None):
     monkeypatch.setattr(api.db, "get_session", lambda *a: db_row)
     monkeypatch.setattr(api.db, "upsert_session", lambda *a, **k: None)
     monkeypatch.setattr(api, "_build_stage_launch_prompt", lambda s: "seed")
-    monkeypatch.setattr(
-        api, "ensure_agent_pty", lambda *a, **k: ("reg-id", _FakePty())
-    )
+
+    def _fake_ensure(*a, **k):
+        if capture is not None:
+            capture.append(k.get("env"))
+        return ("reg-id", _FakePty())
+
+    monkeypatch.setattr(api, "ensure_agent_pty", _fake_ensure)
 
 
 def test_no_resume_without_captured_sid(monkeypatch, tmp_path):
@@ -122,6 +126,36 @@ def test_resume_with_captured_sid(monkeypatch, tmp_path):
     assert is_resume is True
     assert adapter.calls[0]["resume"] is True
     assert adapter.calls[0]["session_id"] == "session_abc123"
+
+
+def test_interactive_spawn_injects_story_env(monkeypatch, tmp_path):
+    """交互式 PTY spawn 必须注入完整 STORY_* env(含 STORY_TITLE)。
+
+    回归(2026-07-28):`_spawn_story_agent_pty` 此前不传 env → ensure_agent_pty 默认
+    None → 子进程继承 serve 进程环境,什么 STORY_* 都没有 → code agent 跑
+    `story tool declare` 时 ValueError 缺 story_key;且 STORY_TITLE 漏注入 →
+    evidence 子目录 slug 退化成字面量 "需求",与 PRD 的 title-slug 目录不一致。
+    """
+    story = {
+        "story_key": "S1",
+        "workspace": str(tmp_path),
+        "current_stage": "verify",
+        "title": "【事件中心】新增提额成功事件",
+        "context_json": "{}",
+    }
+    captured = []
+    _stub_spawn_deps(monkeypatch, db_row={"session_id": None}, capture=captured)
+
+    api._spawn_story_agent_pty(story, _FakeAdapter(), "sonnet")
+    assert len(captured) == 1
+    env = captured[0]
+    assert env is not None, "ensure_agent_pty 未收到 env(交互式 spawn 漏注入)"
+    assert env["STORY_KEY"] == "S1"
+    assert env["STORY_STAGE"] == "verify"
+    assert env["STORY_WORKSPACE"] == str(tmp_path)
+    assert env["STORY_ADAPTER"] == "kimi"
+    # 关键:STORY_TITLE 必须透传,否则 declare 算 evidence 子目录时 slug 退化成 "需求"。
+    assert env["STORY_TITLE"] == "【事件中心】新增提额成功事件"
 
 
 def _wait_session_id(story_key: str, stage: str, adapter: str, timeout: float = 5):

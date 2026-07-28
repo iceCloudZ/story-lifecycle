@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ...infra.llm_client import get_llm, with_story_key
-from ...infra.story_paths import safe_story_path
+from ...infra.story_paths import build_story_spawn_env, safe_story_path
 from ...infra.paths import stage_done_file_rel
 from ...sourcing.state_machine import (
     activate as sm_activate,
@@ -1190,35 +1190,14 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 )
                 _wants_grill = action.get("grill", False) and _has_interactive
 
-                story_env = None
-                # consult (DESIGN-consult-tool §5.8):env 注入提升到所有 headless spawn
-                # —— STORY_KEY/STAGE/WORKSPACE/ADAPTER 对 claude/kimi caller 都可用,
-                # 这样 code agent 用 Bash 跑 `story consult` 时能读到。**不注入**
+                # consult (DESIGN-consult-tool §5.8) + 成果物驱动(STEP 1.4):spawn env
+                # 注入所有 code agent(claude/kimi/opencode/codex),让它们能跑
+                # `story consult` / `story tool declare` / MCP clarify —— STORY_KEY/
+                # STAGE/WORKSPACE/ADAPTER 定位 story,STORY_TITLE 让 declare 算 evidence
+                # 子目录名时跟 PRD 同源(否则 slug 退化成 "需求")。**不注入**
                 # STORY_CONSULT_DEPTH(caller depth 是未设/0;只有外援 spawn 时注入 1)。
-                if headless:
-                    import os as _os
-
-                    story_env = {
-                        **_os.environ,
-                        "STORY_KEY": story_key,
-                        "STORY_STAGE": stage,
-                        "STORY_WORKSPACE": workspace,  # consult spawn 外援的工作区
-                        "STORY_ADAPTER": adapter_name,  # consult 的 decorrelation 决策
-                    }
-                # STEP 1.4(成果物驱动):PTY(interactive_pty)路径也注入 story 上下文,
-                # 让 code agent 能调 `story tool declare` 落成果物(story-tool 从环境读
-                # STORY_KEY/STORY_STAGE/STORY_WORKSPACE 定位 story)。headless 分支已在
-                # 上方注入;PTY 分支独立注入同一组变量。
-                if story_env is None:
-                    import os as _os
-
-                    story_env = {
-                        **_os.environ,
-                        "STORY_KEY": story_key,
-                        "STORY_STAGE": stage,
-                        "STORY_WORKSPACE": workspace,
-                        "STORY_ADAPTER": adapter_name,
-                    }
+                # headless / PTY 两条路径注入同一组变量,走统一 builder,避免各写各的漏注入。
+                story_env = build_story_spawn_env(story, stage, adapter_name)
                 if _wants_grill and adapter_name == "claude" and headless:
                     import sys as _sys
 

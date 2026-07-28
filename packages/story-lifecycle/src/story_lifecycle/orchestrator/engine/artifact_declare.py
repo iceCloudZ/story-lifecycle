@@ -23,14 +23,16 @@ import logging
 from pathlib import Path
 
 from ...infra.atomic_write import atomic_write
+# ENV_STORY_* 的真相源在 story_paths(spawn 侧 build_story_spawn_env 与本模块
+# _story_ctx 共用同一组名字,避免 spawner 漏注入或写错名字 —— 见 story_paths.build_story_spawn_env)。
+from ...infra.story_paths import (
+    ENV_STORY_KEY,
+    ENV_STORY_STAGE,
+    ENV_STORY_TITLE,
+    ENV_STORY_WORKSPACE,
+)
 
 log = logging.getLogger("story-lifecycle.story_tool")
-
-# story-tool 从环境读 story 上下文(planner spawn 时注入,见 1.4)。
-ENV_STORY_KEY = "STORY_KEY"
-ENV_STORY_STAGE = "STORY_STAGE"
-ENV_STORY_WORKSPACE = "STORY_WORKSPACE"
-ENV_STORY_TITLE = "STORY_TITLE"  # 可选,用于 story evidence 目录命名
 
 
 # doc_type → done.json payload 字段映射(miner story_ingest 读这些字段)。
