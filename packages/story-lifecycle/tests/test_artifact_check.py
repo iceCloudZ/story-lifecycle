@@ -251,3 +251,119 @@ def test_evidence_candidate_empty_when_artifact_not_in_map(tmp_path):
     cands = build_evidence_candidates(["custom/file.md"], str(tmp_path), "K1")
     # 未知映射 → 不在候选里(防御)
     assert "custom/file.md" not in cands
+
+
+# ---- resolve_artifact_paths / read_artifact_content(统一真相源) ----
+# real-run tapd-1144381896001066735:spec.md 落 evidence 子目录,各检查点口径不一
+# (完成判据说齐了 / done_data 空 / judge 读空)。resolver 是统一入口。
+
+
+def test_resolve_artifact_paths_workspace_relative(tmp_path):
+    """spec.md 在 workspace 相对路径 → resolver 返回该绝对路径。"""
+    from story_lifecycle.orchestrator.engine.artifact_check import (
+        resolve_artifact_paths,
+    )
+
+    (tmp_path / "story").mkdir()
+    (tmp_path / "story" / "spec.md").write_text("设计\n", encoding="utf-8")
+    resolved = resolve_artifact_paths(["story/spec.md"], str(tmp_path))
+    assert resolved == {"story/spec.md": str(tmp_path / "story" / "spec.md")}
+
+
+def test_resolve_artifact_paths_evidence_fallback(tmp_path):
+    """spec.md 在 evidence 子目录(workspace 相对没有)→ resolver 兜底命中候选。
+
+    这正是 real-run tapd-1144381896001066735 的场景:claude 把 spec.md 写到
+    evidence 目录,workspace/story/spec.md 不存在。此前合成 done_data / judge
+    读内容都漏传 evidence_candidates → files_changed 空 / 读到空。
+    """
+    from story_lifecycle.orchestrator.engine.artifact_check import (
+        resolve_artifact_paths,
+    )
+
+    ev_path = tmp_path / "evidence" / "spec.md"
+    ev_path.parent.mkdir(parents=True)
+    ev_path.write_text("设计\n", encoding="utf-8")
+    cands = {"story/spec.md": [str(ev_path)]}
+    resolved = resolve_artifact_paths(
+        ["story/spec.md"], str(tmp_path), evidence_candidates=cands
+    )
+    assert resolved == {"story/spec.md": str(ev_path)}
+
+
+def test_resolve_artifact_paths_skips_git_and_glob(tmp_path):
+    """git / glob 类无单一落地路径概念,不在结果里(交给 check_artifacts_landed 处理)。"""
+    from story_lifecycle.orchestrator.engine.artifact_check import (
+        resolve_artifact_paths,
+    )
+
+    (tmp_path / "story").mkdir()
+    (tmp_path / "story" / "spec.md").write_text("x\n", encoding="utf-8")
+    resolved = resolve_artifact_paths(["story/spec.md", "git", "story/*.md"], str(tmp_path))
+    assert set(resolved.keys()) == {"story/spec.md"}
+
+
+def test_resolve_artifact_paths_not_landed_excluded(tmp_path):
+    """未落地的 artifact 不在结果里(只返回落地的)。"""
+    from story_lifecycle.orchestrator.engine.artifact_check import (
+        resolve_artifact_paths,
+    )
+
+    resolved = resolve_artifact_paths(["story/spec.md"], str(tmp_path))
+    assert resolved == {}
+
+
+def test_read_artifact_content_evidence_dir(tmp_path):
+    """spec.md 在 evidence 子目录 → read_artifact_content 兜底读到内容。
+
+    防 boundary judge 误判"内容为空":旧 _read_artifact_content 只查 workspace
+    相对,读不到 evidence 子目录的 spec。
+    """
+    from story_lifecycle.orchestrator.engine.artifact_check import (
+        read_artifact_content,
+    )
+
+    ev_path = tmp_path / "evidence" / "spec.md"
+    ev_path.parent.mkdir(parents=True)
+    ev_path.write_text("# 设计方案\n真实内容\n", encoding="utf-8")
+    cands = {"story/spec.md": [str(ev_path)]}
+    content = read_artifact_content(
+        "story/spec.md", str(tmp_path), evidence_candidates=cands
+    )
+    assert content is not None
+    assert "真实内容" in content
+
+
+def test_read_artifact_content_not_found_returns_none(tmp_path):
+    """未落地 + 无候选 → None(judge 据此判空,不会误读)。"""
+    from story_lifecycle.orchestrator.engine.artifact_check import (
+        read_artifact_content,
+    )
+
+    assert read_artifact_content("story/spec.md", str(tmp_path)) is None
+
+
+def test_check_artifacts_landed_uses_resolver_consistent_with_read(tmp_path):
+    """check_artifacts_landed 落地判定 与 read_artifact_content 读内容 口径一致。
+
+    同一份 spec.md(在 evidence 子目录):判定 landed 的,read 必须也能读到内容。
+    这是 real-run bug 的核心矛盾点 —— 修完必须两端一致。
+    """
+    from story_lifecycle.orchestrator.engine.artifact_check import (
+        check_artifacts_landed,
+        read_artifact_content,
+    )
+
+    ev_path = tmp_path / "evidence" / "spec.md"
+    ev_path.parent.mkdir(parents=True)
+    ev_path.write_text("设计内容\n", encoding="utf-8")
+    cands = {"story/spec.md": [str(ev_path)]}
+    missing, landed = check_artifacts_landed(
+        ["story/spec.md"], str(tmp_path), evidence_candidates=cands
+    )
+    assert missing == [] and landed == ["story/spec.md"]
+    # 关键:判 landed 的同一文件,read 必须读到内容(此前不一致)
+    content = read_artifact_content(
+        "story/spec.md", str(tmp_path), evidence_candidates=cands
+    )
+    assert content == "设计内容\n"

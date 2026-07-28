@@ -1821,16 +1821,22 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             done_data = robust_json_parse(done_path) or {}
                         else:
                             # 合成 done_data:成果物已齐但无 done 兼容视图(代码 agent 直接
-                            # 写文件未调 story-tool)。files_changed 列出已落地的成果物路径,
-                            # 让 _register_stage_outputs 能登记。
-                            _missing, _landed = _check_artifacts(
-                                _stage_artifacts, workspace
+                            # 写文件未调 story-tool)。files_changed 用 resolve_artifact_paths
+                            # 拿落地绝对路径(含 evidence 兜底),让 _register_stage_outputs 能
+                            # 直接读文件注册 story_doc。此前漏传 evidence_candidates →
+                            # files_changed 为空 → 前端卡片"暂无产物"(real-run
+                            # tapd-1144381896001066735,2026-07-28)。
+                            from .artifact_check import resolve_artifact_paths as _resolve_arts
+
+                            _resolved = _resolve_arts(
+                                _stage_artifacts, workspace,
+                                evidence_candidates=_ev_cands,
                             )
                             done_data = {
                                 "stage": stage,
                                 "status": "done",
                                 "summary": f"{stage} 成果物落地(未走 declare)",
-                                "files_changed": list(_landed),
+                                "files_changed": list(_resolved.values()),
                             }
                         db.log_event(story_key, stage, "completed", done_data)
                         # BUG #17: 登记 stage 产出文件进 story_document(纯确定性,
@@ -1862,6 +1868,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                 ctx=ctx,
                                 artifacts=_stage_artifacts,
                                 adapter=adapter_name,
+                                evidence_candidates=_ev_cands,
                             )
                             if _bj["decision"] == "reject":
                                 # reject → 回 code CLI 重做(带 reject reason 当 seed)。

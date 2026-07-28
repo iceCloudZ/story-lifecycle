@@ -34,6 +34,7 @@ def assemble_judge_context(
     *,
     artifacts: list[str] | None = None,
     adapter: str = "",
+    evidence_candidates: dict[str, list[str]] | None = None,
     db_module=None,
 ) -> dict:
     """组装喂判定 LLM 的上下文(无状态,§4.6)。
@@ -43,6 +44,9 @@ def assemble_judge_context(
         workspace: 工作区根(读成果物文件 + events.jsonl)。
         artifacts: 该 stage 的成果物路径(相对 workspace)。None 时尝试从 profile 读。
         adapter: 当前 stage 的 adapter(查 session 执行轨迹用)。空则查该 stage 所有 session。
+        evidence_candidates: 成果物 evidence 候选(build_evidence_candidates 建),让
+            读内容时能兜底命中 evidence 子目录的 spec.md。此前无兜底 → boundary judge
+            读到空 → 误判"内容为空"(real-run tapd-1144381896001066735)。
         db_module: 注入 db(测试用);None 则延迟 import。
 
     Returns:
@@ -75,12 +79,17 @@ def assemble_judge_context(
     except Exception as exc:  # noqa: BLE001
         log.debug("[%s] read prd failed (non-fatal): %s", story_key, exc)
 
-    # 2. 成果物内容(每文件截断)
+    # 2. 成果物内容(每文件截断)。用统一的 read_artifact_content(含 evidence 兜底),
+    #    与 check_artifacts_landed 口径一致 —— 同一份 spec.md,完成判据能读到、judge 也能读到。
     if artifacts:
+        from ..engine.artifact_check import read_artifact_content
+
         for art in artifacts:
             if not isinstance(art, str) or art in ("git",) or not art:
                 continue
-            content = _read_artifact_content(art, workspace)
+            content = read_artifact_content(
+                art, workspace, evidence_candidates=evidence_candidates
+            )
             if content is not None:
                 ctx["artifacts"].append(
                     {"path": art, "content": content[:MAX_ARTIFACT_CHARS]}
@@ -107,17 +116,6 @@ def assemble_judge_context(
         log.debug("[%s] read decisions failed (non-fatal): %s", story_key, exc)
 
     return ctx
-
-
-def _read_artifact_content(artifact: str, workspace: str) -> str | None:
-    """读成果物文件内容(相对 workspace)。不存在/读失败 → None。"""
-    try:
-        p = Path(workspace) / artifact
-        if not p.exists() or not p.is_file():
-            return None
-        return p.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
 
 
 def _assemble_trace(

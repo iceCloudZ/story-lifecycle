@@ -440,6 +440,7 @@ def consume_orphan_artifacts(story_key: str) -> bool:
         if not stage or stage in completed_stages:
             continue
         stage_artifacts = list(rp.stage(stage).artifacts or [])
+        _ev: dict | None = None
         if not stage_artifacts:
             # 无 artifacts 声明(老 profile / 测试 profile)→ 退回 done.json 兼容视图存在性。
             done_rel = action.get("done_file") or stage_done_file_rel(story_key, stage)
@@ -461,16 +462,23 @@ def consume_orphan_artifacts(story_key: str) -> bool:
         except Exception:
             done_data = {}
         if not done_data:
-            _m, landed = (
-                check_artifacts_landed(stage_artifacts, workspace)
+            # 合成 done_data:用 resolve_artifact_paths 拿落地绝对路径(含 evidence 兜底)。
+            # 此前 check_artifacts_landed 漏传 evidence_candidates → files_changed 为空
+            # (与 planner.py 同源 bug,real-run tapd-1144381896001066735)。
+            from .artifact_check import resolve_artifact_paths as _resolve_arts
+
+            _resolved = (
+                _resolve_arts(
+                    stage_artifacts, workspace, evidence_candidates=_ev
+                )
                 if stage_artifacts
-                else ([], [])
+                else {}
             )
             done_data = {
                 "stage": stage,
                 "status": "done",
                 "summary": f"{stage} 成果物落地(orphan 认领)",
-                "files_changed": list(landed),
+                "files_changed": list(_resolved.values()),
             }
         completed_stages.append(stage)
         db.log_event(story_key, stage, "completed", done_data)

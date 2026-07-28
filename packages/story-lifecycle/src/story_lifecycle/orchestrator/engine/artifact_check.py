@@ -82,6 +82,78 @@ def _git_has_changes(workspace: Path) -> bool:
         return False
 
 
+def resolve_artifact_paths(
+    artifacts: list[str],
+    workspace: str,
+    *,
+    evidence_candidates: dict[str, list[str]] | None = None,
+) -> dict[str, str]:
+    """artifact 声明 → 真正落地的绝对路径(唯一真相源)。
+
+    处理顺序(workspace 相对优先,与 check_artifacts_landed 落地判定一致):
+      1. workspace 相对路径(如 ``workspace/story/spec.md``)→ 存在且非空即命中;
+      2. evidence 候选(``evidence_candidates`` 给的绝对路径,含 design.md 等别名)→
+         逐个尝试,首个存在且非空即命中。
+
+    real-run tapd-1144381896001066735(2026-07-28)暴露:spec.md 落在 evidence 子目录
+    ``<workspace>/story/<id>-slug/spec.md``,而各检查点用各写各的方式找它 → 完成判据说
+    "齐了"、合成 done_data/files_changed 却为空、boundary judge 读不到内容判"空"。
+    本函数是这组矛盾的统一入口:6 处判定落地 + 2 处读内容都走它,口径不再走样。
+
+    Args:
+        artifacts: stage 声明的成果物标记(只解析文件路径类;git/glob 不参与,不在结果里)。
+        workspace: 工作区根(absolute path string)。
+        evidence_candidates: {artifact: [绝对路径候选]},由 build_evidence_candidates 建。
+
+    Returns:
+        {artifact: 落地绝对路径}。未落地 / git / glob / 非字符串的 artifact 不在结果里。
+    """
+    ws = Path(workspace)
+    extra = evidence_candidates or {}
+    resolved: dict[str, str] = {}
+
+    for artifact in artifacts:
+        if not isinstance(artifact, str) or not artifact:
+            continue
+        if artifact == "git" or _is_glob(artifact):
+            continue  # 无单一落地路径概念,交给 check_artifacts_landed 的 git/glob 分支
+        # 1. workspace 相对路径
+        primary = ws / artifact
+        if _file_landed(primary):
+            resolved[artifact] = str(primary)
+            continue
+        # 2. evidence 候选(别名 / evidence 子目录)
+        for cand in extra.get(artifact, []):
+            if _file_landed(Path(cand)):
+                resolved[artifact] = cand
+                break
+    return resolved
+
+
+def read_artifact_content(
+    artifact: str,
+    workspace: str,
+    *,
+    evidence_candidates: dict[str, list[str]] | None = None,
+) -> str | None:
+    """读成果物文件内容(带 evidence 兜底)。
+
+    用 resolve_artifact_paths 解析落地路径,命中 → 读内容;未命中 → None。
+    替代各处无兜底的直读(如 judge_context._read_artifact_content 旧版只查
+    workspace 相对,读不到 evidence 子目录的 spec → boundary judge 误判"空")。
+    """
+    resolved = resolve_artifact_paths(
+        [artifact], workspace, evidence_candidates=evidence_candidates
+    )
+    path = resolved.get(artifact)
+    if not path:
+        return None
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 def check_artifacts_landed(
     artifacts: list[str],
     workspace: str,
@@ -105,12 +177,16 @@ def check_artifacts_landed(
 
     纯函数:只读 + 子进程查,无副作用。空 artifacts 输入 → ([],[])(调用方应已
     被 1.1 schema 契约拦下,这里防御性返回不抛)。
+
+    文件类 artifact 的落地路径解析走 resolve_artifact_paths(唯一真相源,
+    与 read_artifact_content / done_data 合成口径一致)。
     """
     if not artifacts:
         return [], []
 
     ws = Path(workspace)
-    extra = evidence_candidates or {}
+    # 文件类:用 resolver 一次性解析落地路径(含 evidence 兜底)
+    resolved = resolve_artifact_paths(artifacts, workspace, evidence_candidates=evidence_candidates)
     missing: list[str] = []
     landed: list[str] = []
 
@@ -124,14 +200,8 @@ def check_artifacts_landed(
         elif _is_glob(artifact):
             ok = _glob_landed(ws, artifact)
         else:
-            ok = _file_landed(ws / artifact)
-            # 兜底:workspace 相对路径没落地 → 查 evidence 候选(code agent 可能写到
-            # story evidence 目录或用别的文件名如 design.md)。
-            if not ok:
-                for cand in extra.get(artifact, []):
-                    if _file_landed(Path(cand)):
-                        ok = True
-                        break
+            # 文件类:resolver 命中即落地
+            ok = artifact in resolved
 
         if ok:
             landed.append(artifact)

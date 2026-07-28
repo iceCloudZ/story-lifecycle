@@ -141,7 +141,13 @@ def todo():
         )
         return
 
-    missing, landed = check_artifacts_landed(artifacts, ws)
+    # 补 evidence 候选:code agent 可能把 spec.md 写到 evidence 子目录(story/<id>-slug/)
+    # 或用别名(design.md)。漏传会误判"还缺文件"(real-run tapd-1144381896001066735)。
+    from ...orchestrator.engine.artifact_check import build_evidence_candidates
+
+    _title = (story or {}).get("title", "") or ""
+    _ev = build_evidence_candidates(artifacts, ws, sk, _title)
+    missing, landed = check_artifacts_landed(artifacts, ws, evidence_candidates=_ev)
     console.print(f"Stage [cyan]{st}[/] artifacts (workspace={ws}):")
     for a in landed:
         console.print(f"  [green]✓[/] {a}")

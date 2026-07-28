@@ -51,6 +51,7 @@ def judge_boundary(
     ctx: dict,
     artifacts: list[str],
     adapter: str = "",
+    evidence_candidates: dict[str, list[str]] | None = None,
     llm=None,
     db_module=None,
 ) -> dict:
@@ -62,6 +63,8 @@ def judge_boundary(
         ctx: story context_json(取 task_type / verify_round 等)。
         artifacts: 该 stage 的成果物路径(传给 judge_context 读内容)。
         adapter: 当前 stage 的 adapter(查 session 执行轨迹)。
+        evidence_candidates: 成果物 evidence 候选,透传给 assemble_judge_context 让读
+            内容时能兜底命中 evidence 子目录的 spec.md(此前无兜底 → 读空 → 误 reject)。
         llm: 注入 LLM 客户端(测试用);None 则 get_llm()。
         db_module: 注入 db(测试用);None 则延迟 import。
 
@@ -81,7 +84,8 @@ def judge_boundary(
     from ..context.judge_context import assemble_judge_context, context_ref
 
     judge_ctx = assemble_judge_context(
-        story_key, stage, workspace, artifacts=artifacts, adapter=adapter
+        story_key, stage, workspace, artifacts=artifacts, adapter=adapter,
+        evidence_candidates=evidence_candidates,
     )
     cref = context_ref(judge_ctx)
 
