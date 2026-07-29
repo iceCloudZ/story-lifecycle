@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { IDisposable } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import { writeClipboard, makePtySender, type PtySender } from '../utils/ptyClipboard'
 import './TerminalPanel.css'
 
 interface Props {
@@ -30,6 +31,9 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
   const wsRef = useRef<WebSocket | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const onDataDisposableRef = useRef<IDisposable | null>(null)
+  // 带去重的 PTY 发送器:吸收 onData(P1)与容器 paste 冒泡(P3)对同一
+  // 粘贴内容的重复触发。用 getWs 闭包始终指向最新 WS 句柄。
+  const senderRef = useRef<PtySender | null>(null)
   // When sessionId is provided, the session already exists — skip spawn
   const [spawned, setSpawned] = useState(!!sessionId)
   const [prevStoryKey, setPrevStoryKey] = useState(storyKey)
@@ -152,14 +156,13 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
       }
     }
 
-    // User input → PTY
+    // User input → PTY(粘贴主通道 P1:xterm 原生 paste 也走 onData)。
+    // 走 sender 去重:与容器 paste 兜底(P3)对同一粘贴内容只发一次。
     const term = termRef.current
     if (term) {
       onDataDisposableRef.current?.dispose()
       onDataDisposableRef.current = term.onData((data) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(data)
-        }
+        senderRef.current?.send(data)
       })
     }
   }, [storyKey, spawned, sessionId, scheduleReconnect])
@@ -194,62 +197,40 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
     termRef.current = term
     fitRef.current = fit
 
-    // BUG #11/#12:复制粘贴。xterm 默认不处理 copy/paste,需显式接管。
-    // copy:有选区时 Ctrl+C/Ctrl+Shift+C/Cmd+C → 写剪贴板(clipboard API 不可用则 execCommand 兜底)。
-    // paste:Ctrl+V/Cmd+V → 读剪贴板发 PTY;并在容器挂 paste 事件兜 DOM 粘贴。
-    const writeClipboard = (text: string) => {
-      try {
-        if (navigator.clipboard?.writeText) {
-          navigator.clipboard.writeText(text).catch(() => {})
-        } else {
-          // HTTP 非安全上下文兜底(clipboard API 为 undefined)
-          const ta = document.createElement('textarea')
-          ta.value = text
-          document.body.appendChild(ta)
-          ta.select()
-          try { document.execCommand('copy') } catch { /* ignore */ }
-          document.body.removeChild(ta)
-        }
-      } catch { /* ignore */ }
-    }
+    // 带去重的 PTY 发送器:用 getWs 闭包始终读最新 wsRef,WS 重连 / 切
+    // session 后自动跟随,无需手动 dispose。
+    senderRef.current = makePtySender(() => wsRef.current)
 
-    const sendToPty = (text: string) => {
-      if (text && wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(text)
-      }
-    }
-
-    // 选区变化自动复制(保留原行为,加 try/catch 防 clipboard undefined 抛错)
-    term.onSelectionChange(() => {
-      const selection = term.getSelection()
-      if (selection) writeClipboard(selection)
-    })
-
-    // 键盘兜底:拦截 copy/paste 快捷键,避免浏览器默认行为干扰终端
+    // ── 复制粘贴 ── 统一走 utils/ptyClipboard 的真相源。xterm 默认不处理
+    // copy/paste,需显式接管;历史上为 copy/paste 各注册了多条互不感知的
+    // 入口,导致一次复制/粘贴落 3 份。现已收敛为单入口 + 发送去重。
+    //
+    // 复制:仅 Ctrl+C(有选区时)/ Ctrl+Shift+C / Cmd+C 一条路径。
+    //   (已删 onSelectionChange「选中即复制」——拖选过程中每移动一个字符
+    //   触发一次,与 Ctrl+C 叠加 + StrictMode 双挂载残留 → 最多 3 份。)
+    //
+    // 粘贴: onData(P1,xterm 原生 paste 通道)为主 + 容器 paste(P3)兜底,
+    //   两路都走 sender,同内容 50ms 内只发一次。已删 customKey 的 Ctrl+V
+    //   分支(P2)——它与 onData、容器 paste 三路叠加才是「粘贴 3 份」根因。
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey
       if (!mod) return true
-      // Copy:Ctrl+C(有选区时)/Ctrl+Shift+C/Cmd+C
+      // Copy:Ctrl+C(有选区时)/Ctrl+Shift+C/Cmd+C。Ctrl+V 不在此拦截,
+      // 让它走 xterm 默认 → onData(P1),避免与容器 paste 重复发送。
       if ((e.key === 'c' || e.key === 'C') && (e.shiftKey || term.hasSelection())) {
         const sel = term.getSelection()
         if (sel) { writeClipboard(sel); return false }
       }
-      // Paste:Ctrl+V/Ctrl+Shift+V/Cmd+V
-      if (e.key === 'v' || e.key === 'V') {
-        try {
-          navigator.clipboard?.readText?.().then((text) => { if (text) sendToPty(text) })
-          return false
-        } catch { return true }
-      }
       return true
     })
 
-    // DOM paste 兜底:在容器直接粘贴(不依赖 xterm helper textarea 获焦)
+    // DOM paste 兜底(P3):helper textarea 丢失焦点时 onData 收不到 paste,
+    // 靠容器上的 paste 事件兜住。走去重,与 onData(P1)对同一内容只发一次。
     const onPaste = (e: ClipboardEvent) => {
       const text = e.clipboardData?.getData('text')
       if (text) {
         e.preventDefault()
-        sendToPty(text)
+        senderRef.current?.send(text)
       }
     }
     containerRef.current.addEventListener('paste', onPaste)
@@ -289,6 +270,7 @@ export default function TerminalPanel({ storyKey, autoConnect = false, sessionId
       containerRef.current?.removeEventListener('paste', onPaste)
       onDataDisposableRef.current?.dispose()
       onDataDisposableRef.current = null
+      senderRef.current = null
       term.dispose()
       termRef.current = null
       fitRef.current = null
