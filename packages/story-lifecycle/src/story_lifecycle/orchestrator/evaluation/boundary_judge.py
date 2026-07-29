@@ -84,7 +84,11 @@ def judge_boundary(
     from ..context.judge_context import assemble_judge_context, context_ref
 
     judge_ctx = assemble_judge_context(
-        story_key, stage, workspace, artifacts=artifacts, adapter=adapter,
+        story_key,
+        stage,
+        workspace,
+        artifacts=artifacts,
+        adapter=adapter,
         evidence_candidates=evidence_candidates,
     )
     cref = context_ref(judge_ctx)

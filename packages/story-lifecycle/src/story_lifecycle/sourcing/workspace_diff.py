@@ -192,7 +192,11 @@ def _pick_repo_and_branches(
         # (AGENTS.md「Per-story workspace」约定)。扫一层子目录找 agent 的 checkout;
         # 找到即视为 worktree(diff 目标),前端据此不再显示「worktree 未就绪」。
         child = next(
-            (c for c in sorted(candidate.iterdir()) if c.is_dir() and (c / ".git").exists()),
+            (
+                c
+                for c in sorted(candidate.iterdir())
+                if c.is_dir() and (c / ".git").exists()
+            ),
             None,
         )
         if child is not None:

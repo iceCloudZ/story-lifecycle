@@ -188,7 +188,9 @@ def check_artifacts_landed(
 
     ws = Path(workspace)
     # 文件类:用 resolver 一次性解析落地路径(含 evidence 兜底)
-    resolved = resolve_artifact_paths(artifacts, workspace, evidence_candidates=evidence_candidates)
+    resolved = resolve_artifact_paths(
+        artifacts, workspace, evidence_candidates=evidence_candidates
+    )
     missing: list[str] = []
     landed: list[str] = []
 

@@ -813,7 +813,12 @@ def _spawn_story_agent_pty(
     # resume 的会话 DB 已有 sid,无需重复捕获。
     if _adapter_name and not is_resume:
         arm_sid_capture(
-            adapter, pty, story_key=story_key, stage=stage, cwd=spawn_cwd, since_ts=_spawn_ts
+            adapter,
+            pty,
+            story_key=story_key,
+            stage=stage,
+            cwd=spawn_cwd,
+            since_ts=_spawn_ts,
         )
     # write session marker for NEW sessions (so next spawn resumes)
     if not is_resume:

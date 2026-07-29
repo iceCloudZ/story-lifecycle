@@ -2532,9 +2532,7 @@ def complete_session(story_key: str, stage: str, adapter: str) -> None:
         )
 
 
-def delete_session(
-    story_key: str, stage: str = "", adapter: str = ""
-) -> None:
+def delete_session(story_key: str, stage: str = "", adapter: str = "") -> None:
     """删除 story_session 记录,供 kill_pty 杀进程后清悬空记录用。
 
     防御「kill 进程不清 DB → spawn resume 拿死 sid 崩」(real-run 2026-07-28

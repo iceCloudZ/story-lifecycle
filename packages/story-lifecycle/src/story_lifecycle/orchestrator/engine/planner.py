@@ -1805,10 +1805,13 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             # 直接读文件注册 story_doc。此前漏传 evidence_candidates →
                             # files_changed 为空 → 前端卡片"暂无产物"(real-run
                             # tapd-1144381896001066735,2026-07-28)。
-                            from .artifact_check import resolve_artifact_paths as _resolve_arts
+                            from .artifact_check import (
+                                resolve_artifact_paths as _resolve_arts,
+                            )
 
                             _resolved = _resolve_arts(
-                                _stage_artifacts, workspace,
+                                _stage_artifacts,
+                                workspace,
                                 evidence_candidates=_ev_cands,
                             )
                             done_data = {

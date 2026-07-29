@@ -468,9 +468,7 @@ def consume_orphan_artifacts(story_key: str) -> bool:
             from .artifact_check import resolve_artifact_paths as _resolve_arts
 
             _resolved = (
-                _resolve_arts(
-                    stage_artifacts, workspace, evidence_candidates=_ev
-                )
+                _resolve_arts(stage_artifacts, workspace, evidence_candidates=_ev)
                 if stage_artifacts
                 else {}
             )

@@ -174,8 +174,13 @@ def test_tap_capture_backfills_kimi_sid():
     """输出行捕获模型(kimi):PTY 输出含退出行 → 策略 arm 的 tap 线程回填 DB。
 
     走真实 ShellAdapter + arm_sid_capture + 真实 DB(隔离 STORY_HOME)。
+
+    直接构造 ShellAdapter(name='kimi')而非 get_adapter('kimi'):kimi 是配置驱动
+    的 adapter,CI 无 ~/.story-lifecycle/adapters.yaml 时 get_adapter 抛
+    ValueError。本测试只验 sid 捕获行为(内置 kimi 退出行正则,不依赖 yaml),
+    故直接实例化 —— 仍走真实 ShellAdapter,只是绕开会因缺配置失败的工厂。
     """
-    from story_lifecycle.knowledge.adapters import get_adapter
+    from story_lifecycle.knowledge.adapters.shell import ShellAdapter
     from story_lifecycle.infra.terminal import sid_capture
 
     db.upsert_story(
@@ -186,7 +191,7 @@ def test_tap_capture_backfills_kimi_sid():
 
     pty = _FakePty()
     sid_capture.arm_sid_capture(
-        get_adapter("kimi"), pty, story_key="S1", stage="verify"
+        ShellAdapter(name="kimi"), pty, story_key="S1", stage="verify"
     )
     assert pty.tap_added  # 输出行捕获 → 挂了 tap 线程
     pty.tap.put_nowait(
