@@ -131,6 +131,49 @@ class TestPickRepoAndBranches:
         assert str(repo) == str(child)
         assert wt == str(child)
 
+    def test_child_scan_restricted_to_bound_worktree(
+        self, isolated_story_home, tmp_path
+    ):
+        """有绑定时 child 扫描只认绑定的 worktree,不在共享 monorepo 根上误选无关项目仓。
+
+        回归(2026-07-30 tapd-...1067447):story.workspace=D:\\hc-all 是个共享 monorepo
+        根,每个子目录都是独立项目仓。盲扫会按字母序选到与本 story 无关的 hc-aiops,
+        diff 它等于把别人的改动算成本 story 产物(code exists 假阳)。修复:有绑定时只认
+        绑定的 worktree_path 子目录。
+        """
+        ws = tmp_path / "hc-all"
+        # 三个独立项目仓,字母序 unrelated < bound:
+        unrelated = ws / "aaa-unrelated"
+        bound = ws / "zzz-bound"
+        _make_git_repo(unrelated)
+        _make_git_repo(bound)
+        db.create_story(story_key="S", title="t", workspace=str(ws))
+        db.create_project(name="proj-bound", repo_path=str(tmp_path / "repo-bound"))
+        db.bind_story_project(
+            "S", 1, branch="feat/x", base_branch="master",
+            worktree_path=str(bound), worktree_state="available",
+        )
+
+        repo, src, base, pid, wt = _pick_repo_and_branches("S", None)
+        # 选了绑定的 bound,不是字母序更前的 unrelated。
+        assert str(repo) == str(bound)
+        assert wt == str(bound)
+        # child-scan 路径不解析 pid(那是 bound-fallback 循环的职责);分支来自绑定。
+        assert src == "feat/x"
+
+    def test_child_scan_unrestricted_without_bindings(
+        self, isolated_story_home, tmp_path
+    ):
+        """无绑定时(老 profile/未规划)退回旧行为:扫任意带 .git 的子目录。"""
+        ws = tmp_path / "ws"
+        child = ws / "proj"
+        _make_git_repo(child)
+        db.create_story(story_key="S", title="t", workspace=str(ws))
+        # 注意:不 bind 任何项目
+        repo, src, base, pid, wt = _pick_repo_and_branches("S", None)
+        assert str(repo) == str(child)
+        assert wt == str(child)
+
 
 class TestGetStoryWorkspaceDiffFields:
     def test_diff_response_carries_project_fields(

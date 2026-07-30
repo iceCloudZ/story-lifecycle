@@ -592,6 +592,20 @@ export const docApi = {
 // Deliverables (成果物 gate — 驱动业务状态推进)
 // ---------------------------------------------------------------------------
 
+// delivery 交付物的产物 = MR/PR 行(story_delivery_artifact 表),随 /deliverables
+// 响应一起回(后端已查该表算 exists)。delivery 是 MR 驱动而非文档驱动 —— story_doc
+// 永远没有 delivery 行,前端不能走 /docs/delivery 取内容,只能靠这个 evidence 展示。
+export interface DeliveryEvidence {
+  external_id?: string | null
+  url?: string | null
+  source_branch?: string | null
+  target_branch?: string | null
+  delivery_state?: string | null
+  review_state?: string | null
+  provider?: string | null
+  evidence_ref?: string | null
+}
+
 export interface DeliverableItem {
   key: string
   label: string
@@ -601,6 +615,8 @@ export interface DeliverableItem {
   needs_confirm: boolean
   satisfied: boolean
   skipped: boolean
+  /** delivery 项的 MR/PR 产物清单;其它交付物为空数组。 */
+  evidence?: DeliveryEvidence[]
 }
 
 export interface GateRequired {

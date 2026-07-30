@@ -144,12 +144,14 @@ def check_deliverables(
                     "needs_confirm": d["needs_confirm"],
                     "satisfied": True,  # skipped = 满足
                     "skipped": True,
+                    "evidence": [],
                 }
             )
             continue
 
         exists = False
         confirmed = False
+        evidence: list[dict] = []
 
         if d.get("doc_type"):
             # code agent 可能用别名 doc_type 落库(spec 落成 design),逐个候选试。
@@ -182,9 +184,28 @@ def check_deliverables(
             confirmed = key in confirmed_non_doc
         elif d.get("delivery_check"):
             artifacts = db.get_story_delivery_artifacts(story_key)
-            exists = any(
-                a.get("delivery_state") in ("merged", "abandoned") for a in artifacts
-            )
+            # 只有已落地(merged/abandoned)的 MR 算产物;其余(not_started/open)不算。
+            landed = [
+                a for a in artifacts
+                if a.get("delivery_state") in ("merged", "abandoned")
+            ]
+            exists = bool(landed)
+            # 把命中的 MR 精简后作为 evidence 透传给前端 —— delivery 是 MR 驱动而非
+            # 文档驱动(story_doc 永远没有 delivery 行),前端无法走 /docs/delivery 取内容,
+            # 必须靠这里随 /deliverables 响应一起回的 MR 行展示。只取展示字段,不泄内部 id。
+            evidence = [
+                {
+                    "external_id": a.get("external_id"),
+                    "url": a.get("url"),
+                    "source_branch": a.get("source_branch"),
+                    "target_branch": a.get("target_branch"),
+                    "delivery_state": a.get("delivery_state"),
+                    "review_state": a.get("review_state"),
+                    "provider": a.get("provider"),
+                    "evidence_ref": a.get("evidence_ref"),
+                }
+                for a in landed
+            ]
             confirmed = key in confirmed_non_doc
 
         satisfied = exists and (not d["needs_confirm"] or confirmed)
@@ -198,6 +219,7 @@ def check_deliverables(
                 "needs_confirm": d["needs_confirm"],
                 "satisfied": satisfied,
                 "skipped": False,
+                "evidence": evidence,
             }
         )
     return result

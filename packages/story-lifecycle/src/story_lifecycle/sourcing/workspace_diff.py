@@ -135,8 +135,12 @@ def _pick_repo_and_branches(
       point at an old workspace in handoff/rerun scenarios). The workspace root
       itself is usually not a repo — the agent runs ``git worktree add`` for each
       project inside it — so immediate children are scanned for a git checkout.
-      Falls back to the first bound project whose ``repo_path`` is a git repo.
-      Branches come from the first binding that defines them.
+      Falls back to a bound project's ``worktree_path`` only if it actually exists
+      on disk (the agent's prepared checkout); it deliberately does NOT read a
+      bound project's main ``repo_path``, because that is the shared monorepo and
+      would attribute unrelated changes to this story (real incident: a story whose
+      own worktree was deleted still showed code exists=true by diffing the shared
+      main repo). Branches come from the first binding that defines them.
     """
     story = get_story(story_key)
     if not story:
@@ -178,6 +182,16 @@ def _pick_repo_and_branches(
 
     repo: Path | None = None
     workspace_exists = False
+    # 绑定项目实际 checkout 的 worktree_path(本 story 的代码真正改的地方)。当 story 有
+    # 绑定时,child 扫描只接受落在这个集合里的子目录 —— 否则在共享 monorepo 根(如
+    # D:\hc-all,每个子目录都是独立项目仓)上盲扫会选到与本 story 无关的项目仓,diff 它
+    # 等于把别人的改动算成本 story 产物(真实事件:worktree 删了的 story 仍 exists=true,
+    # 因为扫到 hc-aiops 而非绑定的 hc-coupon)。无绑定时(老 profile/未规划)退回旧行为:
+    # 扫任意带 .git 的子目录。
+    bound_worktrees = {
+        Path(sp.get("worktree_path", "") or "") for sp in bindings
+    }
+    restrict_to_bound = bool(bound_worktrees)
     for candidate_str in (ctx.get("workspace_path") or "", legacy_workspace):
         if not candidate_str:
             continue
@@ -190,13 +204,14 @@ def _pick_repo_and_branches(
             break
         # workspace 根通常不是仓 — agent 在其中 git worktree add 各项目仓
         # (AGENTS.md「Per-story workspace」约定)。扫一层子目录找 agent 的 checkout;
-        # 找到即视为 worktree(diff 目标),前端据此不再显示「worktree 未就绪」。
+        # 有绑定时只认绑定的 worktree_path,避免在共享 monorepo 根上误选无关项目仓。
+        def _is_acceptable_child(c: Path) -> bool:
+            if not (c.is_dir() and (c / ".git").exists()):
+                return False
+            return (not restrict_to_bound) or (c in bound_worktrees)
+
         child = next(
-            (
-                c
-                for c in sorted(candidate.iterdir())
-                if c.is_dir() and (c / ".git").exists()
-            ),
+            (c for c in sorted(candidate.iterdir()) if _is_acceptable_child(c)),
             None,
         )
         if child is not None:
@@ -208,16 +223,19 @@ def _pick_repo_and_branches(
         raise ValueError(f"invalid workspace: {legacy_workspace}")
 
     if repo is None:
-        # workspace 存在但本身和一层子目录都不是仓 → 回退到绑定项目的主仓。
+        # workspace 存在但本身和一层子目录都不是仓 → 回退到绑定项目的 worktree_path
+        # (agent 实际 checkout 代码的地方),且必须真实存在于磁盘。绝不读绑定项目的
+        # 主 repo_path:那是共享主仓,diff 它会把与本 story 无关的改动算成本 story 产物
+        # (真实事件:story 自己的 worktree 已删,却因回退主仓读到无关 diff 而 exists=true)。
         for sp in bindings:
-            proj = get_project(sp.get("project_id"))
-            if not proj:
+            wt = sp.get("worktree_path", "") or ""
+            if not wt:
                 continue
-            candidate = Path(proj.get("repo_path", ""))
+            candidate = Path(wt)
             if candidate.exists() and (candidate / ".git").exists():
                 repo = candidate
                 resolved_project_id = sp.get("project_id")
-                worktree_path = None  # 回退主仓,不是 agent 的 checkout
+                worktree_path = wt
                 break
 
     if repo is None:

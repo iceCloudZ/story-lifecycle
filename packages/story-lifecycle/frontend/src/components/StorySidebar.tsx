@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { deliverablesApi, docApi } from '../api/client'
 import type { DeliverableItem, GateInfo } from '../api/client'
@@ -68,13 +68,18 @@ function resolveTapdUrl(storyKey: string, tapdUrl?: string): string {
 
 // 交付物 key → {跳转 tab, 可选打开的 doc_type}。
 // doc 类(doc_type)→ docs tab + 打开该 doc;code → code tab。
+// delivery 不在此表:它是 MR 驱动(查 story_delivery_artifact),不是文档,story_doc
+// 永远没有 delivery 行 —— 若指到 /docs/delivery 必然 404 空文档。它的产物靠 d.evidence
+// 内联展开显示(见 DELIVERY_EXPANDABLE),不跳 tab。
 const DELIV_TARGET: Record<string, { tab: string; doc?: string }> = {
   prd: { tab: 'docs', doc: 'prd' },
   spec: { tab: 'docs', doc: 'spec' },
   code: { tab: 'code' },
   test_report: { tab: 'docs', doc: 'test_report' },
-  delivery: { tab: 'docs', doc: 'delivery' },
 }
+
+// delivery 交付物可内联展开 MR 产物清单(数据已随 /deliverables 回来,无需新请求)。
+const DELIVERY_EXPANDABLE = 'delivery'
 
 // doc 类交付物(spec/test_report/prd)走 docApi.confirm(写 story_doc);
 // 非 doc 类(code/delivery)走 deliverablesApi.confirm(写 context_json)。
@@ -118,6 +123,9 @@ export default function StorySidebar({
   const deliverables: DeliverableItem[] = delivData?.deliverables ?? []
   const gate: GateInfo | null = delivData?.gate ?? null
 
+  // delivery 的 MR 产物清单展开态:有 evidence 才能展开,无产物点击无反应。
+  const [deliveryExpanded, setDeliveryExpanded] = useState(false)
+
   async function handleConfirm(delivKey: string) {
     const ok = DOC_DELIVERABLES.has(delivKey)
       ? await docApi.confirm(storyKey, delivKey).then(() => true).catch(() => false)
@@ -132,7 +140,14 @@ export default function StorySidebar({
 
   function handleDelivClick(d: DeliverableItem) {
     const target = DELIV_TARGET[d.key]
-    if (target) onNavigate(target.tab, target.doc)
+    if (target) {
+      onNavigate(target.tab, target.doc)
+      return
+    }
+    // delivery:内联展开 MR 产物(非跳转);只在有 evidence 时可展开。
+    if (d.key === DELIVERY_EXPANDABLE && (d.evidence?.length ?? 0) > 0) {
+      setDeliveryExpanded((v) => !v)
+    }
   }
 
   // gate 未满足时,缺失的成果物名(下方显示)。
@@ -181,7 +196,9 @@ export default function StorySidebar({
               const skipped = !!d.skipped
               const showConfirm = !!d.needs_confirm && !skipped
               const target = DELIV_TARGET[d.key]
-              const clickable = !!target && !skipped
+              const hasEvidence = d.key === DELIVERY_EXPANDABLE && (d.evidence?.length ?? 0) > 0
+              // 有 target 的(doc/code)→ 跳 tab;delivery 有 MR 产物 → 内联展开;否则不可点。
+              const clickable = (!skipped) && (!!target || hasEvidence)
               // 确认圈可用性:产物存在才能确认;无产物 → 置灰禁用。
               const confirmDisabled = !d.exists
               const status = skipped
@@ -191,6 +208,11 @@ export default function StorySidebar({
                   : d.exists
                     ? showConfirm ? 'pending' : 'ready'
                     : 'empty'
+              const clickTitle = target
+                ? `查看${d.label}`
+                : hasEvidence
+                  ? `${d.label}:展开合并记录`
+                  : `${d.label}(无对应 tab)`
               return (
                 <div
                   key={d.key}
@@ -198,7 +220,7 @@ export default function StorySidebar({
                 >
                   <div
                     className={`ss-deliv-main${clickable ? ' clickable' : ''}`}
-                    title={target ? `查看${d.label}` : `${d.label}(无对应 tab)`}
+                    title={clickTitle}
                     onClick={() => clickable && handleDelivClick(d)}
                   >
                     <span className="ss-dot" title={DOT_STATUS_TEXT[status]} />
@@ -230,6 +252,37 @@ export default function StorySidebar({
                       </button>
                     )}
                   </div>
+                  {/* delivery 的 MR 产物清单(展开态)。delivery 是 MR 驱动,产物就是这些
+                      合并记录 —— 不是文档,不进 docs tab,直接内联展示。 */}
+                  {d.key === DELIVERY_EXPANDABLE && deliveryExpanded && hasEvidence && (
+                    <div className="ss-deliv-evidence">
+                      {d.evidence!.map((mr, i) => (
+                        <div className="ss-mr-card" key={i}>
+                          <div className="ss-mr-head">
+                            <span className={`ss-mr-state ss-mr-state-${mr.delivery_state ?? 'unknown'}`}>
+                              {mr.delivery_state === 'merged' ? '已合并'
+                                : mr.delivery_state === 'abandoned' ? '已废弃'
+                                : mr.delivery_state ?? '未知'}
+                            </span>
+                            {mr.external_id && <span className="ss-mr-id">#{mr.external_id}</span>}
+                            {mr.url && (
+                              <a className="ss-mr-link" href={mr.url} target="_blank" rel="noreferrer">
+                                打开 ↗
+                              </a>
+                            )}
+                          </div>
+                          {(mr.source_branch || mr.target_branch) && (
+                            <div className="ss-mr-branches">
+                              <code>{mr.source_branch || '?'}</code>
+                              <span className="ss-mr-arrow">→</span>
+                              <code>{mr.target_branch || '?'}</code>
+                            </div>
+                          )}
+                          {mr.evidence_ref && <div className="ss-mr-note">{mr.evidence_ref}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )
             })}

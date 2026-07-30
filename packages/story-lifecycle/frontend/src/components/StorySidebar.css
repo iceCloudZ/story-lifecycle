@@ -371,3 +371,84 @@
   color: var(--color-primary-text);
   background: var(--color-primary-soft);
 }
+
+/* delivery 交付物的 MR 产物清单(展开态)。delivery 是 MR 驱动 —— 产物就是这些合并
+   记录(story_delivery_artifact),不是文档,所以不进 docs tab,直接内联展示在项下方。 */
+.ss-deliv-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) 28px; /* 左侧对齐状态点 */
+}
+.ss-mr-card {
+  background: var(--gray-50);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ss-mr-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ss-mr-state {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  line-height: 1.5;
+}
+.ss-mr-state-merged {
+  color: var(--color-success);
+  background: var(--color-success-soft);
+}
+.ss-mr-state-abandoned {
+  color: var(--color-text-faint);
+  background: var(--gray-100);
+}
+.ss-mr-state-unknown {
+  color: var(--color-text-muted);
+  background: var(--gray-100);
+}
+.ss-mr-id {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+.ss-mr-link {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-primary);
+  text-decoration: none;
+}
+.ss-mr-link:hover {
+  text-decoration: underline;
+}
+.ss-mr-branches {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.ss-mr-branches code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  background: var(--gray-100);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-strong);
+}
+.ss-mr-arrow {
+  color: var(--color-text-faint);
+}
+.ss-mr-note {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
