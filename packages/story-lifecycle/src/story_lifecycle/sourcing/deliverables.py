@@ -186,7 +186,8 @@ def check_deliverables(
             artifacts = db.get_story_delivery_artifacts(story_key)
             # 只有已落地(merged/abandoned)的 MR 算产物;其余(not_started/open)不算。
             landed = [
-                a for a in artifacts
+                a
+                for a in artifacts
                 if a.get("delivery_state") in ("merged", "abandoned")
             ]
             exists = bool(landed)

@@ -188,9 +188,7 @@ def _pick_repo_and_branches(
     # 等于把别人的改动算成本 story 产物(真实事件:worktree 删了的 story 仍 exists=true,
     # 因为扫到 hc-aiops 而非绑定的 hc-coupon)。无绑定时(老 profile/未规划)退回旧行为:
     # 扫任意带 .git 的子目录。
-    bound_worktrees = {
-        Path(sp.get("worktree_path", "") or "") for sp in bindings
-    }
+    bound_worktrees = {Path(sp.get("worktree_path", "") or "") for sp in bindings}
     restrict_to_bound = bool(bound_worktrees)
     for candidate_str in (ctx.get("workspace_path") or "", legacy_workspace):
         if not candidate_str:
@@ -202,6 +200,7 @@ def _pick_repo_and_branches(
         if (candidate / ".git").exists():
             repo = candidate
             break
+
         # workspace 根通常不是仓 — agent 在其中 git worktree add 各项目仓
         # (AGENTS.md「Per-story workspace」约定)。扫一层子目录找 agent 的 checkout;
         # 有绑定时只认绑定的 worktree_path,避免在共享 monorepo 根上误选无关项目仓。
