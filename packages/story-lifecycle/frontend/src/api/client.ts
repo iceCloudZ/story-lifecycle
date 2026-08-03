@@ -272,6 +272,52 @@ export interface WorkspaceOption {
   projects: string[]
 }
 
+// ---- Workspace entity (11-workspace-entity-design.md Phase 2) ----
+// 业务项目实体:聚合 Repo / 知识 / 旅程 / 集成。旧 /api/workspaces(intake 目录)不动。
+
+export interface WorkspaceEntity {
+  id: number
+  name: string
+  slug: string
+  knowledge_root?: string
+  integrations?: Record<string, unknown>
+  init_state?: Record<string, unknown>
+  repo_count?: number
+  story_count?: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface WorkspaceRuntimeFact {
+  runtime_type: string
+  runtime_version?: string
+  check_command?: string
+  availability?: string
+}
+
+export interface WorkspaceProject extends Project {
+  workspace_id?: number | null
+  availability_reason?: string
+  runtime_facts?: WorkspaceRuntimeFact[]
+}
+
+export interface WorkspaceScenario {
+  id: string
+  title: string
+  domain?: string
+  status?: string
+  tags?: string[]
+  updated_at?: string
+  apis?: string[]
+}
+
+export interface WorkspaceEntityDetail {
+  workspace: WorkspaceEntity
+  repos: WorkspaceProject[]
+  stories: Story[]
+  scenarios: WorkspaceScenario[]
+}
+
 export interface ProfileOption {
   name: string
   description: string
@@ -387,6 +433,18 @@ export const terminalApi = {
   spawn: (storyKey: string) => apiAction('POST', `/api/pty/${storyKey}/spawn`),
   kill: (storyKey: string) => apiAction('DELETE', `/api/pty/${storyKey}`),
   info: (storyKey: string) => fetchJSON<Record<string, unknown>>(`/api/session/terminal/${storyKey}`),
+}
+
+// Workspace entity APIs (业务项目实体,与 /api/workspaces 的 intake 目录选项区分)
+export const workspaceEntityApi = {
+  list: () => fetchJSON<{ workspaces: WorkspaceEntity[] }>('/api/workspace-entities'),
+  get: (slug: string) => fetchJSON<WorkspaceEntityDetail>(`/api/workspace-entities/${slug}`),
+  create: (data: { name: string; slug?: string; knowledge_root?: string }) =>
+    fetchJSON<WorkspaceEntity>('/api/workspace-entities', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
 }
 
 // Plan APIs (Agent mode)

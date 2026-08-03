@@ -1,6 +1,7 @@
 """FastAPI server — REST API for story management and terminal access."""
 
 import asyncio
+import json
 import logging
 import tempfile
 from pathlib import Path
@@ -2950,6 +2951,148 @@ def api_update_project(project_id: int, req: UpdateProjectRequest):
 
     update_project(project_id, **updates)
     return db.get_project(project_id)
+
+
+# -------- Workspace entity endpoints (11-workspace-entity-design.md Phase 2) --------
+# 与 /api/workspaces(旧含义:intake 主工作区目录选项)区分:
+# workspace-entities 是新的业务项目实体。旧端点保持不动,前端 IntakeStartModal 继续用。
+
+
+class CreateWorkspaceRequest(BaseModel):
+    name: str
+    slug: str | None = None
+    knowledge_root: str | None = None
+
+
+class WorkspaceInitRequest(BaseModel):
+    step: str | None = None
+    repos: list[str] = []
+    integrations_json: dict | None = None
+
+
+def _resolve_workspace_or_404(ident: str | int) -> dict:
+    from ..workspace.workspace_registry import get_workspace
+
+    ws = get_workspace(ident)
+    if not ws:
+        raise HTTPException(status_code=404, detail=f"Workspace not found: {ident}")
+    return ws
+
+
+def _workspace_scenarios(ws: dict) -> list[dict]:
+    """旅程 tab 数据源(D6):scenario 条目投影,不存 wiki 页。
+
+    best-effort:知识根不存在/INDEX.json 缺失 → 返回 [] 不阻断。
+    """
+    try:
+        from ..workspace.workspace_registry import _knowledge_root_for
+
+        kroot = _knowledge_root_for(ws)
+        if not kroot:
+            return []
+        index_path = Path(kroot) / "INDEX.json"
+        if not index_path.exists():
+            return []
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        return [
+            {
+                "id": e.get("id", ""),
+                "title": e.get("title", ""),
+                "domain": e.get("domain", ""),
+                "status": e.get("status", ""),
+                "tags": e.get("tags", []),
+                "updated_at": e.get("updated_at", ""),
+                "apis": e.get("apis", []),
+            }
+            for e in payload.get("entries", [])
+            if e.get("type") == "scenario"
+        ]
+    except Exception:
+        return []
+
+
+@app.get("/api/workspace-entities")
+def api_list_workspace_entities():
+    """List workspace entities with repo/story counts."""
+    from ..workspace.workspace_registry import list_workspaces
+
+    workspaces = list_workspaces()
+    return {
+        "workspaces": [
+            {
+                "id": ws["id"],
+                "name": ws["name"],
+                "slug": ws["slug"],
+                "knowledge_root": ws.get("knowledge_root") or "",
+                "integrations": json.loads(ws.get("integrations_json") or "{}"),
+                "init_state": json.loads(ws.get("init_state") or "{}"),
+                "repo_count": len(db.list_projects_by_workspace(ws["id"])),
+                "story_count": len(db.list_stories_by_workspace(ws["id"])),
+                "updated_at": ws.get("updated_at", ""),
+            }
+            for ws in workspaces
+        ]
+    }
+
+
+@app.post("/api/workspace-entities")
+def api_create_workspace_entity(req: CreateWorkspaceRequest):
+    from ..workspace.workspace_registry import create_workspace
+
+    try:
+        ws = create_workspace(
+            req.name,
+            slug=req.slug,
+            knowledge_root=req.knowledge_root,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return ws
+
+
+@app.get("/api/workspace-entities/{slug}")
+def api_get_workspace_entity(slug: str):
+    """WorkspacePage 详情:概览(repos+runtime facts+集成)/Stories/旅程(scenario 投影)。"""
+    ws = _resolve_workspace_or_404(slug)
+    repos = db.list_projects_by_workspace(ws["id"])
+    for repo in repos:
+        repo["runtime_facts"] = db.get_runtime_facts(repo["id"])
+    return {
+        "workspace": {
+            "id": ws["id"],
+            "name": ws["name"],
+            "slug": ws["slug"],
+            "knowledge_root": ws.get("knowledge_root") or "",
+            "integrations": json.loads(ws.get("integrations_json") or "{}"),
+            "init_state": json.loads(ws.get("init_state") or "{}"),
+            "created_at": ws.get("created_at", ""),
+            "updated_at": ws.get("updated_at", ""),
+        },
+        "repos": repos,
+        "stories": db.list_stories_by_workspace(ws["id"]),
+        "scenarios": _workspace_scenarios(ws),
+    }
+
+
+@app.post("/api/workspace-entities/{slug}/init")
+def api_workspace_init(slug: str, req: WorkspaceInitRequest):
+    """Run the init pipeline(或单步重跑)。同 `story workspace init`。"""
+    from ..workspace.workspace_registry import run_init_pipeline
+
+    ws = _resolve_workspace_or_404(slug)
+    repos = []
+    for spec in req.repos:
+        if "=" not in spec:
+            raise HTTPException(status_code=400, detail=f"repo 应为 name=path: {spec}")
+        name, path = spec.split("=", 1)
+        repos.append((name.strip(), path.strip()))
+    results = run_init_pipeline(
+        ws["id"],
+        step=req.step,
+        repos=repos,
+        integrations_json=req.integrations_json,
+    )
+    return {"results": results}
 
 
 # -------- Worktree endpoints --------

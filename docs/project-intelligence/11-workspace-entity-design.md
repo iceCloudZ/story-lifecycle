@@ -292,10 +292,10 @@ hc 侧已有资产比预想厚——**L4 探测底座已存在，不要重复造
 
 **Phase 2**：
 
-- [ ] 不建 Workspace 时行为与今天完全一致（开源零配置路径）
-- [ ] `story workspace init hc-credit-domain` 5 步可跑、幂等、单步可重跑；init_state 正确推进
-- [ ] WorkspacePage 三 tab（旅程/Stories/概览）数据正确；旅程 tab 显示 scenario 的 last_status
-- [ ] 代码/文档/prompt 中 per-story 目录统称 Sandbox，无"workspace"三义残留
+- [x] 不建 Workspace 时行为与今天完全一致（开源零配置路径）——`project.workspace_id` 默认 NULL，散仓库照旧；`/api/workspaces`(intake 目录) 未动
+- [x] `story workspace init hc-credit-domain` 5 步可跑、幂等、单步可重跑；init_state 正确推进（`register_repos`/`detect_runtime`/`gen_wiki`(骨架)/`register_integrations`/`init_scenarios`）
+- [x] WorkspacePage 三 tab（旅程/Stories/概览）数据正确；旅程 tab 显示 scenario 条目投影（`last_status` 字段待 Phase 1 测试框架接入后才有，届时 journey 元数据接上即显示）
+- [x] 代码/文档/prompt 中 per-story 目录统称 Sandbox，无"workspace"三义残留（agent 面对的两处 prompt 已改：`### 工作沙箱 (Sandbox)` + `workspace_slug` 说明；代码字段名按 D8 不动）
 
 **Phase 3**：
 
@@ -327,3 +327,17 @@ hc 侧已有资产比预想厚——**L4 探测底座已存在，不要重复造
 - `08-init-knowledge-interaction-design.md` — `init-knowledge` 交互设计（§3 step 3 的 L1 骨架生成复用其交互模式：扫描概览 → 范围确认 → 生成）
 - hc-pytest 侧架构决策：`D:/hc-all/hc-pytest/docs/plans/2026-08-03-golden-data-generator-and-story-lifecycle-integration.md`（金数据采集 = L4 probe 底座，§7）
 - 业界先例：Backstage System Model / Scaffolder、DeepWiki（Cognition）、Swimm Auto-sync
+
+---
+
+## 实施记录（Phase 2，2026-08-03）
+
+落地范围：workspace 表 + `project.workspace_id` + `story workspace` CLI + 初始化管线 + WorkspacePage 只读版。Wiki/probe（Phase 3）未动。
+
+- **DB**：`infra/db/models.py` 新增 `workspace` 表（§1.1 原样）、`project.workspace_id` 幂等迁移、`WORKSPACE_INIT_STEPS` 常量 + workspace CRUD / `update_workspace_init_state` / `list_projects_by_workspace` / `list_stories_by_workspace`（经 story_project 反查，§1.3 不变的关系）
+- **业务层**：`orchestrator/workspace/workspace_registry.py` — `create/get/list/delete` + `run_init_pipeline`（5 步，`--step` 单步重跑）。`init_state` 失败时升级为 `{status, reason}` 对象（§3「标记 failed + 原因」）。`gen_wiki` 为 Phase 2 骨架（建 `<knowledge_root>/wiki/` + 占位 README，draft 管线随 Phase 3）
+- **CLI**：`story workspace create/init/list/show/delete`；`init --repo name=path`(可多次,幂等) `--step` `--integrations-json`
+- **API**：`/api/workspace-entities`（list/create/detail/init）。**故意不用** `/api/workspaces`（旧含义 = intake 主工作区目录选项，IntakeStartModal 在用，未动）
+- **前端**：`WorkspacePage` 路由 `/workspaces`（MoreMenu 视图区），三 tab（旅程/Stories/概览）+ `.ui-chip` 工作区切换 + 新建表单，遵循 frontend/AGENTS.md（tokens/.ui-*/SVG 图标）
+- **术语**：agent 面对的 prompt 已改 Sandbox 表述（`### 工作沙箱 (Sandbox)`、`workspace_slug` 说明）；`workspace_slug`/`workspace_path` 字段名按 D8 不动（15+ 消费点零改动）
+- **测试**：`tests/test_workspace_entity.py` 21 例（CRUD/零配置 attach/管线幂等/单步重跑/失败 reason/API），全绿

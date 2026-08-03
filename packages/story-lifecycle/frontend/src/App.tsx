@@ -14,6 +14,7 @@ import DocSearchPage from './pages/DocSearchPage'
 import TapdBoardPage from './pages/TapdBoardPage'
 import CalendarPage from './pages/CalendarPage'
 import ProjectsPage from './pages/ProjectsPage'
+import WorkspacePage from './pages/WorkspacePage'
 import ReleaseTrainBoard from './pages/ReleaseTrainBoard'
 import './App.css'
 
@@ -54,6 +55,7 @@ function AppContent() {
                   { to: '/tapd', text: 'TAPD 需求' },
                   { to: '/calendar', text: '日历' },
                   { to: '/projects', text: '项目' },
+                  { to: '/workspaces', text: '工作区' },
                   { to: '/release-train', text: '班车看板' },
                 ],
               },
@@ -84,6 +86,7 @@ function AppContent() {
           <Route path="/tapd" element={<TapdBoardPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/workspaces" element={<WorkspacePage />} />
           <Route path="/release-train" element={<ReleaseTrainBoard />} />
         </Routes>
       </main>

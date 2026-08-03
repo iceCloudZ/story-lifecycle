@@ -137,6 +137,7 @@ def cli(ctx, serve, host, port, fix_deps):
             "swebench",
             "diagnostics",
             "project",
+            "workspace",
             "sync",
             "list",
             "show",
@@ -442,6 +443,10 @@ cli.add_command(session_cmd)
 from .project import project  # noqa: E402
 
 cli.add_command(project)
+
+from .workspace_cmd import workspace as workspace_group  # noqa: E402
+
+cli.add_command(workspace_group)
 
 
 @cli.group(invoke_without_command=True, no_args_is_help=False)
