@@ -267,7 +267,12 @@ hc 侧已有资产比预想厚——**L4 探测底座已存在，不要重复造
 | journey 元数据 | `journeys/*.yaml`（name/description/tags/stage 链） | 旅程 tab 的现成数据源；**缺口：无显式服务/API 清单**，需从 stage 的 `gateway`+`path` 聚合提取 |
 | DB/MQ 外部代理 | `conftest.yaml` 的 `cli_sql_path`/`cli_mq_path` | 只读治理通道约束已在架构里（probe 不直连库） |
 
-**缺口**：无 README、无 wiki 资产、无 integrations/ 代码（`HcPytestVerifyProvider` 未写）；`data-map.md`/12 库 schema 在仓库外——wiki 生成时需决策这些口径文档是复制进知识层还是引用。
+**缺口**：无 README、无 wiki 资产、无 integrations/ 代码（`HcPytestVerifyProvider` 未写）；`data-map.md`/12 库 schema 在仓库外。
+
+**缺口决策（2026-08-03 定案）**：
+
+1. **口径文档归属 → 引用，不复制**。`data-map.md`/`CONTEXT.md`/12 库 schema 保持单一真相在源位置，`workspace.knowledge_root` 登记其路径（integrations_json 加 `reference_docs: [{name, path}]`），wiki 生成和 probe 读时拉取。复制会造出双份真相，快照必然 stale——与 I6"不建第二知识库"同源。
+2. **journey 服务/API 清单 → 聚合推断，不改 YAML schema**。wiki/probe 生成时从逐 stage 的 `gateway`+`path` 聚合提取（结合 `conftest.yaml` 的 gateway→服务映射），聚合逻辑放 hc 侧 probe 里。手写 journey 零迁移成本；若将来聚合准确率不够，再考虑在 YAML 加显式 `services` 字段（届时仅 generated 草稿强制，手写保持可选）。
 
 ---
 
