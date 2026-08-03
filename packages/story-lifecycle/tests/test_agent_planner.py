@@ -52,6 +52,16 @@ class TestBuildPrompts:
         assert "codex" in prompt
         assert "AUTH-001" in prompt
 
+    def test_system_prompt_contains_selected_scenarios_schema(self):
+        """设计 10 改动 2.2:规划 prompt 输出 schema 含 selected_scenarios。"""
+        prompt = _build_agent_system_prompt(
+            profile_stages={"design": {"description": "设计方案", "cli": "codex"}},
+            story_title="Auth",
+            story_key="AUTH-001",
+        )
+        assert "selected_scenarios" in prompt
+        assert "候选测试场景" in prompt  # 目录段(空知识时输出空段,不崩)
+
     def test_user_message_contains_title(self):
         msg = _build_agent_user_message(
             story_key="AUTH-001",
@@ -100,6 +110,41 @@ class TestRunOrchestratorAgent:
         assert result["actions"][0]["focus"] == "需求澄清"
         # adapter 由 profile 决定(minimal.yaml design=claude),不是模型选
         assert result["actions"][0]["adapter"] is not None
+
+    def test_selected_scenarios_persisted_into_actions(self, isolated_db, monkeypatch, tmp_path):
+        """设计 10 改动 2.3:规划 LLM 的 selected_scenarios 带进 ctx["_agent_actions"]。"""
+        _make_story(isolated_db, monkeypatch, tmp_path)
+        mock_llm = MagicMock()
+        mock_llm.api_key = "fake"
+
+        class FakeStage:
+            def __init__(self, stage, skip=False, focus="", task_actions=None, grill=False, selected_scenarios=None):
+                self.stage = stage
+                self.skip = skip
+                self.focus = focus
+                self.task_actions = task_actions or []
+                self.grill = grill
+                self.selected_scenarios = selected_scenarios
+
+        class FakePlanResult:
+            def __init__(self, stages):
+                self.stages = stages
+
+        mock_llm.invoke_structured.return_value = FakePlanResult([
+            FakeStage("verify", skip=False, focus="验证", selected_scenarios=["scenario:borrow-flow"]),
+        ])
+
+        with patch("story_lifecycle.orchestrator.engine.planner.get_llm", return_value=mock_llm):
+            result = run_orchestrator_agent("TEST-001")
+
+        launch = result["actions"][0]
+        assert launch["selected_scenarios"] == ["scenario:borrow-flow"]
+        # 持久化进 context_json._agent_actions(R8 接线:gate 合并进 done_data 给 provider)
+        from story_lifecycle.infra.db import models as db
+
+        story = db.get_story("TEST-001")
+        ctx = json.loads(story["context_json"])
+        assert ctx["_agent_actions"][0]["selected_scenarios"] == ["scenario:borrow-flow"]
 
     def test_writes_actions_to_db(self, isolated_db, monkeypatch, tmp_path):
         from story_lifecycle.infra.db import models as db

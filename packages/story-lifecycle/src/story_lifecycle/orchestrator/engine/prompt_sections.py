@@ -188,6 +188,46 @@ def build_knowledge_section(story_key: str, workspace: str, stage: str) -> str:
     return ctx or ""
 
 
+def build_scenario_catalog_section(story_key: str, workspace: str, stage: str) -> str:
+    """读 knowledge 的 type=scenario 条目，渲染候选清单给规划 LLM 选。
+
+    对应设计 10 改动 2.1（scenario_catalog 注入）：规划 LLM 看到候选场景后输出
+    ``selected_scenarios``（scenario id 列表），verify 阶段经 R8 接线传给
+    verify provider 决定跑哪些 journey。容错：knowledge 包未装/无 INDEX/空 → ""，
+    不阻断规划（同 build_knowledge_section 的 failsafe 哲学）。
+
+    注意：候选清单取**全部** scenario 条目（按标题排序取前 20），不依赖
+    ``KnowledgeIndex.retrieve`` 的打分——retrieve 只在 score>0 时返回条目，
+    而静态 scenario 无 domain/query 命中时 score 恒 0，会导致候选永远为空。
+    """
+    try:
+        from knowledge import KnowledgeIndex
+
+        from ...knowledge.context_providers.knowledge_provider import _KNOWLEDGE_ROOT
+
+        idx = KnowledgeIndex(str(_KNOWLEDGE_ROOT))
+        entries = idx.all()
+        scenarios = sorted(
+            (e for e in entries if e.type == "scenario"),
+            key=lambda e: e.title,
+        )[:20]
+    except Exception:  # noqa: BLE001 — 容错，不阻断
+        return ""
+
+    if not scenarios:
+        return ""
+    lines = ["## 候选测试场景（从中选择本 story 需要验证的）", ""]
+    for s in scenarios:
+        lines.append(f"- `{s.id}` — {s.title}")
+        if getattr(s, "participating_services", None):
+            lines.append(f"  服务: {', '.join(s.participating_services)}")
+        if getattr(s, "apis", None):
+            lines.append(f"  API: {', '.join(s.apis[:5])}")
+        if getattr(s, "test_ref", ""):
+            lines.append(f"  journey: {s.test_ref}")
+    return "\n".join(lines)
+
+
 def build_quality_section(story_key: str, stage: str) -> str:
     """Return the compact Quality Checklist text for this story/stage, or ``""``.
 
@@ -411,4 +451,5 @@ __all__ = [
     "build_transcript_section",
     "build_grill_protocol_section",
     "build_consult_protocol_section",
+    "build_scenario_catalog_section",
 ]

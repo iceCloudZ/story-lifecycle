@@ -186,6 +186,12 @@ def _build_agent_system_prompt(
     from .task_actions import get_action_catalog_for_prompt
 
     action_catalog = get_action_catalog_for_prompt()
+    # 候选测试场景(设计 10 改动 2):knowledge 的 scenario 条目渲染给规划 LLM 选,
+    # LLM 输出 selected_scenarios 到每个 stage,verify 阶段经 R8 接线传给外部
+    # verify provider。容错:无 scenario 知识 → 空串,不注入,规划零影响。
+    from .prompt_sections import build_scenario_catalog_section
+
+    scenario_catalog = build_scenario_catalog_section(story_key, workspace, "planning")
 
     return f"""你是开发任务编排 Agent。根据需求信息，规划开发流程。
 
@@ -193,7 +199,8 @@ def _build_agent_system_prompt(
 - 根据需求决定需要执行哪些阶段(skip 不需要的)
 - 给每个阶段指定 2-3 个关键要点（focus）
 - 为每个阶段选 task_actions（该干什么活）
-- 给本 story 起一个独立的 workspace_slug(工作空间目录名)
+- 给本 story 起一个独立的 sandbox_slug(隔离沙箱目录名)
+- 从候选测试场景里选本 story 需要验证的（selected_scenarios）
 - 规划完成后暂停，等待用户确认
 
 ## 当前 Story
@@ -211,6 +218,8 @@ def _build_agent_system_prompt(
 
 {action_catalog}
 
+{scenario_catalog}
+
 ## 规则
 1. 对每个阶段,决定 skip(true)还是执行(false)
 2. 对执行的阶段,给 2-3 个 focus 要点(不要写详细设计)
@@ -218,18 +227,20 @@ def _build_agent_system_prompt(
 4. 标 grill=true 表示该阶段需要人澄清关键歧义(如复杂设计决策);简单明确的标 false
 5. CLI（claude/codex/kimi）会自己理解需求并设计方案，你不需要代劳
 6. adapter 由 profile 路由,你不需要选
-7. **workspace_slug**：为这个 story 起一个独立的隔离工作空间目录名。
+7. **selected_scenarios**：从「候选测试场景」里选本 story 需要验证的场景，
+   填 scenario id（如 `scenario:borrow-flow`）；没有候选或无需外部验证时填空数组 []
+8. **workspace_slug**：为这个 story 起一个独立的隔离沙箱目录名(Sandbox)。
    - 从标题提炼：小写英文 + 数字 + 连字符(kebab-case)，10-40 字符
    - 例：「MGM活动限制用户当前的app版本」→ `mgm-app-version-limit`
    - 例：「优化订单导出查询性能」→ `order-export-perf`
-   - 后端会建空目录 <worktrees_root>/<slug>/ 作为 code agent 的 cwd
+   - 后端会建空目录 <worktrees_root>/<slug>/ 作为 code agent 的 cwd(Sandbox)
    - agent 自己把要改的项目 `git worktree add` 进去,在这里干活
    - 纯调研/不改代码的 story 才留空字符串 ""
 
 ## 输出格式（关键）
 必须**只**输出一个 JSON 对象，不要任何 markdown、表格、解释文字、代码块标记。
 schema:
-{{"stages":[{{"stage":"<阶段名>","skip":<true|false>,"focus":"<要点，多条用分号>","task_actions":["<动作1>","<动作2>"],"grill":<true|false>}}],"workspace_slug":"<kebab-case 目录名>"}}
+{{"stages":[{{"stage":"<阶段名>","skip":<true|false>,"focus":"<要点，多条用分号>","task_actions":["<动作1>","<动作2>"],"grill":<true|false>,"selected_scenarios":["scenario:xxx"]}}],"workspace_slug":"<kebab-case 目录名>"}}
 - 每个 profile 里的阶段都要出现在 stages 里（skip 的也要列出，skip=true）
 - focus/task_actions 用中文
 - workspace_slug 用 kebab-case 英文(标题简写)
@@ -320,21 +331,25 @@ def run_orchestrator_agent(
     from pydantic import BaseModel
 
     class StagePlan(BaseModel):
-        """单阶段规划:skip 哪些阶段 + 每阶段 focus + task_actions + grill。adapter 不让模型选。"""
+        """单阶段规划:skip 哪些阶段 + 每阶段 focus + task_actions + grill + selected_scenarios。adapter 不让模型选。"""
 
         stage: str
         skip: bool = False
         focus: str = ""
         task_actions: list[str] = []
         grill: bool = False
+        # 设计 10 改动 2.3:规划 LLM 从候选测试场景里选的 scenario id 列表
+        # (如 ["scenario:borrow-flow"])。随 action 持久化进 ctx["_agent_actions"],
+        # verify 阶段经 R8 接线传给外部 verify provider。
+        selected_scenarios: list[str] = []
 
     class PlanResult(BaseModel):
-        """规划结果:阶段列表 + 工作空间 slug。
+        """规划结果:阶段列表 + 沙箱 slug。
 
         workspace_slug(标题简写,kebab-case):规划 LLM 决定的 per-story 隔离
-        工作空间目录名,后端会在 <worktrees_root>/<slug>/ 建空目录,作为 code
-        agent 的 cwd。agent 自己把要改的项目 git worktree add 进来。空字符串
-        = 不需要独立工作空间(如纯调研 story),code agent 用主 workspace。
+        沙箱(Sandbox)目录名,后端会在 <worktrees_root>/<slug>/ 建空目录,作为
+        code agent 的 cwd。agent 自己把要改的项目 git worktree add 进来。空字符串
+        = 不需要独立沙箱(如纯调研 story),code agent 用主 workspace。
         """
 
         stages: list[StagePlan]
@@ -455,6 +470,12 @@ def run_orchestrator_agent(
                             ),
                             "grill": _resolve_single_pass_grill(
                                 getattr(sp, "grill", None), is_single
+                            ),
+                            # 设计 10 改动 2.3:selected_scenarios 随 action 持久化,
+                            # verify 阶段 gate 的 R8 接线把它合进 done_data 给外部
+                            # verify provider 读。
+                            "selected_scenarios": list(
+                                getattr(sp, "selected_scenarios", None) or []
                             ),
                             "done_file": stage_done_file_rel(story_key, stage_name),
                         }
@@ -2525,18 +2546,18 @@ def _build_cli_prompt(
 **硬约束**：若 git 操作失败（分支已存在且冲突、无权限、仓库不可写等），**立即停止后续工作**，不要尝试在错误的分支或主分支上继续。不要 `story tool declare` 成果物(本阶段没产出有效结果)。
 """
     elif workspace_path:
-        # 规划 LLM 决定的 per-story 隔离工作空间(无项目绑定场景):后端建了空目录,
+        # 规划 LLM 决定的 per-story 隔离沙箱(无项目绑定场景):后端建了空目录,
         # agent 自己把要改的项目 worktree add 进来。主 workspace(ws,如 D:/hc-all)下
         # 有多个独立项目仓库,agent 凭需求自己判断要改哪个 → 把那个项目 worktree 进来。
         worktree_section = f"""
-### 工作空间
+### 工作沙箱 (Sandbox)
 
-本 story 的隔离工作空间已建好(空目录)：`{workspace_path}`
+本 story 的隔离沙箱已建好(空目录)：`{workspace_path}`
 
 **这是你的工作目录(cwd)**。请把本次改动涉及的项目仓库 `git worktree add` 进来,在隔离分支上改代码：
 
 ```bash
-# 例:判断要改 hc-config,基于 main 切 feature 分支并加进工作空间
+# 例:判断要改 hc-config,基于 main 切 feature 分支并加进沙箱
 cd {workspace_path}
 git -C {workspace or "<主工作区>"}/hc-config worktree add -b feature/{story_key} ./hc-config main
 cd ./hc-config

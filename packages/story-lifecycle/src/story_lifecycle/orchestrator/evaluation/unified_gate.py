@@ -22,11 +22,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 from pydantic import BaseModel
 
 from ...infra.llm_client import get_llm
+
+if TYPE_CHECKING:
+    from ..verify_providers.base import VerifyResult
 
 log = logging.getLogger("story-lifecycle.unified_gate")
 
@@ -140,10 +143,141 @@ def run_unified_verify_gate(
         result.setdefault("reason", result.get("reason") or "verify-gate decision")
         # 记录 gate 事件(供 reflect 沉淀)
         _log_gate_event(db, story_key, stage, result, open_findings)
-        return result
+        return _merge_external_verify_result(
+            story_key, stage, workspace, done_data, context, result, db
+        )
     except Exception as exc:
         log.warning("[%s] unified gate LLM failed, falling back: %s", story_key, exc)
-        return _fallback_gate_decision(evidence, db, story_key)
+        return _merge_external_verify_result(
+            story_key,
+            stage,
+            workspace,
+            done_data,
+            context,
+            _fallback_gate_decision(evidence, db, story_key),
+            db,
+        )
+
+
+def _run_external_verify(
+    story_key: str, workspace: str, done_data: dict, context: dict
+) -> Optional["VerifyResult"]:
+    """如果配了 verify_provider，执行（或起跑）外部测试。
+
+    修订点 R8 接线：把规划产物 _agent_actions 合入 done_data，provider 据此读
+    selected_scenarios（selected_scenarios 存在 ctx["_agent_actions"]，不在
+    done.json 里——不合入 provider 将永远拿不到）。
+    """
+    try:
+        from ...infra.config import get_config
+        from ..verify_providers import load_verify_provider
+
+        config = get_config()
+        provider = load_verify_provider(config)
+        if provider is None:
+            return None
+        done_data = {
+            **done_data,
+            "_agent_actions": context.get("_agent_actions", []),
+        }
+        return provider.verify(story_key, workspace, "verify", done_data)
+    except Exception as exc:
+        log.warning("[%s] external verify 执行失败，忽略: %s", story_key, exc)
+        return None
+
+
+def _merge_external_verify_result(
+    story_key: str,
+    stage: str,
+    workspace: str,
+    done_data: dict,
+    context: dict,
+    result: dict,
+    db,
+) -> dict:
+    """在 LLM 判定后合并外部验证结果（设计 10 改动 1.3）。
+
+    - provider 未配置 / 返回 None（异步产物模式：起跑后立即返回）→ 原样返回，
+      本轮 LLM-only，无行为变化。
+    - 外部 FAIL（修订点 R2）→ 强制转 retry（修复轮），且计入 reject budget
+      （≤3 次/stage 且理由去重，超限 force-escalate → fail 转人），防"环境坏→
+      永远 retry"死循环。
+    - 外部 PASS（修订点 R3）→ 只合并 findings，不得跳过人工 confirm-gate
+      （advance 仍需人确认，同 boundary_judge 的 confirm=true 不变量）。
+    """
+    ext = _run_external_verify(story_key, workspace, done_data, context)
+    if ext is None:
+        return result
+
+    summary = (ext.summary or "无摘要")[:200]
+    if not ext.passed:
+        from .reject_budget import check_reject_budget
+
+        budget = check_reject_budget(
+            story_key, stage, summary, trigger="external_verify", db_module=db
+        )
+        reason = f"外部测试失败: {summary}"
+        result["verdict"] = "rework"
+        if budget["allow"]:
+            result["decision"] = "retry"
+            result["reason"] = reason
+            result["repair_action"] = {"kind": "retry", "reason": reason}
+            try:
+                db.log_decision(
+                    story_key,
+                    stage,
+                    "external_verify",
+                    "reject",
+                    reason=summary,
+                    action_taken="insert_retry_action",
+                    action_payload={"findings_count": len(ext.findings)},
+                )
+            except Exception as exc:  # noqa: BLE001 — 审计 best-effort
+                log.warning("[%s] log_decision failed (non-fatal): %s", story_key, exc)
+        else:
+            # 连续外部失败（超预算/理由重复）→ force-escalate：转 fail 进人视野，
+            # 而非无限 retry 死循环。
+            result["decision"] = "fail"
+            result["reason"] = f"外部测试连续失败(防打回循环): {budget['warn']}; {reason}"
+            result["repair_action"] = {"kind": "escalate", "reason": budget["warn"]}
+            try:
+                db.log_decision(
+                    story_key,
+                    stage,
+                    "external_verify",
+                    "escalate",
+                    reason=f"{budget['warn']}; {summary}",
+                    action_taken="fail",
+                    action_payload={"findings_count": len(ext.findings)},
+                )
+            except Exception as exc:  # noqa: BLE001 — 审计 best-effort
+                log.warning("[%s] log_decision failed (non-fatal): %s", story_key, exc)
+
+    # 外部 PASS 只合并 findings（R3），不覆盖 LLM 的 advance/retry 决定
+    for f in ext.findings:
+        try:
+            from .quality import record_finding
+
+            record_finding(
+                story_key,
+                stage,
+                {
+                    "source": "test_failure",
+                    "severity": f.get("severity") or "high",
+                    "category": "test_failure",
+                    "description": (f.get("detail") or f.get("description") or summary),
+                    "location": f.get("scenario"),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — finding 记录失败不阻断
+            log.warning("[%s] record_finding failed (non-fatal): %s", story_key, exc)
+
+    result["external_verify"] = {
+        "passed": ext.passed,
+        "summary": ext.summary,
+        "evidence_ref": ext.evidence_ref,
+    }
+    return result
 
 
 # ---- Fallback(§5.3.3)----

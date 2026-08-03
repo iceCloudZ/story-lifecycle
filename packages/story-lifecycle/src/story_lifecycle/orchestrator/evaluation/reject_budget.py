@@ -44,6 +44,7 @@ def check_reject_budget(
     new_reason: str,
     *,
     limit: int | None = None,
+    trigger: str = "boundary_judge",
     db_module=None,
 ) -> dict:
     """检查本次 reject 是否被允许(防打回循环,§4.9 / 评审 A2)。
@@ -52,6 +53,9 @@ def check_reject_budget(
         story_key / stage: 当前 story+stage。
         new_reason: 本次 reject 的新理由。
         limit: reject 上限(默认 REJECT_LIMIT,可 env 配)。
+        trigger: 决策触发源——默认 "boundary_judge"；外部测试 FAIL 走
+            "external_verify"(设计 10 改动 1.3,修订点 R2:外部失败同样计
+            reject budget,防环境挂/journey 坏时无限 retry 死循环)。
         db_module: 注入 db(测试用);None 则延迟 import。
 
     Returns:
@@ -65,10 +69,10 @@ def check_reject_budget(
 
     budget = limit if limit is not None else REJECT_LIMIT
 
-    # 查该 stage 历史 reject 数(boundary_judge 触发)。
+    # 查该 stage 历史 reject 数(boundary_judge / external_verify 触发)。
     try:
         count = db_module.count_decisions(
-            story_key, stage, decision="reject", trigger="boundary_judge"
+            story_key, stage, decision="reject", trigger=trigger
         )
     except Exception as exc:  # noqa: BLE001 — 查询失败安全放行(不阻塞主流程)
         log.warning(
@@ -98,7 +102,7 @@ def check_reject_budget(
     # 规则 2:理由与上次 reject 重复 → judge 在抖,强制 escalate(评审 A2)。
     try:
         decisions = db_module.get_decisions(
-            story_key, stage, trigger="boundary_judge", limit=10
+            story_key, stage, trigger=trigger, limit=10
         )
     except Exception:  # noqa: BLE001
         decisions = []

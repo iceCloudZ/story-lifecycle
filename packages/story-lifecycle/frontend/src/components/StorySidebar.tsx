@@ -26,7 +26,7 @@ interface Props {
   onAdvance?: () => void
 }
 
-// 模块导航图标(概览/代码/文档 tab)—— 统一 1.5px 描边 SVG,不用 emoji。
+// 模块导航图标(概览/代码/文档/测试场景 tab)—— 统一 1.5px 描边 SVG,不用 emoji。
 const MODULE_ICONS: Record<string, ReactNode> = {
   overview: (
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -45,6 +45,13 @@ const MODULE_ICONS: Record<string, ReactNode> = {
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4.25 1.75h4.5l3 3v9.5h-7.5z" />
       <path d="M8.75 1.75v3h3" />
+    </svg>
+  ),
+  // 测试场景:烧瓶(flask)—— 测试验证语义
+  scenarios: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6.25 1.75h3.5M7 1.75v3.4L4.25 10.6a2.6 2.6 0 0 0 2.2 3.9h3.1a2.6 2.6 0 0 0 2.2-3.9L9 5.15V1.75" />
+      <path d="M4.4 9.5h7.2" />
     </svg>
   ),
 }

@@ -82,6 +82,11 @@ class ScenarioEntry(KnowledgeEntry):
     mq_topics: list[str] = field(default_factory=list)
     state_machines: list[str] = field(default_factory=list)
     known_risks: list[str] = field(default_factory=list)
+    # 设计 10 改动 4.1:跟可执行测试的绑定(journey 执行状态回写,供 stale 检测 + 规划注入)
+    test_ref: str = ""          # 指向 hc-pytest journey YAML 路径
+    last_run_at: str = ""       # 最近一次 journey 执行时间
+    last_status: str = ""       # PASS / FAIL / STALE
+    verified_at: str = ""       # 人工确认时间
 
     def to_dict(self) -> dict[str, Any]:
         data = super().to_dict()
@@ -94,6 +99,10 @@ class ScenarioEntry(KnowledgeEntry):
                 "mq_topics": self.mq_topics,
                 "state_machines": self.state_machines,
                 "known_risks": self.known_risks,
+                "test_ref": self.test_ref,
+                "last_run_at": self.last_run_at,
+                "last_status": self.last_status,
+                "verified_at": self.verified_at,
             }
         )
         return data

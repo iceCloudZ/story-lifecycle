@@ -111,8 +111,17 @@ def _extract_scenario_fields(path: str) -> dict[str, Any]:
 
 
 def parse_scenario(path: str, rel_path: str) -> ScenarioEntry:
-    """Parse a scenario markdown into a ScenarioEntry."""
+    """Parse a scenario markdown into a ScenarioEntry.
+
+    sidecar JSON(``<scenario>.md.json``)与 frontmatter 合并读取——设计 10 改动 4:
+    hc-pytest 侧 ``generate_scenarios.py`` 产出 ``{"apis": [...], "test_ref": "...",
+    "updated_at": "..."}`` 的 sidecar;journey 执行状态(last_run_at/last_status)也经
+    sidecar 回写。sidecar 覆盖 frontmatter(扫描结果是权威)。playbook 同款机制。
+    """
     meta = _read_frontmatter(path)
+    sidecar_path = path + ".json"
+    sidecar = _read_json(sidecar_path) or {}
+    meta.update(sidecar)
     inferred = _extract_scenario_fields(path)
     domain = os.path.basename(os.path.dirname(path)) if os.path.dirname(path) else ""
     return ScenarioEntry(
@@ -134,6 +143,10 @@ def parse_scenario(path: str, rel_path: str) -> ScenarioEntry:
         mq_topics=meta.get("mq_topics", inferred.get("mq_topics", [])),
         state_machines=meta.get("state_machines", []),
         known_risks=meta.get("known_risks", []),
+        test_ref=meta.get("test_ref", ""),
+        last_run_at=meta.get("last_run_at", ""),
+        last_status=meta.get("last_status", ""),
+        verified_at=meta.get("verified_at", ""),
     )
 
 

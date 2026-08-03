@@ -166,6 +166,41 @@ def test_scenario_parser_extracts_legacy_markdown_fields(tmp_path):
     assert scenario["mq_topics"] == ["ORDER_CREATED"]
 
 
+def test_scenario_sidecar_fields_in_index(tmp_path):
+    """设计 10 改动 4:sidecar(apis/test_ref/last_run_at/last_status/verified_at)进 INDEX。
+
+    hc-pytest 侧 generate_scenarios.py 产出的 sidecar JSON 与 frontmatter 合并,
+    sidecar 覆盖 frontmatter(扫描结果是权威)。
+    """
+    _write(
+        str(tmp_path),
+        "scenarios/core-borrow/borrow.md",
+        "---\nid: scenario:borrow-flow\ntitle: 借款放款流程\n---\n# 借款放款流程\n",
+    )
+    _write(
+        str(tmp_path),
+        "scenarios/core-borrow/borrow.md.json",
+        json.dumps(
+            {
+                "apis": ["POST /api/loan/borrow", "GET /api/loan/status"],
+                "test_ref": "journeys/test_borrow.py",
+                "last_run_at": "2026-08-03T10:00:00+08:00",
+                "last_status": "FAIL",
+                "verified_at": "2026-08-03T11:00:00+08:00",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    index = generate_index(str(tmp_path))
+    scenario = next(e for e in index["entries"] if e["type"] == "scenario")
+    assert scenario["apis"] == ["POST /api/loan/borrow", "GET /api/loan/status"]
+    assert scenario["test_ref"] == "journeys/test_borrow.py"
+    assert scenario["last_run_at"] == "2026-08-03T10:00:00+08:00"
+    assert scenario["last_status"] == "FAIL"
+    assert scenario["verified_at"] == "2026-08-03T11:00:00+08:00"
+
+
 def test_attribution_reports_merged_into_failure_knowledge(tmp_path):
     report = {
         "instance_id": "tapd-1065518",

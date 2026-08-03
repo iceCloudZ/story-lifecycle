@@ -131,6 +131,10 @@ def _entry_from_dict(data: dict[str, Any]) -> KnowledgeEntry:
             mq_topics=data.get("mq_topics", []),
             state_machines=data.get("state_machines", []),
             known_risks=data.get("known_risks", []),
+            test_ref=data.get("test_ref", ""),
+            last_run_at=data.get("last_run_at", ""),
+            last_status=data.get("last_status", ""),
+            verified_at=data.get("verified_at", ""),
         )
     if type_ == "playbook":
         return PlaybookEntry(

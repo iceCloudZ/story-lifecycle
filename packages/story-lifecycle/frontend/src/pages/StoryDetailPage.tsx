@@ -12,10 +12,12 @@ import './StoryDetailPage.css'
 
 // Visible modules for the semi-automatic workflow. Terminal 放回 sidebar:
 // 终端已并入概览底部(上下分区),不再单独成 tab。
+// icon 字段仅作占位(StorySidebar 的 MODULE_ICONS 按 id 渲染 SVG,不落 emoji)。
 const MODULES = [
-  { id: 'overview', icon: '📊', label: '概览' },
-  { id: 'code', icon: '📦', label: '代码变更' },
-  { id: 'docs', icon: '📄', label: '文档' },
+  { id: 'overview', icon: 'overview', label: '概览' },
+  { id: 'code', icon: 'code', label: '代码变更' },
+  { id: 'docs', icon: 'docs', label: '文档' },
+  { id: 'scenarios', icon: 'scenarios', label: '测试场景' },
 ]
 
 // 概览操作按钮:只放「推进执行类」操作(继续/重试/紧急停止)。
@@ -324,6 +326,8 @@ export default function StoryDetailPage() {
           )}
           {validTab === 'code' && <CodeChangesTab storyKey={storyKey} />}
           {validTab === 'docs' && <DocsTab storyKey={storyKey} />}
+          {/* 测试场景 tab:复用 DocsTab(doc_type 开放,scenario_report 自动可见) */}
+          {validTab === 'scenarios' && <DocsTab storyKey={storyKey} />}
         </div>
       </div>
     </div>
