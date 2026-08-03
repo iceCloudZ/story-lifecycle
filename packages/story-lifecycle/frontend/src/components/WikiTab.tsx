@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import MarkdownView from './MarkdownView'
+import './WikiTab.css'
 
 /**
  * WikiTab — WorkspacePage 的 Wiki tab 内容(11-workspace-entity-design.md §4/§5, Phase 3)。
  *
- * 独立组件,**不挂载**——挂载由汇总窗口做(phases/README.md 交界工作 b)。
+ * 已挂载于 WorkspacePage(汇总窗口交界工作 b)。
  * 功能:wiki 条目列表(draft/merged 徽章)+ 正文渲染 + review 收件箱
  * (draft → approve/reject,§4.3 人工确认)。
  */

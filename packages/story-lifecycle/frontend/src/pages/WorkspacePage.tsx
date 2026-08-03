@@ -6,19 +6,21 @@ import type {
   WorkspaceScenario,
   WorkspaceProject,
 } from '../api/client'
+import WikiTab from '../components/WikiTab'
 import './lifecycle/LifecyclePage.css'
 import './WorkspacePage.css'
 
 /**
  * 工作区 — 业务项目实体(11-workspace-entity-design.md Phase 2)。
- * 顶层路由,与 Board 平级。Phase 2 只读:旅程 / Stories / 概览 三 tab;
- * Wiki tab 随 Phase 3(知识层 type: wiki 条目)落地。
+ * 顶层路由,与 Board 平级。旅程 / Stories / 概览 三 tab 只读;
+ * Wiki tab(Phase 3,知识层 type: wiki 条目 + review 收件箱)由汇总窗口挂载。
  */
 
 const TABS = [
   { id: 'journeys', label: '旅程' },
   { id: 'stories', label: 'Stories' },
   { id: 'overview', label: '概览' },
+  { id: 'wiki', label: 'Wiki' },
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -152,6 +154,7 @@ function WorkspaceBody({ tab, detail }: { tab: TabId; detail: WorkspaceEntityDet
           knowledgeRoot={ws.knowledge_root || ''}
         />
       )}
+      {tab === 'wiki' && <WikiTab slug={ws.slug} />}
     </div>
   )
 }

@@ -418,7 +418,7 @@ def run_orchestrator_agent(
             result = llm.invoke_structured(
                 prompt, PlanResult, temperature=0.1, timeout=90
             )
-            # 规划 LLM 决定的 per-story 工作空间 slug → mkdir + 存 ctx。
+            # 规划 LLM 决定的 per-story 沙箱(Sandbox) slug → mkdir + 存 ctx。
             # LLM 只决定 slug(标题简写),建目录是后端的事(无副作用、可重放)。
             # 失败/无 slug → workspace_path 留空,后续 spawn 退回主 workspace。
             workspace_slug = (getattr(result, "workspace_slug", "") or "").strip()
@@ -499,7 +499,7 @@ def run_orchestrator_agent(
         pass
     ctx["_agent_actions"] = actions
     ctx["_plan_confirmed"] = False
-    # 落规划期建好的工作空间路径(无则保留原值/清空),供后续 spawn + prompt 用。
+    # 落规划期建好的沙箱(Sandbox)路径(无则保留原值/清空),供后续 spawn + prompt 用。
     if workspace_path:
         ctx["workspace_path"] = workspace_path
     ctx["plan_summary"] = "; ".join(

@@ -63,4 +63,4 @@
 
 ## 关键 commit
 
-- `45a91fb8` feat(test-framework): Phase 1 — verify provider 扩展点 + scenario_catalog 注入 + 测试场景 tab + scenario 知识闭环
+- `5f0c7b54` feat(test-framework): Phase 1 — verify provider 扩展点 + scenario_catalog 注入 + 测试场景 tab + scenario 知识闭环（原 `45a91fb8` 经 amend 并入此 commit，含本 RESULT 文件）

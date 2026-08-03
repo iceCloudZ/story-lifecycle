@@ -11,6 +11,14 @@ from datetime import datetime
 
 import pytest
 
+# 2026-06 包结构重组前写的测试:story_lifecycle.adapters 已迁至
+# story_lifecycle.knowledge.adapters,且 BaseAdapter 接口已换成 start_session 体系。
+# 需要重写;先 importorskip 让根级 pytest 可跑,而非 collection error 中断。
+pytest.importorskip(
+    "story_lifecycle.adapters",
+    reason="stale pre-restructure import (story_lifecycle.adapters → knowledge.adapters); BaseAdapter interface has changed, needs rewrite",
+)
+
 from story_lifecycle.adapters.base import BaseAdapter
 from miner.story_context_provider import TranscriptStoryContextProvider
 

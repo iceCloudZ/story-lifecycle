@@ -63,4 +63,4 @@
 
 ## 关键 commit
 
-- 待提交（本期）
+- `0b2a7441` feat(wiki): Phase 3 — type:wiki 条目 + draft 管线 + BaseWikiProbe 缝 + CodeScanProbe(L1)

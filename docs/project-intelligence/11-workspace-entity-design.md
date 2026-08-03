@@ -2,6 +2,8 @@
 
 > 把 story-lifecycle 的"workspace"从物理路径升级为**业务项目实体**：一个 Workspace 代表一个业务项目（如 HappyCash 授信域），聚合仓库、story、wiki、测试旅程和外部集成（GitLab/CI/测试框架）。
 > 本文档自包含——执行者无需访问 hc-pytest / hc-all 仓库即可完成设计理解；hc 侧资产仅作参考实现盘点（§7）。
+>
+> **实施状态（2026-08-03）**：Phase 2（实体化，commit `0a9469a6`）与 Phase 3（wiki，commit `0b2a7441`）已落地，交界工作（WikiTab 挂载、Sandbox 术语收尾）由汇总窗口完成。实施结果与偏差见 `phases/PHASE-2-RESULT.md` / `PHASE-3-RESULT.md`；hc 侧 probe（L2-L4）待 hc 仓实施后联调。
 
 ## 背景与核心决策
 
