@@ -3052,11 +3052,21 @@ def api_create_workspace_entity(req: CreateWorkspaceRequest):
 
 @app.get("/api/workspace-entities/{slug}")
 def api_get_workspace_entity(slug: str):
-    """WorkspacePage 详情:概览(repos+runtime facts+集成)/Stories/旅程(scenario 投影)。"""
+    """WorkspacePage 详情:概览(repos+runtime facts+集成)/Stories/旅程(scenario 投影)/Wiki。"""
     ws = _resolve_workspace_or_404(slug)
     repos = db.list_projects_by_workspace(ws["id"])
     for repo in repos:
         repo["runtime_facts"] = db.get_runtime_facts(repo["id"])
+    wiki: list[dict] = []
+    try:
+        from ..workspace.workspace_registry import _knowledge_root_for
+        from ...knowledge.wiki_pipeline import list_wiki_entries
+
+        kroot = _knowledge_root_for(ws)
+        if kroot:
+            wiki = list_wiki_entries(kroot)
+    except Exception:
+        pass
     return {
         "workspace": {
             "id": ws["id"],
@@ -3071,6 +3081,7 @@ def api_get_workspace_entity(slug: str):
         "repos": repos,
         "stories": db.list_stories_by_workspace(ws["id"]),
         "scenarios": _workspace_scenarios(ws),
+        "wiki": wiki,
     }
 
 
@@ -3093,6 +3104,116 @@ def api_workspace_init(slug: str, req: WorkspaceInitRequest):
         integrations_json=req.integrations_json,
     )
     return {"results": results}
+
+
+# -------- Wiki endpoints(11-workspace-entity-design.md §4/§5, Phase 3) --------
+
+
+class WikiSaveRequest(BaseModel):
+    title: str
+    content: str
+    source: str = "human"  # human | story:<key> | probe:<name>
+    summary: str = ""
+    evidence_refs: list[dict] = []
+    related: list[str] = []
+    source_refs: list[str] = []
+    slug: str | None = None
+
+
+class WikiReviewRequest(BaseModel):
+    decision: str  # approve | reject
+    reviewer: str = ""
+    reason: str = ""
+
+
+def _wiki_knowledge_root(slug: str) -> tuple[dict, str]:
+    """解析 workspace + 知识根;无知识根 → 400(还没跑 gen_wiki)。"""
+    from ..workspace.workspace_registry import _knowledge_root_for
+
+    ws = _resolve_workspace_or_404(slug)
+    kroot = _knowledge_root_for(ws)
+    if not kroot:
+        raise HTTPException(
+            status_code=400,
+            detail="Workspace 无知识根目录,先跑 story workspace init --step gen_wiki",
+        )
+    return ws, kroot
+
+
+@app.get("/api/workspace-entities/{slug}/wiki")
+def api_list_wiki(slug: str, review_state: str = ""):
+    """列出 wiki 条目(review_state=draft|merged|'')。"""
+    from ...knowledge.wiki_pipeline import list_wiki_entries
+
+    _, kroot = _wiki_knowledge_root(slug)
+    return {"wiki": list_wiki_entries(kroot, review_state)}
+
+
+@app.post("/api/workspace-entities/{slug}/wiki")
+def api_save_wiki(slug: str, req: WikiSaveRequest):
+    """保存 wiki 条目。source=human → 直接生效;AI/probe → draft(§4.3)。"""
+    from ...knowledge.wiki_pipeline import save_wiki_entry
+
+    _, kroot = _wiki_knowledge_root(slug)
+    try:
+        entry = save_wiki_entry(
+            kroot,
+            title=req.title,
+            content=req.content,
+            source=req.source,
+            summary=req.summary,
+            evidence_refs=req.evidence_refs,
+            related=req.related,
+            source_refs=req.source_refs,
+            slug=req.slug,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return entry
+
+
+@app.post("/api/workspace-entities/{slug}/wiki/{wiki_id}/review")
+def api_review_wiki(slug: str, wiki_id: str, req: WikiReviewRequest):
+    """人工确认:approve → merged(写 verified_at);reject → 回 draft + reason。"""
+    from ...knowledge.wiki_pipeline import review_wiki
+
+    _, kroot = _wiki_knowledge_root(slug)
+    try:
+        return review_wiki(
+            kroot, wiki_id, req.decision, reviewer=req.reviewer, reason=req.reason
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Wiki 条目不存在: {wiki_id}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/workspace-entities/{slug}/wiki/{wiki_id}")
+def api_delete_wiki(slug: str, wiki_id: str):
+    from ...knowledge.wiki_pipeline import delete_wiki
+
+    _, kroot = _wiki_knowledge_root(slug)
+    return {"ok": delete_wiki(kroot, wiki_id)}
+
+
+@app.post("/api/workspace-entities/{slug}/wiki/generate")
+def api_generate_wiki_drafts(slug: str):
+    """跑 probe 生成/刷新 wiki draft(gen_wiki step 的 API 形态)。"""
+    from ..workspace.workspace_registry import _knowledge_root_for
+    from ...knowledge.wiki_pipeline import generate_wiki_drafts
+
+    ws = _resolve_workspace_or_404(slug)
+    kroot = _knowledge_root_for(ws)
+    if not kroot:
+        raise HTTPException(status_code=400, detail="Workspace 无知识根目录")
+    ws_dict = {
+        "id": ws["id"],
+        "name": ws["name"],
+        "knowledge_root": kroot,
+        "repos": db.list_projects_by_workspace(ws["id"]),
+    }
+    drafts = generate_wiki_drafts(ws_dict)
+    return {"created": len(drafts), "drafts": [d["id"] for d in drafts]}
 
 
 # -------- Worktree endpoints --------

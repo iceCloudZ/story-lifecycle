@@ -6,7 +6,13 @@ Public API:
     results = index.retrieve(story_key="...", workspace="...", stage="...", query="...")
 """
 from .index import KnowledgeIndex
-from .models import FailureEntry, KnowledgeEntry, PlaybookEntry, ScenarioEntry
+from .models import (
+    FailureEntry,
+    KnowledgeEntry,
+    PlaybookEntry,
+    ScenarioEntry,
+    WikiEntry,
+)
 
 __all__ = [
     "KnowledgeIndex",
@@ -14,4 +20,5 @@ __all__ = [
     "ScenarioEntry",
     "PlaybookEntry",
     "FailureEntry",
+    "WikiEntry",
 ]

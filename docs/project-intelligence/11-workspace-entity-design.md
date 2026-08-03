@@ -299,12 +299,12 @@ hc 侧已有资产比预想厚——**L4 探测底座已存在，不要重复造
 
 **Phase 3**：
 
-- [ ] `type: wiki` 条目可解析、进 INDEX.json；人写的直接生效，AI/probe 产出的一律 draft
-- [ ] agent prompt 注入只含 summary + related，且 wiki 条目检索权低于 scenario/playbook；stale 标注生效
-- [ ] 不配 probe 时只有 L1 骨架；配了 DMS/ES probe 后 wiki draft 含 L3/L4 证据（带 evidence_refs）
-- [ ] 分歧记录可用：代码定义与 probe 观测不一致时，wiki draft 写现实 + 标注分歧
-- [ ] stale 检测支持"重跑 probe 对比"，无 mtime 误报
-- [ ] PII 审计：wiki 条目和 prompt 注入中无原始用户数据（只有聚合统计）
+- [x] `type: wiki` 条目可解析、进 INDEX.json；人写的直接生效，AI/probe 产出的一律 draft（`WikiEntry`/`parse_wiki`/INDEX 扫描；human→merged，probe/story→draft，review approve/reject 管线）
+- [x] agent prompt 注入只含 summary + related，且 wiki 条目检索权低于 scenario/playbook；stale 标注生效（注入段只取 merged 条目的 summary+related 指针，独立段追加在知识库段之后即降权；git 变更晚于 verified_at 标"可能过期，以代码为准"）
+- [x] 不配 probe 时只有 L1 骨架；配了 DMS/ES probe 后 wiki draft 含 L3/L4 证据（带 evidence_refs）（零配置回退 CodeScanProbe；配置 probe 走 evidence_refs+probe_snapshot 机制，hc 侧 probe 实现见 PHASE-3-RESULT.md 遗留）
+- [x] 分歧记录可用：代码定义与 probe 观测不一致时，wiki draft 写现实 + 标注分歧（L1 检测代码内 API 声明分歧；L3/L4 代码 vs 线上分歧由 hc probe 产出，机制同构）
+- [x] stale 检测支持"重跑 probe 对比"，无 mtime 误报（`check_wiki_stale`：重跑 probe 对比聚合快照 + git log %ct 比对；只 touch 文件不过期，测试覆盖）
+- [x] PII 审计：wiki 条目和 prompt 注入中无原始用户数据（只有聚合统计）（probe 只产计数/分布/名称清单，测试断言 data 值类型；hc 侧 probe 需遵守 I5，本仓无产生原始行的路径）
 
 ---
 
@@ -341,3 +341,16 @@ hc 侧已有资产比预想厚——**L4 探测底座已存在，不要重复造
 - **前端**：`WorkspacePage` 路由 `/workspaces`（MoreMenu 视图区），三 tab（旅程/Stories/概览）+ `.ui-chip` 工作区切换 + 新建表单，遵循 frontend/AGENTS.md（tokens/.ui-*/SVG 图标）
 - **术语**：agent 面对的 prompt 已改 Sandbox 表述（`### 工作沙箱 (Sandbox)`、`workspace_slug` 说明）；`workspace_slug`/`workspace_path` 字段名按 D8 不动（15+ 消费点零改动）
 - **测试**：`tests/test_workspace_entity.py` 21 例（CRUD/零配置 attach/管线幂等/单步重跑/失败 reason/API），全绿
+
+## 实施记录（Phase 3，2026-08-03）
+
+落地范围：wiki 条目（type: wiki）+ draft → review → merge 管线 + BaseWikiProbe 缝 + CodeScanProbe（L1）+ agent 注入降权/stale 标注 + WikiTab 组件（未挂载）。详见 `docs/project-intelligence/phases/PHASE-3-RESULT.md`。
+
+- **知识层**：`packages/knowledge` 追加 `WikiEntry`（§4.1 字段全量）+ `parse_wiki` + INDEX 扫描/还原分支（只追加，不改既有类/函数行为）
+- **probe 缝**：`knowledge/wiki_probes/`（§5.2 契约原样 + mirror verify_providers 的 loader）+ `CodeScanProbe`（L1：API 注解/表定义/MQ/依赖聚合统计 + 代码内 API 声明分歧检测；I5 只产聚合）
+- **管线**：`knowledge/wiki_pipeline.py` — human→merged 直接生效、AI/probe→draft（I2）、review approve/reject、AI 重写合并页降级 draft、`generate_wiki_drafts`（probe→draft，已 merge 跳过）、`check_wiki_stale`（重跑 probe 对比 + git 语义，无 mtime）
+- **gen_wiki step 升级**：初始化管线 step 3 跑 probe 生成 L1 draft（零配置只有 L1 骨架，§5.4）
+- **API**：`/api/workspace-entities/{slug}/wiki`（GET/POST）+ `/wiki/{id}/review` + DELETE + `/wiki/generate`；workspace detail 带 wiki 字段
+- **注入**：`knowledge_provider._build_wiki_summary_section` — merged 条目只取 summary+related、段位置在知识库之后（降权）、stale 标注
+- **前端**：`frontend/src/components/WikiTab.tsx`（+css）独立组件，**未挂载**（汇总窗口做）；条目列表/正文/review 收件箱，遵守 frontend/AGENTS.md
+- **测试**：`test_wiki_phase3.py` 30 例 + `packages/knowledge/tests/test_wiki_entry.py` 5 例；全量 **1344 passed, 2 skipped**

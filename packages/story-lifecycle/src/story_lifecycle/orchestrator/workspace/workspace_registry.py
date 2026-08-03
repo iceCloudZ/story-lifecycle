@@ -223,9 +223,11 @@ def _knowledge_root_for(ws: dict) -> str | None:
 
 
 def _step_gen_wiki(ws: dict) -> dict:
-    """step 3: gen_wiki —— Phase 2 骨架,Phase 3 落地 L1 CodeScanProbe + draft 管线。
+    """step 3: gen_wiki —— L1 代码扫描生成 wiki 骨架 + probe 增补,全部 draft(§4/§5)。
 
-    Phase 2 只确保 wiki 目录就位(知识层 .story/knowledge/wiki/),并写占位说明。
+    Phase 3:跑配置的 wiki_probes(缺省核心自带 CodeScanProbe L1)把证据落成
+    draft wiki 页(带 evidence_refs 证据链)。L2-L4 专用 probe 在 hc 侧仓库,
+    没配就缺哪层,优雅降级。probe 产出永远 draft,生效走人工确认(I2)。
     """
     kroot = _knowledge_root_for(ws)
     if kroot is None:
@@ -239,16 +241,28 @@ def _step_gen_wiki(ws: dict) -> dict:
     placeholder = wiki_dir / "README.md"
     if not placeholder.exists():
         placeholder.write_text(
-            "## Wiki(Phase 3 落地)\n\n"
-            "本目录是 Workspace 的业务 wiki 骨架。"
-            "Phase 3 将在此生成 `type: wiki` 知识条目"
-            "(L1 CodeScanProbe 骨架 + hc 侧 L2-L4 probe 增补,全部 draft 待人确认)。\n",
+            "## Wiki\n\n"
+            "本目录是 Workspace 的业务 wiki 知识(§4)。"
+            "probe/story 产出为 draft,人工确认(merge)后生效;"
+            "人写条目(source: human)直接生效。\n",
             encoding="utf-8",
         )
-    return {
-        "status": "done",
-        "detail": f"wiki 骨架就位: {wiki_dir}",
-    }
+    try:
+        from ...knowledge.wiki_pipeline import generate_wiki_drafts
+
+        ws_dict = {
+            "id": ws["id"],
+            "name": ws["name"],
+            "knowledge_root": kroot,
+            "repos": db.list_projects_by_workspace(ws["id"]),
+        }
+        drafts = generate_wiki_drafts(ws_dict)
+        return {
+            "status": "done",
+            "detail": f"wiki 骨架就位 + {len(drafts)} 条 probe draft(待人确认)",
+        }
+    except Exception as e:  # noqa: BLE001 — probe 失败不阻塞管线,标记 failed + 原因
+        return {"status": "failed", "reason": f"wiki 生成失败: {e}"}
 
 
 def _step_register_integrations(ws: dict, integrations: dict | None) -> dict:

@@ -50,7 +50,7 @@ def _attribution_reports_to_failures(knowledge_dir: str) -> list[FailureEntry]:
 
 
 def _collect_entries(knowledge_dir: str) -> list[KnowledgeEntry]:
-    """Scan knowledge_dir for scenarios, playbooks, and failures."""
+    """Scan knowledge_dir for scenarios, playbooks, failures, and wiki entries."""
     entries: list[KnowledgeEntry] = []
     if not os.path.isdir(knowledge_dir):
         return entries
@@ -70,6 +70,18 @@ def _collect_entries(knowledge_dir: str) -> list[KnowledgeEntry]:
     playbooks_dir = os.path.join(knowledge_dir, "playbooks")
     if os.path.isdir(playbooks_dir):
         for root, _, files in os.walk(playbooks_dir):
+            for f in files:
+                if not _is_markdown(f):
+                    continue
+                abs_path = os.path.join(root, f)
+                rel_path = os.path.relpath(abs_path, knowledge_dir)
+                entry = parse_entry(abs_path, rel_path)
+                if entry:
+                    entries.append(entry)
+
+    wiki_dir = os.path.join(knowledge_dir, "wiki")
+    if os.path.isdir(wiki_dir):
+        for root, _, files in os.walk(wiki_dir):
             for f in files:
                 if not _is_markdown(f):
                     continue

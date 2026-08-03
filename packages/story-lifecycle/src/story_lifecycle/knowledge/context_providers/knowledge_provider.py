@@ -223,6 +223,61 @@ class KnowledgeContextProvider:
         out.append("")
         return "\n".join(out)
 
+    def _build_wiki_summary_section(self, task_type: str) -> str:
+        """Wiki 摘要(§4.2 双读者:agent 只读 summary + related 指针)。
+
+        - 只取 review_state=merged 的正式条目(draft 未确认不注入,I2)
+        - 只注入 summary + related,不注入全文(token 稀缺,细节让 agent read_file)
+        - 降权:作为知识库段之后追加的独立段(检索权低于 scenario/playbook/failure)
+        - stale 标注:关联代码 git 变更晚于 verified_at → 标"可能过期,以代码为准"
+        """
+        try:
+            from knowledge import KnowledgeIndex
+        except ImportError:
+            return ""
+        try:
+            idx = KnowledgeIndex(str(_KNOWLEDGE_ROOT))
+        except Exception:
+            return ""
+        wiki_entries = [
+            e
+            for e in idx.all()
+            if getattr(e, "type", "") == "wiki"
+            and getattr(e, "review_state", "") == "merged"
+        ]
+        if not wiki_entries:
+            return ""
+        lines = ["### Wiki 摘要（二手知识，综述可能过期，以代码为准）\n"]
+        for e in wiki_entries:
+            summary = getattr(e, "summary", "") or e.title
+            stale = self._wiki_is_stale(e)
+            mark = "【可能过期，以代码为准】" if stale else ""
+            lines.append(f"- **{e.title}**{mark}：{summary}")
+            related = getattr(e, "related", None) or []
+            if related:
+                lines.append(f"  - 相关: {', '.join(str(r) for r in related[:5])}")
+        lines.append("")
+        return "\n".join(lines)
+
+    def _wiki_is_stale(self, entry) -> bool:
+        """git 语义比对(§5.3,不用 mtime):source_refs 文件变更晚于 verified_at。"""
+        refs = getattr(entry, "source_refs", None) or []
+        verified_at = getattr(entry, "verified_at", "") or ""
+        if not refs or not verified_at:
+            return False
+        try:
+            from ..knowledge_store.stale import _git_last_change_ts, _parse_time
+
+            root = _KNOWLEDGE_ROOT.parent
+            verified = _parse_time(verified_at)
+            for ref in refs[:5]:
+                ts = _git_last_change_ts(root, ref)
+                if ts and verified and ts > verified:
+                    return True
+        except Exception:
+            return False
+        return False
+
     def get_context(self, story_key: str, workspace: str, stage: str) -> str | None:
         """Return markdown knowledge context for this story, or None."""
         task_type = self._task_type_for(story_key)
@@ -303,6 +358,14 @@ class KnowledgeContextProvider:
             )
             if ki_section:
                 lines.append(ki_section)
+        except Exception:
+            pass
+
+        # 6. wiki 摘要(§4.2:只取 summary+related,降权在知识库段之后,stale 标注)
+        try:
+            wiki_section = self._build_wiki_summary_section(task_type)
+            if wiki_section:
+                lines.append(wiki_section)
         except Exception:
             pass
 

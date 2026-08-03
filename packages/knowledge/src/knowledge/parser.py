@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from .models import (
@@ -14,6 +15,7 @@ from .models import (
     KnowledgeEntry,
     PlaybookEntry,
     ScenarioEntry,
+    WikiEntry,
 )
 
 
@@ -239,4 +241,56 @@ def parse_entry(path: str, rel_path: str) -> KnowledgeEntry | None:
         return parse_scenario(path, rel_path)
     if "playbooks" in rel_path.split(os.sep):
         return parse_playbook(path, rel_path)
+    if "wiki" in rel_path.split(os.sep):
+        return parse_wiki(path, rel_path)
     return None
+
+
+def parse_wiki(path: str, rel_path: str) -> WikiEntry:
+    """Parse a wiki markdown (frontmatter + body) into a WikiEntry.
+
+    11-workspace-entity-design.md §4: ``type: wiki`` 条目,frontmatter 承载
+    summary/review_state/evidence_refs/related/verified_at 等元数据,
+    body(去 frontmatter 后的正文)是人读的完整叙述。
+    """
+    meta = _read_frontmatter(path)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        text = ""
+    body = ""
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            body = parts[2].strip()
+    else:
+        body = text.strip()
+    domain = ""
+    # domain 取 wiki 下最近子目录名(如 wiki/core-borrow/xxx.md → core-borrow)
+    rel_parts = [p for p in Path(rel_path).parts if p]
+    if len(rel_parts) >= 2 and rel_parts[-2] != "wiki":
+        domain = rel_parts[-2]
+    return WikiEntry(
+        id=meta.get("id") or _slug_to_id("wiki", path),
+        type="wiki",
+        title=meta.get("title") or _title_from_markdown(path),
+        source=meta.get("source", "human"),
+        domain=meta.get("domain", domain),
+        status=meta.get("status", "merged"),
+        tags=meta.get("tags", []),
+        source_refs=meta.get("source_refs", []),
+        created_at=meta.get("created_at", ""),
+        updated_at=meta.get("updated_at", ""),
+        path=rel_path,
+        links=meta.get("links", []),
+        summary=meta.get("summary", ""),
+        review_state=meta.get("review_state", "draft"),
+        evidence_refs=meta.get("evidence_refs", []),
+        related=meta.get("related", []),
+        verified_at=meta.get("verified_at", ""),
+        reviewed_by=meta.get("reviewed_by", ""),
+        review_reason=meta.get("review_reason", ""),
+        probe_snapshot=meta.get("probe_snapshot", {}),
+        content=body,
+    )

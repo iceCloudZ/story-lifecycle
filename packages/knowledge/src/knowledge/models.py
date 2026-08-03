@@ -231,3 +231,47 @@ class FailureEntry(KnowledgeEntry):
             }
         )
         return data
+
+
+@dataclass
+class WikiEntry(KnowledgeEntry):
+    """业务项目 wiki 页(11-workspace-entity-design.md §4)。
+
+    type: wiki —— 知识层唯一"人优先"的条目类型:人读全文,agent 只读
+    ``summary`` + ``related`` 指针(双读者,§4.2)。来源与生效规则(§4.3):
+
+    - ``source: human`` → 直接生效(review_state=merged),不进 draft 管线
+    - ``source: story:<key>`` / ``probe:<name>`` → 必须 draft → review →
+      人工确认 → merge(I2:AI 不自动覆盖正式知识)
+
+    review_state: draft | merged(暂不引入独立 review 态,reject 回 draft + reason)。
+    evidence_refs: 论断的证据链 [{probe, query, observed_at}](§5.3),AI/probe 产出必填。
+    probe_snapshot: probe 产出时的聚合快照,stale 检测重跑 probe 对比用(§5.3)。
+    """
+
+    summary: str = ""  # ≤200 字,agent 注入只用这段(§4.2)
+    review_state: str = "draft"  # draft | merged(人写直接 merged)
+    evidence_refs: list[dict] = field(default_factory=list)
+    related: list[str] = field(default_factory=list)  # [scenario:xxx, playbook:yyy]
+    verified_at: str = ""  # 人工确认时间
+    reviewed_by: str = ""
+    review_reason: str = ""
+    probe_snapshot: dict = field(default_factory=dict)  # 聚合统计,无原始行(I5)
+    content: str = ""  # 正文(给人看的完整叙述)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = super().to_dict()
+        data.update(
+            {
+                "summary": self.summary,
+                "review_state": self.review_state,
+                "evidence_refs": self.evidence_refs,
+                "related": self.related,
+                "verified_at": self.verified_at,
+                "reviewed_by": self.reviewed_by,
+                "review_reason": self.review_reason,
+                "probe_snapshot": self.probe_snapshot,
+                "content": self.content,
+            }
+        )
+        return data

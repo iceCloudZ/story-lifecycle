@@ -5,8 +5,8 @@ import json
 import os
 from typing import Any
 
-from .generator import generate_index, write_index
-from .models import KnowledgeEntry
+from .generator import write_index
+from .models import KnowledgeEntry, WikiEntry
 from .parser import (
     CommandRef,
     FailureEntry,
@@ -186,5 +186,29 @@ def _entry_from_dict(data: dict[str, Any]) -> KnowledgeEntry:
             stages_affected=data.get("stages_affected", []),
             mitigations=data.get("mitigations", []),
             counterfactuals=data.get("counterfactuals", []),
+        )
+    if type_ == "wiki":
+        return WikiEntry(
+            id=data["id"],
+            type="wiki",
+            title=data["title"],
+            source=data["source"],
+            domain=data.get("domain", ""),
+            status=data.get("status", "merged"),
+            tags=data.get("tags", []),
+            source_refs=data.get("source_refs", []),
+            created_at=data.get("created_at", ""),
+            updated_at=data.get("updated_at", ""),
+            path=data.get("path", ""),
+            links=data.get("links", []),
+            summary=data.get("summary", ""),
+            review_state=data.get("review_state", "draft"),
+            evidence_refs=data.get("evidence_refs", []),
+            related=data.get("related", []),
+            verified_at=data.get("verified_at", ""),
+            reviewed_by=data.get("reviewed_by", ""),
+            review_reason=data.get("review_reason", ""),
+            probe_snapshot=data.get("probe_snapshot", {}),
+            content=data.get("content", ""),
         )
     return KnowledgeEntry.from_dict(data)

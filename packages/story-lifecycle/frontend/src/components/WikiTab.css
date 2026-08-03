@@ -1,0 +1,125 @@
+/* WikiTab — WorkspacePage 的 Wiki tab(11-workspace-entity-design.md §4/§5, Phase 3)。
+   独立组件,未挂载;挂载由汇总窗口做。 */
+
+.wiki-layout {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .wiki-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wiki-row-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.wiki-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.wiki-row-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.wiki-row-summary {
+  margin: 4px 0 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wiki-row-active {
+  background: var(--color-primary-soft);
+}
+
+.wiki-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.wiki-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.wiki-detail-head h4 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.wiki-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.wiki-summary,
+.wiki-related,
+.wiki-evidence,
+.wiki-body {
+  margin-bottom: 12px;
+}
+
+.wiki-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  margin: 0 6px 6px 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.wiki-hint-line {
+  margin: 2px 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.wiki-review-box {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.wiki-review-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.wiki-reject-input {
+  flex: 1;
+  min-width: 120px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+}
