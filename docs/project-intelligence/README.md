@@ -44,6 +44,10 @@ PRD / spec / plan / done / context / finding / pattern / test / code diff
    - Simple command layer design.
    - Defines short user-facing commands such as `story init`, `story ask`, `story scan`, and maps them to the existing Project Intelligence internals.
 
+8. [11-workspace-entity-design.md](11-workspace-entity-design.md)
+   - Workspace entity design (top layer above Story).
+   - Defines the four-layer model Workspace → Repo → Story → Sandbox, the workspace init pipeline, the dual-reader `type: wiki` knowledge entry, and the L1-L4 multi-source probe seam (`BaseWikiProbe`). Phase 1 (test framework integration) lives in `10-test-framework-integration-design.md`.
+
 ## Design Position
 
 Project Intelligence is local-first:
