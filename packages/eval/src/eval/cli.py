@@ -13,11 +13,14 @@ import click
 
 def _setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
         stream=sys.stdout,
         encoding="utf-8",
+        force=True,
     )
 
 
@@ -28,6 +31,53 @@ def main(verbose: bool):
     from .judges import configure_llm_env
 
     configure_llm_env()
+
+
+@main.command()
+def index():
+    """A 源:扫描 hc-all 各仓库 origin/master 的 merge 交付单元。"""
+    from .gitindex import run_index
+
+    res = run_index()
+    click.echo(f"index 完成: {res['deliveries_total']} 个交付单元")
+
+
+@main.command(name="tapd-scan")
+def tapd_scan():
+    """B 源:拉取 TAPD stories（需 TAPD token 有效）。"""
+    from .tapdscan import run_tapd_scan
+
+    try:
+        res = run_tapd_scan()
+        click.echo(f"tapd-scan 完成: stories={res['stories']} commit_seeds={res['commit_seeds']}")
+    except RuntimeError as e:
+        click.echo(f"tapd-scan 失败: {e}", err=True)
+
+
+@main.command()
+@click.option("--llm", is_flag=True, help="对无种子关联的 delivery 跑 LLM 模糊匹配（需 key）")
+@click.option("--llm-limit", type=int, default=500, help="LLM 匹配上限")
+def link(llm, llm_limit):
+    """三方匹配 → stories_matched.jsonl + 待确认队列 + 覆盖率报告。"""
+    from .linker import run_link
+
+    res = run_link(do_llm=llm, llm_limit=llm_limit)
+    click.echo(
+        f"link 完成: 实体 {res['entities']} / A∩B high+official {res['ab_high']} / "
+        f"待确认 {res['pending']}"
+    )
+    if res["pending"]:
+        click.echo("  ⚠ 有待确认项 → dataset/links_pending_review.md,标注后跑 `eval review-apply`")
+
+
+@main.command(name="review-apply")
+@click.argument("path", default="dataset/links_pending_review.md")
+def review_apply(path):
+    """应用人工确认结果（accept:xxx）进 link_confirmations.jsonl。"""
+    from .linker import review_apply as _apply
+
+    res = _apply(path)
+    click.echo(f"review-apply: {res['applied']} 条确认写入 {res['file']}")
 
 
 @main.command()
@@ -48,8 +98,8 @@ def extract(db, dataset_dir, workspace, story_key, force):
         force=force,
     )
     click.echo(
-        f"完成: 候选 {summary['total_completed']} / 有证据 {summary['with_evidence']} / "
-        f"入选 {summary['qualified']} (+fs {summary.get('fs_only', 0)}) / core {summary['core']}"
+        f"完成: 实体 {summary['entities_total']} / 入选 {summary['qualified']} "
+        f"(A∩B {summary['qualified_ab']} + C {summary['qualified_c']}) / core {summary['core']}"
     )
     for e in summary["errors"]:
         click.echo(f"  ! {e}", err=True)

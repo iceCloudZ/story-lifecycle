@@ -25,6 +25,7 @@ log = logging.getLogger("eval.dataset")
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_DATASET_DIR = PACKAGE_ROOT / "dataset"
+DATASET_DIR = DEFAULT_DATASET_DIR
 
 DEFAULT_DB = r"C:/Users/zzh58/.story-lifecycle/story.db"
 HC_EVIDENCE_ROOT = Path("D:/hc-all/story")
@@ -246,73 +247,69 @@ def _copy_files(files: list[Path], dest_dir: Path) -> list[str]:
 
 @dataclass
 class ExtractStats:
-    total_completed: int = 0
-    with_evidence: int = 0
+    entities_total: int = 0
     qualified: int = 0
+    qualified_ab: int = 0
+    qualified_c: int = 0
     core: int = 0
-    skipped_no_evidence: int = 0
-    skipped_threshold: int = 0
-    fs_only: int = 0
+    core_with_diffs: int = 0
     errors: list[str] = field(default_factory=list)
 
 
-def _extract_filesystem_only(
-    ds_dir: Path, db_keys: set[str], all_db_keys: set[str], manifests: list[dict], force: bool
-) -> int:
-    """旧时代 story（DB 已删除）:证据目录 + PRD 仓齐全即入选。
+def _load_entities() -> list[dict]:
+    path = DATASET_DIR / "stories_matched.jsonl"
+    if not path.exists():
+        raise FileNotFoundError(
+            "stories_matched.jsonl 不存在——先跑 `eval link`"
+        )
+    return [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
 
-    只收数字前缀 ≥6 位的目录（排除测试目录 2-* 等）;PRD 优先目录内,缺失则
-    从 ``D:/hc-all/prd`` 仓兜底。前缀命中任何 DB story（含 failed/已删除）的
-    目录不收——它们不是「人工验收过的完成 story」。manifest 带
-    ``source: filesystem`` 标记。
-    """
-    added = 0
-    if not HC_EVIDENCE_ROOT.exists():
-        return 0
-    for d in sorted(HC_EVIDENCE_ROOT.iterdir()):
-        if not d.is_dir():
-            continue
-        m = re.match(r"(\d{6,})", d.name)
-        if not m:
-            continue
-        prefix = m.group(1)
-        if any(k.startswith(prefix) or k.endswith(prefix) for k in all_db_keys):
-            continue
-        docs, files = _collect_docs([d])
-        if not docs.get("spec"):
-            continue
-        if not docs.get("prd"):
-            prd_store = _find_prd_store_files(prefix)
-            if not prd_store:
-                continue
-            docs["prd"] = prd_store[0].name
-            files.append(prd_store[0])
-        story_key = f"fs-{prefix}"
-        story_dir = ds_dir / story_key
-        if story_dir.exists():
-            if not force:
-                continue
-            shutil.rmtree(story_dir, ignore_errors=True)
-        story_dir.mkdir(parents=True, exist_ok=True)
-        _copy_files(files, story_dir)
-        manifest = {
-            "story_key": story_key,
-            "title": d.name.split("-", 1)[1] if "-" in d.name else d.name,
-            "workspace": str(HC_EVIDENCE_ROOT),
-            "profile": "",
-            "completed_at": "",
-            "docs": docs,
-            "git": {"branch": None, "commits": []},
-            "gates": [],
-            "core": bool(docs.get("plan") and docs.get("test_report")),
-            "source": "filesystem",
-        }
-        with open(story_dir / "manifest.json", "w", encoding="utf-8") as f:
-            json.dump(manifest, f, ensure_ascii=False, indent=2)
-        manifests.append(manifest)
-        added += 1
-        log.info("[%s] filesystem-only core=%s docs=%s", story_key, manifest["core"], list(docs.keys()))
-    return added
+
+def _delivery_index() -> dict[tuple[str, str], dict]:
+    """(repo, merge_hash) → delivery（commits/diffstat）。"""
+    from .gitindex import load_deliveries
+
+    return {(d["repo"], d["merge_hash"]): d for d in load_deliveries()}
+
+
+def _gates_for_story(conn: sqlite3.Connection, story_key: str) -> list[dict]:
+    if not story_key:
+        return []
+    row = conn.execute("SELECT id FROM story WHERE story_key=?", (story_key,)).fetchone()
+    if not row:
+        return []
+    return _extract_gates(conn, row[0])
+
+
+def _write_diff(repo_name: str, merge_hash: str, diff_dir: Path) -> dict:
+    """core 集落 diff 全文（只读 git diff,超 5MB 跳过）。"""
+    repo_path = Path("D:/hc-all") / repo_name
+    if repo_name == "hc-admin":
+        repo_path = Path("D:/hc-all/frontends/hc-admin")
+    if not repo_path.exists():
+        return {"error": "repo 不存在"}
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["git", "--no-pager", "diff", f"{merge_hash}^1", merge_hash],
+            cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+        )
+        if r.returncode != 0:
+            return {"error": r.stderr[:200]}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:200]}
+    if len(r.stdout) > MAX_COPY_BYTES:
+        return {"error": f"diff 过大({len(r.stdout)}B),跳过"}
+    diff_dir.mkdir(parents=True, exist_ok=True)
+    out = diff_dir / f"{repo_name}_{merge_hash}.diff"
+    out.write_text(r.stdout, encoding="utf-8")
+    return {"bytes": len(r.stdout)}
 
 
 def extract(
@@ -321,124 +318,167 @@ def extract(
     workspace: str | None = None,
     story_key: str | None = None,
     force: bool = False,
+    limit: int | None = None,
 ) -> dict[str, Any]:
-    """执行抽取,返回统计摘要 dict。
+    """以三方匹配实体为轴落盘评分材料（Task 2）。
 
-    Args:
-        workspace: 限定单个 workspace（调试用）。
-        story_key: 限定单个 story_key（调试用）。
-        force: 覆盖已存在目录。
+    入选门槛: A∩B（有交付有需求）或 C 有 PRD+spec;
+    ``core=true`` = spec+plan+test-report + ≥1 个 high/official 交付单元。
     """
     db_path = Path(db_path)
-    if not db_path.exists():
-        raise FileNotFoundError(f"DB 不存在: {db_path}")
     ds_dir = Path(dataset_dir) if dataset_dir else DEFAULT_DATASET_DIR
     ds_dir.mkdir(parents=True, exist_ok=True)
 
-    # 只读连接（绝不让抽取路径写生产库）
     uri = f"file:{db_path.as_posix()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
 
-    stats = ExtractStats()
+    entities = _load_entities()
+    if limit:
+        entities = entities[:limit]
+    deliveries = _delivery_index()
+
+    stats = ExtractStats(entities_total=len(entities))
     manifests: list[dict[str, Any]] = []
 
-    sql = (
-        "SELECT id, story_key, title, workspace, profile, updated_at FROM story "
-        "WHERE status='completed' AND (is_test=0 OR is_test IS NULL) AND deleted_at IS NULL"
-    )
-    params: tuple = ()
-    if story_key:
-        sql += " AND story_key=?"
-        params = (story_key,)
-    rows = conn.execute(sql, params).fetchall()
-    stats.total_completed = len(rows)
-
-    for row in rows:
-        d = dict(row)
-        key = d["story_key"]
-        ws = d.get("workspace") or ""
-        if workspace and ws.replace("\\", "/") != workspace.replace("\\", "/"):
+    for ent in entities:
+        tapd_id = ent.get("tapd_id") or ""
+        sk = ent.get("story_key") or ""
+        if story_key and sk != story_key:
             continue
         try:
-            evidence_dirs = _find_evidence_dirs(ws, key)
-            prd_store = _find_prd_store_files(key)
-            if not evidence_dirs and not prd_store:
-                stats.skipped_no_evidence += 1
+            ab_links = [d for d in ent.get("deliveries", []) if d.get("confidence")]
+            ab_high = any(
+                d.get("confidence") in ("high", "official") for d in ent["deliveries"]
+            )
+            # C 文档
+            docs: dict[str, str] = {}
+            files: list[Path] = []
+            evidence_dir = ent.get("evidence_dir") or ""
+            if evidence_dir:
+                ed = Path(evidence_dir)
+                if ed.is_dir():
+                    docs, files = _collect_docs([ed])
+            if not docs.get("prd"):
+                prd_store = _find_prd_store_files(sk or tapd_id)
+                if prd_store:
+                    docs["prd"] = prd_store[0].name
+                    files.append(prd_store[0])
+            c_ok = bool(docs.get("prd") and docs.get("spec"))
+            # 入选门槛
+            if not (ab_links and (c_ok or True)) and not c_ok:
                 continue
-            stats.with_evidence += 1
-            docs, files = _collect_docs(evidence_dirs, prd_store)
-            prd = docs.get("prd")
-            spec = docs.get("spec")
-            if not (prd and spec):
-                stats.skipped_threshold += 1
-                continue
+            qualified = bool(ab_links or c_ok)
             stats.qualified += 1
+            if ab_links:
+                stats.qualified_ab += 1
+            if c_ok:
+                stats.qualified_c += 1
 
-            story_dir = ds_dir / _safe_segment(key)
+            # core = spec+plan C 文档 + ≥1 high/official 交付单元
+            # （用户定案:放宽 test-report 硬性要求,见 docs/eval-build-handoff.md）
+            core = bool(
+                docs.get("spec") and docs.get("plan") and ab_high
+            )
+            if core:
+                stats.core += 1
+
+            # 输出目录
+            dir_name = _safe_segment(tapd_id or sk or f"entity-{stats.qualified}")
+            story_dir = ds_dir / dir_name
             if story_dir.exists():
                 if not force:
-                    log.info("跳过已存在 %s（--force 覆盖）", key)
+                    log.info("跳过已存在 %s（--force 覆盖）", dir_name)
                     continue
                 shutil.rmtree(story_dir, ignore_errors=True)
             story_dir.mkdir(parents=True, exist_ok=True)
 
-            copied = _copy_files(files, story_dir)
-            receipts = _collect_receipts(ws, key)
+            if files:
+                _copy_files(files, story_dir)
+            ws_lookup = ""
+            if sk:
+                row = conn.execute("SELECT workspace FROM story WHERE story_key=?", (sk,)).fetchone()
+                ws_lookup = row[0] if row else ""
+            receipts = _collect_receipts(ws_lookup or evidence_dir.split("/story/")[0], sk) if sk else []
             if receipts:
                 rec_dir = story_dir / "receipts"
                 rec_dir.mkdir(exist_ok=True)
                 for rp in receipts:
                     shutil.copy2(rp, rec_dir / rp.name)
 
-            git = _extract_git(conn, d["id"])
-            git["commits"] = sorted(set(git["commits"] + _extract_change_commits(conn, key)))
-            gates = _extract_gates(conn, d["id"])
+            # A 侧明细
+            delivery_details = []
+            for dl in ent["deliveries"]:
+                full = deliveries.get((dl["repo"], dl["merge_hash"]), {})
+                delivery_details.append(
+                    {
+                        "repo": dl["repo"],
+                        "merge_hash": dl["merge_hash"],
+                        "branch": dl.get("branch", ""),
+                        "link_method": dl.get("link_method", ""),
+                        "confidence": dl.get("confidence", ""),
+                        "merged_at": full.get("merged_at", ""),
+                        "author": full.get("author", ""),
+                        "commits": [
+                            {"hash": c.get("hash", ""), "subject": c.get("subject", "")[:200]}
+                            for c in full.get("commits", [])[:50]
+                        ],
+                        "diffstat": full.get("diffstat", {}),
+                    }
+                )
+            # core 集落 diff 全文
+            diff_result = {}
+            if core:
+                diff_dir = story_dir / "diffs"
+                for dl in ent["deliveries"]:
+                    if dl.get("confidence") not in ("high", "official"):
+                        continue
+                    r = _write_diff(dl["repo"], dl["merge_hash"], diff_dir)
+                    diff_result[f"{dl['repo']}_{dl['merge_hash'][:10]}"] = r
+                    if r.get("bytes"):
+                        stats.core_with_diffs += 1
 
-            plan = docs.get("plan")
-            test_report = docs.get("test_report")
             manifest = {
-                "story_key": key,
-                "title": d.get("title") or "",
-                "workspace": ws,
-                "profile": d.get("profile") or "",
-                "completed_at": d.get("updated_at") or "",
+                "tapd_id": tapd_id,
+                "story_key": sk,
+                "dir": dir_name,
+                "title": ent.get("name") or ent.get("story_title") or "",
+                "tapd_status": ent.get("status", ""),
+                "iteration_id": ent.get("iteration_id", ""),
+                "owner": ent.get("owner", ""),
+                "evidence_dir": evidence_dir,
+                "link_summary": ent.get("link_summary", {}),
+                "link_notes": ent.get("link_notes", []),
                 "docs": docs,
-                "git": git,
-                "gates": gates,
-                "core": bool(plan and test_report),
+                "gates": _gates_for_story(conn, sk),
+                "deliveries": delivery_details,
+                "diffs": diff_result,
+                "core": core,
             }
-            if manifest["core"]:
-                stats.core += 1
             with open(story_dir / "manifest.json", "w", encoding="utf-8") as f:
                 json.dump(manifest, f, ensure_ascii=False, indent=2)
             manifests.append(manifest)
             log.info(
-                "[%s] core=%s docs=%s receipts=%d",
-                key,
-                manifest["core"],
+                "[%s] qualified(ab=%s c=%s) core=%s docs=%s deliveries=%d",
+                dir_name,
+                bool(ab_links),
+                c_ok,
+                core,
                 list(docs.keys()),
-                len(receipts),
+                len(delivery_details),
             )
-        except Exception as e:  # noqa: BLE001 — 单 story 失败不中断全量
-            stats.errors.append(f"{key}: {e}")
-            log.exception("story %s 抽取失败", key)
-
-    # 文件系统-only 旧时代 story（DB 已无记录,但证据目录 + PRD 仓齐全）
-    db_keys = {r["story_key"] for r in rows}
-    all_db_keys = {r[0] for r in conn.execute("SELECT story_key FROM story")}
-    stats.fs_only = _extract_filesystem_only(ds_dir, db_keys, all_db_keys, manifests, force)
+        except Exception as e:  # noqa: BLE001 — 单实体失败不中断
+            stats.errors.append(f"{tapd_id or sk}: {e}")
+            log.exception("实体 %s 抽取失败", tapd_id or sk)
 
     conn.close()
-
     summary = {
-        "total_completed": stats.total_completed,
-        "with_evidence": stats.with_evidence,
+        "entities_total": stats.entities_total,
         "qualified": stats.qualified,
+        "qualified_ab": stats.qualified_ab,
+        "qualified_c": stats.qualified_c,
         "core": stats.core,
-        "fs_only": stats.fs_only,
-        "skipped_no_evidence": stats.skipped_no_evidence,
-        "skipped_threshold": stats.skipped_threshold,
+        "core_with_diffs": stats.core_with_diffs,
         "errors": stats.errors,
         "dataset_dir": str(ds_dir),
     }
@@ -474,5 +514,6 @@ def artifact_path(dataset_dir: Path, manifest: dict, doc_key: str) -> Path | Non
     fn = (manifest.get("docs") or {}).get(doc_key)
     if not fn:
         return None
-    p = dataset_dir / _safe_segment(manifest["story_key"]) / fn
+    d = manifest.get("dir") or _safe_segment(manifest.get("story_key") or manifest.get("tapd_id") or "story")
+    p = Path(dataset_dir) / d / fn
     return p if p.exists() else None

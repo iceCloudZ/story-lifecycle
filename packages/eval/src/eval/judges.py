@@ -70,10 +70,24 @@ class PlanScore(BaseScore):
 
 
 class ConformanceScore(BaseScore):
-    """回放产出与 spec 的吻合度:alignment（实现与 spec 语义一致）+ coverage（覆盖度）。"""
+    """实现（merge diff）与需求参照物的吻合度。
 
-    alignment: int = Field(ge=1, le=5, description="实现与 spec 语义一致度")
-    coverage: int = Field(ge=1, le=5, description="spec 要求的实现完整度")
+    参照物优先级: C 源 spec > C 源 PRD > B 源 TAPD 需求描述。
+    评分须标注实际用的参照物类型。
+    """
+
+    alignment: int = Field(ge=1, le=5, description="实现与参照物语义一致度")
+    coverage: int = Field(ge=1, le=5, description="参照物要求的实现完整度")
+    scope_drift: int = Field(ge=1, le=5, description="范围漂移控制(5=无越界改动,1=大量无关改动)")
+    reference_type: str = Field(default="", description="实际使用的参照物: spec/prd/tapd")
+
+
+class DeliveryScore(BaseScore):
+    """交付质量:commit message 质量 / 提交粒度 / 返工迹象。"""
+
+    message_quality: int = Field(ge=1, le=5, description="commit message 质量(描述清晰、关联需求)")
+    granularity: int = Field(ge=1, le=5, description="提交粒度(逻辑独立、大小适中)")
+    rework: int = Field(ge=1, le=5, description="返工控制(5=无 revert/fixup/反复修,1=大量返工)")
 
 
 class _LLM:
@@ -197,28 +211,60 @@ findings 列 2-6 条具体问题;summary 一句话总评。
     return _LLM.invoke_structured(prompt, PlanScore)  # type: ignore[return-value]
 
 
-def judge_conformance(spec_text: str, build_artifacts: dict[str, str]) -> ConformanceScore:
-    """ConformanceScore:回放 build 产出（git diff / 落地 artifact 文本）与 spec 吻合度。"""
-    artifact_block = "\n\n".join(
-        f"### {name}\n```\n{_truncate(text, 60_000)}\n```" for name, text in build_artifacts.items()
-    )
-    if not artifact_block:
-        artifact_block = "（无任何落地产出文本）"
-    prompt = f"""请判断一次 AI 编码回放产出的**实现**与**设计文档(spec)**的吻合程度。评分 1-5 分。
+def judge_conformance(reference_text: str, reference_type: str, diff_text: str) -> ConformanceScore:
+    """ConformanceScore:实现（merge diff）vs 需求参照物（spec/PRD/TAPD 描述）。
 
-# 设计文档 spec（gold）
+    diff 大按文件分批由调用方负责（本函数处理单批）。
+    """
+    type_label = {"spec": "设计文档 spec", "prd": "需求 PRD", "tapd": "TAPD 需求描述"}.get(
+        reference_type, reference_type
+    )
+    prompt = f"""请判断一次代码交付（merge diff）与**{type_label}**的吻合程度。评分 1-5 分。
+
+# 需求参照物（{type_label}）
 ```markdown
-{_truncate(spec_text, 150_000)}
+{_truncate(reference_text, 120_000)}
 ```
 
-# 回放 build 产出（git diff 摘要 / 新增文件 / 测试报告）
-{artifact_block}
+# 交付实现（git merge diff 全文/摘要）
+```diff
+{_truncate(diff_text, 120_000)}
+```
 
 评分要求:
-- alignment:实现是否与 spec 的语义一致（数据结构/接口/流程,不要求逐字相同）
-- coverage:spec 要求的实现点被覆盖的比例（缺了哪些写明）
+- alignment:实现是否与参照物的语义一致（数据结构/接口/流程,不要求逐字相同）
+- coverage:参照物要求的实现点被覆盖的比例（缺了哪些写明）
+- scope_drift:是否混入与需求无关的改动（5=严格按范围,1=大量无关改动）
 findings 列 2-6 条具体差异;summary 一句话总评。
 
-只输出 JSON 对象:{{"alignment": int, "coverage": int,
-"findings": [str], "summary": str}}"""
+只输出 JSON 对象:{{"alignment": int, "coverage": int, "scope_drift": int,
+"reference_type": "{reference_type}", "findings": [str], "summary": str}}"""
     return _LLM.invoke_structured(prompt, ConformanceScore)  # type: ignore[return-value]
+
+
+def judge_delivery(commits: list[dict], repo: str, branch: str) -> DeliveryScore:
+    """DeliveryScore:commit message 质量 / 提交粒度 / 返工迹象。"""
+    commit_block = "\n".join(
+        f"- [{c.get('date', '')[:10]}] {c.get('subject', '')[:200]}" for c in commits[:80]
+    )
+    if not commit_block:
+        commit_block = "（无提交信息）"
+    prompt = f"""请评审一次代码交付的提交质量。评分 1-5 分。
+
+# 交付信息
+- repo: {repo}
+- branch: {branch}
+- 提交数: {len(commits)}
+
+# commit 列表
+{commit_block}
+
+评分要求:
+- message_quality:commit message 是否清晰描述改动、是否关联需求/问题
+- granularity:提交粒度是否逻辑独立、大小适中（不把一堆无关改动揉在一个提交里）
+- rework:是否有 revert/fixup/反复修复同一处的返工迹象
+findings 列 2-6 条具体问题;summary 一句话总评。
+
+只输出 JSON 对象:{{"message_quality": int, "granularity": int, "rework": int,
+"findings": [str], "summary": str}}"""
+    return _LLM.invoke_structured(prompt, DeliveryScore)  # type: ignore[return-value]
