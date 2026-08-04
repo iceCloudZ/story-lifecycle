@@ -58,3 +58,8 @@ packages/testing/src/testing/scenarios/calculator/calculator.py
 .codex/
 .kimi-code/
 .claude/
+
+# eval 层产物（gold 抽取 / 评分 / 回放）
+packages/eval/dataset/
+packages/eval/results/
+.tmp/eval_runs/

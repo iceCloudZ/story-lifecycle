@@ -44,6 +44,7 @@ pythonpath = [
     "packages/knowledge/src",
     "packages/story-lifecycle/src",
     "packages/testing/src",
+    "packages/eval/src",
 ]
 markers = [
     "real_e2e: real-AI end-to-end over the in-process harness (slow/costly; skipped by default, run with `pytest -m real_e2e`)",

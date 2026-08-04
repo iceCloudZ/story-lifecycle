@@ -1,0 +1,46 @@
+# eval 回放专用 profile — 由 packages/eval/replay.py 动态改写
+# hidden: 不在前端 profile 下拉显示;cli: opencode(headless -p 驱动)
+version: 2
+cli: opencode
+execution_mode: headless
+hidden: true
+
+stages:
+  design:
+    order: 1
+    description: "eval 回放:分析需求并输出 spec"
+    confirm: false
+    review: false
+    max_retries: 0
+    expected_outputs: []
+    artifacts:
+      - story/spec.md
+    next_default: [implement]
+
+  implement:
+    order: 2
+    description: "eval 回放:编码实现"
+    confirm: false
+    review: false
+    max_retries: 0
+    expected_outputs: []
+    artifacts:
+      - git
+    next_default: [verify]
+
+  verify:
+    order: 3
+    description: "eval 回放:验证并输出测试报告"
+    confirm: false
+    review: false
+    max_retries: 0
+    expected_outputs: []
+    artifacts:
+      - story/test-report.md
+    next_default: []
+
+quality:
+  enabled: false
+
+adversarial:
+  enabled: false
