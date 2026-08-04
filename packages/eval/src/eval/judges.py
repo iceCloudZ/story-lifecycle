@@ -90,6 +90,13 @@ class DeliveryScore(BaseScore):
     rework: int = Field(ge=1, le=5, description="返工控制(5=无 revert/fixup/反复修,1=大量返工)")
 
 
+class MergeSummary(BaseModel):
+    """无关联 merge 的语义摘要（兜底评分 + 第二轮模糊关联素材）。"""
+
+    summary: str = Field(description="该 merge 实际做了什么的一段语义摘要(100-300字)")
+    topics: list[str] = Field(default_factory=list, description="改动主题标签 3-8 个")
+
+
 class _LLM:
     """惰性单例 + 429 退避的 LLMClient 包装。"""
 
@@ -268,3 +275,37 @@ findings 列 2-6 条具体问题;summary 一句话总评。
 只输出 JSON 对象:{{"message_quality": int, "granularity": int, "rework": int,
 "findings": [str], "summary": str}}"""
     return _LLM.invoke_structured(prompt, DeliveryScore)  # type: ignore[return-value]
+
+
+def judge_merge_summary(commits: list[dict], repo: str, branch: str, diffstat: dict) -> MergeSummary:
+    """MergeSummary:该 merge 实际做了什么（语义摘要 + 主题标签）。
+
+    无关联 story 的 merge 兜底;摘要写回索引反哺第二轮模糊关联。
+    """
+    commit_block = "\n".join(
+        f"- [{c.get('date', '')[:10]}] {c.get('subject', '')[:200]}" for c in commits[:80]
+    )
+    if not commit_block:
+        commit_block = "（无提交信息）"
+    stat = diffstat or {}
+    stat_block = (
+        f"- 文件: {stat.get('files', 0)} 个,新增 {stat.get('insertions', 0)} 行,"
+        f"删除 {stat.get('deletions', 0)} 行"
+    )
+    prompt = f"""请归纳一次代码交付（git merge）实际做了什么。输出语义摘要 + 主题标签。
+
+# 交付信息
+- repo: {repo}
+- branch: {branch}
+- 提交数: {len(commits)}
+{stat_block}
+
+# commit 列表
+{commit_block}
+
+要求:
+- summary: 100-300 字,概括该 merge 实现的功能/修复/重构（从 commit 角度,不猜需求）
+- topics: 3-8 个主题标签（如: 风控、还款计划、报表、bugfix、配置项、重构）
+
+只输出 JSON 对象:{{"summary": str, "topics": [str]}}"""
+    return _LLM.invoke_structured(prompt, MergeSummary)  # type: ignore[return-value]

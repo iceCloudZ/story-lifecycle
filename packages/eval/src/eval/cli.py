@@ -122,6 +122,20 @@ def score(dataset_dir, results_dir, limit, seed):
 
 
 @main.command()
+@click.option("--dataset-dir", default=None)
+@click.option("--results-dir", default=None)
+@click.option("--limit", type=int, default=None, help="只评前 N 个 merge（试跑/分批）")
+def scan_all(dataset_dir, results_dir, limit):
+    """对全量 merge 逐个评分（Conformance+Delivery / MergeSummary+Delivery）。"""
+    from .scanall import run_scan_all
+
+    res = run_scan_all(limit=limit, results_dir=results_dir)
+    click.echo(f"scan-all: 共 {res['total']},本次新增 {res['scored_now']},报告 {res['report']}")
+    for e in res["errors"][:10]:
+        click.echo(f"  ! {e}", err=True)
+
+
+@main.command()
 @click.option("--results-dir", default=None)
 @click.option("--only", default=None, help="只回放单个 story_key")
 def replay(results_dir, only):
