@@ -1,6 +1,11 @@
-# 进度记录（2026-08-03）
+# 进度记录（2026-08-03，更新至 2026-08-04）
 
 > 下次继续时读本文件即可恢复上下文。设计文档自包含：10（测试接入）/ 11（Workspace 实体 + wiki）。
+
+## 2026-08-04 更新（Part A 验证 / Part B 落地）
+
+- **Part A（改动 1-4）验证通过**：`verify_providers/base.py` + `__init__.py`（duck-type 加载、失败降级 None）、`unified_gate.py` 外部验证合并（R2/R3/R8）、`prompt_sections.build_scenario_catalog_section`、`planner.py` StagePlan `selected_scenarios` 持久化、StoryDetailPage 测试场景 tab 均已存在并有测试（`test_verify_providers.py` 9 例）。本轮全量跑测：`pytest packages/story-lifecycle/tests packages/knowledge/tests` = **1331 passed, 2 skipped**（不配 verify_provider 零行为变化已测）。ruff 干净。
+- **Part B（hc-pytest 侧）**：`HcPytestVerifyProvider` 已实现于 hc-pytest 仓 `integrations/story_lifecycle_provider.py`（duck-type，异步产物模式为主 + sync 冒烟，subprocess 跑 journey，失败不抛异常，HTML 报告存在时附 evidence_ref）。验收命令通过（见 hc-pytest 仓进度）。
 
 ## 已完成
 
