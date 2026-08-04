@@ -112,7 +112,10 @@ class _LLM:
 
     @classmethod
     def invoke_structured(cls, prompt: str, schema: type[BaseModel]) -> BaseModel:
-        """带 429 指数退避 + 2 次重试的 invoke_structured。"""
+        """带 429 指数退避 + 2 次重试的 invoke_structured。
+
+        LLM 偶发输出数组而非对象（如 ``[]``）时,补一句「严禁输出数组」再试一次。
+        """
         last_exc: Exception | None = None
         for attempt in range(MAX_HTTP_RETRIES + 1):
             try:
@@ -126,6 +129,21 @@ class _LLM:
                 )
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                if _is_list_output(exc):
+                    # 模型把评分对象输出成数组——补提示重试一次即可
+                    log.warning("LLM 输出数组而非对象,补「严禁数组」提示重试")
+                    try:
+                        return cls.client().invoke_structured(
+                            prompt + "\n\n**严禁输出 JSON 数组/列表**——本任务是对象评分,输出形如 "
+                            f"{json.dumps({n: _schema_example(f) for n, f in schema.model_fields.items()}, ensure_ascii=False)} 的对象。",
+                            schema,
+                            system="你是严谨的软件工程质量评审专家。只输出合法 JSON 对象,严禁输出数组。",
+                            temperature=0,
+                            timeout=180,
+                            max_tokens=4096,
+                        )
+                    except Exception as e2:  # noqa: BLE001
+                        raise RuntimeError(f"数组输出修复重试也失败: {e2}") from e2
                 if not _is_retryable(exc):
                     raise
                 delay = min(BACKOFF_INITIAL * (BACKOFF_MULT**attempt), BACKOFF_MAX)
@@ -138,6 +156,32 @@ class _LLM:
                 )
                 time.sleep(delay)
         raise RuntimeError(f"LLM 调用重试耗尽: {last_exc}")
+
+
+def _schema_example(field) -> Any:
+    """给评分维度的示例值（int 给 3,str 给空串,list 给空数组）。"""
+    from typing import get_origin
+
+    ann = field.annotation
+    if ann is int:
+        return 3
+    if ann is str:
+        return ""
+    if get_origin(ann) is list:
+        return []
+    return None
+
+
+def _is_list_output(exc: Exception) -> bool:
+    """LLM 把对象输出成数组的典型 ValidationError。"""
+    text = f"{exc.__class__.__name__}: {exc}"
+    if "ValidationError" not in text and "validation error" not in text.lower():
+        return False
+    if "input_value=[], input_type=list" in text or "input_type=list" in text:
+        return True
+    if "should be a valid dictionary" in text or "model_type" in text:
+        return True
+    return False
 
 
 def _is_retryable(exc: Exception) -> bool:
