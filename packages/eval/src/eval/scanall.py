@@ -290,6 +290,17 @@ def run_scan_all(limit: int | None = None, results_dir: str | Path | None = None
         release_lock()
 
 
+def _load_rows(path: Path) -> dict[tuple[str, str], dict]:
+    """读 merge_scores.jsonl,(repo, merge_hash) 去重、同键后写覆盖。"""
+    rows: dict[tuple[str, str], dict] = {}
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rec = json.loads(line)
+                rows[(rec.get("repo", ""), rec.get("merge_hash", ""))] = rec
+    return rows
+
+
 def _run(res_dir: Path, limit: int | None, max_attempts: int) -> dict[str, Any]:
     deliveries = gitindex.load_deliveries()
     if not deliveries:
@@ -302,12 +313,11 @@ def _run(res_dir: Path, limit: int | None, max_attempts: int) -> dict[str, Any]:
     if limit:
         ordered = ordered[:limit]
 
-    done: set[tuple[str, str]] = set()
-    if SCORES_PATH.exists():
-        for line in SCORES_PATH.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                rec = json.loads(line)
-                done.add((rec.get("repo", ""), rec.get("merge_hash", "")))
+    rows = _load_rows(SCORES_PATH)
+    # 有 error 的行视为未完成——断点续跑时重试,不硬跳过
+    done: set[tuple[str, str]] = {
+        key for key, rec in rows.items() if not rec.get("error")
+    }
 
     idx, tapd = load_match_index()
     todo = [(repo, h) for repo, h in [(d["repo"], d["merge_hash"]) for d in ordered] if (repo, h) not in done]
@@ -391,11 +401,7 @@ def _dims(row: dict) -> list[tuple[str, int]]:
 
 def _render_report(res_dir: Path, ordered: list[dict], tapd: dict[str, dict], idx: dict) -> str:
     date = _dt.date.today().strftime("%Y%m%d")
-    rows: list[dict] = []
-    if SCORES_PATH.exists():
-        for line in SCORES_PATH.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                rows.append(json.loads(line))
+    rows = list(_load_rows(res_dir / "merge_scores.jsonl").values())
 
     n_linked = sum(1 for r in rows if r.get("tapd_id"))
     n_unlinked = sum(1 for r in rows if not r.get("tapd_id") and not r.get("error"))
