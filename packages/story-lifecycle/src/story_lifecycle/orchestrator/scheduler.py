@@ -97,6 +97,10 @@ class OrchestratorThread(threading.Thread):
         self._executor_pool = ThreadPoolExecutor(max_workers=max_judge_workers)
         self._judging: set[str] = set()  # 正在 judge 的 story_key:stage（防重复）
         self._judge_results: dict[str, dict] = {}  # story_key:stage → decision
+        # story_key:stage → done_data：_submit_judge 存，approve 后 _finalize_stage_pass
+        # 取用（log_event completed / register / commit）。judge 失败兜底 approve 时
+        # 取不到 → _finalize_stage_pass 用空 done_data 兜底（非阻塞）。
+        self._stage_done_data: dict[str, dict] = {}
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         # 每个 story 当前 stage 的运行时状态（spawn 时刻 / 卡住去重 / headless 重试）
@@ -208,7 +212,9 @@ class OrchestratorThread(threading.Thread):
         # 1. judge 结果就绪 → 处理（子线程写 _judge_results，主循环读）
         result = self._take_judge_result(story_key, stage)
         if result is not None:
-            self._handle_decision(story_key, stage, result, ctx, actions, handler)
+            self._handle_decision(
+                story_key, stage, result, ctx, actions, handler, executor, story
+            )
             return
 
         # 1b. 正在 judge（结果未就绪）→ 等子线程写（防重复 submit）
@@ -509,7 +515,15 @@ class OrchestratorThread(threading.Thread):
     def _submit_judge(
         self, story_key: str, stage: str, ctx: dict, executor, story: dict
     ):
-        """submit judge 到子线程池（不阻塞主循环）。"""
+        """submit judge 到子线程池（不阻塞主循环）。
+
+        注意（1068018 事故修复）：本函数**只**加锁去重 + 读 done_data + 存
+        done_data + submit judge。**不**在此处记 completed / register / commit /
+        释放 PTY —— 这些收尾动作挪到 ``_finalize_stage_pass``，仅在 judge 返回
+        approve 后由 ``_handle_decision`` 调用。理由：judge 还在子线程跑时就杀
+        PTY + 记 completed，reject 时 PTY 已死（没法 resume 救场）且事件流语义
+        混乱（先 completed 再 rejected）。
+        """
         judge_key = f"{story_key}:{stage}"
         with self._lock:
             if judge_key in self._judging:
@@ -518,8 +532,29 @@ class OrchestratorThread(threading.Thread):
         workspace = story.get("workspace", "")
         actions = ctx.get("_agent_actions") or []
         done_data = _read_done_data(story_key, stage, workspace, actions)
-        # 成果物已落地 → 记 completed 事件（payload = done 兼容视图，对齐 driver poll
-        # 循环）+ 登记 stage 产出文件。judge 结果（approve/reject）由 handler 另记。
+        # done_data 存下来给 approve 后的 _finalize_stage_pass 用（register/commit
+        # 要 summary/files_changed）。judge 失败兜底 approve 时可能取不到 → 收尾
+        # 用空 done_data 兜底，非阻塞。
+        with self._lock:
+            self._stage_done_data[judge_key] = done_data
+        self._executor_pool.submit(
+            self._judge_task, story_key, stage, done_data, ctx, story
+        )
+        log.info("[%s] submit judge for stage=%s (async)", story_key, stage)
+
+    def _finalize_stage_pass(
+        self, story_key: str, stage: str, executor, story: dict, done_data: dict | None
+    ):
+        """judge approve 后的 stage 收尾（1068018 事故修复：从 _submit_judge 移来）。
+
+        - 记 ``completed`` 事件 + 登记产出文件（``_register_stage_outputs``）
+        - build 阶段自动 commit（``_auto_commit_worktrees``；reject 不该 commit）
+        - 释放本 stage 的 PTY / headless（``_release_stage``）
+
+        语义：**只有 approve 才算 stage 真正通过**，才记 completed / commit / 释放
+        PTY。reject/escalate 不收尾 —— PTY 保留给用户介入或下轮 retry 复用。
+        """
+        done_data = done_data or {}
         try:
             db.log_event(story_key, stage, "completed", done_data)
             from .engine.planner import _register_stage_outputs
@@ -527,7 +562,6 @@ class OrchestratorThread(threading.Thread):
             _register_stage_outputs(story_key, stage, done_data)
         except Exception:
             log.exception("[%s] completed event/register outputs failed", story_key)
-        # build 阶段完成后自动 commit（对齐 driver：agent 只写代码不提交）。
         if stage == "build":
             try:
                 from .engine.planner import _auto_commit_worktrees
@@ -537,13 +571,9 @@ class OrchestratorThread(threading.Thread):
                 log.exception(
                     "[%s] auto-commit worktrees failed (non-fatal)", story_key
                 )
-        # 成果物已落地 → 释放本 stage 的 PTY（设计12 改动2：PTY try/finally 释放语义
-        # 保留；judge 在子线程跑，释放不能等 judge 完 —— 编排线程这里同步收尾）。
         self._release_stage(story_key, stage, executor)
-        self._executor_pool.submit(
-            self._judge_task, story_key, stage, done_data, ctx, story
-        )
-        log.info("[%s] submit judge for stage=%s (async)", story_key, stage)
+        with self._lock:
+            self._stage_done_data.pop(f"{story_key}:{stage}", None)
 
     def _release_stage(self, story_key: str, stage: str, executor):
         """释放 stage 的 PTY/headless 进程（幂等；对齐 driver finally 收口）。"""
@@ -589,6 +619,11 @@ class OrchestratorThread(threading.Thread):
                 if a.get("stage") == stage:
                     adapter = a.get("adapter", "")
                     break
+            # 归一化成果物发现：与 is_artifacts_ready 用同一套（resolve_stage_artifacts），
+            # 否则 judge 读空 evidence 兜底命中的文件 → 误 reject（1068018 事故）。
+            from .executors import resolve_stage_artifacts
+
+            stage_artifacts, ev, _ = resolve_stage_artifacts(story, stage)
             decision = judge_stage_completion(
                 story_key=story_key,
                 stage=stage,
@@ -602,6 +637,8 @@ class OrchestratorThread(threading.Thread):
                 adapter=adapter,
                 retry_count=ctx.get("_verify_round", 1),
                 story_states=_story_states(story),
+                artifacts=stage_artifacts,
+                evidence_candidates=ev,
             )
         except Exception:
             log.exception("[%s] judge failed for %s", story_key, stage)
@@ -644,8 +681,14 @@ class OrchestratorThread(threading.Thread):
         ctx: dict,
         actions: list,
         handler,
+        executor=None,
+        story: dict | None = None,
     ):
-        """judge 决策三分支 → DecisionHandler。"""
+        """judge 决策三分支 → DecisionHandler。
+
+        仅 approve 分支调 ``_finalize_stage_pass`` 收尾（记 completed / build
+        commit / 释放 PTY）。reject/escalate 不收尾 —— PTY 保留给介入或 retry。
+        """
         quality = decision.get("quality", "approve")
         if quality == "reject":
             handler.handle_reject(story_key, stage, decision, ctx, actions)
@@ -653,6 +696,14 @@ class OrchestratorThread(threading.Thread):
             handler.handle_escalate(story_key, stage, decision, ctx)
         else:
             handler.handle_approve(story_key, stage, decision, ctx, actions)
+            # approve 才收尾：judge 通过了，才算 stage 真正完成（1068018 事故修复）。
+            if executor is not None:
+                done_data = None
+                with self._lock:
+                    done_data = self._stage_done_data.get(f"{story_key}:{stage}")
+                self._finalize_stage_pass(
+                    story_key, stage, executor, story or {}, done_data
+                )
         log.info(
             "[%s] decision handled: stage=%s quality=%s",
             story_key,

@@ -42,6 +42,53 @@ def find_action(actions: list, stage: str) -> dict | None:
     return None
 
 
+def resolve_stage_artifacts(
+    story: dict, stage: str
+) -> tuple[list[str], dict[str, list[str]], list[str]]:
+    """归一化的 stage 成果物发现（设计 13 bugfix）。
+
+    返回 ``(stage_artifacts, evidence_candidates, git_worktrees)``：
+
+    - ``stage_artifacts``: profile 里该 stage 声明的 artifacts（如
+      ``["story/spec.md"]``）；profile 缺失/解析失败 → 空列表。
+    - ``evidence_candidates``: ``build_evidence_candidates`` 产物
+      (``{artifact: [abs_path, ...]}``)，含 evidence 子目录别名兜底。
+    - ``git_worktrees``: story_project 的 worktree_path 列表（monorepo 里
+      代码改动落绑定项目的 worktree，``check_artifacts_landed`` 查 ``"git"``
+      artifact 时要用）。
+
+    **这是 ``is_artifacts_ready`` 与 ``judge_stage_completion`` 共用的唯一入口**
+    —— 二者必须用同一套发现结果，否则会出现「检测到落地（带 evidence 兜底）→
+    judge 却读空 → 误 reject」的不一致（真实事故：1068018 design 的 spec.md 落
+    evidence 目录被检测到，judge 没读到，判「成果物完全为空」reject）。
+    """
+    from .engine.profile_loader import resolve_profile
+    from .engine.artifact_check import build_evidence_candidates
+
+    workspace = story.get("workspace", "") or ""
+    try:
+        rp = resolve_profile(story.get("profile") or "minimal")
+        stage_artifacts = list(rp.stage(stage).artifacts or [])
+    except Exception:
+        stage_artifacts = []
+    if not stage_artifacts or not workspace:
+        return [], {}, []
+    ev = build_evidence_candidates(
+        stage_artifacts, workspace, story.get("story_key", ""), story.get("title", "")
+    )
+    git_worktrees: list[str] = []
+    try:
+        from ..infra.db import models as db
+
+        for sp in db.get_story_projects(story.get("story_key", "")):
+            wt = sp.get("worktree_path") or ""
+            if wt:
+                git_worktrees.append(wt)
+    except Exception:
+        pass
+    return stage_artifacts, ev, git_worktrees
+
+
 class BaseStageExecutor(StageExecutor):
     """共享实现：PTY 查询 + 成果物检查 + 头文件辅助。
 
@@ -84,11 +131,7 @@ class BaseStageExecutor(StageExecutor):
         """stage 声明的 artifacts 是否全部落地（与 driver poll 同口径）。"""
         from ..infra.db import models as db
         from ..infra.paths import stage_done_file_rel
-        from .engine.profile_loader import resolve_profile
-        from .engine.artifact_check import (
-            build_evidence_candidates,
-            check_artifacts_landed,
-        )
+        from .engine.artifact_check import check_artifacts_landed
 
         story = db.get_story(story_key)
         if not story:
@@ -96,26 +139,11 @@ class BaseStageExecutor(StageExecutor):
         workspace = story.get("workspace", "")
         if not workspace:
             return False
-        try:
-            rp = resolve_profile(story.get("profile") or "minimal")
-        except Exception:
-            return False
-        stage_artifacts = list(rp.stage(stage).artifacts or [])
+        stage_artifacts, ev, git_worktrees = resolve_stage_artifacts(story, stage)
         if not stage_artifacts:
             # 无 artifacts 声明（老 profile / 测试 profile）→ done.json 兼容视图。
             return (Path(workspace) / stage_done_file_rel(story_key, stage)).exists()
 
-        ev = build_evidence_candidates(
-            stage_artifacts, workspace, story_key, story.get("title", "")
-        )
-        git_worktrees: list[str] = []
-        try:
-            for sp in db.get_story_projects(story_key):
-                wt = sp.get("worktree_path") or ""
-                if wt:
-                    git_worktrees.append(wt)
-        except Exception:
-            pass
         missing, _ = check_artifacts_landed(
             stage_artifacts,
             workspace,
