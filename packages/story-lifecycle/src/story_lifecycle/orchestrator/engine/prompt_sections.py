@@ -248,6 +248,72 @@ def build_quality_section(story_key: str, stage: str) -> str:
         return ""
 
 
+def build_test_env_section(story_key: str, stage: str) -> str:
+    """渲染 workspace entity 的测试环境配置给 verify prompt 注入。
+
+    从 story_key 反查 workspace entity（经 story_project → project.workspace_id
+    → workspace 三跳 join），读 integrations_json.test_env。
+
+    只注入 _scan_status=confirmed 的（draft 不注入,避免未确认的配置误导 agent）。
+    failsafe:找不到 workspace / 无 test_env / 未确认 → 返回 ""(不阻断)。
+    """
+    try:
+        from ...infra.db import models as db
+
+        # 三跳 join 反查 workspace entity
+        sps = db.get_story_projects(story_key)
+        if not sps:
+            return ""
+        ws = None
+        for sp in sps:
+            proj = db.get_project(sp.get("project_id"))
+            wid = (proj or {}).get("workspace_id")
+            if wid:
+                ws = db.get_workspace(wid)
+                if ws:
+                    break
+        if not ws:
+            return ""
+
+        import json
+
+        integrations = json.loads(ws.get("integrations_json") or "{}")
+        test_env = integrations.get("test_env") or {}
+        # 只注入已确认的
+        if test_env.get("_scan_status") != "confirmed":
+            return ""
+        if not test_env:
+            return ""
+
+        lines = ["## 测试环境（用于验证）", ""]
+        if test_env.get("env"):
+            lines.append(f"- 环境: {test_env['env']}")
+        gateways = test_env.get("gateways") or {}
+        if gateways:
+            lines.append("- Gateways:")
+            for name, url in gateways.items():
+                lines.append(f"  - {name}: {url}")
+        mq = test_env.get("mq") or {}
+        if mq.get("proxy"):
+            topic = mq.get("topic", "")
+            lines.append(f"- MQ Proxy: {mq['proxy']}" + (f" (topic: {topic})" if topic else ""))
+        config = test_env.get("config") or {}
+        if config.get("nacos"):
+            lines.append(f"- Nacos: {config['nacos']}")
+        database = test_env.get("database") or {}
+        if database.get("hosts"):
+            lines.append(f"- 数据库: {', '.join(database['hosts'])}")
+        if database.get("note"):
+            lines.append(f"  {database['note']}")
+        fixtures = test_env.get("fixtures") or {}
+        if fixtures:
+            parts = [f"{k}={v}" for k, v in fixtures.items()]
+            lines.append(f"- 测试用户: {', '.join(parts)}")
+        return "\n".join(lines) + "\n"
+    except Exception:  # noqa: BLE001 — never block prompt rendering
+        return ""
+
+
 def build_grill_protocol_section(*, interactive: bool = False) -> str:
     """通用澄清协议(grill-me):遇关键岔路可提问。
 
@@ -448,6 +514,7 @@ def build_design_dimensions_section(
 __all__ = [
     "build_knowledge_section",
     "build_quality_section",
+    "build_test_env_section",
     "build_transcript_section",
     "build_grill_protocol_section",
     "build_consult_protocol_section",

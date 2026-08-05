@@ -88,7 +88,7 @@ def generate_prd_from_source(source: StorySourceSnapshot) -> PrdGenerationResult
             content = vision_llm.invoke_vision(
                 prompt,
                 images,
-                temperature=0.1,
+                temperature=0,
                 timeout=180,
                 max_tokens=4000,
             )
@@ -114,7 +114,7 @@ def generate_prd_from_source(source: StorySourceSnapshot) -> PrdGenerationResult
         result = get_llm().invoke_structured(
             prompt,
             PrdGenerationResult,
-            temperature=0.1,
+            temperature=0,
             timeout=120,
             max_tokens=3000,
         )

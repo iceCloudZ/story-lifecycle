@@ -161,6 +161,7 @@ def check_artifacts_landed(
     workspace: str,
     *,
     evidence_candidates: dict[str, list[str]] | None = None,
+    git_worktrees: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """检查一组 artifacts 是否落地。
 
@@ -200,7 +201,12 @@ def check_artifacts_landed(
             continue
 
         if artifact == "git":
-            ok = _git_has_changes(ws)
+            # monorepo 场景:story workspace 可能不是 git 仓库(D:\hc-all),
+            # 代码改动在绑定项目的 worktree 里。检查 workspace + 所有 worktree,
+            # 任一有改动即 landed。
+            ok = _git_has_changes(ws) or any(
+                _git_has_changes(Path(wt)) for wt in (git_worktrees or [])
+            )
         elif _is_glob(artifact):
             ok = _glob_landed(ws, artifact)
         else:

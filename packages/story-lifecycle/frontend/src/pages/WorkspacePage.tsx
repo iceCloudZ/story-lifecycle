@@ -5,7 +5,9 @@ import type {
   WorkspaceEntityDetail,
   WorkspaceScenario,
   WorkspaceProject,
+  TestSuite,
 } from '../api/client'
+import { workspaceEntityApi } from '../api/client'
 import WikiTab from '../components/WikiTab'
 import './lifecycle/LifecyclePage.css'
 import './WorkspacePage.css'
@@ -17,9 +19,9 @@ import './WorkspacePage.css'
  */
 
 const TABS = [
-  { id: 'journeys', label: '旅程' },
-  { id: 'stories', label: 'Stories' },
   { id: 'overview', label: '概览' },
+  { id: 'stories', label: 'Stories' },
+  { id: 'testing', label: '测试' },
   { id: 'wiki', label: 'Wiki' },
 ] as const
 
@@ -29,7 +31,7 @@ export default function WorkspacePage() {
   const [workspaces, setWorkspaces] = useState<WorkspaceEntity[]>([])
   const [selected, setSelected] = useState<WorkspaceEntity | null>(null)
   const [detail, setDetail] = useState<WorkspaceEntityDetail | null>(null)
-  const [tab, setTab] = useState<TabId>('journeys')
+  const [tab, setTab] = useState<TabId>('overview')
   const [showCreate, setShowCreate] = useState(false)
 
   function loadList() {
@@ -144,7 +146,6 @@ function WorkspaceBody({ tab, detail }: { tab: TabId; detail: WorkspaceEntityDet
   const initState = ws.init_state || {}
   return (
     <div className="ws-body">
-      {tab === 'journeys' && <JourneysTab scenarios={detail.scenarios} />}
       {tab === 'stories' && <StoriesTab stories={detail.stories} />}
       {tab === 'overview' && (
         <OverviewTab
@@ -154,51 +155,8 @@ function WorkspaceBody({ tab, detail }: { tab: TabId; detail: WorkspaceEntityDet
           knowledgeRoot={ws.knowledge_root || ''}
         />
       )}
+      {tab === 'testing' && <TestingTab slug={ws.slug} scenarios={detail.scenarios} />}
       {tab === 'wiki' && <WikiTab slug={ws.slug} />}
-    </div>
-  )
-}
-
-// ---- 旅程 tab:scenario 条目投影(D6:不存 wiki 页,无同步问题) ----
-
-function JourneysTab({ scenarios }: { scenarios: WorkspaceScenario[] }) {
-  return (
-    <div className="ui-card ui-card-pad">
-      <div className="ui-section-title">测试旅程(Scenario 投影)</div>
-      {scenarios.length === 0 ? (
-        <div className="ui-empty" style={{ marginTop: 12 }}>
-          <p>暂无 scenario 条目</p>
-          <p className="ui-hint" style={{ marginTop: 4 }}>
-            知识层生成后自动出现:story workspace init --step init_scenarios
-          </p>
-        </div>
-      ) : (
-        <div className="ui-list">
-          {scenarios.map(sc => (
-            <div className="ui-list-row" key={sc.id}>
-              <span className="ws-svg-icon" aria-hidden>
-                <JourneyIcon />
-              </span>
-              <div className="ws-row-main">
-                <div className="ws-row-title">
-                  {sc.title || sc.id}
-                  {sc.status && (
-                    <span className={`badge-type ${sc.status === 'confirmed' ? 'badge-ok' : 'badge-warn'}`}>
-                      {sc.status}
-                    </span>
-                  )}
-                </div>
-                <div className="ws-row-meta">
-                  <span className="ws-mono">{sc.id}</span>
-                  {sc.domain && <span>{sc.domain}</span>}
-                  {sc.apis && sc.apis.length > 0 && <span>{sc.apis.length} 个 API</span>}
-                  {sc.updated_at && <span>{sc.updated_at.slice(0, 10)}</span>}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
@@ -317,6 +275,136 @@ function OverviewTab({ repos, integrations, initState, knowledgeRoot }: {
             )
           })}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ---- 测试 tab:测试环境配置 + 测试套件 + 运行历史 ----
+
+function TestingTab({ slug, scenarios }: { slug: string; scenarios: WorkspaceScenario[] }) {
+  const [testEnv, setTestEnv] = useState<Record<string, unknown> | null>(null)
+  const [suites, setSuites] = useState<TestSuite[]>([])
+  const [editing, setEditing] = useState(false)
+  const [envText, setEnvText] = useState('')
+
+  function loadEnv() {
+    workspaceEntityApi.getTestEnv(slug).then(d => {
+      setTestEnv(d.test_env || {})
+      setEnvText(JSON.stringify(d.test_env || {}, null, 2))
+    }).catch(() => setTestEnv({}))
+  }
+  function loadSuites() {
+    workspaceEntityApi.getTestSuites(slug).then(d => setSuites(d.suites || [])).catch(() => setSuites([]))
+  }
+  useEffect(() => { loadEnv(); loadSuites() }, [slug])
+
+  const scanStatus = (testEnv as Record<string, unknown>)?._scan_status as string | undefined
+  const isDraft = scanStatus === 'draft'
+
+  function handleSave() {
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(envText)
+    } catch {
+      alert('JSON 格式错误')
+      return
+    }
+    workspaceEntityApi.putTestEnv(slug, parsed).then(d => {
+      setTestEnv(d.test_env)
+      setEditing(false)
+    }).catch(e => alert('保存失败: ' + e))
+  }
+
+  // scenario → journey 映射：scenario 的 test_ref 指向 journey 文件名(stem)
+  // 同时 journey 也可能反查到关联的 scenario id
+  const suiteByName: Record<string, TestSuite> = {}
+  for (const s of suites) suiteByName[s.name] = s
+
+  return (
+    <div className="ws-overview">
+      {/* ① 测试环境配置 */}
+      <div className="ui-card ui-card-pad">
+        <div className="ui-section-title">测试环境配置</div>
+        {isDraft && (
+          <div className="ui-banner ui-banner-warn" style={{ margin: '8px 0', padding: '8px 12px', background: '#fff8e1', borderRadius: 6 }}>
+            ⚠ 扫描草稿，待确认。确认后 verify prompt 才会注入此配置。
+          </div>
+        )}
+        {scanStatus === 'confirmed' && (
+          <div className="ui-banner ui-banner-ok" style={{ margin: '8px 0', padding: '8px 12px', background: '#e8f5e9', borderRadius: 6 }}>
+            ✓ 已确认，verify prompt 会自动注入。
+          </div>
+        )}
+        {!editing ? (
+          <>
+            <pre className="ws-mono" style={{ background: '#f5f5f5', padding: 12, borderRadius: 6, fontSize: 13, overflow: 'auto', maxHeight: 300 }}>
+              {JSON.stringify(testEnv, null, 2)}
+            </pre>
+            <div style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => setEditing(true)}>编辑</button>
+              {isDraft && (
+                <button className="btn btn-primary" style={{ marginLeft: 8 }} onClick={handleSave}>确认</button>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <textarea
+              className="ws-mono"
+              style={{ width: '100%', minHeight: 200, padding: 8, fontSize: 13, fontFamily: 'monospace' }}
+              value={envText}
+              onChange={e => setEnvText(e.target.value)}
+            />
+            <div style={{ marginTop: 8 }}>
+              <button className="btn btn-primary" onClick={handleSave}>保存并确认</button>
+              <button className="btn" style={{ marginLeft: 8 }} onClick={() => { setEditing(false); loadEnv() }}>取消</button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ② 测试场景（scenario 定义 + journey 执行，统一视图） */}
+      <div className="ui-card ui-card-pad">
+        <div className="ui-section-title">测试场景（业务定义 + 可执行 journey）</div>
+        <p className="ui-hint" style={{ marginTop: 4, marginBottom: 8 }}>
+          每个场景既是规划 LLM 的候选（选哪些要验证），也是 hc-pytest 的执行入口（跑哪个 journey）。
+          有 test_ref 绑定的场景可自动执行；未绑定的只有业务定义。
+        </p>
+        {scenarios.length === 0 ? (
+          <div className="ui-hint" style={{ marginTop: 8 }}>暂无 scenario 条目</div>
+        ) : (
+          <div className="ui-list">
+            {scenarios.map(sc => {
+              // 找关联的 journey（scenario.test_ref 指向 journey 文件名 stem）
+              const refName = sc.test_ref
+              const linkedSuite = refName ? suiteByName[refName] : undefined
+              const hasJourney = !!linkedSuite
+              return (
+                <div className="ui-list-row" key={sc.id}>
+                  <span className="ws-svg-icon" aria-hidden><JourneyIcon /></span>
+                  <div className="ws-row-main">
+                    <div className="ws-row-title">
+                      {sc.title || sc.id}
+                      <span className={`badge-type ${hasJourney ? 'badge-ok' : 'badge-warn'}`}>
+                        {hasJourney ? '已绑定 journey' : '未绑定'}
+                      </span>
+                    </div>
+                    <div className="ws-row-meta">
+                      <span className="ws-mono">{sc.id}</span>
+                      {sc.domain && <span>{sc.domain}</span>}
+                      {sc.apis && sc.apis.length > 0 && <span>{sc.apis.length} 个 API</span>}
+                      {refName && <span className="ws-mono">journey: {refName}</span>}
+                    </div>
+                    {hasJourney && linkedSuite!.description && (
+                      <div className="ui-hint" style={{ marginTop: 2 }}>{linkedSuite!.description}</div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )

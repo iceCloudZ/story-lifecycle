@@ -39,7 +39,10 @@ TASK_ACTIONS: dict[str, dict] = {
     "run_tests": {
         "desc": "运行测试确认改动正确",
         "instruction": (
-            "运行测试（pytest/ruff check）确认改动正确。测试失败就修，直到通过。"
+            "运行测试确认改动正确。按项目实际技术栈选工具"
+            "（Java/Maven: mvn test -pl <module>；Python: pytest；前端: npm test）"
+            "——先看 pom.xml/package.json/pyproject.toml 确认。"
+            "测试失败就修，直到通过。"
         ),
         "order": 30,
         "mode": "autonomous",

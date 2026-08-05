@@ -34,7 +34,7 @@ stages:
     order: 2
     description: "实施计划与编码实现"
     cli: opencode  # 编码用 opencode(2026-07-25 从 kimi 切换)
-    model: opencode-go/kimi-k2.7-code  # opencode 的 provider/model(opencode-go 有凭据)
+    model: opencode-go/deepseek-v4-flash  # opencode 的 provider/model
     confirm: true
     review: false
     max_retries: 3

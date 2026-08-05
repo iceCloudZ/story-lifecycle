@@ -62,6 +62,9 @@ class OpencodeAdapter(BaseAdapter):
 
     name = "opencode"
 
+    # opencode 默认模型（spawn 端点 req.model 为空时用）。
+    default_model = "opencode-go/deepseek-v4-flash"
+
     # 见 start_session —— opencode --prompt 自管理 readiness。
     readiness_marker = None
     # CLI 自分配 sid(ses_…),须文件扫描捕获。

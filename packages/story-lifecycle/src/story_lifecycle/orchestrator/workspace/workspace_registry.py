@@ -307,12 +307,135 @@ def _step_init_scenarios(ws: dict) -> dict:
         return {"status": "failed", "reason": f"scenario 知识生成失败: {e}"}
 
 
+def _step_detect_test_env(ws: dict) -> dict:
+    """step 6: 扫描测试环境配置(gateway/MQ/DB/测试用户),写 integrations_json.test_env(draft)。
+
+    扫描来源:
+      - <workspace_root>/hc-pytest/conftest.yaml → gateways/mq_proxy/fixtures
+      - 各 repo 的 bootstrap-local.yml → nacos addr / datasource url(提取 host,不提取密码)
+
+    产出 _scan_status=draft,前端展示等人工确认。确认后 verify prompt 才注入。
+    """
+    import yaml
+
+    repos = db.list_projects_by_workspace(ws["id"])
+    ws_root = _infer_workspace_root(repos)
+    if ws_root is None:
+        return {"status": "skipped", "reason": "无法推断工作区根目录"}
+
+    test_env: dict = {"_scan_status": "draft"}
+
+    # 1. hc-pytest/conftest.yaml（最权威的测试环境配置源）
+    conftest = ws_root / "hc-pytest" / "conftest.yaml"
+    if conftest.exists():
+        try:
+            cfg = yaml.safe_load(conftest.read_text(encoding="utf-8")) or {}
+            if cfg.get("env"):
+                test_env["env"] = cfg["env"]
+            if cfg.get("gateways"):
+                test_env["gateways"] = cfg["gateways"]
+            if cfg.get("mq_proxy"):
+                test_env.setdefault("mq", {})["proxy"] = cfg["mq_proxy"]
+            # fixtures
+            fixtures = {}
+            for key in (
+                "test_mobile",
+                "test_user_id",
+                "test_verify_code",
+                "test_device_id",
+                "test_id_no",
+            ):
+                if key in cfg:
+                    fixtures[key] = cfg[key]
+            if fixtures:
+                test_env["fixtures"] = fixtures
+        except Exception as e:  # noqa: BLE001
+            return {"status": "failed", "reason": f"conftest.yaml 解析失败: {e}"}
+
+    # 2. 各 repo 的 bootstrap-local.yml（提取 nacos/datasource host）
+    db_info: dict = {}
+    nacos_addr = ""
+    for repo in repos:
+        repo_path = Path(repo.get("repo_path") or "")
+        for yml_name in (
+            "bootstrap-local.yml",
+            "bootstrap-local.yaml",
+        ):
+            yml = repo_path / "src" / "main" / "resources" / yml_name
+            if not yml.exists():
+                yml = repo_path / yml_name
+            if not yml.exists():
+                continue
+            try:
+                content = yml.read_text(encoding="utf-8")
+                # 轻量提取(不完整解析 YAML,只抓关键字段,避免多文档/占位符炸)
+                for line in content.splitlines():
+                    stripped = line.strip()
+                    if "server-addr" in stripped and ":" in stripped:
+                        # nacos: server-addr: xxx:8848
+                        val = stripped.split(":", 1)[1].strip().strip("\"'")
+                        if val and not nacos_addr:
+                            nacos_addr = val
+                    if "jdbc:" in stripped and "mysql" in stripped:
+                        # datasource url 抓 host
+                        import re
+
+                        m = re.search(r"//([^/:]+)", stripped)
+                        if m:
+                            host = m.group(1)
+                            db_info.setdefault("hosts", [])
+                            if host not in db_info["hosts"]:
+                                db_info["hosts"].append(host)
+            except Exception:
+                pass  # 单个 repo 解析失败不影响整体
+
+    if nacos_addr:
+        test_env.setdefault("config", {})["nacos"] = nacos_addr
+    if db_info:
+        test_env["database"] = db_info
+        test_env["database"]["note"] = "凭据在各服务 bootstrap-local.yml"
+
+    if not test_env or test_env == {"_scan_status": "draft"}:
+        return {
+            "status": "done",
+            "detail": "未扫到测试环境配置(无 conftest.yaml / bootstrap-local.yml)",
+        }
+
+    # 写入 integrations_json.test_env
+    merged = json.loads(ws.get("integrations_json") or "{}")
+    merged["test_env"] = test_env
+    db.update_workspace(ws["id"], integrations_json=json.dumps(merged, ensure_ascii=False))
+
+    sources = []
+    if conftest.exists():
+        sources.append("conftest.yaml")
+    if db_info or nacos_addr:
+        sources.append("bootstrap-local.yml")
+    return {
+        "status": "done",
+        "detail": f"扫描到测试环境配置({', '.join(sources)}),draft 待确认",
+    }
+
+
+def confirm_test_env(ident: int | str, test_env: dict) -> dict:
+    """用户确认/编辑测试环境配置 → 标记 _scan_status=confirmed。"""
+    ws = get_workspace(ident)
+    if not ws:
+        raise ValueError(f"Workspace not found: {ident}")
+    test_env["_scan_status"] = "confirmed"
+    merged = json.loads(ws.get("integrations_json") or "{}")
+    merged["test_env"] = test_env
+    db.update_workspace(ws["id"], integrations_json=json.dumps(merged, ensure_ascii=False))
+    return merged["test_env"]
+
+
 _STEP_RUNNERS = {
     "register_repos": _step_register_repos,
     "detect_runtime": _step_detect_runtime,
     "gen_wiki": _step_gen_wiki,
     "register_integrations": _step_register_integrations,
     "init_scenarios": _step_init_scenarios,
+    "detect_test_env": _step_detect_test_env,
 }
 
 

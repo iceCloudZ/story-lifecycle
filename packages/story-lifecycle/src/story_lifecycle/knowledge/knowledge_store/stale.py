@@ -35,13 +35,27 @@ def _git_last_change_ts(workspace: str | Path, rel_path: str) -> int | None:
 
     用 ``git log -1 --format=%ct -- <path>`` 而非 mtime——checkout/touch 会刷
     mtime 造成误报（修订点 R5b）。路径不在 git 跟踪内/非 git 仓库 → None。
+
+    多仓库 workspace（如 D:/hc-all 下每个 hc-* 服务独立 git 仓库）：从文件
+    所在目录向上找最近的含 ``.git`` 的仓库根，在仓库根内以相对路径执行 git——
+    只拿 workspace 根跑 git 会因"不是 git 仓库"全部返回 None（R5b 落地 gap）。
     """
+    start = Path(workspace) / rel_path
+    if not start.exists():
+        return None
+    repo_root = _nearest_git_root(start.parent, Path(workspace))
+    if repo_root is None:
+        return None
+    try:
+        inner = start.relative_to(repo_root)
+    except ValueError:
+        return None
     try:
         r = subprocess.run(
-            ["git", "log", "-1", "--format=%ct", "--", str(rel_path)],
+            ["git", "log", "-1", "--format=%ct", "--", str(inner)],
             capture_output=True,
             text=True,
-            cwd=str(workspace),
+            cwd=str(repo_root),
             timeout=10,
         )
         if r.returncode == 0 and r.stdout.strip():
@@ -49,6 +63,18 @@ def _git_last_change_ts(workspace: str | Path, rel_path: str) -> int | None:
     except Exception:
         pass
     return None
+
+
+def _nearest_git_root(start_dir: Path, stop: Path) -> Path | None:
+    """从 start_dir 向上找第一个含 .git 的目录；到 stop（含）为止。"""
+    cur = start_dir.resolve()
+    stop_res = stop.resolve()
+    while True:
+        if (cur / ".git").exists():
+            return cur
+        if cur == stop_res or cur.parent == cur:
+            return None
+        cur = cur.parent
 
 
 def _parse_time(value: str) -> int:
@@ -137,7 +163,8 @@ def check_stale(workspace: str | Path) -> dict:
                 continue
             code_ts = _git_last_change_ts(workspace, ref)
             verified = _parse_time(entry.verified_at or "")
-            if code_ts and verified and code_ts > verified:
+            # verified_at 为空 = 从未人工确认 → 视为 stale（设计 10 4.3 原文语义）
+            if code_ts and code_ts > verified:
                 reasons.append(f"代码变更: {ref}")
         if (entry.last_status or "") == "FAIL":
             reasons.append("绑定的 journey 最近失败")

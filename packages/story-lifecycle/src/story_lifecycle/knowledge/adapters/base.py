@@ -49,6 +49,9 @@ class BaseAdapter(ABC):
     # sleep. Subclasses override with their CLI's input-prompt regex.
     readiness_marker: str | None = None
 
+    # 默认模型（spawn 端点 req.model 为空时用）。各 adapter 覆盖为自己的默认。
+    default_model: str = "sonnet"
+
     # --- Session-id model (Phase 0 抽象) -------------------------------------
     # 会话 id 是「启动时已知」还是「CLI 自分配、事后捕获」是 adapter 的职责,
     # 不是 spawner 的。两类:
