@@ -1,0 +1,276 @@
+"""Stage 完成裁判「一次 LLM 三个决定」测试（设计 14 §2.3）。
+
+设计 12 契约：artifacts 落地后一次 LLM 调用输出三决定 —— quality /
+lifecycle_target / summary。本文件锁定：
+- 三字段解析正确（approve 正常路径）
+- reject → 不推进 lifecycle，插 retry action（全自动 handler）
+- escalate → paused 等人
+- lifecycle_target 跨多状态 → advance_lifecycle_to_target 迭代推进，遇
+  ui_button 停住等人确认
+- LLM 非法 JSON / 调用失败 → 降级不崩
+"""
+
+import json
+
+import pytest
+
+from story_lifecycle.infra.db import models as db
+from story_lifecycle.orchestrator.evaluation.stage_completion import (
+    StageCompletionDecision,
+    advance_lifecycle_to_target,
+    judge_stage_completion,
+)
+from story_lifecycle.orchestrator.handlers import make_decision_handler
+from story_lifecycle.orchestrator.engine import graph
+
+
+class _FakeLLM:
+    """模拟 invoke_structured：返回预置的 StageCompletionDecision。"""
+
+    api_key = "fake-key"
+    model = "test-model"
+
+    def __init__(self, decision):
+        self._decision = decision
+        self.invoked = False
+
+    def invoke_structured(self, prompt, schema, **kwargs):
+        self.invoked = True
+        return self._decision
+
+
+def _decision(quality="approve", target=None, summary="完成", reason="ok"):
+    return StageCompletionDecision(
+        quality=quality, lifecycle_target=target, summary=summary, reason=reason
+    )
+
+
+@pytest.fixture
+def judge_story(tmp_path, isolated_story_home):
+    """建一条 active story + workspace + 最小 judge 输入。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    db.create_story("JUDGE-1", "裁判测试", str(ws), profile="minimal")
+    db.update_story(
+        "JUDGE-1",
+        lifecycle_state="待启动",
+        context_json=json.dumps(
+            {
+                "_plan_confirmed": True,
+                "_agent_actions": [
+                    {"action": "launch", "stage": "design", "adapter": "claude"}
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
+    return "JUDGE-1"
+
+
+class TestThreeDecisionsParse:
+    def test_approve_parses_three_fields(self, judge_story, monkeypatch):
+        """mock LLM 返回三字段 → 返回值三字段都对。"""
+        llm = _FakeLLM(
+            _decision(quality="approve", target="开发", summary="设计完成")
+        )
+        monkeypatch.setattr(
+            "story_lifecycle.infra.llm_client.get_llm",
+            lambda: llm,
+        )
+        out = judge_stage_completion(
+            story_key="JUDGE-1",
+            stage="design",
+            workspace=db.get_story("JUDGE-1")["workspace"],
+            ctx={},
+            lifecycle_state="待启动",
+            done_data={"summary": "spec 落地", "files_changed": ["story/spec.md"]},
+        )
+        assert llm.invoked
+        assert out["quality"] == "approve"
+        assert out["lifecycle_target"] == "开发"
+        assert out["summary"] == "设计完成"
+
+    def test_reject_has_no_lifecycle_target(self, judge_story, monkeypatch):
+        """quality=reject → lifecycle_target 恒为 None（不合格不算产出）。"""
+        llm = _FakeLLM(
+            _decision(quality="reject", target="开发", reason="成果物为空")
+        )
+        monkeypatch.setattr(
+            "story_lifecycle.infra.llm_client.get_llm",
+            lambda: llm,
+        )
+        out = judge_stage_completion(
+            story_key="JUDGE-1",
+            stage="design",
+            workspace=db.get_story("JUDGE-1")["workspace"],
+            ctx={},
+            lifecycle_state="待启动",
+            done_data={"summary": "空", "files_changed": []},
+        )
+        assert out["quality"] == "reject"
+        assert out["lifecycle_target"] is None
+
+    def test_invalid_target_treated_as_none(self, judge_story, monkeypatch):
+        """LLM 返回不在 LIFECYCLE_ORDER 里的 target → 视为不推进。"""
+        llm = _FakeLLM(_decision(quality="approve", target="乱写的状态"))
+        monkeypatch.setattr(
+            "story_lifecycle.infra.llm_client.get_llm",
+            lambda: llm,
+        )
+        out = judge_stage_completion(
+            story_key="JUDGE-1",
+            stage="design",
+            workspace=db.get_story("JUDGE-1")["workspace"],
+            ctx={},
+            lifecycle_state="待启动",
+            done_data={"summary": "x"},
+        )
+        assert out["lifecycle_target"] is None
+        assert out["quality"] == "approve"
+
+    def test_llm_exception_falls_back_without_crash(self, judge_story, monkeypatch):
+        """LLM 抛异常 → 降级（fallback approve 不崩）。"""
+        def _boom(*a, **kw):
+            raise RuntimeError("llm down")
+
+        monkeypatch.setattr(
+            "story_lifecycle.infra.llm_client.get_llm",
+            lambda: type("L", (), {"api_key": "k", "invoke_structured": _boom})(),
+        )
+        out = judge_stage_completion(
+            story_key="JUDGE-1",
+            stage="design",
+            workspace=db.get_story("JUDGE-1")["workspace"],
+            ctx={},
+            lifecycle_state="待启动",
+            done_data={"summary": "x"},
+        )
+        assert out["quality"] in ("approve", "escalate")
+        assert out["fallback"] is True
+
+
+class TestRejectInsertsRetry:
+    def test_reject_does_not_advance_and_inserts_retry(
+        self, judge_story, tmp_path, monkeypatch
+    ):
+        """reject → 不调 advance_lifecycle_to_target，插 retry action（全自动）。"""
+        monkeypatch.setattr(
+            "story_lifecycle.infra.llm_client.get_llm",
+            lambda: _FakeLLM(_decision(quality="reject", reason="质量不达标")),
+        )
+        out = judge_stage_completion(
+            story_key="JUDGE-1",
+            stage="design",
+            workspace=db.get_story("JUDGE-1")["workspace"],
+            ctx={},
+            lifecycle_state="待启动",
+            done_data={"summary": "差", "files_changed": []},
+        )
+        assert out["quality"] == "reject"
+
+        # 全自动 handler 处理 reject → 插 retry action
+        story = db.get_story("JUDGE-1")
+        db.update_story("JUDGE-1", profile="single-pass")  # 全自动
+        story = db.get_story("JUDGE-1")
+        ctx = json.loads(story["context_json"])
+        handler = make_decision_handler(story, ctx)
+        advanced = []
+        monkeypatch.setattr(
+            "story_lifecycle.orchestrator.evaluation.stage_completion.advance_lifecycle_to_target",
+            lambda **kw: advanced.append(kw) or {"new_state": "待启动", "paused_for_confirm": False},
+        )
+        handler.handle_reject("JUDGE-1", "design", out, ctx, ctx["_agent_actions"])
+        ctx_after = json.loads(db.get_story("JUDGE-1")["context_json"])
+        assert len(ctx_after["_agent_actions"]) == 2, "reject 应插入 retry action"
+        assert "reject" in ctx_after["_agent_actions"][1]["focus"]
+        assert advanced == []  # reject 不推进 lifecycle
+
+
+class TestEscalatePauses:
+    def test_escalate_pauses_for_human(self, judge_story):
+        """escalate → paused 等人（交互式 handler）。"""
+        story = db.get_story("JUDGE-1")
+        ctx = json.loads(story["context_json"])
+        handler = make_decision_handler(story, ctx)
+        handler.handle_escalate(
+            "JUDGE-1",
+            "design",
+            {"quality": "escalate", "reason": "质量问题超限", "summary": ""},
+            ctx,
+        )
+        assert db.get_story("JUDGE-1")["status"] == "paused"
+
+
+class TestAdvanceLifecycleToTarget:
+    def test_multi_state_advance_hits_ui_button_pause(
+        self, tmp_path, isolated_story_home
+    ):
+        """跨多状态推进：遇 ui_button 的转换停住，写 _story_state_gate。"""
+        db.create_story("ADV-1", "推进测试", str(tmp_path / "ws2"), profile="minimal")
+        db.update_story(
+            "ADV-1",
+            lifecycle_state="待启动",
+            context_json=json.dumps({}),
+        )
+        ctx = json.loads(db.get_story("ADV-1")["context_json"])
+        # 开发→测试 是 ui_button（人等确认），其余自动
+        story_states = {
+            "待启动": {"confirm": {"type": "none"}},
+            "开发": {"confirm": {"type": "ui_button", "label": "进入测试"}},
+            "测试": {"confirm": {"type": "none"}},
+        }
+        out = advance_lifecycle_to_target(
+            story_key="ADV-1",
+            ctx=ctx,
+            current="待启动",
+            target="结项",
+            story_states=story_states,
+            db_module=db,
+        )
+        assert out["paused_for_confirm"] is True
+        assert out["new_state"] == "开发"  # 停在上一个已自动推进的状态
+        # _story_state_gate 被写，final_target 记住终点
+        ctx_after = json.loads(db.get_story("ADV-1")["context_json"])
+        gate = ctx_after.get("_story_state_gate") or {}
+        assert gate.get("awaiting_confirm") is True
+        assert gate.get("final_target") == "结项"
+        assert db.get_story("ADV-1")["status"] == "paused"
+
+    def test_multi_state_advance_auto_when_no_gate(
+        self, tmp_path, isolated_story_home
+    ):
+        """没有 ui_button 的跨状态 → 一路自动推进到 target。"""
+        db.create_story("ADV-2", "推进测试2", str(tmp_path / "ws3"), profile="minimal")
+        db.update_story(
+            "ADV-2",
+            lifecycle_state="待启动",
+            context_json=json.dumps({}),
+        )
+        ctx = json.loads(db.get_story("ADV-2")["context_json"])
+        out = advance_lifecycle_to_target(
+            story_key="ADV-2",
+            ctx=ctx,
+            current="待启动",
+            target="结项",
+            story_states={},  # 无状态机定义 → 全自动
+            db_module=db,
+        )
+        assert out["paused_for_confirm"] is False
+        assert out["new_state"] == "结项"
+        assert db.get_story("ADV-2")["lifecycle_state"] == "结项"
+
+    def test_target_equals_current_noop(self, tmp_path, isolated_story_home):
+        """target == current → 不推进不暂停。"""
+        db.create_story("ADV-3", "推进测试3", str(tmp_path / "ws4"), profile="minimal")
+        db.update_story("ADV-3", lifecycle_state="开发", context_json=json.dumps({}))
+        ctx = json.loads(db.get_story("ADV-3")["context_json"])
+        out = advance_lifecycle_to_target(
+            story_key="ADV-3",
+            ctx=ctx,
+            current="开发",
+            target="开发",
+            story_states={},
+            db_module=db,
+        )
+        assert out["new_state"] == "开发"
+        assert out["paused_for_confirm"] is False

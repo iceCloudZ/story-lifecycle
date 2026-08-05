@@ -34,7 +34,8 @@ def api_client(isolated_db, monkeypatch, tmp_path):
     from story_lifecycle.orchestrator.service.api import app
     from fastapi.testclient import TestClient
 
-    # 阻止 start_story_async 真起线程(/start 不触发执行,但保险)
+    # /start 不触发执行;serve 场景 start_story_async 只标 active(编排线程接管),
+    # CLI 场景同步驱动——保险起见仍 patch 掉,让测试只关注 intake 链路。
     monkeypatch.setattr(
         "story_lifecycle.orchestrator.service.api.start_story_async",
         lambda *a, **kw: None,
