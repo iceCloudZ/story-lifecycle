@@ -63,3 +63,9 @@ packages/testing/src/testing/scenarios/calculator/calculator.py
 packages/eval/dataset/
 packages/eval/results/
 .tmp/eval_runs/
+
+# round2 回放沙箱（story_home/ws/gold 全忽略，只留 profiles 模板）
+packages/eval/sandbox/story_home/
+packages/eval/sandbox/ws/
+packages/eval/sandbox/gold/
+packages/eval/sandbox/selfcheck_report.json

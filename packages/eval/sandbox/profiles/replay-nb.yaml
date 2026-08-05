@@ -1,0 +1,34 @@
+# round2 回放专用 profile（design → verify，摘除 build/implement）
+version: 2
+cli: opencode
+execution_mode: headless
+hidden: true
+
+stages:
+  design:
+    order: 1
+    description: "eval 回放:分析需求并输出 spec"
+    confirm: false
+    review: false
+    max_retries: 0
+    expected_outputs: []
+    artifacts:
+      - story/spec.md
+    next_default: [verify]
+
+  verify:
+    order: 2
+    description: "eval 回放:验证交付并输出测试报告"
+    confirm: false
+    review: false
+    max_retries: 0
+    expected_outputs: []
+    artifacts:
+      - story/test-report.md
+    next_default: []
+
+quality:
+  enabled: false
+
+adversarial:
+  enabled: false
