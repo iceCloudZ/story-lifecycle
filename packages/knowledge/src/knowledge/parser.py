@@ -149,6 +149,7 @@ def parse_scenario(path: str, rel_path: str) -> ScenarioEntry:
         last_run_at=meta.get("last_run_at", ""),
         last_status=meta.get("last_status", ""),
         verified_at=meta.get("verified_at", ""),
+        updated_at=meta.get("updated_at", ""),
     )
 
 
@@ -179,6 +180,7 @@ def parse_playbook(path: str, rel_path: str) -> PlaybookEntry:
         common_failures=[FailureRef.from_dict(f) for f in meta.get("common_failures", [])],
         linked_scenarios=meta.get("linked_scenarios", []),
         linked_story=meta.get("linked_story", ""),
+        updated_at=meta.get("updated_at", ""),
     )
 
 

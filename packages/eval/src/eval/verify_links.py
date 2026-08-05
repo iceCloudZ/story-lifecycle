@@ -295,21 +295,18 @@ def _verify_one(
         guard = _date_guard_verdict(merged_at, tapd_created)
         if guard:
             verdict, reason = guard
-            # 时间倒挂 ≤90 天 → 进待审队列（标注），不直接 reject
+            # 时间倒挂 ≤90 天 → 仍走 LLM 无锚定验证（guard_pending 标记保留，
+            # reason 附加时间倒挂注记，最终 verdict 以 LLM 为准）
             if verdict == "pending_guard":
+                guard_note = reason
+            else:
+                # gap > 90 天 → 确定性 reject，不走 LLM
                 return {
                     **item,
                     "merged_at": merged_at,
-                    "verdict": "uncertain",
+                    "verdict": verdict,
                     "reason": reason,
-                    "guard_pending": True,
                 }
-            return {
-                **item,
-                "merged_at": merged_at,
-                "verdict": verdict,
-                "reason": reason,
-            }
 
     diff_text, truncated = _diff_text(item["repo"], item["merge_hash"])
     prompt = _build_prompt(tapd, delivery, diff_text)
@@ -319,13 +316,17 @@ def _verify_one(
         verdict = res.verdict.strip().lower()
         if verdict not in ("related", "unrelated", "uncertain"):
             verdict = "uncertain"
-        return {
+        out = {
             **item,
             "merged_at": merged_at,
             "verdict": verdict,
             "reason": res.reason.strip(),
             "truncated": truncated,
         }
+        if "guard_note" in locals():
+            out["guard_pending"] = True
+            out["reason"] = f"{guard_note}；LLM: {out['reason']}"
+        return out
     except Exception as e:  # noqa: BLE001
         log.warning("验证失败 %s:%s: %s", item["repo"], item["merge_hash"], e)
         return {**item, "merged_at": merged_at, "verdict": "uncertain", "reason": f"LLM 调用失败: {e}"}
@@ -602,7 +603,12 @@ def run_apply_verify(
             raise RuntimeError("没有找到 verify_links_*.jsonl，先跑 `eval verify-links`")
         verify_path = dates[-1]
     rows = _load_verify_rows(Path(verify_path))
-    calibrations = _parse_calibrated_sample(Path(sample_path))
+    # 校准合并：当前 sample（可能为空校准列）+ 历史人工校准备份（*.calibrated.md）
+    calibrations: dict[tuple[str, str, str], str] = {}
+    for cal_path in [Path(sample_path)] + sorted(
+        ds_dir.glob("verify_links_sample_*.calibrated.md")
+    ):
+        calibrations.update(_parse_calibrated_sample(cal_path))
 
     # 校准 + 日期守卫（三态）。优先级铁律：human_confirmed 跳过一切自动规则。
     from .linker import load_stories_matched
@@ -610,6 +616,7 @@ def run_apply_verify(
     matched_path = ds_dir / "stories_matched.jsonl"
     pending_path = ds_dir / "links_pending_review.md"
     entities = load_stories_matched()
+    pending_rows = _parse_pending(pending_path)
     human_confirmed_keys: set[tuple[str, str, str]] = set()
     for ent in entities:
         for dl in ent.get("deliveries", []):
@@ -641,17 +648,22 @@ def run_apply_verify(
             verdict, reason = guard
             reason_map[key] = reason
             if verdict == "unrelated":
+                # gap > 90 天 → 确定性 reject
                 verdict_map[key] = "unrelated"
                 guard_rejected.append({"repo": r["repo"], "merge_hash": r["merge_hash"], "tapd_id": r["tapd_id"]})
             else:
-                # 时间倒挂 ≤90 天 → 进待审队列
-                verdict_map[key] = "uncertain"
-                guard_pending.append({
-                    "repo": r["repo"],
-                    "merge_hash": r["merge_hash"],
-                    "tapd_id": r["tapd_id"],
-                    "reason": reason,
-                })
+                # 时间倒挂 ≤90 天：verify-links 已跑 LLM（guard_pending 标记），尊重 LLM verdict；
+                # 校准可覆盖；仅当 jsonl 无 verdict 时兜底留队列
+                llm_verdict = r.get("verdict", "uncertain")
+                final_v = calibrations.get(key, llm_verdict)
+                verdict_map[key] = final_v
+                if final_v == "uncertain":
+                    guard_pending.append({
+                        "repo": r["repo"],
+                        "merge_hash": r["merge_hash"],
+                        "tapd_id": r["tapd_id"],
+                        "reason": reason,
+                    })
         else:
             verdict_map[key] = calibrations.get(key, r.get("verdict", "uncertain"))
 
@@ -751,13 +763,14 @@ def run_apply_verify(
                 "reason": reason_map.get(key, "verify unrelated"),
             })
         else:
+            llm_reason = reason_map.get(key) or p.get("reason", "verify uncertain")
             kept_uncertain.append({
                 "repo": p["repo"],
                 "merge_hash": full_hash,
                 "branch": p.get("branch", ""),
                 "merged_at": p.get("merged_at", ""),
                 "tapd_id": p["tapd_id"],
-                "reason": reason_map.get(key, p.get("reason", "verify uncertain")),
+                "reason": llm_reason,
             })
 
     # 5. 写回 stories_matched.jsonl

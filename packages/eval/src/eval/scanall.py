@@ -618,9 +618,10 @@ _SUSPECTED_WRONG_LINK_KEYWORDS = (
 def _is_suspected_wrong_link(row: dict) -> bool:
     """alignment=1 且 judge 明确说实现与需求完全无关 → 大概率是 merge↔story 错链。
 
-    人工已确认（human_confirmed）的链接跳过——人工校准是最高权威，不再进疑似错链。
+    人工已确认（human_confirmed）或人工再裁决过（human_recalibrated）的链接跳过——
+    人工是最高权威，不再进疑似错链/待审队列。
     """
-    if row.get("human_confirmed"):
+    if row.get("human_confirmed") or row.get("human_recalibrated"):
         return False
     cf = row.get("conformance_score") or {}
     if cf.get("alignment") != 1:
@@ -842,6 +843,19 @@ def _render_report(
             )
         else:
             lines.append("| conf.alignment 均分 | - | - |")
+        ref_enrich = verify_summary.get("ref_enrich") or {}
+        if ref_enrich:
+            lines.append(
+                f"| ref 富化前后（{ref_enrich.get('n_merges', '?')} 个同一样本集） | "
+                f"{ref_enrich.get('align_before', '?')} | {ref_enrich.get('align_after', '?')}（Δ{ref_enrich.get('align_delta', '?')}） |"
+            )
+            lines.append(
+                f"| 疑似错链数变化（ref 富化） | {ref_enrich.get('suspected_before', '?')} | {ref_enrich.get('suspected_after', '?')} |"
+            )
+            if ref_enrich.get('story_refs_upgraded'):
+                lines.append(
+                    f"| story_refs 富化生效 | - | {ref_enrich.get('story_refs_upgraded')} 个 merge 参照物从 tapd 升级为 story_refs |"
+                )
         lines.append("")
 
     lines += ["", "## 按 repo", ""]
