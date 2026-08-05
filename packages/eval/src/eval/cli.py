@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 
@@ -70,6 +71,93 @@ def link(llm, llm_limit):
         click.echo("  ⚠ 有待确认项 → dataset/links_pending_review.md,标注后跑 `eval review-apply`")
 
 
+@main.command(name="link-mine")
+@click.option("--window-days", type=int, default=90, help="merge 前后时间窗（默认 90 天）")
+@click.option("--auto-threshold", type=float, default=0.8, help="自动关联阈值（默认 0.8）")
+@click.option("--pending-threshold", type=float, default=0.5, help="进待确认队列阈值（默认 0.5）")
+@click.option("--concurrency", type=int, default=None, help="并发数（默认 EVAL_LLM_CONCURRENCY 或 16）")
+@click.option("--limit", type=int, default=None, help="只处理前 N 个未关联 merge（试跑）")
+@click.option("--verify", is_flag=True, default=False, help="跑完后自动执行 verify-links 复核")
+def link_mine(window_days, auto_threshold, pending_threshold, concurrency, limit, verify):
+    """对个人未关联 merge 跑加强版 LLM 关联（owner=赵子豪, ±90 天）。"""
+    from .linker import run_link_mine
+
+    res = run_link_mine(
+        window_days=window_days,
+        auto_threshold=auto_threshold,
+        pending_threshold=pending_threshold,
+        concurrency=concurrency,
+        limit=limit,
+    )
+    click.echo(
+        f"link-mine 完成: 个人未关联 {res['mine_unlinked']} / 负责人候选 story {res['owner_pool']} / "
+        f"本次处理 {res.get('processed', '?')} / 自动关联 {res['auto_linked']} / 待确认 {res['pending']}"
+    )
+    if res["pending"]:
+        click.echo("  ⚠ 有待确认项 → dataset/links_pending_review.md")
+    if verify:
+        click.echo("  → 自动进入 verify-links 复核...")
+        from .verify_links import run_verify_links
+
+        vres = run_verify_links(
+            env_file="dataset/.env.deepseek",
+            concurrency=concurrency or 8,
+        )
+        click.echo(
+            f"verify-links 完成: 总 {vres['total']} / related {vres['by_verdict'].get('related', 0)} / "
+            f"unrelated {vres['by_verdict'].get('unrelated', 0)} / uncertain {vres['by_verdict'].get('uncertain', 0)}"
+        )
+        click.echo(f"  抽样清单: {vres['sample']}")
+
+
+@main.command(name="verify-links")
+@click.option("--dataset-dir", default=None, help="dataset 目录")
+@click.option("--results-dir", default=None, help="results 目录")
+@click.option("--env-file", default="dataset/.env.deepseek", help="DeepSeek env 文件路径")
+@click.option("--concurrency", type=int, default=8, help="并发数（默认 8）")
+@click.option("--seed", type=int, default=42, help="抽样随机种子")
+@click.option("--sample-each", type=int, default=7, help="每层抽样条数（默认 7）")
+def verify_links(dataset_dir, results_dir, env_file, concurrency, seed, sample_each):
+    """独立复核 pending + llm_mine_high 关联，输出 verify_links_<date>.jsonl + 抽样清单。"""
+    from .verify_links import run_verify_links
+
+    res = run_verify_links(
+        dataset_dir=dataset_dir,
+        results_dir=results_dir,
+        env_file=env_file,
+        concurrency=concurrency,
+        seed=seed,
+        sample_each=sample_each,
+    )
+    click.echo(
+        f"verify-links 完成: 总 {res['total']} / related {res['by_verdict'].get('related', 0)} / "
+        f"unrelated {res['by_verdict'].get('unrelated', 0)} / uncertain {res['by_verdict'].get('uncertain', 0)}"
+    )
+    click.echo(f"输出: {res['output']}")
+    click.echo(f"抽样清单: {res['sample']}")
+
+
+@main.command(name="apply-verify")
+@click.argument("sample_path", default="dataset/verify_links_sample_20260805.md")
+@click.option("--dataset-dir", default=None, help="dataset 目录")
+@click.option("--verify-path", default=None, help="verify_links jsonl（默认最新）")
+def apply_verify(sample_path, dataset_dir, verify_path):
+    """按人工校准后的抽样清单执行分级：related→accept、unrelated→reject、uncertain→留队列。"""
+    from .verify_links import run_apply_verify
+
+    res = run_apply_verify(
+        sample_path=sample_path,
+        dataset_dir=dataset_dir,
+        verify_path=verify_path,
+    )
+    click.echo(
+        f"apply-verify 完成: 总 {res['total']} / accept {res['accepted']} / "
+        f"reject {res['rejected']} / 留队列 {res['kept_uncertain']}"
+    )
+    click.echo(f"stories_matched: {res['stories_matched']}")
+    click.echo(f"pending: {res['pending_review']}")
+
+
 @main.command(name="review-apply")
 @click.argument("path", default="dataset/links_pending_review.md")
 def review_apply(path):
@@ -78,6 +166,17 @@ def review_apply(path):
 
     res = _apply(path)
     click.echo(f"review-apply: {res['applied']} 条确认写入 {res['file']}")
+
+
+@main.command(name="backfill-human")
+@click.argument("sample_path", default="dataset/verify_links_sample_20260805.md")
+@click.option("--dataset-dir", default=None, help="dataset 目录")
+def backfill_human(sample_path, dataset_dir):
+    """把人工校准过的 (merge, tapd) 对回写为 stories_matched 的 human_confirmed 标记。"""
+    from .verify_links import backfill_human_confirmed
+
+    res = backfill_human_confirmed(sample_path=sample_path, dataset_dir=dataset_dir)
+    click.echo(f"backfill-human 完成: 标记 {res['marked']} 条 deliveries（sample {res['sample_keys']} 键）")
 
 
 @main.command()
@@ -110,11 +209,15 @@ def extract(db, dataset_dir, workspace, story_key, force):
 @click.option("--results-dir", default=None)
 @click.option("--limit", type=int, default=None, help="只评前 N 个（调试）")
 @click.option("--seed", type=int, default=42)
-def score(dataset_dir, results_dir, limit, seed):
+@click.option("--force", is_flag=True, help="忽略 partial 文件，强制重新打分")
+@click.option("--concurrency", type=int, default=None, help="并发数（默认 EVAL_LLM_CONCURRENCY 或 4）")
+def score(dataset_dir, results_dir, limit, seed, force, concurrency):
     """对 core 集全量跑 SpecScore+PlanScore,生成 baseline 报告。"""
     from .baseline import run_baseline
 
-    res = run_baseline(dataset_dir, results_dir, limit=limit, seed=seed)
+    res = run_baseline(
+        dataset_dir, results_dir, limit=limit, seed=seed, force=force, concurrency=concurrency
+    )
     click.echo(f"baseline 完成: {res['count']} 个 story, {res['json']}")
     click.echo(f"自洽性(分差≤1比例): {res['consistency']['diff_le_1_ratio']:.1%}")
     for e in res["errors"]:
@@ -125,11 +228,20 @@ def score(dataset_dir, results_dir, limit, seed):
 @click.option("--dataset-dir", default=None)
 @click.option("--results-dir", default=None)
 @click.option("--limit", type=int, default=None, help="只评前 N 个 merge（试跑/分批）")
-def scan_all(dataset_dir, results_dir, limit):
+@click.option("--author", "authors", multiple=True, help="按 author 过滤（可多次）")
+@click.option("--branch-pattern", "branch_patterns", multiple=True, help="按分支通配过滤（可多次）")
+@click.option("--mine", is_flag=True, help="只跑个人交付（zhaozihao/赵子豪 + feature/ice/* + feature/zzh/*）")
+def scan_all(dataset_dir, results_dir, limit, authors, branch_patterns, mine):
     """对全量 merge 逐个评分（Conformance+Delivery / MergeSummary+Delivery）。"""
     from .scanall import run_scan_all
 
-    res = run_scan_all(limit=limit, results_dir=results_dir)
+    res = run_scan_all(
+        limit=limit,
+        results_dir=results_dir,
+        authors=list(authors) if authors else None,
+        branch_patterns=list(branch_patterns) if branch_patterns else None,
+        mine=mine,
+    )
     click.echo(f"scan-all: 共 {res['total']},本次新增 {res['scored_now']},报告 {res['report']}")
     for e in res["errors"][:10]:
         click.echo(f"  ! {e}", err=True)
@@ -157,6 +269,48 @@ def report(dataset_dir, results_dir):
 
     res = run_report(dataset_dir, results_dir)
     click.echo(f"回归报告: {res['md']}")
+
+
+@main.command(name="ref-fetch")
+@click.option("--priority", is_flag=True, help="只抓优先批(link-only ∩ stories_matched)")
+@click.option("--tapd-id", multiple=True, help="只抓指定 tapd_id（可多次）")
+@click.option("--limit", type=int, default=None, help="只处理前 N 个 (tapd_id, url)（试跑）")
+@click.option("--route", multiple=True, help="只抓指定 fetcher 路线（tapd_api/curl/webbridge/login_required,可多次）")
+@click.option("--retry", is_flag=True, help="连确定性错误(empty_content/login_wall 等)也强制重试")
+@click.option("--dry-run", is_flag=True, help="只列出待抓清单,不抓")
+@click.option("--stats", is_flag=True, help="只输出索引统计")
+def ref_fetch(priority, tapd_id, limit, route, retry, dry_run, stats):
+    """抓 link-only 需求链接正文 → dataset/story_refs/<tapd_id>.md + 索引。"""
+    from .ref_fetch import index_stats, run_fetch
+
+    if stats:
+        click.echo(json.dumps(index_stats(), ensure_ascii=False, indent=2))
+        return
+    res = run_fetch(
+        priority_only=priority,
+        tapd_ids=list(tapd_id) if tapd_id else None,
+        limit=limit,
+        dry_run=dry_run,
+        routes=list(route) if route else None,
+        retry=retry,
+    )
+    if res.get("dry_run"):
+        click.echo(f"dry-run: 待抓 {res['todo']} 个 (tapd_id, url),涉及 {res['stories']} 条需求")
+        return
+    click.echo(
+        f"ref-fetch 完成: 本次 {res['fetched']} 个链接,分布 {res['by_status']},"
+        f"索引 {res['index']}"
+    )
+    for e in res["errors"][:10]:
+        click.echo(f"  ! {e}", err=True)
+
+
+@main.command(name="ref-stats")
+def ref_stats():
+    """ref-fetch 索引统计（fetcher × status 分布 + 覆盖）。"""
+    from .ref_fetch import index_stats
+
+    click.echo(json.dumps(index_stats(), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

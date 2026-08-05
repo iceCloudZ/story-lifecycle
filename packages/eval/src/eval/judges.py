@@ -1,19 +1,25 @@
-"""LLM judges — 离线质量评分（Pydantic schema + Go 端点调用）。
+"""LLM judges — 离线质量评分（Pydantic schema + OpenAI-compatible 端点调用）。
 
-复用 ``story_lifecycle.infra.llm_client.LLMClient``；所有调用**串行**、
-``temperature=0``、429 指数退避（初始 5s ×2 上限 300s）、失败重试 2 次后
-记录 error 不中断全量任务。judge prompt 中文、reference-based（gold artifact
-全文注入作参照）。
+复用 ``story_lifecycle.infra.llm_client.LLMClient``；``temperature=0``、
+429 指数退避（初始 5s ×2 上限 300s）、失败重试 2 次后记录 error 不中断全量任务。
+judge prompt 中文、reference-based（gold artifact 全文注入作参照）。
 
 模型选择: ``EVAL_LLM_BASE_URL/API_KEY/MODEL`` 覆盖（默认取 Go 端点 +
 ``OPENCODE_API_KEY``）;见 ``configure_llm_env()``。
+
+并发说明: judge 模块本身保持单调用语义；scanall 等外层调用方可通过
+``EVAL_LLM_CONCURRENCY`` 并发。token 消耗由本模块挂载的 hook 统计，
+不依赖 story.db 的 trace 表。
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -28,22 +34,97 @@ BACKOFF_MULT = 2.0
 BACKOFF_MAX = 300.0
 MAX_HTTP_RETRIES = 2
 
+# 线程安全 token 统计
+_token_lock = threading.Lock()
+_token_usage: dict[str, int] = {"prompt": 0, "completion": 0, "total": 0, "calls": 0}
+_token_hook_installed = False
 
-def configure_llm_env() -> None:
+
+def _install_token_hook() -> None:
+    """挂载 LLMClient._trace 钩子，把 usage 累加到本模块计数器。
+
+    不破坏原有 trace 行为（仍会写 story.db），只额外做一份 eval 专用统计，
+    避免高并发下 story.db 锁竞争导致丢数。
+    """
+    global _token_hook_installed
+    if _token_hook_installed:
+        return
+    try:
+        from story_lifecycle.infra.llm_client import LLMClient
+
+        original_trace = LLMClient._trace
+
+        def _patched_trace(usage: dict, duration_ms: int, **kwargs):
+            with _token_lock:
+                _token_usage["prompt"] += usage.get("prompt_tokens", 0)
+                _token_usage["completion"] += usage.get("completion_tokens", 0)
+                _token_usage["total"] += usage.get("total_tokens", 0)
+                _token_usage["calls"] += 1
+            return original_trace(usage, duration_ms, **kwargs)
+
+        LLMClient._trace = staticmethod(_patched_trace)  # type: ignore[assignment]
+        _token_hook_installed = True
+    except Exception as e:
+        log.warning("token 统计钩子挂载失败: %s", e)
+
+
+def get_token_usage() -> dict[str, int]:
+    """返回当前进程累计 token 消耗（prompt/completion/total/calls）。"""
+    with _token_lock:
+        return dict(_token_usage)
+
+
+def reset_token_usage() -> None:
+    """重置计数器，通常在 scanall 启动前调用。"""
+    global _token_usage
+    with _token_lock:
+        _token_usage = {"prompt": 0, "completion": 0, "total": 0, "calls": 0}
+
+
+def _load_dotenv(path: Path, override: bool = False) -> None:
+    """手工解析简单的 KEY=VALUE .env 文件（无外部依赖）。"""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"\'')
+        if not key or not value:
+            continue
+        if override or key not in os.environ:
+            os.environ[key] = value
+
+
+def configure_llm_env(env_file: str | Path | None = None) -> None:
     """把 STORY_LLM_* 指向 Go 端点（judge 与回放管线共用）。
 
     EVAL_LLM_* 优先（对比 judge 模型用）;否则 EVAL 未设 → 用 Go 默认。
+    若 ``env_file`` 存在，自动加载（并覆盖已有 EVAL_LLM_*/STORY_LLM_*，
+    用于临时切 DeepSeek 官方端点）;否则尝试 ``packages/eval/dataset/.env``。
     OPENCODE_API_KEY 缺失时仅打 warning（调用时才会真正失败）。
     """
+    _install_token_hook()
+    if env_file is not None:
+        _load_dotenv(Path(env_file), override=True)
+        # 显式 env_file 时强制覆盖 STORY_LLM_*（CLI 启动可能已按 Go 端点 setdefault）
+        for k in ("STORY_LLM_BASE_URL", "STORY_LLM_MODEL", "STORY_LLM_API_KEY"):
+            os.environ.pop(k, None)
+        # 客户端单例可能已按旧端点创建，重置以便重建
+        _LLM._client = None
+    else:
+        _load_dotenv(Path(__file__).resolve().parent.parent.parent / "dataset" / ".env")
     base = os.environ.get("EVAL_LLM_BASE_URL") or DEFAULT_BASE_URL
     model = os.environ.get("EVAL_LLM_MODEL") or DEFAULT_MODEL
     key = os.environ.get("EVAL_LLM_API_KEY") or os.environ.get("OPENCODE_API_KEY")
     if not key:
         log.warning("OPENCODE_API_KEY 未设置——judge 调用将失败（设置环境变量后重试）")
-    os.environ.setdefault("STORY_LLM_BASE_URL", base)
-    os.environ.setdefault("STORY_LLM_MODEL", model)
+    os.environ["STORY_LLM_BASE_URL"] = base
+    os.environ["STORY_LLM_MODEL"] = model
     if key:
-        os.environ.setdefault("STORY_LLM_API_KEY", key)
+        os.environ["STORY_LLM_API_KEY"] = key
 
 
 class BaseScore(BaseModel):
@@ -112,17 +193,27 @@ class _LLM:
 
     @classmethod
     def invoke_structured(cls, prompt: str, schema: type[BaseModel]) -> BaseModel:
-        """带 429 指数退避 + 2 次重试的 invoke_structured。
+        """带 429 指数退避 + parse 修复重试的 invoke_structured。
 
-        LLM 偶发输出数组而非对象（如 ``[]``）时,补一句「严禁输出数组」再试一次。
+        - 首次调用即强制「只输出 JSON,不要任何解释/思考过程」。
+        - 若仍输出数组,追加「严禁数组」重试。
+        - 若输出无法解析为 JSON 对象,追加更严格的「只输出 JSON」重试。
         """
+        system = (
+            "你是严谨的软件工程质量评审专家。"
+            "必须只输出合法 JSON 对象,不要任何解释、markdown、代码块、思考过程或前后缀。"
+        )
+        example = json.dumps(
+            {n: _schema_example(f) for n, f in schema.model_fields.items()},
+            ensure_ascii=False,
+        )
         last_exc: Exception | None = None
         for attempt in range(MAX_HTTP_RETRIES + 1):
             try:
                 return cls.client().invoke_structured(
                     prompt,
                     schema,
-                    system="你是严谨的软件工程质量评审专家。只输出合法 JSON。",
+                    system=system,
                     temperature=0,
                     timeout=180,
                     max_tokens=4096,
@@ -130,20 +221,32 @@ class _LLM:
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 if _is_list_output(exc):
-                    # 模型把评分对象输出成数组——补提示重试一次即可
                     log.warning("LLM 输出数组而非对象,补「严禁数组」提示重试")
                     try:
                         return cls.client().invoke_structured(
-                            prompt + "\n\n**严禁输出 JSON 数组/列表**——本任务是对象评分,输出形如 "
-                            f"{json.dumps({n: _schema_example(f) for n, f in schema.model_fields.items()}, ensure_ascii=False)} 的对象。",
+                            prompt + f"\n\n**严禁输出 JSON 数组/列表**——本任务是对象评分,必须输出形如 {example} 的单个 JSON 对象,不要任何其他内容。",
                             schema,
-                            system="你是严谨的软件工程质量评审专家。只输出合法 JSON 对象,严禁输出数组。",
+                            system=system + " 严禁输出数组,只能输出单个 JSON 对象。",
                             temperature=0,
                             timeout=180,
                             max_tokens=4096,
                         )
                     except Exception as e2:  # noqa: BLE001
                         raise RuntimeError(f"数组输出修复重试也失败: {e2}") from e2
+                if _is_parse_failure(exc):
+                    log.warning("LLM 输出无法解析为 JSON,补「只输出 JSON」提示重试")
+                    try:
+                        return cls.client().invoke_structured(
+                            prompt + "\n\n**要求**：不要写任何分析、解释、思考过程或自然语言,直接输出且仅输出一个合法 JSON 对象。"
+                            f"必须形如 {example} 。第一个字符必须是 {{,最后一个字符必须是 }}。",
+                            schema,
+                            system=system + " 只能输出 JSON 对象,任何非 JSON 内容都视为错误。",
+                            temperature=0,
+                            timeout=180,
+                            max_tokens=4096,
+                        )
+                    except Exception as e2:  # noqa: BLE001
+                        raise RuntimeError(f"JSON 修复重试也失败: {e2}") from e2
                 if not _is_retryable(exc):
                     raise
                 delay = min(BACKOFF_INITIAL * (BACKOFF_MULT**attempt), BACKOFF_MAX)
@@ -180,6 +283,20 @@ def _is_list_output(exc: Exception) -> bool:
     if "input_value=[], input_type=list" in text or "input_type=list" in text:
         return True
     if "should be a valid dictionary" in text or "model_type" in text:
+        return True
+    return False
+
+
+def _is_parse_failure(exc: Exception) -> bool:
+    """LLM 输出不是可解析 JSON 对象（含 JSON 解析失败、ValidationError）。"""
+    text = f"{exc.__class__.__name__}: {exc}".lower()
+    if "cannot parse" in text:
+        return True
+    if "json" in text and ("decode" in text or "parse" in text):
+        return True
+    if "validation" in text and "model_type" in text:
+        return True
+    if "expecting" in text and "json" in text:
         return True
     return False
 
@@ -267,9 +384,12 @@ def judge_conformance(reference_text: str, reference_type: str, diff_text: str) 
 
     diff 大按文件分批由调用方负责（本函数处理单批）。
     """
-    type_label = {"spec": "设计文档 spec", "prd": "需求 PRD", "tapd": "TAPD 需求描述"}.get(
-        reference_type, reference_type
-    )
+    type_label = {
+        "spec": "设计文档 spec",
+        "prd": "需求 PRD",
+        "tapd": "TAPD 需求描述",
+        "story_refs": "TAPD 需求参照物(链接抓取的正文)",
+    }.get(reference_type, reference_type)
     prompt = f"""请判断一次代码交付（merge diff）与**{type_label}**的吻合程度。评分 1-5 分。
 
 # 需求参照物（{type_label}）
@@ -283,8 +403,11 @@ def judge_conformance(reference_text: str, reference_type: str, diff_text: str) 
 ```
 
 评分要求:
-- alignment:实现是否与参照物的语义一致（数据结构/接口/流程,不要求逐字相同）
-- coverage:参照物要求的实现点被覆盖的比例（缺了哪些写明）
+- alignment: **已实现部分**与参照物的语义一致度（数据结构/接口/流程,不要求逐字相同）。
+  跨服务需求在单仓只交付切片时,若已实现部分与参照物语义一致,alignment 不得给 1,
+  低覆盖体现在 coverage;alignment=1 仅用于「diff 中没有任何内容与参照物对应」。
+- coverage: 参照物要求的**完整度**——要求点被覆盖的比例（缺了哪些写明;单仓切片
+  交付属于覆盖不全,不降低 alignment）
 - scope_drift:是否混入与需求无关的改动（5=严格按范围,1=大量无关改动）
 findings 列 2-6 条具体差异;summary 一句话总评。
 

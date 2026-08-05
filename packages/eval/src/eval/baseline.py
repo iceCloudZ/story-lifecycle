@@ -8,10 +8,13 @@ ConformanceScore 参照物优先级: C 源 spec > C 源 PRD > B 源 TAPD 描述�
 
 from __future__ import annotations
 
+import concurrent.futures
 import datetime as _dt
 import json
 import logging
+import os
 import random
+import threading
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -145,14 +148,16 @@ def score_manifest(ds_dir: Path, manifest: dict, with_diffs: bool = True) -> dic
         )
         out["delivery_score"] = dscore.model_dump()
 
-    # ConformanceScore:diff vs 参照物（管线外 story 用 TAPD 描述兜底）
+    # ConformanceScore:diff vs 参照物（管线外 story 用 TAPD 描述/story_refs 兜底）
     if with_diffs and deliveries:
         diff_texts = _delivery_diff_texts(manifest)
         if diff_texts:
             ref, ref_type = _reference_for(manifest, ds_dir)
             if not ref:
-                ref_type = "tapd"
-                ref = _tapd_description(manifest)
+                # 参照物优先级: C 源 spec > C 源 PRD > story_refs > TAPD 描述
+                from .ref_fetch import reference_for_tapd
+
+                ref, ref_type = reference_for_tapd(_tapd_cache(), manifest.get("tapd_id") or "")
                 if not ref:
                     log.info("%s: 无任何参照物,跳过 Conformance", manifest.get("dir"))
                     return out
@@ -172,6 +177,8 @@ def run_baseline(
     limit: int | None = None,
     seed: int = 42,
     with_diffs: bool = True,
+    force: bool = False,
+    concurrency: int | None = None,
 ) -> dict[str, Any]:
     ds_dir = Path(dataset_dir) if dataset_dir else DATASET_DIR
     res_dir = Path(results_dir) if results_dir else RESULTS_DIR
@@ -183,29 +190,69 @@ def run_baseline(
     if not manifests:
         raise RuntimeError("入选集为空——先跑 `eval link` + `eval extract`")
 
+    if concurrency is None:
+        concurrency = int(os.environ.get("EVAL_LLM_CONCURRENCY", "4"))
+    if concurrency < 1:
+        concurrency = 1
+
     date = _dt.date.today().strftime("%Y%m%d")
-    done = _load_partial(res_dir)
+    partial_path = res_dir / PARTIAL_NAME
+    if force and partial_path.exists():
+        log.info("--force: 清空 partial 文件 %s", partial_path)
+        partial_path.unlink()
+    done = {} if force else _load_partial(res_dir)
     if done:
         log.info("发现 %d 条 partial 打分,断点续跑（跳过已完成 story）", len(done))
 
     results: list[dict[str, Any]] = []
     errors: list[str] = []
+    results_map: dict[int, dict[str, Any]] = {}
+    errors_map: dict[int, str] = {}
     skipped = 0
-    for i, mf in enumerate(manifests, 1):
+    partial_lock = threading.Lock()
+
+    def _score_one(i: int, mf: dict) -> tuple[str, int, Any]:
         key = mf.get("tapd_id") or mf.get("story_key") or "?"
         if key in done:
-            results.append(done[key])
-            skipped += 1
-            log.info("[%d/%d] 跳过 %s（partial 已有）", i, len(manifests), key)
-            continue
+            return ("skip", i, done[key])
         log.info("[%d/%d] 打分 %s", i, len(manifests), key)
         try:
             rec = score_manifest(ds_dir, mf, with_diffs=with_diffs)
-            results.append(rec)
-            _append_partial(res_dir, rec)
-        except Exception as e:  # noqa: BLE001 — 单实体失败不中断
-            errors.append(f"{key}: {e}")
+            return ("ok", i, rec)
+        except Exception as e:  # noqa: BLE001
             log.exception("打分失败 %s", key)
+            return ("err", i, f"{key}: {e}")
+
+    if concurrency == 1:
+        for i, mf in enumerate(manifests, 1):
+            kind, idx, val = _score_one(i, mf)
+            if kind == "skip":
+                skipped += 1
+                results_map[idx] = val
+            elif kind == "ok":
+                results_map[idx] = val
+                _append_partial(res_dir, val)
+            else:
+                errors_map[idx] = val
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = {executor.submit(_score_one, i, mf): i for i, mf in enumerate(manifests, 1)}
+            for future in concurrent.futures.as_completed(futures):
+                kind, idx, val = future.result()
+                if kind == "skip":
+                    skipped += 1
+                    results_map[idx] = val
+                elif kind == "ok":
+                    results_map[idx] = val
+                    with partial_lock:
+                        _append_partial(res_dir, val)
+                else:
+                    errors_map[idx] = val
+
+    for idx in sorted(results_map):
+        results.append(results_map[idx])
+    for idx in sorted(errors_map):
+        errors.append(errors_map[idx])
     if skipped:
         log.info("本次续跑跳过 %d 条,新增打分 %d 条", skipped, len(results) - skipped)
 
