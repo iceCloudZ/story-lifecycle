@@ -225,23 +225,36 @@ def main() -> dict:
 
     out = []
     tmp_home = Path(tempfile.mkdtemp(prefix="gate_replay_"))
-    for i, (kind, r) in enumerate(samples, 1):
+
+    def _worker(args):
+        idx, (kind, r) = args
         dl = deliveries.get((r["repo"], r["merge_hash"]))
         if dl is None:
-            out.append({"kind": kind, "repo": r["repo"], "merge": r["merge_hash"][:10],
-                        "tapd": r.get("tapd_id", ""), "alignment": r["conformance_score"]["alignment"],
-                        "skip": "deliveries 缺失"})
-            continue
+            return {"idx": idx, "kind": kind, "repo": r["repo"], "merge": r["merge_hash"][:10],
+                    "tapd": r.get("tapd_id", ""), "alignment": r["conformance_score"]["alignment"],
+                    "skip": "deliveries 缺失"}
         rec = _run_gate_one(r, dl, tmp_home)
         rec.update({
-            "kind": kind, "repo": r["repo"], "merge": r["merge_hash"][:10],
+            "idx": idx, "kind": kind, "repo": r["repo"], "merge": r["merge_hash"][:10],
             "tapd": r.get("tapd_id", ""), "story_key": r.get("story_key", ""),
             "alignment": r["conformance_score"]["alignment"],
             "eval_findings": (r["conformance_score"].get("findings") or [])[:3],
         })
-        out.append(rec)
-        if i % 20 == 0:
-            print(f"进度 {i}/{len(samples)}", file=sys.stderr)
+        return rec
+
+    import concurrent.futures
+
+    CONCURRENCY = int(os.environ.get("EVAL_LLM_CONCURRENCY", "8"))
+    done_n = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=CONCURRENCY) as executor:
+        futures = [executor.submit(_worker, (i, s)) for i, s in enumerate(samples)]
+        for fut in concurrent.futures.as_completed(futures):
+            out.append(fut.result())
+            done_n += 1
+            if done_n % 20 == 0 or done_n == len(samples):
+                print(f"进度 {done_n}/{len(samples)}（并发 {CONCURRENCY}）", file=sys.stderr)
+
+    out.sort(key=lambda x: x["idx"])
 
     _render_report(out, pos, neg)
     return {"total": len(out), "pos": len(pos), "neg": len(neg)}
