@@ -45,8 +45,11 @@ def _bootstrap_env() -> None:
 
 
 def run_one(tapd_id: str, gold_dir: Path, out: dict) -> dict:
-    story_key = f"tapd-{tapd_id}"
+    tag = os.environ.get("COV_TAG", "")
+    story_key = f"tapd-{tapd_id}" + (f"-{tag}" if tag else "")
     ws = SANDBOX / "ws" / story_key
+    # gold 目录按 tapd_id 找（story_key 可能带 tag 后缀）
+    gold_dir = SANDBOX / "gold" / f"tapd-{tapd_id}"
     out.update({"story_key": story_key, "tapd": tapd_id, "ws": str(ws)})
 
     # workspace 准备：AGENTS.md 截断证据爬升（防泄漏到 repo 根 story/）
