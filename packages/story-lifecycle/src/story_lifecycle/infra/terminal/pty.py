@@ -504,6 +504,23 @@ def get_pty(story_id: str, session_id: str = "") -> Optional[ManagedPty]:
         return None
 
 
+def get_pty_for_stage(story_id: str, stage: str, purpose: str = "agent") -> Optional[ManagedPty]:
+    """Get the story's PTY bound to a stage (any adapter), or None.
+
+    设计 13 编排线程按 (story_key, stage) 查 PTY —— 注册表 key 是
+    compute_session_id(story,stage,adapter),adapter 由调用方解析;这里按
+    ``pty.stage`` 扫描兜底(不管 adapter 是什么都能命中用户手动 spawn 的会话)。
+    ``purpose="agent"`` 只匹配 agent 会话(排除 shell/其他用途)。
+    不做 lazy reaper(与 get_pty 语义一致)。
+    """
+    with _lock:
+        sessions = _ptys.get(story_id, {})
+        for s in sessions.values():
+            if s.stage == stage and s.purpose == purpose:
+                return s
+        return None
+
+
 def list_pty_sessions(story_id: str) -> list[dict]:
     """List all PTY sessions for a story."""
     with _lock:

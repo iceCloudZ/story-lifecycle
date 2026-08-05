@@ -1,10 +1,9 @@
-"""Story execution engine — workspace locking, thread pool, story lifecycle.
+"""Story execution engine 鈥?workspace locking, thread pool, story lifecycle.
 
 Previously built on LangGraph StateGraph. Now delegates to Agent-driven
 execution (continue_orchestrator_agent) via Function Calling.
 """
 
-import json
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -12,12 +11,10 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
-from . import planner
 from ...infra.db import models as db
 from ...sourcing.state_machine import (
     activate as sm_activate,
     mark_failed as sm_mark_failed,
-    mark_completed as sm_mark_completed,
     pause as sm_pause,
 )
 
@@ -27,14 +24,14 @@ STORY_HOME = Path.home() / ".story-lifecycle"
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
-# Execution guard — prevent double submission.
+# Execution guard 鈥?prevent double submission.
 _running_stories: dict[str, int] = {}
 _running_lock = threading.Lock()
 
-# 层3 rescue:单次 run_story 内换 adapter 重跑的次数上限(与 rescue_story/decide_recovery 协同)。
+# 灞? rescue:鍗曟 run_story 鍐呮崲 adapter 閲嶈窇鐨勬鏁颁笂闄?涓?rescue_story/decide_recovery 鍗忓悓)銆?
 _MAX_RECOVERY = 3
 
-# Workspace mutex — cross-process safe via filelock + in-process threading.Lock.
+# Workspace mutex 鈥?cross-process safe via filelock + in-process threading.Lock.
 _workspace_locks_dir = STORY_HOME / "workspace-locks"
 _workspace_locks_dir.mkdir(parents=True, exist_ok=True)
 # In-process dict: each workspace gets a threading.Lock for same-process mutual exclusion
@@ -42,7 +39,7 @@ _ws_inproc_locks: dict[str, threading.Lock] = {}
 # FileLock instances held by current process (to keep them locked across acquire/release cycles)
 _ws_file_locks: dict[str, FileLock] = {}
 
-# Run epoch — bumped on start/force-stop so stale threads detect cancellation
+# Run epoch 鈥?bumped on start/force-stop so stale threads detect cancellation
 _story_epochs: dict[str, int] = {}
 
 
@@ -84,7 +81,7 @@ def acquire_workspace(workspace: str, story_key: str, exclude_story: str = "") -
                 return True
         return False
 
-    # Both locks acquired — store references and owner info
+    # Both locks acquired 鈥?store references and owner info
     _ws_file_locks[ws] = flock
     lock_path.with_suffix(".owner").write_text(story_key, encoding="utf-8")
     return True
@@ -179,18 +176,25 @@ def is_epoch_current(story_key: str, epoch: int) -> bool:
 
 
 def run_story(story_key: str, epoch: int = 0, claim_token: str = ""):
-    """Run a story through the Agent execution loop.
+    """Run a story through the global orchestrator machinery (璁捐 13).
 
-    Replaces the old LangGraph StateGraph invocation. 层3 rescue Handler:
-    失败 → ``decide_recovery`` → ``rescue_story`` 换 adapter → 有界重跑(上限 ``_MAX_RECOVERY``)。
+    璁捐13 鍓?driver 绾跨▼姹?submit 鈫?continue_orchestrator_agent 鍏ㄩ噺杞銆?
+    璁捐13 鍚?鍏ㄥ眬缂栨帓绾跨▼(OrchestratorThread)绠＄悊鎵€鏈?story 鐨?PTY;杩欓噷淇濈暀涓?
+    **鍚屾椹卞姩鍏ュ彛**(swebench CLI / 鏃?serve 鍦烘櫙),鍐呴儴璋?``drive_story_sync``
+    鈥斺€?鍚屼竴濂?executors/handlers/judge,涓嶆槸绗簩濂楄皟搴︽満鍒躲€?
+
+    灞? rescue Handler 淇濈暀:澶辫触 鈫?``decide_recovery`` 鈫?``rescue_story``
+    鎹?adapter 鈫?鏈夌晫閲嶈窇(涓婇檺 ``_MAX_RECOVERY``)銆?
 
     ``claim_token`` is the driver_claim won by ``start_story_async``; it is
     released in ``finally`` so the story becomes drivable again on exit/crash
     of this run (only released if still ours). Callers that invoke ``run_story``
-    directly (e.g. swebench) pass no token → no claim lifecycle.
+    directly (e.g. swebench) pass no token 鈫?no claim lifecycle.
     """
     import json as _json
     import traceback
+
+    from ..scheduler import drive_story_sync
 
     story = db.get_story(story_key)
     workspace = story["workspace"] if story else ""
@@ -200,21 +204,21 @@ def run_story(story_key: str, epoch: int = 0, claim_token: str = ""):
         if workspace:
             acquired = acquire_workspace(workspace, story_key)
 
-        # 有界重试循环:可恢复失败 → 换 adapter 重跑;不可恢复 / 超上限 / 无 _agent_actions → 停。
+        # 鏈夌晫閲嶈瘯寰幆:鍙仮澶嶅け璐?鈫?鎹?adapter 閲嶈窇;涓嶅彲鎭㈠ / 瓒呬笂闄?鈫?鍋溿€?
         while True:
             try:
-                planner.continue_orchestrator_agent(story_key)
-                return  # 成功
+                drive_story_sync(story_key)
+                return  # 鎴愬姛
             except Exception as exc:
                 log.error(
                     f"run_story attempt failed for {story_key}:\n{traceback.format_exc()}"
                 )
-                # 异常回写(0d-D):不标 failed 则崩溃 story 永远卡 active。
+                # 寮傚父鍥炲啓(0d-D):涓嶆爣 failed 鍒欏穿婧?story 姘歌繙鍗?active銆?
                 try:
                     sm_mark_failed(story_key, str(exc))
                 except Exception:
                     log.exception("failed to mark story %s as failed", story_key)
-                # 层3 recovery:决策救法 + 落 recovery_action 事件(审计 + 层5 反思数据源)
+                # 灞? recovery:鍐崇瓥鏁戞硶 + 钀?recovery_action 浜嬩欢(瀹¤ + 灞? 鍙嶆€濇暟鎹簮)
                 from .recovery import decide_recovery, rescue_story
 
                 story_rec = db.get_story(story_key) or {}
@@ -232,13 +236,13 @@ def run_story(story_key: str, epoch: int = 0, claim_token: str = ""):
                         "priority": story_rec.get("priority") or "P2",
                         "workspace": story_rec.get("workspace") or "",
                     },
-                    adapter="claude",  # 兜底;rescue_story 会按 ctx action 的 adapter 换
+                    adapter="claude",  # 鍏滃簳;rescue_story 浼氭寜 ctx action 鐨?adapter 鎹?
                     attempt_count=attempt_count,
                 )
                 db.log_event(story_key, stage_rec, "recovery_action", recovery)
                 if recovery.get("action") != "retry_new_adapter":
-                    break  # 不可恢复(escalate/skip/downgrade)→ 停
-                # rescue:换失败 stage 的 adapter + bump 计数
+                    break  # 涓嶅彲鎭㈠(escalate/skip/downgrade)鈫?鍋?
+                # rescue:鎹㈠け璐?stage 鐨?adapter + bump 璁℃暟
                 rescue = rescue_story(
                     story_key=story_key,
                     recovery_decision=recovery,
@@ -247,7 +251,7 @@ def run_story(story_key: str, epoch: int = 0, claim_token: str = ""):
                     max_attempts=_MAX_RECOVERY,
                 )
                 if not rescue.get("scheduled"):
-                    break  # 超 _agent_actions 不匹配 / 超上限 → 停(story 已 failed)
+                    break  # 瓒?_agent_actions 涓嶅尮閰?/ 瓒呬笂闄?鈫?鍋?story 宸?failed)
                 try:
                     sm_activate(story_key, ctx_updates=prior_ctx)
                 except Exception:
@@ -260,8 +264,8 @@ def run_story(story_key: str, epoch: int = 0, claim_token: str = ""):
                     rescue["attempt"],
                     _MAX_RECOVERY,
                 )
-                # loop → 重新调 planner(读更新后的 ctx,用新 adapter)
-        # 终态失败:写 graph_error.log
+                # loop 鈫?閲嶆柊 drive(璇绘洿鏂板悗鐨?ctx,鐢ㄦ柊 adapter)
+        # 缁堟€佸け璐?鍐?graph_error.log
         err_file = STORY_HOME / "graph_error.log"
         try:
             err_file.write_text(
@@ -284,10 +288,12 @@ def run_story(story_key: str, epoch: int = 0, claim_token: str = ""):
 
 
 def start_story_async(story_key: str):
-    """Submit a story for execution in the thread pool.
+    """Notify the global orchestrator that this story should start (璁捐 13).
 
-    If the story has _agent_actions in context, it runs through
-    continue_orchestrator_agent. Otherwise it auto-generates a plan first.
+    璁捐13 鍓?driver CAS 璁ら + 绾跨▼姹?submit run_story銆?
+    璁捐13 鍚?缂栨帓绾跨▼(serve 閲屽父椹?姣忚疆鎵?active story,鍙戠幇鍗虫帴绠?鈥斺€?杩欓噷
+    鍙渶纭繚 story 鏄?active(CAS 璁ら淇濈暀,闃?CLI 涓?serve 鍙岄┍鍔?缂栨帓绾跨▼
+    鐨?tick 鏈韩涓嶈棰?鍙湁鍚屾 drive 璺緞鐢?銆?
     """
     story = db.get_story(story_key)
     if story and story.get("intake_state") == "candidate":
@@ -296,13 +302,20 @@ def start_story_async(story_key: str):
         )
         return
 
-    # Cross-process driver mutual exclusion (optimistic CAS, real-run 2026-07-06).
-    # The in-process _running_stories dict below can't see OTHER processes — each
-    # python process has its own — so two drivers (e.g. tmp_drive_minimal + a
-    # serve worker) both passed the old guard and double-drove the same story
-    # (event_log events appeared ×2, interleaved per stage). Claim atomically in
-    # the SHARED DB: only one caller's UPDATE (driver_claim NULL -> token)
-    # succeeds; the loser returns here. See db.claim_story_driver.
+    # 缂栨帓绾跨▼鍦?serve 閲屽父椹?CLI(鏃?serve)璧板悓姝ラ┍鍔ㄣ€?
+    try:
+        from ..scheduler import is_orchestrator_running
+
+        if is_orchestrator_running():
+            # serve 鍦烘櫙:鍙繚璇?active,缂栨帓绾跨▼涓嬩竴杞彂鐜板苟鎺ョ銆?
+            if story and story.get("status") != "active":
+                sm_activate(story_key)
+            return
+    except Exception:
+        pass
+
+    # CLI/鏃?serve:淇濈暀鏃х殑鍚屾椹卞姩(CAS 璁ら + 绾跨▼姹?submit)銆?
+    # Cross-process driver mutual exclusion (optimistic CAS, real-run 2026-07-06)銆?
     import os as _os
     import time as _time
 
@@ -337,230 +350,13 @@ def resume_story_async(story_key: str):
     start_story_async(story_key)
 
 
-def find_ready_interactive_stories() -> list[str]:
-    """Return active interactive stories whose done file is ready."""
-    from ...infra.paths import stage_done_file
-
-    ready = []
-    for story in db.list_active_stories():
-        if story.get("status") != "active":
-            continue
-        try:
-            context = json.loads(story.get("context_json") or "{}")
-        except (json.JSONDecodeError, TypeError):
-            continue
-        marker = context.get("_active_execution")
-        if not isinstance(marker, dict):
-            continue
-        if marker.get("mode") != "interactive_pty":
-            continue
-        stage = story.get("current_stage", "")
-        if marker.get("stage") != stage:
-            continue
-        if is_story_running(story["story_key"]):
-            continue
-        if stage_done_file(
-            story.get("workspace", ""),
-            story["story_key"],
-            stage,
-        ).exists():
-            ready.append(story["story_key"])
-    return ready
-
-
-def consume_orphan_artifacts(story_key: str) -> bool:
-    """Detect and claim stage artifacts that landed while no driver was watching.
-
-    STEP 1.4(替 consume_orphan_done):完成信号从 done.json 自报换成成果物落地
-    (DESIGN-artifact-driven-stage-completion 附录 A)。Scenario this fixes: user
-    emergency-stops the driver (or it crashes), but the code agent keeps running
-    and finishes the stage — landing the required ``stage.artifacts`` files.
-    Without a driver polling, those artifacts sit there orphaned and the story
-    stays stuck in paused/planning forever.
-
-    Called from GET /api/story/{key} (every detail-page load) as a passive
-    reconciliation: if the current stage's ``artifacts`` are all landed but not
-    yet claimed into ``_completed_stages``, claim it + write the completed
-    event + advance the story state. No-op if the driver is actively running
-    (driver's own poll loop owns that case) or nothing's orphaned.
-
-    Returns True if any stage was claimed (caller may want to refetch).
-    """
-    # Don't compete with a live driver — its poll loop handles artifact polling.
-    if is_story_running(story_key):
-        return False
-    # Also defer if driver_claim is held by a live PID (cross-process driver
-    # active in another serve instance).
-    story = db.get_story(story_key)
-    if not story:
-        return False
-    existing_claim = story.get("driver_claim")
-    if existing_claim and db._driver_pid_alive(existing_claim):
-        return False
-
-    try:
-        ctx = json.loads(story.get("context_json") or "{}")
-    except (json.JSONDecodeError, TypeError):
-        return False
-    workspace = story.get("workspace", "")
-    if not workspace:
-        return False
-
-    # Don't touch already-finished stories. 4 态合并后终态 = completed/failed。
-    from ...sourcing.execution_status import is_terminal
-
-    if is_terminal(story.get("status")):
-        return False
-
-    # 解析 profile 拿每个 stage 的 artifacts(完成信号)。
-    from .profile_loader import resolve_profile
-
-    try:
-        rp = resolve_profile(story.get("profile") or "minimal")
-    except Exception:
-        log.exception(
-            "[%s] resolve_profile failed in orphan consume; aborting", story_key
-        )
-        return False
-
-    actions = ctx.get("_agent_actions") or []
-    completed_stages = list(ctx.get("_completed_stages") or [])
-    changed = False
-
-    from ...infra.json_helpers import robust_json_parse
-    from ...infra.paths import stage_done_file_rel
-    from .artifact_check import build_evidence_candidates as _build_ev_cands
-    from .artifact_check import check_artifacts_landed
-
-    story_title = story.get("title", "") or ""
-    for action in actions:
-        if action.get("action") != "launch":
-            continue
-        stage = action.get("stage")
-        if not stage or stage in completed_stages:
-            continue
-        stage_artifacts = list(rp.stage(stage).artifacts or [])
-        _ev: dict | None = None
-        if not stage_artifacts:
-            # 无 artifacts 声明(老 profile / 测试 profile)→ 退回 done.json 兼容视图存在性。
-            done_rel = action.get("done_file") or stage_done_file_rel(story_key, stage)
-            ready = (Path(workspace) / done_rel).exists()
-        else:
-            _ev = _build_ev_cands(stage_artifacts, workspace, story_key, story_title)
-            missing, _ = check_artifacts_landed(
-                stage_artifacts, workspace, evidence_candidates=_ev
-            )
-            ready = not missing
-        if not ready:
-            continue
-        # Orphan artifacts found — claim it.
-        # 读 done.json 兼容视图(story-tool declare 双写)作 payload;没有则合成。
-        done_rel = action.get("done_file") or stage_done_file_rel(story_key, stage)
-        done_path = Path(workspace) / done_rel
-        try:
-            done_data = robust_json_parse(done_path) or {} if done_path.exists() else {}
-        except Exception:
-            done_data = {}
-        if not done_data:
-            # 合成 done_data:用 resolve_artifact_paths 拿落地绝对路径(含 evidence 兜底)。
-            # 此前 check_artifacts_landed 漏传 evidence_candidates → files_changed 为空
-            # (与 planner.py 同源 bug,real-run tapd-1144381896001066735)。
-            from .artifact_check import resolve_artifact_paths as _resolve_arts
-
-            _resolved = (
-                _resolve_arts(stage_artifacts, workspace, evidence_candidates=_ev)
-                if stage_artifacts
-                else {}
-            )
-            done_data = {
-                "stage": stage,
-                "status": "done",
-                "summary": f"{stage} 成果物落地(orphan 认领)",
-                "files_changed": list(_resolved.values()),
-            }
-        completed_stages.append(stage)
-        db.log_event(story_key, stage, "completed", done_data)
-        # Register stage outputs (story_document + story_doc versioning), same
-        # as the driver's poll loop does. Best-effort.
-        try:
-            planner._register_stage_outputs(story_key, stage, done_data)
-        except Exception:
-            log.exception(
-                "[%s] register_stage_outputs failed during orphan consume for %s",
-                story_key,
-                stage,
-            )
-        log.info(
-            "[%s] consumed orphan artifacts for stage=%s (driver was not running)",
-            story_key,
-            stage,
-        )
-        changed = True
-
-    if not changed:
-        return False
-
-    ctx["_completed_stages"] = completed_stages
-    # If every launch stage is now done, the story is complete. Mirror what
-    # the driver's poll loop does at end-of-actions.
-    launch_stages = [
-        a.get("stage")
-        for a in actions
-        if a.get("action") == "launch" and a.get("stage")
-    ]
-    all_done = launch_stages and all(s in completed_stages for s in launch_stages)
-    if all_done:
-        sm_mark_completed(story_key, ctx_updates=ctx)
-        log.info("[%s] all stages done via orphan consume → completed", story_key)
-    else:
-        db.update_story(
-            story_key,
-            context_json=json.dumps(ctx, ensure_ascii=False),
-        )
-    return True
-
-
-# 向后兼容别名:AGENTS.md「Driver lifecycle」段曾用 consume_orphan_done 名字。
-# 信号源从 done 换成 artifacts(设计附录 A),但调用点(GET /api/story/{key})不变。
-consume_orphan_done = consume_orphan_artifacts
-
-
-def order_ready_stories(story_keys: list[str]) -> list[str]:
-    """层5 scheduler:把 ready story 按 decide_schedule(优先级+就绪+FIFO)排序。
-
-    替 ``resume_ready_interactive_stories`` 原本的 FIFO 提交序。查不到行的 key(已删)丢弃。
-    """
-    from .scheduler import decide_schedule
-
-    stories: list[dict] = []
-    for k in story_keys:
-        row = db.get_story(k)
-        if not row:
-            continue
-        row["ready"] = True  # 都已就绪(done file 在)
-        stories.append(row)
-    return decide_schedule(stories=stories)
-
-
-def resume_ready_interactive_stories() -> list[str]:
-    """Submit interactive stories that have produced a done file.
-
-    层5 scheduler:按优先级排序提交(替 FIFO)。
-    """
-    ready = find_ready_interactive_stories()
-    ordered = order_ready_stories(ready)
-    for story_key in ordered:
-        resume_story_async(story_key)
-    return ordered
-
-
 def recover_orphan_stories():
     """Recover stories left 'active' after a server restart.
 
     We do NOT auto-resume execution: relaunching the AI CLI on every restart was
     surprising and heavy (it silently re-spawned codex for each active story).
     Instead, mark such stories 'paused' so they surface in the UI with a manual
-    '继续执行' action. Candidates are already excluded by list_active_stories.
+    '缁х画鎵ц' action. Candidates are already excluded by list_active_stories.
     """
     stories = [
         story

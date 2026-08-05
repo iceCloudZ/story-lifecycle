@@ -20,6 +20,22 @@ from story_lifecycle.orchestrator.engine.planner import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_evidence_root(tmp_path, monkeypatch):
+    """把 evidence 根锁到 workspace/story（不走向上找 .agents 的真实路径）。
+
+    story_evidence_root 会沿父目录找 .agents/AGENTS.md —— 测试 tmp_path 位于
+    C:/Users/zzh58 下,命中真实 .agents → evidence 候选指到用户 story 目录
+    （被真实跑测污染,spec.md 存在 → is_artifacts_ready 误判 True）。
+    """
+    import story_lifecycle.infra.story_paths as sp
+    from pathlib import Path as _P
+
+    monkeypatch.setattr(
+        sp, "story_evidence_root", lambda ws: _P(str(ws or ".")) / "story"
+    )
+
+
 @pytest.fixture
 def story(tmp_path):
     return db.create_story(
@@ -104,16 +120,29 @@ def test_planner_advances_when_artifact_landed(story, tmp_path):
 
 
 def test_planner_does_not_advance_without_artifact(story, tmp_path, monkeypatch):
-    """成果物没落地 → planner 不推进,超时后失败。"""
+    """成果物没落地 → 编排线程不推进,超时后失败。"""
     import time
 
-    _setup_planning(story)
-    monkeypatch.setattr(time, "sleep", lambda s: None)  # 加速轮询
+    from story_lifecycle.orchestrator.scheduler import OrchestratorThread
 
-    with patch("subprocess.Popen", return_value=_mock_headless_proc()), patch(
-        "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
-    ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"):
-        continue_orchestrator_agent(story["story_key"], headless=True)
+    _setup_planning(story)
+    # 设计13:超时是真实时钟(STAGE_TIMEOUT, 默认 45min);测试注入短超时 + 真实 sleep。
+    monkeypatch.setattr(OrchestratorThread, "STAGE_TIMEOUT", 0.5)
+
+    thr = OrchestratorThread(poll_interval=0)
+    try:
+        with patch("subprocess.Popen", return_value=_mock_headless_proc()), patch(
+            "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
+        ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"):
+            for _ in range(30):
+                s = db.get_story(story["story_key"])
+                if s and s.get("status") in ("paused", "completed", "failed"):
+                    break
+                thr._tick()
+                time.sleep(0.1)  # 真实 sleep:让 STAGE_TIMEOUT(真实时钟)能触发
+    finally:
+        thr.stop()
+        thr._executor_pool.shutdown(wait=False)
 
     updated = db.get_story(story["story_key"])
     assert updated["status"] == "failed"
@@ -158,48 +187,61 @@ def test_planner_reads_done_compat_view_when_present(story, tmp_path):
     assert "story-tool declare" in payload.get("summary", "")
 
 
-# ---- consume_orphan_artifacts(GET /api/story/{key} 被动扫成果物) ----
+# ---- 设计13:orphan 成果物由全局编排线程 poll 发现(替代 consume_orphan_artifacts) ----
 
 
-def test_consume_orphan_artifacts_claims_landed_stage(story, tmp_path):
-    """成果物落地但 driver 没在跑 → consume_orphan_artifacts 认领(打开详情页解卡)。"""
+def test_orchestrator_claims_landed_stage_without_pty(story, tmp_path, monkeypatch):
+    """成果物落地但无 PTY(用户手动跑完/driver 曾挂)→ 编排线程 submit judge → 完成。
+
+    设计13 替代 consume_orphan_artifacts(GET /story 副作用):编排线程每轮
+    poll artifacts,无 PTY 也能发现落地成果物并推进。
+    """
+    import time as _time
+
+    from story_lifecycle.orchestrator.scheduler import OrchestratorThread
+
     _setup_planning(story)
-    # 落地成果物,模拟"code agent 干完了但 driver 挂了"
+    # 落地成果物,模拟"code agent 干完了但没有任何 PTY 在跑"
     spec = tmp_path / "story" / "spec.md"
     spec.parent.mkdir(parents=True, exist_ok=True)
     spec.write_text("# 设计\n", encoding="utf-8")
+    # 加速轮询(judge 子线程在真实线程池里,不需要真实 sleep)
+    monkeypatch.setattr(_time, "sleep", lambda s: None)
 
-    # story 不在 running 状态,无 driver_claim → 应被认领
-    claimed = graph.consume_orphan_artifacts(story["story_key"])
-    assert claimed is True
+    thr = OrchestratorThread(poll_interval=0)
+    try:
+        for _ in range(50):
+            s = db.get_story(story["story_key"])
+            if s and s.get("status") in ("paused", "completed", "failed"):
+                break
+            thr._tick()
+    finally:
+        thr.stop()
+        thr._executor_pool.shutdown(wait=False)
+
     updated = db.get_story(story["story_key"])
     assert updated["status"] == "completed"
 
 
-def test_consume_orphan_artifacts_noop_when_artifacts_missing(story, tmp_path):
-    """成果物没落地 → consume_orphan_artifacts 不认领(返回 False)。"""
+def test_orchestrator_does_not_judge_without_artifact(story, tmp_path, monkeypatch):
+    """成果物没落地 → 编排线程不推进(等 spawn 的 CLI 产出)。"""
+    import time as _time
+
+    from story_lifecycle.orchestrator.scheduler import OrchestratorThread
+
     _setup_planning(story)
-    claimed = graph.consume_orphan_artifacts(story["story_key"])
-    assert claimed is False
+    monkeypatch.setattr(_time, "sleep", lambda s: None)
 
+    thr = OrchestratorThread(poll_interval=0)
+    try:
+        thr._tick()
+        thr._tick()
+    finally:
+        thr.stop()
+        thr._executor_pool.shutdown(wait=False)
 
-def test_consume_orphan_done_alias_works(story, tmp_path):
-    """consume_orphan_done 是 consume_orphan_artifacts 的向后兼容别名。"""
-    _setup_planning(story)
-    spec = tmp_path / "story" / "spec.md"
-    spec.parent.mkdir(parents=True, exist_ok=True)
-    spec.write_text("# 设计\n", encoding="utf-8")
-    # 老调用点(api.py)仍调 consume_orphan_done 名字 —— 应工作
-    assert graph.consume_orphan_done(story["story_key"]) is True
-
-
-def test_consume_orphan_artifacts_skipped_when_driver_running(story, tmp_path):
-    """driver 在跑 → consume_orphan_artifacts 不抢(让 driver 的 poll loop 管)。"""
-    _setup_planning(story)
-    spec = tmp_path / "story" / "spec.md"
-    spec.parent.mkdir(parents=True, exist_ok=True)
-    spec.write_text("# 设计\n", encoding="utf-8")
-    # 标 story 为 running(driver 在跑)
-    with patch("story_lifecycle.orchestrator.engine.graph.is_story_running", return_value=True):
-        claimed = graph.consume_orphan_artifacts(story["story_key"])
-    assert claimed is False
+    updated = db.get_story(story["story_key"])
+    assert updated["status"] == "active"
+    assert "design" not in (
+        json.loads(updated.get("context_json", "{}")).get("_completed_stages") or []
+    )

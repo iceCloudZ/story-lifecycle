@@ -12,7 +12,6 @@ still guards same-process re-entry.
 
 import story_lifecycle.orchestrator.engine.graph as graph
 from story_lifecycle.infra.db import models as db
-from story_lifecycle.orchestrator.engine import planner
 
 
 class TestClaimReleaseHelpers:
@@ -93,8 +92,10 @@ class TestRunStoryReleasesClaim:
         db.create_story("K6", "t", str(isolated_story_home))
         db.update_story("K6", intake_state="ready", current_stage="design")
         monkeypatch.setattr(graph, "_running_stories", {})
-        # Don't actually run the orchestrator agent.
-        monkeypatch.setattr(planner, "continue_orchestrator_agent", lambda key: None)
+        # Don't actually drive the orchestrator (design13:run_story → drive_story_sync)。
+        monkeypatch.setattr(
+            "story_lifecycle.orchestrator.scheduler.drive_story_sync", lambda key: None
+        )
 
         token = "test-pid:1"
         db.claim_story_driver("K6", token)
@@ -148,22 +149,19 @@ class TestDeadPidRecovery:
 
 
 class TestConsumeOrphanDone:
-    """Passive done-file reconciliation when no driver was watching.
-
-    Real-run 2026-07-20: CLI finished the stage and wrote .story/done/<key>/
-    <stage>.json while the driver was dead (emergency-stopped). The done file
-    sat orphaned, story stuck in planning forever. Fix: consume_orphan_done
-    scans for done files not yet in _completed_stages and claims them.
-    Triggered from GET /api/story/{key} so just opening the page unsticks it.
+    """设计13:orphan 认领机制(consume_orphan_done)已删 —— 全局编排线程每轮
+    poll artifacts,无 PTY 也能发现落地成果物并推进(替代 GET /story 副作用)。
     """
 
-    def test_consumes_orphan_done_and_marks_completed(
+    def test_orchestrator_claims_orphan_artifacts_and_marks_completed(
         self, isolated_story_home, monkeypatch
     ):
         import json
+        import time as _time
         from pathlib import Path
 
         from story_lifecycle.infra.paths import stage_done_file_rel
+        from story_lifecycle.orchestrator.scheduler import OrchestratorThread
 
         ws = isolated_story_home
         db.create_story("OD1", "t", str(ws))
@@ -181,10 +179,9 @@ class TestConsumeOrphanDone:
             "_completed_stages": [],
         }
         db.update_story(
-            "OD1", status="paused", context_json=json.dumps(ctx), workspace=str(ws)
+            "OD1", lifecycle_state="开发", context_json=json.dumps(ctx), workspace=str(ws)
         )
-        # STEP 1.4:完成信号是成果物落地(minimal verify → story/test-report.md),
-        # 不是 done.json 自报。code agent 落地了成果物 + 写了 done 兼容视图。
+        # 完成信号是成果物落地(minimal verify → story/test-report.md)。
         artifact_path = Path(str(ws)) / "story" / "test-report.md"
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         artifact_path.write_text("# 测试报告\n全过\n", encoding="utf-8")
@@ -195,12 +192,19 @@ class TestConsumeOrphanDone:
             json.dumps({"stage": "verify", "status": "done", "summary": "did it"}),
             encoding="utf-8",
         )
-        # No driver running, no live claim.
-        monkeypatch.setattr(graph, "_running_stories", {})
+        monkeypatch.setattr(_time, "sleep", lambda s: None)
 
-        consumed = graph.consume_orphan_done("OD1")
+        thr = OrchestratorThread(poll_interval=0)
+        try:
+            for _ in range(60):
+                s = db.get_story("OD1")
+                if s and s.get("status") in ("paused", "completed", "failed"):
+                    break
+                thr._tick()
+        finally:
+            thr.stop()
+            thr._executor_pool.shutdown(wait=False)
 
-        assert consumed is True
         s = db.get_story("OD1")
         assert s["status"] == "completed"
         new_ctx = json.loads(s["context_json"])
@@ -209,11 +213,17 @@ class TestConsumeOrphanDone:
         events = db.get_story_events("OD1")
         assert any(e.get("event_type") == "completed" for e in events)
 
-    def test_noop_when_driver_running(self, isolated_story_home, monkeypatch):
+    def test_orchestrator_skips_paused_story(self, isolated_story_home, monkeypatch):
+        """paused 的 story 编排线程不碰(等人介入)。"""
         import json
+        import time as _time
         from pathlib import Path
 
         from story_lifecycle.infra.paths import stage_done_file_rel
+        from story_lifecycle.orchestrator.scheduler import (
+            OrchestratorThread,
+            list_active_for_orchestrator,
+        )
 
         ws = isolated_story_home
         db.create_story("OD2", "t", str(ws))
@@ -228,38 +238,62 @@ class TestConsumeOrphanDone:
             "_completed_stages": [],
         }
         db.update_story("OD2", context_json=json.dumps(ctx), workspace=str(ws))
+        db.update_story("OD2", status="paused")
         done_path = Path(str(ws)) / stage_done_file_rel("OD2", "verify")
         done_path.parent.mkdir(parents=True, exist_ok=True)
         done_path.write_text('{"status":"done"}', encoding="utf-8")
-        # Driver IS running → defer to its poll loop.
-        monkeypatch.setattr(graph, "_running_stories", {"OD2": 1})
+        monkeypatch.setattr(_time, "sleep", lambda s: None)
 
-        assert graph.consume_orphan_done("OD2") is False
+        # paused 不在编排线程的驱动名单里
+        assert "OD2" not in list_active_for_orchestrator()
+        thr = OrchestratorThread(poll_interval=0)
+        try:
+            thr._tick()
+        finally:
+            thr.stop()
+            thr._executor_pool.shutdown(wait=False)
         # Nothing changed.
         assert "verify" not in (
             json.loads(db.get_story("OD2")["context_json"]).get("_completed_stages") or []
         )
 
-    def test_noop_when_already_completed(self, isolated_story_home, monkeypatch):
-        import json
+    def test_orchestrator_skips_completed_story(self, isolated_story_home, monkeypatch):
+        """终态 story 编排线程不碰。"""
+        import time as _time
+
+        from story_lifecycle.orchestrator.scheduler import OrchestratorThread
 
         db.create_story("OD3", "t", str(isolated_story_home))
-        db.update_story("OD3", status="completed")
-        monkeypatch.setattr(graph, "_running_stories", {})
+        db.update_story("OD3", status="completed", lifecycle_state="结项")
+        monkeypatch.setattr(_time, "sleep", lambda s: None)
 
-        assert graph.consume_orphan_done("OD3") is False
+        thr = OrchestratorThread(poll_interval=0)
+        try:
+            thr._tick()
+        finally:
+            thr.stop()
+            thr._executor_pool.shutdown(wait=False)
+        assert db.get_story("OD3")["status"] == "completed"
 
-    def test_noop_when_no_done_file(self, isolated_story_home, monkeypatch):
+    def test_orchestrator_skips_story_without_actions(self, isolated_story_home, monkeypatch):
+        """无 _agent_actions 的 story 编排线程跳过(不 judge 不推进)。"""
         import json
+        import time as _time
+
+        from story_lifecycle.orchestrator.scheduler import OrchestratorThread
 
         db.create_story("OD4", "t", str(isolated_story_home))
         ctx = {
-            "_agent_actions": [
-                {"action": "launch", "stage": "verify", "adapter": "claude"}
-            ],
-            "_completed_stages": [],
+            "_agent_actions": [],
+            "_plan_confirmed": True,
         }
-        db.update_story("OD4", context_json=json.dumps(ctx), status="planning")
-        monkeypatch.setattr(graph, "_running_stories", {})
+        db.update_story("OD4", lifecycle_state="开发", context_json=json.dumps(ctx))
+        monkeypatch.setattr(_time, "sleep", lambda s: None)
 
-        assert graph.consume_orphan_done("OD4") is False
+        thr = OrchestratorThread(poll_interval=0)
+        try:
+            thr._tick()
+        finally:
+            thr.stop()
+            thr._executor_pool.shutdown(wait=False)
+        assert db.get_story("OD4")["status"] == "active"

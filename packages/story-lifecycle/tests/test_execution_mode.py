@@ -64,7 +64,12 @@ def test_auto_confirm_stage_override_takes_precedence():
 def test_done_watcher_selects_only_ready_interactive_story(
     isolated_story_home, tmp_path
 ):
-    from story_lifecycle.orchestrator.engine.graph import find_ready_interactive_stories
+    """设计13:watcher(find_ready_interactive_stories)已删 —— 编排线程每轮扫
+    active story,不需要「done 文件就绪」预筛(它会自己 poll artifacts)。"""
+    from story_lifecycle.orchestrator.scheduler import (
+        OrchestratorThread,
+        list_active_for_orchestrator,
+    )
 
     ready_workspace = tmp_path / "ready"
     ready_workspace.mkdir()
@@ -95,7 +100,10 @@ def test_done_watcher_selects_only_ready_interactive_story(
         ),
     )
 
-    assert find_ready_interactive_stories() == ["READY-1"]
+    # 编排线程只驱动 status=active 的 story(paused 不碰)。
+    active = list_active_for_orchestrator()
+    assert "READY-1" in active
+    assert "PAUSED-1" not in active
 
 
 def test_terminal_spawn_starts_profile_agent_not_shell(

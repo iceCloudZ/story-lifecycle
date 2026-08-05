@@ -172,24 +172,41 @@ Code agents run in an isolated per-story workspace, not the main monorepo:
 
 **LLM decides the slug, backend builds the dir** (no side effects in the model call — replayable). The agent decides *which projects* to bring in (it's closest to the need). See commit `8ddc3501`.
 
-### Driver lifecycle — dead-PID recovery + passive artifact consumption
+### Driver lifecycle — dead-PID recovery + 全局编排线程（设计 13）
 
-Two invariants that must hold, both learned from a stuck-story incident (commit `56583154`):
+设计 13（docs/project-intelligence/13-global-orchestrator-thread.md）之后，三套调度
+机制（driver 线程 / orphan 认领 / done-file watcher）归一为**一个全局编排线程**
+（`orchestrator/scheduler.py` 的 `OrchestratorThread`，serve 启动时起、停时止）。
+旧机制均已删除：`consume_orphan_artifacts` / `consume_orphan_done` /
+`find_ready_interactive_stories` / `resume_ready_interactive_stories` /
+`_watch_interactive_done_files`、driver poll 循环（`continue_orchestrator_agent`
+的 1446 行体）。仍须成立的不变量（两个都来自 stuck-story 事故，commit `56583154`）：
 
-1. **A dead driver must not lock the story forever.** `claim_story_driver` checks `_driver_pid_alive(token)` before failing CAS — if the holding PID is gone, a new driver may seize. Windows uses `OpenProcess(SYNCHRONIZE)` via ctypes (`os.kill(pid, 0)` returns `WinError 87` regardless of liveness — do not use it). POSIX uses `os.kill(pid, 0)`.
-2. **A CLI that self-completes while no driver is watching must still advance state.** `consume_orphan_artifacts(story_key)` scans for stage `artifacts` that have landed (via `check_artifacts_landed`) but aren't yet in `_completed_stages` and claims them. Triggered from `GET /api/story/{key}` — opening the detail page unsticks a story whose CLI finished after an emergency-stop. No-op when a driver is live (its poll loop owns that case) or the story is finished. (`consume_orphan_done` is kept as a backward-compat alias.)
+1. **僵死的 driver 不能永远锁住 story。** `claim_story_driver` 检查
+   `_driver_pid_alive(token)` 再判 CAS —— 持有 PID 已死则新 driver 可抢占。Windows
+   用 `OpenProcess(SYNCHRONIZE)` via ctypes（`os.kill(pid, 0)` 恒返回 `WinError 87`，
+   不可用）；POSIX 用 `os.kill(pid, 0)`。
+2. **CLI 自完成但没人盯时 story 仍要推进。** 编排线程每轮 poll 所有 active story
+   的 stage artifacts（`StageExecutor.is_artifacts_ready`），无 PTY 也能发现落地
+   成果物并 submit judge（替代 GET /story 副作用的 orphan 认领）。半自动模式用户
+   手动 spawn 的 CLI 跑完 → 下一轮 tick 自动接管。No-op 语义：paused（等人介入）
+   / 终态 / 无 `_agent_actions` 的 story 编排线程不碰。
 
-**Hard rule**: the driver assumes "CLI lifecycle ⊆ driver lifecycle". Any path that breaks this (interactive manual run, emergency-stop, crash) must have a reconciliation entry. `consume_orphan_artifacts` is that entry; don't add a second one.
+**Hard rule**：编排线程是唯一调度入口。`continue_orchestrator_agent`（planner.py）
+保留为**同步驱动 shim**（CLI/swebench/测试用，内部驱动同一套
+executors/handlers/judge 机制，不是第二套调度逻辑）；`start_story_async` 在
+serve 场景只标 active（编排线程下一轮发现），CLI 无 serve 时回退同步驱动。
+任何新增「主动推进 story」的路径都必须回到编排线程的 tick，不要另起轮询。
 
 ### Story execution entry — 规划在前，执行在后（`_agent_actions` 必须先有）
 
 执行一个 story 的**正确顺序**是先生成规划、再确认启动，不能直接跳到执行：
 
 1. `POST /api/story/{key}/plan/stream` 或 `/plan/regenerate` → `planner.run_orchestrator_agent` 调 LLM 产出 `_agent_actions`（写进 `context_json`），`_plan_confirmed=False`
-2. `POST /api/story/{key}/plan/confirm` → 设 `_plan_confirmed=True` + `sm_activate(lifecycle_state="开发")` + `start_story_async`
-3. `start_story_async` → `run_story` → `continue_orchestrator_agent` 读 `ctx._agent_actions` 逐个执行
+2. `POST /api/story/{key}/plan/confirm` → 设 `_plan_confirmed=True` + `sm_activate(lifecycle_state="开发")` + `start_story_async`（serve 场景=通知编排线程，下一轮 tick 接管）
+3. 编排线程 tick → `AutomaticStageExecutor.maybe_spawn`（全自动 profile）或用户手动 `/sessions/spawn`（半自动）→ poll artifacts → judge → `DecisionHandler` 三分支推进
 
-`continue_orchestrator_agent`（`planner.py`）开头直接 `actions = ctx.get("_agent_actions", [])`，**空就 `sm_mark_failed(story_key, "No actions to execute")`**——没有任何 auto-generate plan 的兜底。
+`continue_orchestrator_agent`（`planner.py`，同步 shim）开头直接 `actions = ctx.get("_agent_actions", [])`，**空就 `sm_mark_failed(story_key, "No actions to execute")`**——没有任何 auto-generate plan 的兜底。
 
 - `PUT /api/story/{key}/advance` 的 `active` 分支会直接 `start_story_async`（注释说"single-pass 等 profile 创建即 active，但执行从未触发"），**但不检查 `_agent_actions` 是否存在**。所以 `story create` 后若不先走规划端点就直接 advance，必崩 "No actions to execute"。
 - `start_story_async`（`graph.py`）的 docstring 撒谎说 "Otherwise it auto-generates a plan first"——**代码里没有这个逻辑**，是过时描述。

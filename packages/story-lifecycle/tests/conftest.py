@@ -11,6 +11,14 @@ import story_lifecycle.orchestrator.engine.profile_loader as _pl
 @pytest.fixture(autouse=True)
 def _reset_graph_globals():
     """Clear in-process graph state before and after every test."""
+    # 设计13:清 executors 模块级 headless 注册表(跨测试防 stale proc 污染)。
+    try:
+        import story_lifecycle.orchestrator.executors as _exec_mod
+
+        _exec_mod._headless_procs.clear()
+        _exec_mod._headless_attempts.clear()
+    except Exception:
+        pass
     # Release any file locks held by this process
     import glob as glob_mod
 
@@ -33,6 +41,13 @@ def _reset_graph_globals():
         graph._running_stories.clear()
         graph._story_epochs.clear()
     yield
+    try:
+        import story_lifecycle.orchestrator.executors as _exec_mod
+
+        _exec_mod._headless_procs.clear()
+        _exec_mod._headless_attempts.clear()
+    except Exception:
+        pass
     for lock_file in glob_mod.glob(str(graph._workspace_locks_dir / "*.lock")):
         try:
             from filelock import FileLock

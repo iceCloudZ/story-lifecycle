@@ -36,7 +36,6 @@ from ...infra.terminal.sid_capture import arm_sid_capture, now_utc_iso
 from ..engine.graph import (
     start_story_async,
     recover_orphan_stories,
-    resume_ready_interactive_stories,
     force_stop_story,
 )
 from ..engine.profile_loader import resolve_profile
@@ -143,15 +142,15 @@ async def lifespan(app: FastAPI):
         logging.getLogger("story-lifecycle").info(
             f"Recovered {recovered} active stories after restart"
         )
-    watcher = asyncio.create_task(_watch_interactive_done_files())
+    # 设计13:全局编排线程替代 _watch_interactive_done_files（watcher）+
+    # consume_orphan_artifacts（GET /story 副作用）—— 一个线程管所有 story 的 PTY。
+    from ..scheduler import get_orchestrator, stop_orchestrator
+
+    get_orchestrator()
     try:
         yield
     finally:
-        watcher.cancel()
-        try:
-            await watcher
-        except asyncio.CancelledError:
-            pass
+        stop_orchestrator()
         # Clean PTY teardown on shutdown: ask each agent to `/exit` first so
         # claude flushes its transcript (a complete transcript is what makes
         # --resume pick up full history), force-killing any that don't exit in
@@ -162,12 +161,6 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(cleanup_all)
         except Exception:
             pass
-
-
-async def _watch_interactive_done_files():
-    while True:
-        resume_ready_interactive_stories()
-        await asyncio.sleep(1)
 
 
 app = FastAPI(title="Story Lifecycle Manager", version="0.1.0", lifespan=lifespan)
@@ -755,6 +748,14 @@ def _spawn_story_agent_pty(
     except (ValueError, TypeError):
         pass
     spawn_cwd = _ctx_spawn.get("workspace_path") or workspace
+    # 确保 cwd 存在：规划 LLM 可能设了 workspace_path（如 D:/worktrees/<slug>/）但
+    # 目录还没创建（worktree add 是 code agent 的职责，spawn 时可能还没跑）。
+    # claude/opencode 在不存在的 cwd 里启动会立即退出 → session 表空 → 用户看不到终端。
+    try:
+        Path(spawn_cwd).mkdir(parents=True, exist_ok=True)
+        log.info("[%s] spawn cwd ensured: %s (exists=%s)", story_key, spawn_cwd, Path(spawn_cwd).exists())
+    except Exception as exc:
+        log.warning("[%s] mkdir spawn_cwd failed: %s", story_key, exc)
     # session-persistence (claude --session-id / --resume; kimi -S). 真相源 = DB
     # (story_session 表),marker 文件作兼容副本。resume 判据:DB 有 session_id,或 marker 在。
     _adapter_name = getattr(adapter, "name", "") or ""
@@ -851,6 +852,73 @@ def _spawn_story_agent_pty(
             )
         except Exception:
             pass
+    # spawn 后存活检查：PTY 立即死了（cwd 不存在 / resume 死 sid / claude 崩溃）
+    # 时清 marker + DB session，让下次 spawn 起新会话而非反复 resume 死 sid 秒退。
+    # 现象：spawn 返回 resumed=True 但 claude 进程不存在 → 前端「没有 CLI 会话」死循环。
+    import time as _time
+
+    _time.sleep(1.5)  # 给 claude 一点启动时间
+    if not getattr(pty, "alive", True):
+        # claude 确定性 UUID 的特殊处理：NEW spawn 用 --session-id <uuid>，但 claude
+        # 存储里已有这个 UUID（之前 spawn 创建过）→ "already in use" 秒退。
+        # 重试：用 --resume <uuid> 加载已有 transcript（claude session 存在就能 resume）。
+        if not is_resume and _prespecified:
+            log.warning(
+                "[%s] PTY died after NEW spawn (stage=%s adapter=%s sid=%s) "
+                "— retrying with --resume (session may exist in claude storage)",
+                story_key,
+                stage,
+                _adapter_name,
+                _use_sid,
+            )
+            try:
+                pty.kill()
+            except Exception:
+                pass
+            retry_spec = adapter.start_session(
+                model,
+                prompt="继续上次的任务,完成后按完成协议写入 done 文件。",
+                session_id=_use_sid,
+                session_name=session_name,
+                resume=True,
+            )
+            session_id, pty = ensure_agent_pty(
+                story_key,
+                stage,
+                _adapter_name,
+                retry_spec.command,
+                spawn_cwd,
+                retry_spec.pty_prompt,
+                env=build_story_spawn_env(story, stage, _adapter_name),
+                readiness_marker=retry_spec.readiness_marker,
+                startup_delay=2.0,
+            )
+            _time.sleep(1.5)
+            if getattr(pty, "alive", False):
+                log.info(
+                    "[%s] retry --resume succeeded (stage=%s sid=%s)",
+                    story_key, stage, _use_sid,
+                )
+                is_resume = True
+                return session_id, pty, is_resume
+        # resume 重试也死了（或非 prespecified adapter）→ 清理 marker + DB
+        log.warning(
+            "[%s] PTY died immediately after spawn (stage=%s adapter=%s "
+            "is_resume=%s) — clearing marker for fresh spawn next time",
+            story_key,
+            stage,
+            _adapter_name,
+            is_resume,
+        )
+        try:
+            marker.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            db.delete_session(story_key, stage, _adapter_name)
+        except Exception:
+            pass
+        is_resume = False
     return session_id, pty, is_resume
 
 
@@ -1013,20 +1081,9 @@ def _story_headless(s: dict) -> bool:
 
 @app.get("/api/story/{story_key}")
 def get_story(story_key: str):
-    # Passive done-file reconciliation: if the CLI finished a stage while no
-    # driver was watching (emergency-stop / crash / interactive manual run),
-    # consume the orphan done file + advance state before returning. No-op
-    # when the driver is live or nothing's orphaned. Means just opening the
-    # detail page is enough to unstick a story whose CLI self-completed.
-    try:
-        from ..engine.graph import consume_orphan_done
-
-        if consume_orphan_done(story_key):
-            # state changed → refetch so the response reflects the new status
-            db.bump_context_revision(story_key)
-    except Exception:  # noqa: BLE001 — never let reconcile break GET
-        log.exception("[%s] consume_orphan_done failed in GET /story", story_key)
-
+    # 设计13：GET /story 去掉副作用（consume_orphan_artifacts 已被全局编排线程
+    # 的 poll-artifacts 替代 —— 编排线程每轮检查所有 active story 的成果物，
+    # 打开详情页不再需要触发认领）。
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")

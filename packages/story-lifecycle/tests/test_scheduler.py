@@ -7,6 +7,8 @@
 同就绪按优先级(P0 最高),同优先级 FIFO(created_at 早的先)。
 """
 
+import pytest
+
 from story_lifecycle.orchestrator.engine.scheduler import decide_schedule
 
 
@@ -76,24 +78,210 @@ from story_lifecycle.orchestrator.engine import graph
 
 
 def test_order_ready_stories_by_priority():
-    """graph.order_ready_stories 按 decide_schedule 优先级排(替 FIFO)。"""
-    for k, p in (("LO", "P2"), ("HI", "P0"), ("MID", "P1")):
-        db.create_story(k, k, "")
-        db.update_story(k, priority=p)
-    ordered = graph.order_ready_stories(["LO", "HI", "MID"])
+    """graph.order_ready_stories 按 decide_schedule 优先级排(替 FIFO)。
+
+    设计13 后 graph.order_ready_stories 已删(watcher 机制),但 decide_schedule
+    纯函数保留 —— 编排线程用它给多 story 排序。这里直接测 decide_schedule。
+    """
+    from story_lifecycle.orchestrator.engine.scheduler import decide_schedule
+
+    ordered = decide_schedule(
+        stories=[
+            {"story_key": "LO", "priority": "P2", "ready": True, "created_at": "t1"},
+            {"story_key": "HI", "priority": "P0", "ready": True, "created_at": "t2"},
+            {"story_key": "MID", "priority": "P1", "ready": True, "created_at": "t3"},
+        ]
+    )
     assert ordered[0] == "HI"  # P0 最高
     assert ordered[1] == "MID"  # P1
     assert ordered[2] == "LO"  # P2
 
 
 def test_order_ready_stories_empty():
-    assert graph.order_ready_stories([]) == []
+    from story_lifecycle.orchestrator.engine.scheduler import decide_schedule
+
+    assert decide_schedule(stories=[]) == []
 
 
 def test_order_ready_stories_missing_story_row_kept():
-    """某个 key 在 db 里查不到(已删)→ 不崩,其余照排。"""
-    db.create_story("KEEP", "keep", "")
-    db.update_story("KEEP", priority="P0")
-    ordered = graph.order_ready_stories(["GONE", "KEEP"])
-    assert ordered == ["KEEP"]  # GONE 被丢,KEEP 保留
+    """decide_schedule 只排传入的 story,查不到的行由调用方丢弃(不崩)。"""
+    from story_lifecycle.orchestrator.engine.scheduler import decide_schedule
+
+    ordered = decide_schedule(
+        stories=[
+            {"story_key": "KEEP", "priority": "P0", "ready": True, "created_at": "t1"}
+        ]
+    )
+    assert ordered == ["KEEP"]
+
+
+# ---------------------------------------------------------------------------
+# 设计 13 Step 5：OrchestratorThread 调度测试（mock executor + handler，不真起 PTY/LLM）
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+import pytest as _pytest
+
+from story_lifecycle.orchestrator.scheduler import OrchestratorThread
+from story_lifecycle.orchestrator.executors import InteractiveStageExecutor
+
+
+class _FakePty:
+    def __init__(self, alive=True):
+        self.alive = alive
+        self.session_id = "sess-fake"
+
+    def kill(self):
+        self.alive = False
+
+
+@pytest.fixture
+def _orchestrator():
+    """一个不自动跑的编排线程实例（测试手动调 _tick）。"""
+    thr = OrchestratorThread(poll_interval=0.01)
+    yield thr
+    thr.stop()
+    thr._executor_pool.shutdown(wait=False)
+
+
+def _make_active_story(tmp_path, story_key="S-SCHED-1", profile="minimal"):
+    """创建 status=active、_plan_confirmed、有 _agent_actions 的 story。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    db.create_story(story_key, "调度测试", str(ws), profile=profile)
+    ctx = {
+        "_plan_confirmed": True,
+        "_agent_actions": [
+            {"action": "launch", "stage": "design", "adapter": "claude"},
+        ],
+    }
+    db.update_story(
+        story_key,
+        lifecycle_state="待启动",
+        context_json=_json.dumps(ctx, ensure_ascii=False),
+    )
+    return story_key
+
+
+class TestOrchestratorTick:
+    def test_tick_skips_non_ready_story(self, tmp_path, isolated_story_home, _orchestrator):
+        """candidate 状态的 story 不被编排"""
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        db.create_story("S-CAND", "candidate", str(ws))
+        db.update_story("S-CAND", intake_state="candidate")
+        _orchestrator._tick()
+        story = db.get_story("S-CAND")
+        assert story["status"] == "active"  # 未被暂停/推进,也没有事件
+        events = db.get_story_events("S-CAND")
+        assert events == []
+
+    def test_tick_polls_alive_pty_artifacts(self, tmp_path, isolated_story_home, _orchestrator):
+        """PTY 活着 + 没 artifacts → 不 judge"""
+        _make_active_story(tmp_path)
+        # mock get_pty 返回活 PTY,is_artifacts_ready False
+        _orchestrator._tick()
+        assert len(_orchestrator._judging) == 0
+
+    def test_tick_judges_when_artifacts_ready(self, tmp_path, isolated_story_home, _orchestrator, monkeypatch):
+        """PTY 死了 + artifacts ready → submit judge"""
+        key = _make_active_story(tmp_path)
+        # 落地 design 成果物（story/spec.md）
+        import story_lifecycle.infra.story_paths as sp
+        from pathlib import Path as _P
+
+        monkeypatch.setattr(
+            sp, "story_evidence_root", lambda ws: _P(str(ws)) / "story"
+        )
+        story = db.get_story(key)
+        edir = sp.story_evidence_dir(story["workspace"], key, story["title"])
+        edir.mkdir(parents=True, exist_ok=True)
+        (edir / "spec.md").write_text("# spec", encoding="utf-8")
+        # mock 一个死了的 PTY（设计循环语义：PTY 死了 + artifacts ready → judge）
+        dead = _FakePty(alive=False)
+        monkeypatch.setattr(
+            "story_lifecycle.orchestrator.executors.InteractiveStageExecutor.get_pty",
+            lambda self, k, st: dead,
+        )
+        _orchestrator._tick()
+        # judge 被提交（_judging 里有 key 或结果已写）
+        assert f"{key}:design" in _orchestrator._judging or f"{key}:design" in _orchestrator._judge_results
+
+    def test_tick_skips_already_judging(self, tmp_path, isolated_story_home, _orchestrator):
+        """已在 judge → 不重复 submit"""
+        key = _make_active_story(tmp_path)
+        _orchestrator._judging.add(f"{key}:design")
+        _orchestrator._tick()
+        assert f"{key}:design" in _orchestrator._judging  # 仍在（没重复提交后被清）
+
+    def test_tick_does_not_spawn_in_interactive(self, tmp_path, isolated_story_home, _orchestrator):
+        """半自动 + 没 PTY → 不 spawn"""
+        key = _make_active_story(tmp_path)
+        _orchestrator._tick()
+        assert InteractiveStageExecutor().get_pty(key, "design") is None
+
+    def test_tick_spawns_in_automatic(self, tmp_path, isolated_story_home, _orchestrator, monkeypatch):
+        """全自动 + 没 PTY → spawn"""
+        _make_active_story(tmp_path, profile="single-pass")
+        spawned = {}
+        monkeypatch.setattr(
+            "story_lifecycle.orchestrator.executors.AutomaticStageExecutor.spawn",
+            lambda self, k, st, act: spawned.setdefault("n", 0) or spawned.__setitem__("n", spawned["n"] + 1),
+        )
+        _orchestrator._tick()
+        assert spawned.get("n", 0) >= 1
+
+
+class TestOrchestratorCrashRecovery:
+    def test_tick_survives_exception(self, tmp_path, isolated_story_home, _orchestrator, monkeypatch):
+        """executor 抛异常 → 不崩，继续"""
+        _make_active_story(tmp_path)
+        calls = {"n": 0}
+
+        def _boom(*a, **kw):
+            calls["n"] += 1
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(
+            "story_lifecycle.orchestrator.executors.InteractiveStageExecutor.get_pty", _boom
+        )
+        _orchestrator._tick()  # 不抛
+        _orchestrator._tick()  # 下一轮正常
+        assert calls["n"] >= 2
+
+
+class TestJudgeTask:
+    def test_judge_writes_result(self, tmp_path, isolated_story_home, _orchestrator, monkeypatch):
+        """judge_task 写结果到 _judge_results"""
+        key = _make_active_story(tmp_path)
+        monkeypatch.setattr(
+            "story_lifecycle.orchestrator.evaluation.stage_completion.judge_stage_completion",
+            lambda **kw: {
+                "quality": "approve",
+                "lifecycle_target": None,
+                "summary": "ok",
+                "reason": "",
+            },
+        )
+        story = db.get_story(key)
+        _orchestrator._judge_task(key, "design", {"stage": "design"}, _json.loads(story["context_json"]), story)
+        result = _orchestrator._take_judge_result(key, "design")
+        assert result is not None
+        assert result["quality"] == "approve"
+
+    def test_judge_fallback_on_llm_failure(self, tmp_path, isolated_story_home, _orchestrator, monkeypatch):
+        """LLM 挂了 → fallback approve"""
+        key = _make_active_story(tmp_path)
+        monkeypatch.setattr(
+            "story_lifecycle.orchestrator.evaluation.stage_completion.judge_stage_completion",
+            lambda **kw: (_ for _ in ()).throw(RuntimeError("llm down")),
+        )
+        story = db.get_story(key)
+        _orchestrator._judge_task(key, "design", {"stage": "design"}, _json.loads(story["context_json"]), story)
+        result = _orchestrator._take_judge_result(key, "design")
+        assert result is not None
+        assert result["quality"] == "approve"
+
+
 

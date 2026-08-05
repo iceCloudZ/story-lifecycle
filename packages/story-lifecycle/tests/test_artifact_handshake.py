@@ -111,6 +111,10 @@ def test_done_handshake_success(story, tmp_path):
 
 def test_done_handshake_timeout(story, tmp_path, monkeypatch):
     """成果物没落地 within timeout → stage 失败且不无限挂起。"""
+    import time
+
+    from story_lifecycle.orchestrator.scheduler import OrchestratorThread
+
     _setup_planning(story)
 
     mock_proc = MagicMock()
@@ -119,13 +123,22 @@ def test_done_handshake_timeout(story, tmp_path, monkeypatch):
     mock_proc.stdout = MagicMock()
     mock_proc.stderr = MagicMock()
 
-    # Accelerate the poll loop: make time.sleep a no-op.
-    monkeypatch.setattr(time, "sleep", lambda s: None)
-
-    with patch("subprocess.Popen", return_value=mock_proc), patch(
-        "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
-    ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"):
-        continue_orchestrator_agent(story["story_key"], headless=True)
+    # 设计13:超时是真实时钟(STAGE_TIMEOUT, 默认 45min);测试注入短超时 + 真实 sleep。
+    monkeypatch.setattr(OrchestratorThread, "STAGE_TIMEOUT", 0.5)
+    thr = OrchestratorThread(poll_interval=0)
+    try:
+        with patch("subprocess.Popen", return_value=mock_proc), patch(
+            "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
+        ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"):
+            for _ in range(30):
+                s = db.get_story(story["story_key"])
+                if s and s.get("status") in ("paused", "completed", "failed"):
+                    break
+                thr._tick()
+                time.sleep(0.1)
+    finally:
+        thr.stop()
+        thr._executor_pool.shutdown(wait=False)
 
     updated = db.get_story(story["story_key"])
     assert updated["status"] == "failed"
