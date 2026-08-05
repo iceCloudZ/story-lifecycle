@@ -114,6 +114,8 @@ export interface StoryStateGate {
   to?: string
   awaiting_confirm?: boolean
   label?: string
+  /** 设计12 改动1:LLM 裁判的最终推进目标(遇 ui_button 停住时记,确认后续推)。 */
+  final_target?: string
 }
 
 // design 逐问澄清 HITL(runbook 块4):claude 遇关键岔路暂停等人答。
@@ -309,6 +311,7 @@ export interface WorkspaceScenario {
   tags?: string[]
   updated_at?: string
   apis?: string[]
+  test_ref?: string
 }
 
 export interface WorkspaceEntityDetail {
@@ -316,6 +319,14 @@ export interface WorkspaceEntityDetail {
   repos: WorkspaceProject[]
   stories: Story[]
   scenarios: WorkspaceScenario[]
+}
+
+export interface TestSuite {
+  name: string
+  file: string
+  title?: string
+  description?: string
+  scenarios?: string[]
 }
 
 export interface ProfileOption {
@@ -445,6 +456,16 @@ export const workspaceEntityApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     }),
+  getTestEnv: (slug: string) =>
+    fetchJSON<{ test_env: Record<string, unknown> }>(`/api/workspace-entities/${slug}/test-env`),
+  putTestEnv: (slug: string, testEnv: Record<string, unknown>) =>
+    fetchJSON<{ test_env: Record<string, unknown> }>(`/api/workspace-entities/${slug}/test-env`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ test_env: testEnv }),
+    }),
+  getTestSuites: (slug: string) =>
+    fetchJSON<{ suites: TestSuite[] }>(`/api/workspace-entities/${slug}/test-suites`),
 }
 
 // Plan APIs (Agent mode)

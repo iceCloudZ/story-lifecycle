@@ -423,6 +423,8 @@ def api_list_sessions(story_key: str):
                 "model": "",
                 "status": "running" if alive else "exited",
                 "started_at": row.get("created_at", ""),
+                # 设计12 改动3:stage 完成摘要(judge_stage_completion 的 summary)。
+                "completion_summary": row.get("completion_summary") or "",
             }
         )
     return {"sessions": result}
@@ -531,7 +533,7 @@ def api_spawn_session(story_key: str, req: SpawnSessionRequest = None):
         # 未知 adapter:get_adapter 抛 ValueError(消息含 builtin/configured 名单)。
         # 这是客户端错误(用户传了非法 adapter)→ 400,不是 500。原先未捕获直接 500。
         raise HTTPException(status_code=400, detail=str(exc))
-    model = req.model or "sonnet"
+    model = req.model or getattr(adapter, "default_model", "sonnet")
     # 复用检查:该 (story, stage, adapter) 已有存活 agent PTY 时直接返回现有
     # session,不重复 spawn(对齐 _ensure_story_agent_pty;此前每次点击都新起
     # 进程并覆盖注册表条目,旧进程泄漏)。用户点「启动终端」想看的往往就是
@@ -1223,6 +1225,20 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
     # 但执行从未触发:无 _active_execution)。overview 的「开始执行」按钮走这里。
     # 区别于 paused→resume:这是首次启动。已在跑的(有 _active_execution)不重复触发
     # (start_story_async 的 CAS 也会兜底,但这里提前返回避免无谓 claim 抖动)。
+    # failed 也走这里:用户点「恢复执行」重试失败 stage（清 _active_execution + 重激活）。
+    if s["status"] == "failed":
+        import json as _json
+
+        try:
+            _ctx = _json.loads(s.get("context_json") or "{}")
+        except (ValueError, TypeError):
+            _ctx = {}
+        # failed → active 重试:清执行标记 + lastError,重新激活。
+        _ctx.pop("_active_execution", None)
+        sm_activate(story_key, ctx_updates=_ctx)
+        start_story_async(story_key)
+        return {"ok": True, "status": "retried"}
+
     if s["status"] == "active":
         import json as _json
 
@@ -1259,6 +1275,59 @@ def advance_lifecycle_state(story_key: str):
         ctx = {}
 
     cur_state = s.get("lifecycle_state") or "待启动"
+
+    # 设计12 改动1:LLM 裁判(judge_stage_completion)判的 lifecycle_target 中途遇
+    # ui_button 停住(planner 写 _story_state_gate.final_target)。用户在此确认 → 续推:
+    # 刚确认的转换 (gate.from → gate.to) 已批准,先落这一格,再从 to 续推到 final_target。
+    # 不查交付物 gate —— LLM 已看累积产出判过 target 可达(设计 §1.5)。
+    gate = ctx.get("_story_state_gate") or {}
+    final_target = gate.get("final_target") if gate.get("awaiting_confirm") else None
+    if final_target:
+        from ..evaluation.stage_completion import advance_lifecycle_to_target
+
+        try:
+            from ...sourcing.source_loader import resolve_source_profile
+
+            states = resolve_source_profile(s.get("source_type")).story_states or {}
+        except Exception:
+            states = {}
+        _confirmed_from = gate.get("from") or cur_state
+        _resume_from = gate.get("to") or cur_state
+        # 刚确认的闸已处理:清除(advance_lifecycle_to_target 遇下一个 ui_button 会重写)。
+        ctx.pop("_story_state_gate", None)
+        if _resume_from != _confirmed_from and _resume_from != cur_state:
+            # 应用已确认的转换(from → to)
+            ctx["_lifecycle_state"] = _resume_from
+            db.update_story(
+                story_key,
+                lifecycle_state=_resume_from,
+                context_json=_json.dumps(ctx, ensure_ascii=False),
+            )
+            db.log_event(
+                story_key,
+                "",
+                "story_state_transition",
+                {"from": _confirmed_from, "to": _resume_from, "auto": False, "confirmed": True},
+            )
+        result = advance_lifecycle_to_target(
+            story_key=story_key,
+            ctx=ctx,
+            current=_resume_from,
+            target=final_target,
+            story_states=states,
+        )
+        new_state = result["new_state"]
+        if result["paused_for_confirm"]:
+            # 又遇 ui_button(多级跳转的中间确认格)→ 继续 paused
+            return {"ok": True, "lifecycle_state": new_state, "status": "paused"}
+        # 已到 final_target → 看该状态有无 stages:无(终态)则完成,有则继续跑
+        next_def = states.get(new_state) or {}
+        next_stages = list(next_def.get("stages") or [])
+        if not next_stages:
+            sm_mark_completed(story_key)
+            return {"ok": True, "lifecycle_state": new_state, "status": "completed"}
+        start_story_async(story_key)
+        return {"ok": True, "lifecycle_state": new_state, "status": "active"}
 
     # 成果物 gate 检查(取代旧的 _story_state_gate.awaiting_confirm 检查)。
     gate_info = gate_for_current_state(story_key)
@@ -3003,6 +3072,7 @@ def _workspace_scenarios(ws: dict) -> list[dict]:
                 "tags": e.get("tags", []),
                 "updated_at": e.get("updated_at", ""),
                 "apis": e.get("apis", []),
+                "test_ref": e.get("test_ref", ""),
             }
             for e in payload.get("entries", [])
             if e.get("type") == "scenario"
@@ -3104,6 +3174,77 @@ def api_workspace_init(slug: str, req: WorkspaceInitRequest):
         integrations_json=req.integrations_json,
     )
     return {"results": results}
+
+
+# -------- Test environment endpoints(测试 tab) --------
+
+
+@app.get("/api/workspace-entities/{slug}/test-env")
+def api_get_test_env(slug: str):
+    """读 workspace 的测试环境配置(integrations_json.test_env)。"""
+    ws = _resolve_workspace_or_404(slug)
+    integrations = json.loads(ws.get("integrations_json") or "{}")
+    return {"test_env": integrations.get("test_env", {})}
+
+
+class TestEnvRequest(BaseModel):
+    test_env: dict
+
+
+@app.put("/api/workspace-entities/{slug}/test-env")
+def api_put_test_env(slug: str, req: TestEnvRequest):
+    """写/确认测试环境配置 → _scan_status=confirmed。"""
+    from ..workspace.workspace_registry import confirm_test_env
+
+    ws = _resolve_workspace_or_404(slug)
+    result = confirm_test_env(ws["id"], req.test_env)
+    return {"test_env": result}
+
+
+@app.get("/api/workspace-entities/{slug}/test-suites")
+def api_get_test_suites(slug: str):
+    """读 hc-pytest journey 列表(扫 workspace 下 hc-pytest/journeys/*.yaml)。"""
+    from ..workspace.workspace_registry import _infer_workspace_root
+
+    ws = _resolve_workspace_or_404(slug)
+    repos = db.list_projects_by_workspace(ws["id"])
+    ws_root = _infer_workspace_root(repos)
+    if ws_root is None:
+        return {"suites": []}
+
+    journeys_dir = ws_root / "hc-pytest" / "journeys"
+    suites: list[dict] = []
+    if journeys_dir.exists():
+        import yaml
+
+        # knowledge scenario → journey 映射(反查 test_ref)
+        scenario_map: dict[str, str] = {}
+        try:
+            from ..knowledge.context_providers.knowledge_provider import _KNOWLEDGE_ROOT
+            from knowledge import KnowledgeIndex
+
+            idx = KnowledgeIndex(str(_KNOWLEDGE_ROOT))
+            for e in idx.all():
+                if e.type == "scenario" and getattr(e, "test_ref", ""):
+                    scenario_map[e.test_ref] = e.id
+        except Exception:
+            pass
+
+        for yml in sorted(journeys_dir.glob("*.y*ml")):
+            suite: dict = {"name": yml.stem, "file": str(yml)}
+            try:
+                data = yaml.safe_load(yml.read_text(encoding="utf-8")) or {}
+                suite["title"] = data.get("title", yml.stem)
+                suite["description"] = str(data.get("description", ""))[:120]
+                # 反查关联 scenario
+                scenarios = [
+                    sid for ref, sid in scenario_map.items() if ref == yml.stem
+                ]
+                suite["scenarios"] = scenarios
+            except Exception:
+                pass
+            suites.append(suite)
+    return {"suites": suites}
 
 
 # -------- Wiki endpoints(11-workspace-entity-design.md §4/§5, Phase 3) --------
@@ -3889,16 +4030,21 @@ def _load_story_source_snapshot(story_key: str, story: dict):
 def _bind_story_projects_for_start(
     story_key: str, story: dict, project_ids: list[int], branch: str = ""
 ):
-    sps = db.get_story_projects(story_key)
+    # 覆盖语义：用户本次提交的 project_ids 代表完整期望绑定集合。
+    # 先清除旧绑定（story key 复用/intake 重走时避免残留）。
+    # intake 阶段绑定均为 worktree_state="unprepared"，无 worktree 副作用，可直接删。
+    for sp in db.get_story_projects(story_key):
+        try:
+            db.unbind_story_project(story_key, sp["project_id"])
+        except Exception:
+            log.debug("[%s] unbind stale project %s failed", story_key, sp.get("project_id"))
+
     if not project_ids:
         return
 
     all_projects = {p["id"]: p for p in db.list_projects()}
-    existing_pids = {sp["project_id"] for sp in sps}
     bound_repo = None
     for pid in project_ids:
-        if pid in existing_pids:
-            continue
         proj = all_projects.get(pid)
         if not proj:
             continue
@@ -4042,6 +4188,21 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
         db.bump_context_revision(story_key)
 
         db.update_story(story_key, intake_state="ready", status="active")
+
+        # Intake 后触发 LLM 规划（兑现 docstring "triggers LLM planning"）。
+        # BUG FIX: 原本 /start 只改 status=active 却不调规划，而 run_story 无条件调
+        # continue_orchestrator_agent(它要求 ctx["_agent_actions"] 已存在)→ 规划永远
+        # 不跑 → 用户点「开始执行」必命中 "No actions to execute" false-failed。
+        # 这里同步跑规划（用户在 intake 弹窗等「处理中...」，阻塞可接受），
+        # 规划失败不阻断 /start（用户可在详情页 regenerate 重试）。
+        try:
+            planner.run_orchestrator_agent(story_key)
+        except Exception as plan_exc:  # noqa: BLE001 — 规划失败不阻断 intake
+            log.warning(
+                "[%s] intake planning failed (user can regenerate): %s",
+                story_key,
+                plan_exc,
+            )
     except HTTPException:
         raise
     except Exception as exc:

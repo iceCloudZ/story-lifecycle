@@ -41,6 +41,8 @@ interface Session {
   model: string
   status: SessionStatus
   started_at: string
+  /** 设计12 改动3:stage 完成摘要(judge_stage_completion 的 summary)。 */
+  completion_summary?: string
 }
 
 // chip 的稳定 key:kimi 运行期 DB sid 为空,用 attach_id 兜底。
@@ -195,6 +197,9 @@ export default function TerminalTab({
     const stageSessions = sessions.filter((s) => s.stage === sel)
     const hasSession = stageSessions.length > 0
     const canEditAdapter = !!editable && !!onAdapterChange && !hasSession
+    // 设计12 改动3:该 stage 最近的完成摘要(重跑过取最新一条)。
+    const stageSummary =
+      [...stageSessions].reverse().find((s) => s.completion_summary)?.completion_summary || ''
 
     // 该 stage 选中 session:attach 该 stage 的活 PTY(用 attach_id —— kimi 运行期
     // DB sid 未捕获为空,注册表 id 才是 WS 凭据)。
@@ -276,6 +281,24 @@ export default function TerminalTab({
           </div>
 
           {focus && <div className="tt-stage-focus">📋 {focus}</div>}
+
+          {/* 设计12 改动3:stage 完成摘要(judge_stage_completion 的 summary) */}
+          {isDone && stageSummary && (
+            <div className="tt-stage-summary">
+              <svg
+                className="tt-stage-summary-icon"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 8.5 6.5 12 13 4.5" />
+              </svg>
+              <span className="tt-stage-summary-text">{stageSummary}</span>
+            </div>
+          )}
 
           {/* 终端 + 对话历史 */}
           <div className={`tt-main${showHistory ? ' with-history' : ''}`}>

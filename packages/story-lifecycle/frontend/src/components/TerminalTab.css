@@ -275,3 +275,28 @@
   white-space: pre-wrap;
 }
 
+/* 设计12 改动3:stage 完成摘要(judge_stage_completion 的 summary,✅ 本轮完成) */
+.tt-stage-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-1) 0;
+  background: var(--color-success-soft);
+  border-left: 3px solid var(--color-success);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text);
+}
+.tt-stage-summary-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  color: var(--color-success-text);
+}
+.tt-stage-summary-text {
+  white-space: pre-wrap;
+}
+

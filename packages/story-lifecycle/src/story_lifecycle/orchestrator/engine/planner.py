@@ -819,6 +819,60 @@ def _register_stage_outputs(story_key: str, stage: str, done_data: dict) -> None
             )
 
 
+def _auto_commit_worktrees(story_key: str, summary: str) -> None:
+    """build 完成后自动 commit 所有 story_project 的 worktree 改动。
+
+    agent 只写代码不提交(untracked + modified),编排器负责 git add -A &&
+    commit,让分支有 commit 可推送、代码变更 tab diff 完整。
+
+    对每个 story_project 的 worktree_path 跑:
+      git add -A && git commit -m "<message>"
+    无改动(worktree 干净)时跳过。失败不抛(调用方 try/except 兜底)。
+    """
+    import subprocess as _sp
+    from ...infra.db import models as db
+
+    sps = db.get_story_projects(story_key)
+    if not sps:
+        return
+    # commit message 规范:对齐项目约定
+    short_summary = (summary or "build")[:80].replace('"', "'")
+    message = f'feat({story_key}): {short_summary}'
+    for sp in sps:
+        wt = sp.get("worktree_path") or ""
+        if not wt:
+            continue
+        try:
+            # 检查有无改动
+            status = _sp.run(
+                ["git", "-C", wt, "status", "--porcelain"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if not status.stdout.strip():
+                continue  # 无改动跳过
+            # add + commit
+            _sp.run(
+                ["git", "-C", wt, "add", "-A"],
+                capture_output=True, text=True, timeout=30,
+            )
+            result = _sp.run(
+                ["git", "-C", wt, "commit", "-m", message],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                log.info(
+                    "[%s] auto-commit worktree %s: %s",
+                    story_key, wt, message[:60],
+                )
+            else:
+                log.warning(
+                    "[%s] auto-commit failed for %s: %s",
+                    story_key, wt, result.stderr[:200],
+                )
+        except Exception as e:  # noqa: BLE001
+            log.warning("[%s] auto-commit exception for %s: %s", story_key, wt, e)
+
+
 def _now_utc_iso() -> str:
     """UTC ISO 时间戳(秒精度),作文件扫描捕获 sid 的时间窗口下界。
 
@@ -1109,469 +1163,208 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
             prompt_file.write_text(cli_prompt, encoding="utf-8")
 
             # 启动 CLI
-            try:
-                adapter = get_adapter(adapter_name)
-                # 获取 stage model 配置
-                model = ""
-                if stage in profile_stages:
-                    cfg = profile_stages[stage]
-                    model = cfg.model if hasattr(cfg, "model") else ""
-                if headless:
-                    launch_cmd = adapter.headless_launch_cmd(model=model, prompt="")
-                    # headless 路径不走 PTY 注入(走 done-file 轮询);spec 用不上。
-                    _session_spec = None
-                else:
-                    # 交互式:走 adapter.start_session 拿统一的 SessionSpec。
-                    # prompt/resume/session_id 在 spec 里,下游 ensure_agent_pty
-                    # 按 spec.pty_prompt + spec.readiness_marker 注入,不再分支。
-                    #
-                    # prompt 投递策略:不把完整多行 cli_prompt 直接塞进 claude "query"
-                    # —— claude CLI 只接收命令行的首行,多行 prompt 会被截断到
-                    # `## 任务: <stage>` 一行(实测:tapd-1144381896001067642 的 verify
-                    # stage 只剩首行,agent 无从下手)。cli_prompt 已在上方写入
-                    # prompt_file(1049 行),这里只传一条「读该文件并执行」的 seed,
-                    # 与 _spawn_story_agent_pty(api.py)的投递路径对齐:两条 spawn
-                    # 入口落到同一个 prompt_<stage>.md,claude 收到的也都是读文件指令。
-                    # 对 kimi/codex(PTY paste)同样安全:seed 短,完整内容在文件里。
-                    _seed = (
-                        f"请读取 `{prompt_file}` 并严格按其中的说明执行本阶段"
-                        f"({stage})任务,完成后用 `story tool declare` 落地成果物。"
-                    )
-                    # 会话恢复回填:每阶段一个会话,同阶段重试/崩溃 resume 续上(省 token)。
-                    # sid 模型是 adapter 的职责(Phase 0 抽象):prespecified_session_id=True
-                    # 的 adapter(claude)启动即知确定性 sid;否则(kimi/opencode)由 CLI 自分配,
-                    # 退出时捕获回填(make_sid_capturer / capture_sid_post_exit)。查 DB 决定
-                    # NEW vs RESUME。spawner 不再分支 adapter 名 —— 见 AGENTS.md「Session-id model」。
-                    from ...infra.db import models as _sd
-
-                    _prior = _sd.get_session(story_key, stage, adapter_name)
-                    _need_sid_capture = False  # 仅新会话 + 非预指定 sid 才需捕获
-                    _spawn_ts = _now_utc_iso()  # 文件扫描捕获的时间窗口下界
-                    if _prior and _prior.get("session_id"):
-                        # 该阶段已建过会话 → resume(续上 transcript,不重读 prompt_file)。
-                        _resume_seed = (
-                            "继续上次的任务,完成后用 `story tool declare` 落地成果物。"
-                        )
-                        _session_spec = adapter.start_session(
-                            model=model,
-                            prompt=_resume_seed,
-                            session_id=_prior["session_id"],
-                            resume=True,
-                        )
-                        log.info(
-                            "[%s] RESUME session stage=%s adapter=%s sid=%s",
-                            story_key,
-                            stage,
-                            adapter_name,
-                            _prior["session_id"],
-                        )
+            # 设计12 改动2:launch 分支整体包 try/finally,无论怎么退出
+            # (return/break/异常/pause)PTY + headless 进程都释放 —— 消灭孤儿线程
+            # (story_state_gate paused / stage_confirm_gate paused 曾漏释放)。
+            # 变量在 try 外初始化,spawn 失败时 finally 也能安全引用。
+            headless_proc = None
+            _agent_pty = None
+            _adapter_obj = None  # finally 里 sid 捕获用(adapter 实例,可能未建)
+            _need_sid_capture = False  # 仅 interactive 新会话 + 非预指定 sid 才捕获
+            _spawn_ts = _now_utc_iso()  # 文件扫描捕获的时间窗口下界
+            _spawn_cwd = ctx.get("workspace_path") or workspace  # code agent 真实 cwd
+            try:  # 设计12 改动2:launch 分支整体 try/finally —— 无论怎么退出(return/break/异常/pause)PTY + headless 都释放,消灭孤儿线程
+                try:  # spawn(原有 try,失败即 return)
+                    adapter = get_adapter(adapter_name)
+                    _adapter_obj = adapter  # finally 里 make_sid_capturer 用
+                    # 获取 stage model 配置（profile 显式配 > adapter 默认 > 空串）
+                    model = getattr(adapter, "default_model", "")
+                    if stage in profile_stages:
+                        cfg = profile_stages[stage]
+                        model = (cfg.model if hasattr(cfg, "model") else "") or model
+                    if headless:
+                        launch_cmd = adapter.headless_launch_cmd(model=model, prompt="")
+                        # headless 路径不走 PTY 注入(走 done-file 轮询);spec 用不上。
+                        _session_spec = None
                     else:
-                        # 新会话。prespecified sid 的 adapter 给确定性 sid(compute_session_id
-                        # 统一三字段);否则忽略由 CLI 分配,退出时捕获回填。
-                        _new_sid = _sd.compute_session_id(
-                            story_key, stage, adapter_name
+                        # 交互式:走 adapter.start_session 拿统一的 SessionSpec。
+                        # prompt/resume/session_id 在 spec 里,下游 ensure_agent_pty
+                        # 按 spec.pty_prompt + spec.readiness_marker 注入,不再分支。
+                        #
+                        # prompt 投递策略:不把完整多行 cli_prompt 直接塞进 claude "query"
+                        # —— claude CLI 只接收命令行的首行,多行 prompt 会被截断到
+                        # `## 任务: <stage>` 一行(实测:tapd-1144381896001067642 的 verify
+                        # stage 只剩首行,agent 无从下手)。cli_prompt 已在上方写入
+                        # prompt_file(1049 行),这里只传一条「读该文件并执行」的 seed,
+                        # 与 _spawn_story_agent_pty(api.py)的投递路径对齐:两条 spawn
+                        # 入口落到同一个 prompt_<stage>.md,claude 收到的也都是读文件指令。
+                        # 对 kimi/codex(PTY paste)同样安全:seed 短,完整内容在文件里。
+                        _seed = (
+                            f"请读取 `{prompt_file}` 并严格按其中的说明执行本阶段"
+                            f"({stage})任务,完成后用 `story tool declare` 落地成果物。"
                         )
-                        _session_spec = adapter.start_session(
-                            model=model,
-                            prompt=_seed,
-                            session_id=_new_sid,
-                            resume=False,
-                        )
-                        _has_known_sid = adapter.prespecified_session_id
-                        # 占位入库:预指定 sid 的 adapter(claude)sid 已知;否则 None,捕获回填。
-                        _sd.upsert_session(
-                            story_key,
-                            stage,
-                            adapter_name,
-                            session_id=_new_sid if _has_known_sid else None,
-                        )
-                        _need_sid_capture = not _has_known_sid
-                        log.info(
-                            "[%s] NEW session stage=%s adapter=%s sid=%s",
-                            story_key,
-                            stage,
-                            adapter_name,
-                            _new_sid
-                            if _has_known_sid
-                            else f"(待捕获 since {_spawn_ts})",
-                        )
-                    launch_cmd = _session_spec.command
+                        # 会话恢复回填:每阶段一个会话,同阶段重试/崩溃 resume 续上(省 token)。
+                        # sid 模型是 adapter 的职责(Phase 0 抽象):prespecified_session_id=True
+                        # 的 adapter(claude)启动即知确定性 sid;否则(kimi/opencode)由 CLI 自分配,
+                        # 退出时捕获回填(make_sid_capturer / capture_sid_post_exit)。查 DB 决定
+                        # NEW vs RESUME。spawner 不再分支 adapter 名 —— 见 AGENTS.md「Session-id model」。
+                        from ...infra.db import models as _sd
 
-                # grill-me:LLM 决定 + mode 兜底。
-                # 当 action.grill=True 且 task_actions 里有 interactive 动作时,接 MCP clarify。
-                # 替原 stage=="design" 硬编码 —— grill 不再绑 design stage。
-                # 仅 headless 路径走 MCP clarify;交互式路径(interactive_pty)走"终端直接问人"
-                # (BUG #9,见 handoff-design-hitl §11)。
-                # 见 orchestrator/mcp/clarify_server.py + memory story-lifecycle-design-hitl。
-                from .task_actions import TASK_ACTIONS as _TA
-
-                _has_interactive = any(
-                    _TA.get(a, {}).get("mode") == "interactive"
-                    for a in action.get("task_actions", [])
-                )
-                _wants_grill = action.get("grill", False) and _has_interactive
-
-                # consult (DESIGN-consult-tool §5.8) + 成果物驱动(STEP 1.4):spawn env
-                # 注入所有 code agent(claude/kimi/opencode/codex),让它们能跑
-                # `story consult` / `story tool declare` / MCP clarify —— STORY_KEY/
-                # STAGE/WORKSPACE/ADAPTER 定位 story,STORY_TITLE 让 declare 算 evidence
-                # 子目录名时跟 PRD 同源(否则 slug 退化成 "需求")。**不注入**
-                # STORY_CONSULT_DEPTH(caller depth 是未设/0;只有外援 spawn 时注入 1)。
-                # headless / PTY 两条路径注入同一组变量,走统一 builder,避免各写各的漏注入。
-                story_env = build_story_spawn_env(story, stage, adapter_name)
-                if _wants_grill and adapter_name == "claude" and headless:
-                    import sys as _sys
-
-                    try:
-                        from ..mcp.clarify_server import write_mcp_config
-
-                        _mcp_cfg = (
-                            safe_story_path(workspace, ".story", "context", story_key)
-                            / "clarify_mcp.json"
-                        )
-                        write_mcp_config(_mcp_cfg, _sys.executable)
-                        launch_cmd = list(launch_cmd) + ["--mcp-config", str(_mcp_cfg)]
-                        # story_env 已在 headless 分支注入;这里只补 MCP config,
-                        # 不再重复设 STORY_KEY/STAGE(避免双源真相漂移)。
-                        log.info(
-                            "[%s] stage %s grill clarify MCP wired: --mcp-config=%s",
-                            story_key,
-                            stage,
-                            _mcp_cfg,
-                        )
-                    except Exception:
-                        log.exception(
-                            "[%s] stage %s grill clarify MCP wiring failed (clarify unavailable)",
-                            story_key,
-                            stage,
-                        )
-                _ctx_markers = (
-                    "上下文",
-                    "context",
-                    "DDL",
-                    "CREATE TABLE",
-                    "Nacos",
-                    "PRD",
-                    "表结构",
-                    "接口定义",
-                )
-                log.info(
-                    "[%s] >>> EXECUTE stage=%s adapter=%s model=%s cmd=%s workspace=%s",
-                    story_key,
-                    stage,
-                    adapter_name,
-                    model or "-",
-                    launch_cmd,
-                    workspace,
-                )
-                log.info(
-                    "[%s] injecting prompt into PTY: %d chars; contains-context=%s; head=%r",
-                    story_key,
-                    len(cli_prompt),
-                    any(m in cli_prompt for m in _ctx_markers),
-                    cli_prompt[:120],
-                )
-                headless_proc = None
-                _agent_pty = None  # interactive 分支才赋值(见 else);此处初始化让 done 块两类分支都能安全引用
-                _stderr_tail = []  # headless stderr 排空 holder(kimi 叙述/claude 日志 → 防 PIPE 死锁 + retry 诊断)
-                # spawn cwd:ctx.workspace_path(规划 LLM 决定的隔离空间)优先,
-                # 退回主 workspace。code agent 在隔离空间里 worktree add 项目进来。
-                _spawn_cwd = ctx.get("workspace_path") or workspace
-                if headless:
-                    import subprocess as _sp
-
-                    # I2 miner binding：headless 路径不经过 adapter.inject_prompt()，
-                    # 显式补写 anchor，使 miner.link 能按 (cwd+ts) 精确回填
-                    # sessions.story_id。best-effort，绝不阻断 spawn。
-                    try:
-                        adapter.write_anchor(
-                            prompt=cli_prompt,
-                            story_key=story_key,
-                            stage=stage,
-                            cwd=workspace,
-                            workspace=workspace,
-                        )
-                    except Exception:
-                        pass
-                    log.info(
-                        "[%s] HEADLESS spawn stage=%s cmd=%s",
-                        story_key,
-                        stage,
-                        launch_cmd,
-                    )
-                    # 非阻塞启动：done file 才是完成信号。claude -p 写完 done file 后
-                    # 往往继续运行很久不自行退出，blocking subprocess.run 会一路卡到超时；
-                    # 改用 Popen 与 done-file 轮询并发——done file 一出现即 kill claude、
-                    # 推进下一阶段（headless_proc 在下方 poll 循环里被回收）。
-                    try:
-                        headless_proc = _sp.Popen(
-                            launch_cmd,
-                            cwd=_spawn_cwd,
-                            stdin=_sp.PIPE,
-                            stdout=_sp.PIPE,
-                            stderr=_sp.PIPE,
-                            env=story_env,
-                        )
-                        headless_proc.stdin.write(cli_prompt.encode("utf-8"))
-                        headless_proc.stdin.close()
-                    except Exception as exc:
-                        sm_mark_failed(
-                            story_key, f"Stage {stage} headless spawn failed: {exc}"
-                        )
-                        return
-                    # §4.1 层1 supervisor(headless):daemon 线程消费 stdout —— 双重价值:
-                    # (a) drain stdout 防 PIPE 缓冲满致 proc 阻塞(主循环只轮询 done,从不读 stdout);
-                    # (b) 命中提问(claude permission/elicitation、kimi 选择)→ decide_response + 落 supervisor_decision。
-                    # observe-only:headless stdin 已关,不回写答案。
-                    try:
-                        import threading as _th
-                        from .claude_stream import supervise_headless_stdout
-
-                        _sup_llm = get_llm().invoke
-                        _sup_sf = {
-                            "story_key": story_key,
-                            "stage": stage,
-                            "summary": focus,
-                        }
-                        _sup_proc = headless_proc
-                        _sup_stderr = _stderr_tail  # drain 线程排空 stderr 到此 holder
-
-                        def _drain_headless():
-                            try:
-                                supervise_headless_stdout(
-                                    proc=_sup_proc,
-                                    adapter=adapter_name,
-                                    story_facts=_sup_sf,
-                                    llm_invoke=_sup_llm,
-                                    log_event_fn=db.log_event,
-                                    stderr_tail=_sup_stderr,
-                                )
-                            except Exception:
-                                pass
-
-                        _th.Thread(
-                            target=_drain_headless,
-                            daemon=True,
-                            name=f"supervise-h-{story_key}",
-                        ).start()
-                    except Exception:
-                        pass
-                    log.info(
-                        "[%s] HEADLESS pid=%s stage=%s (polling done file, not exit)",
-                        story_key,
-                        headless_proc.pid,
-                        stage,
-                    )
-                else:
-                    # spec 驱动:prompt 和 readiness_marker 都从 adapter.start_session
-                    # 的返回值拿(adapter 自己声明 prompt 怎么传,见 SessionSpec)。
-                    # cwd 用 ctx.workspace_path(规划 LLM 决定的隔离空间),没有则退回主 ws。
-                    _spawn_cwd = ctx.get("workspace_path") or workspace
-                    # I2 miner binding:PTY 路径也不经过 adapter.inject_prompt()(走
-                    # start_session → SessionSpec),显式补写 anchor,使 miner.link 能按
-                    # (cwd+ts) 精确回填 sessions.story_id。cwd=_spawn_cwd(code agent 的真实
-                    # cwd = worktree,link 据此匹配 claude transcript 的项目目录);workspace=
-                    # scenario workspace(miner link 扫 config.WORKSPACES 下的 anchors,
-                    # scenario ws 在 loopback 时被注册),anchor 落 scenario ws 的 .story/runs/。
-                    # 对称 headless 路径 1276 的 anchor 写。best-effort,不阻断 spawn。
-                    try:
-                        adapter.write_anchor(
-                            prompt=(
-                                _session_spec.pty_prompt
-                                if _session_spec
-                                else cli_prompt
-                            ),
-                            story_key=story_key,
-                            stage=stage,
-                            cwd=_spawn_cwd,
-                            workspace=workspace,
-                        )
-                    except Exception:
-                        pass
-                    # STEP 1.7b:启 PTY 两层日志(raw + events.jsonl),供卡住检测 + 飞轮。
-                    # best-effort:日志目录创建失败不阻塞 spawn(logger=None 兜底)。
-                    _pty_logger = None
-                    try:
-                        from ...infra.terminal.pty_logger import PtyLogger
-
-                        _pty_logger = PtyLogger(story_key, stage, _spawn_cwd)
-                        # 回填 story_session.pty_log_ref(执行轨迹)。
-                        try:
-                            db.update_session_trace(
+                        _prior = _sd.get_session(story_key, stage, adapter_name)
+                        _need_sid_capture = False  # 仅新会话 + 非预指定 sid 才需捕获
+                        _spawn_ts = _now_utc_iso()  # 文件扫描捕获的时间窗口下界
+                        if _prior and _prior.get("session_id"):
+                            # 该阶段已建过会话 → resume(续上 transcript,不重读 prompt_file)。
+                            _resume_seed = (
+                                "继续上次的任务,完成后用 `story tool declare` 落地成果物。"
+                            )
+                            _session_spec = adapter.start_session(
+                                model=model,
+                                prompt=_resume_seed,
+                                session_id=_prior["session_id"],
+                                resume=True,
+                            )
+                            log.info(
+                                "[%s] RESUME session stage=%s adapter=%s sid=%s",
                                 story_key,
                                 stage,
                                 adapter_name,
-                                pty_log_ref=_pty_logger.log_ref,
+                                _prior["session_id"],
                             )
-                        except Exception:  # noqa: BLE001
-                            pass
-                    except Exception:  # noqa: BLE001
-                        log.debug("PtyLogger init failed (non-fatal)", exc_info=True)
-                    _pty_session, _agent_pty = ensure_agent_pty(
+                        else:
+                            # 新会话。prespecified sid 的 adapter 给确定性 sid(compute_session_id
+                            # 统一三字段);否则忽略由 CLI 分配,退出时捕获回填。
+                            _new_sid = _sd.compute_session_id(
+                                story_key, stage, adapter_name
+                            )
+                            _session_spec = adapter.start_session(
+                                model=model,
+                                prompt=_seed,
+                                session_id=_new_sid,
+                                resume=False,
+                            )
+                            _has_known_sid = adapter.prespecified_session_id
+                            # 占位入库:预指定 sid 的 adapter(claude)sid 已知;否则 None,捕获回填。
+                            _sd.upsert_session(
+                                story_key,
+                                stage,
+                                adapter_name,
+                                session_id=_new_sid if _has_known_sid else None,
+                            )
+                            _need_sid_capture = not _has_known_sid
+                            log.info(
+                                "[%s] NEW session stage=%s adapter=%s sid=%s",
+                                story_key,
+                                stage,
+                                adapter_name,
+                                _new_sid
+                                if _has_known_sid
+                                else f"(待捕获 since {_spawn_ts})",
+                            )
+                        launch_cmd = _session_spec.command
+
+                    # grill-me:LLM 决定 + mode 兜底。
+                    # 当 action.grill=True 且 task_actions 里有 interactive 动作时,接 MCP clarify。
+                    # 替原 stage=="design" 硬编码 —— grill 不再绑 design stage。
+                    # 仅 headless 路径走 MCP clarify;交互式路径(interactive_pty)走"终端直接问人"
+                    # (BUG #9,见 handoff-design-hitl §11)。
+                    # 见 orchestrator/mcp/clarify_server.py + memory story-lifecycle-design-hitl。
+                    from .task_actions import TASK_ACTIONS as _TA
+
+                    _has_interactive = any(
+                        _TA.get(a, {}).get("mode") == "interactive"
+                        for a in action.get("task_actions", [])
+                    )
+                    _wants_grill = action.get("grill", False) and _has_interactive
+
+                    # consult (DESIGN-consult-tool §5.8) + 成果物驱动(STEP 1.4):spawn env
+                    # 注入所有 code agent(claude/kimi/opencode/codex),让它们能跑
+                    # `story consult` / `story tool declare` / MCP clarify —— STORY_KEY/
+                    # STAGE/WORKSPACE/ADAPTER 定位 story,STORY_TITLE 让 declare 算 evidence
+                    # 子目录名时跟 PRD 同源(否则 slug 退化成 "需求")。**不注入**
+                    # STORY_CONSULT_DEPTH(caller depth 是未设/0;只有外援 spawn 时注入 1)。
+                    # headless / PTY 两条路径注入同一组变量,走统一 builder,避免各写各的漏注入。
+                    story_env = build_story_spawn_env(story, stage, adapter_name)
+                    if _wants_grill and adapter_name == "claude" and headless:
+                        import sys as _sys
+
+                        try:
+                            from ..mcp.clarify_server import write_mcp_config
+
+                            _mcp_cfg = (
+                                safe_story_path(workspace, ".story", "context", story_key)
+                                / "clarify_mcp.json"
+                            )
+                            write_mcp_config(_mcp_cfg, _sys.executable)
+                            launch_cmd = list(launch_cmd) + ["--mcp-config", str(_mcp_cfg)]
+                            # story_env 已在 headless 分支注入;这里只补 MCP config,
+                            # 不再重复设 STORY_KEY/STAGE(避免双源真相漂移)。
+                            log.info(
+                                "[%s] stage %s grill clarify MCP wired: --mcp-config=%s",
+                                story_key,
+                                stage,
+                                _mcp_cfg,
+                            )
+                        except Exception:
+                            log.exception(
+                                "[%s] stage %s grill clarify MCP wiring failed (clarify unavailable)",
+                                story_key,
+                                stage,
+                            )
+                    _ctx_markers = (
+                        "上下文",
+                        "context",
+                        "DDL",
+                        "CREATE TABLE",
+                        "Nacos",
+                        "PRD",
+                        "表结构",
+                        "接口定义",
+                    )
+                    log.info(
+                        "[%s] >>> EXECUTE stage=%s adapter=%s model=%s cmd=%s workspace=%s",
                         story_key,
                         stage,
                         adapter_name,
+                        model or "-",
                         launch_cmd,
-                        _spawn_cwd,
-                        _session_spec.pty_prompt if _session_spec else "",
-                        readiness_marker=(
-                            _session_spec.readiness_marker if _session_spec else None
-                        ),
-                        env=story_env,
-                        logger=_pty_logger,
+                        workspace,
                     )
-                    log.info("[%s] PTY session started for stage=%s", story_key, stage)
-                    # sid 捕获改在 stage 完成的 clean_exit_pty 收尾时做(Phase 0 抽象):
-                    #   输出驱动(kimi)—— adapter.make_sid_capturer 在 clean_exit drain 退出
-                    #     输出时命中 'To resume: kimi -r session_<uuid>' 回填。
-                    #   文件扫描(opencode)—— adapter.capture_sid_post_exit 在 clean_exit 后
-                    #     扫存储文件取最新会话。
-                    # 不在 spawn 后扫启动 banner —— 那个时机脆弱且正则与实际输出不符
-                    # (DESIGN-session-pty-id-model.md §3.5 / 问题 9)。_need_sid_capture 标记
-                    # 传到下面 stage-done 收尾,决定是否捕获。
-                    # prespecified sid 的 adapter(claude)无需捕获,确定性 sid 主动给。
-                    # §4.1 层1 supervisor(interactive PTY):daemon 线程跑 supervise_pty_session。
-                    # run_story 在 ThreadPoolExecutor 线程里(无 asyncio loop)→ 独立 daemon 线程 + new_event_loop。
-                    # pty 死时 supervise_pty_session 退出(轮询 pty.alive)。
-                    try:
-                        import asyncio as _aio
-                        import threading as _th
-
-                        from .awaiting_detector import make_awaiting_fn
-                        from .execution import auto_confirm_from_profile
-                        from .supervisor import supervise_pty_session
-
-                        _sup_llm = get_llm().invoke
-                        _sup_sf = {
-                            "story_key": story_key,
-                            "stage": stage,
-                            "summary": focus,
-                            # supervision 模式:默认 False(人工盯,supervisor 不调 LLM、不写 PTY,
-                            # 仅落 awaiting_confirm 事件 + 桌面通知);仅 profile 显式 auto_confirm=True
-                            # 的全自动场景(benchmark/CI)才走 LLM 决策 + 自动回写。
-                            "auto_confirm": auto_confirm_from_profile(rp, stage),
-                        }
-                        _sup_pty = _agent_pty
-                        _sup_det = make_awaiting_fn(adapter_name)
-
-                        def _supervise_pty():
-                            try:
-                                loop = _aio.new_event_loop()
-                                _aio.set_event_loop(loop)
-                                loop.run_until_complete(
-                                    supervise_pty_session(
-                                        pty=_sup_pty,
-                                        adapter=adapter_name,
-                                        story_facts=_sup_sf,
-                                        is_awaiting_fn=_sup_det,
-                                        llm_invoke=_sup_llm,
-                                        log_event_fn=db.log_event,
-                                    )
-                                )
-                            except Exception:
-                                pass
-
-                        _th.Thread(
-                            target=_supervise_pty,
-                            daemon=True,
-                            name=f"supervise-p-{story_key}",
-                        ).start()
-                    except Exception:
-                        pass
-            except Exception as exc:
-                log.error(
-                    f"[{story_key}] Failed to launch {adapter_name} for {stage}: {exc}"
-                )
-                sm_mark_failed(story_key, f"CLI launch failed for {stage}: {exc}")
-                return
-
-            # 更新执行上下文
-            ctx["_active_execution"] = {
-                "mode": "interactive_pty",
-                "adapter": adapter_name,
-                "stage": stage,
-                "start_time": time.time(),
-            }
-            db.update_story(
-                story_key,
-                context_json=json.dumps(ctx, ensure_ascii=False),
-            )
-
-            # 轮询成果物落地(STEP 1.4:成果物驱动,替 done.json 自报)。
-            # 完成信号 = stage.artifacts 全落地(check_artifacts_landed),不再靠 code agent
-            # 自写 done.json。done.json 兼容视图(story-tool declare 双写)仍可能存在,作为
-            # miner 兼容 + payload 来源,但不是完成判据。
-            done_path = Path(workspace) / done_file_rel
-            # 本 stage 声明的 artifacts(机器可查的完成信号)。profile 是权威;兜底空列表
-            # (理论上 1.1 schema 契约已拦,这里防御 —— 空 artifacts 时不阻塞,直接读 done 兼容视图)。
-            _stage_artifacts = list(rp.stage(stage).artifacts or [])
-            from .artifact_check import (
-                build_evidence_candidates as _build_ev_cands,
-            )
-            from .artifact_check import check_artifacts_landed as _check_artifacts
-
-            # evidence 候选路径(robust 兜底,设计 §7.6):code agent 可能写到 story
-            # evidence 目录(story_evidence_root 向上找 AGENTS.md 脱离 workspace)或用别名
-            # 文件名(design.md vs spec.md)。为每个文件类 artifact 列出候选,check 时兜底命中。
-            _ev_cands = _build_ev_cands(_stage_artifacts, workspace, story_key, title)
-
-            def _artifacts_ready() -> bool:
-                """本 stage 成果物是否全齐(missing 为空)。空 artifacts → 看 done 兼容视图(向后兼容老 story)。"""
-                if _stage_artifacts:
-                    missing, _ = _check_artifacts(
-                        _stage_artifacts, workspace, evidence_candidates=_ev_cands
+                    log.info(
+                        "[%s] injecting prompt into PTY: %d chars; contains-context=%s; head=%r",
+                        story_key,
+                        len(cli_prompt),
+                        any(m in cli_prompt for m in _ctx_markers),
+                        cli_prompt[:120],
                     )
-                    return not missing
-                # 兜底:无 artifacts 声明(老 story / 测试 profile)→ 退回 done.json 兼容视图存在性。
-                return done_path.exists()
+                    _stderr_tail = []  # headless stderr 排空 holder(kimi 叙述/claude 日志 → 防 PIPE 死锁 + retry 诊断)
+                    # spawn cwd 已在 launch 分支开头初始化(ctx.workspace_path 优先)。
+                    if headless:
+                        import subprocess as _sp
 
-            poll_timeout = (
-                45 * 60
-            )  # 45 minutes(realtest:大 codebase 上 kimi design/build 较慢,§0.1 时间不限,留余量)
-            poll_interval = 5  # seconds
-            elapsed = 0
-            headless_attempt = 1  # headless 重试计数（首次=1）
-            # done_data 只在 _artifacts_ready() 块内赋值(成果物落地后)。这里先置 None,
-            # 让 poll 退出后的 verify-gate 能区分"完成落地"(有 done_data)与
-            # "restart/stuck break"(没落地,done_data 仍是 None) — 后者必须跳过 gate,
-            # 否则 2119 行 done_data.get(...) 会 UnboundLocalError(2026-07-27 真实事件:
-            # claude 被判 stuck → restart break → 落到 verify-gate → 崩 → 强制切 adapter)。
-            done_data = None
-            # STEP 1.7c:规则卡住检测状态。_stuck_escalated 防同一卡住状态反复 escalate
-            # (每次 poll 都查会刷屏);卡住解除(有新输出)后重置,允许下次再卡再报。
-            _stuck_escalated = False
-
-            while elapsed < poll_timeout:
-                # headless：claude 若已退出却没产出成果物，提前失败（不等满 30min）
-                if (
-                    headless_proc is not None
-                    and headless_proc.poll() is not None
-                    and not _artifacts_ready()
-                ):
-                    rc = headless_proc.returncode
-                    stderr_tail, stdout_tail = "", b""
-                    try:
-                        # stderr 已由 drain daemon(supervise_headless_stdout)排空到 _stderr_tail;
-                        # 不再 headless_proc.stderr.read()(与 drain 线程争用 / 阻塞)。
-                        stderr_tail = "".join(_stderr_tail)[-500:]
-                        if headless_proc.stdout:
-                            stdout_tail = headless_proc.stdout.read()[-800:]
-                    except Exception:
-                        pass
-                    # claude 非确定：偶发 rc!=0 退出（API 抖动/限流/崩溃）却没产出成果物
-                    # → 重试，扛住瞬时抖动（共享下方 poll_timeout 预算，不另加时）。
-                    if headless_attempt < HEADLESS_MAX_ATTEMPTS:
-                        log.warning(
-                            "[%s] claude exited rc=%d before landing artifacts (attempt %d/%d); "
-                            "re-launching. stderr=%r stdout_tail=%r",
+                        # I2 miner binding：headless 路径不经过 adapter.inject_prompt()，
+                        # 显式补写 anchor，使 miner.link 能按 (cwd+ts) 精确回填
+                        # sessions.story_id。best-effort，绝不阻断 spawn。
+                        try:
+                            adapter.write_anchor(
+                                prompt=cli_prompt,
+                                story_key=story_key,
+                                stage=stage,
+                                cwd=workspace,
+                                workspace=workspace,
+                            )
+                        except Exception:
+                            pass
+                        log.info(
+                            "[%s] HEADLESS spawn stage=%s cmd=%s",
                             story_key,
-                            rc,
-                            headless_attempt,
-                            HEADLESS_MAX_ATTEMPTS,
-                            stderr_tail,
-                            stdout_tail,
+                            stage,
+                            launch_cmd,
                         )
-                        headless_attempt += 1
+                        # 非阻塞启动：done file 才是完成信号。claude -p 写完 done file 后
+                        # 往往继续运行很久不自行退出，blocking subprocess.run 会一路卡到超时；
+                        # 改用 Popen 与 done-file 轮询并发——done file 一出现即 kill claude、
+                        # 推进下一阶段（headless_proc 在下方 poll 循环里被回收）。
                         try:
                             headless_proc = _sp.Popen(
                                 launch_cmd,
@@ -1585,308 +1378,646 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             headless_proc.stdin.close()
                         except Exception as exc:
                             sm_mark_failed(
-                                story_key,
-                                f"Stage {stage}: headless retry spawn failed: {exc}",
+                                story_key, f"Stage {stage} headless spawn failed: {exc}"
                             )
                             return
+                        # §4.1 层1 supervisor(headless):daemon 线程消费 stdout —— 双重价值:
+                        # (a) drain stdout 防 PIPE 缓冲满致 proc 阻塞(主循环只轮询 done,从不读 stdout);
+                        # (b) 命中提问(claude permission/elicitation、kimi 选择)→ decide_response + 落 supervisor_decision。
+                        # observe-only:headless stdin 已关,不回写答案。
+                        try:
+                            import threading as _th
+                            from .claude_stream import supervise_headless_stdout
+
+                            _sup_llm = get_llm().invoke
+                            _sup_sf = {
+                                "story_key": story_key,
+                                "stage": stage,
+                                "summary": focus,
+                            }
+                            _sup_proc = headless_proc
+                            _sup_stderr = _stderr_tail  # drain 线程排空 stderr 到此 holder
+
+                            def _drain_headless():
+                                try:
+                                    supervise_headless_stdout(
+                                        proc=_sup_proc,
+                                        adapter=adapter_name,
+                                        story_facts=_sup_sf,
+                                        llm_invoke=_sup_llm,
+                                        log_event_fn=db.log_event,
+                                        stderr_tail=_sup_stderr,
+                                    )
+                                except Exception:
+                                    pass
+
+                            _th.Thread(
+                                target=_drain_headless,
+                                daemon=True,
+                                name=f"supervise-h-{story_key}",
+                            ).start()
+                        except Exception:
+                            pass
                         log.info(
-                            "[%s] HEADLESS retry pid=%s stage=%s (attempt %d)",
+                            "[%s] HEADLESS pid=%s stage=%s (polling done file, not exit)",
                             story_key,
                             headless_proc.pid,
                             stage,
-                            headless_attempt,
                         )
-                        continue
-                    log.warning(
-                        "[%s] claude exited rc=%d without landing artifacts after %d attempts; "
-                        "giving up. stdout_tail=%r",
-                        story_key,
-                        rc,
-                        HEADLESS_MAX_ATTEMPTS,
-                        stdout_tail,
-                    )
-                    sm_mark_failed(
-                        story_key,
-                        (
-                            f"Stage {stage}: claude exited (rc={rc}) without landing artifacts "
-                            f"after {HEADLESS_MAX_ATTEMPTS} attempts"
-                        ),
-                    )
-                    return
-                # PTY（interactive_pty 路径）：kimi/codex 若已退出却没产出成果物，
-                # 同样提前失败——否则进程死后 poll 循环只能傻等满 45min（且若残留
-                # 输出被误判为 pending clarification，elapsed 会被反复重置，永不超时，
-                # story 僵尸在 active）。对称 headless 的 1230 检查，但不重试（PTY
-                # 重启重，交给 decide_recovery/rescue_story 层统一换 adapter 恢复）。
-                # 容错：进程刚 spawn 时 alive 短暂为 False（启动握手期），给 30s 宽限。
-                # STEP 1.4:完成判据从 done file 换成成果物落地(check_artifacts_landed)。
-                if (
-                    _agent_pty is not None
-                    and elapsed > 30
-                    and not _agent_pty.alive
-                    and not _artifacts_ready()
-                ):
-                    log.warning(
-                        "[%s] PTY %s exited without landing artifacts for stage=%s; "
-                        "marking failed (rescue layer will retry)",
-                        story_key,
-                        adapter_name,
-                        stage,
-                    )
-                    sm_mark_failed(
-                        story_key,
-                        (
-                            f"Stage {stage}: {adapter_name} PTY process exited "
-                            f"without landing required artifacts"
-                        ),
-                    )
-                    return
-                # design 逐问澄清:claude 阻塞在 mcp__lifecycle__clarify 调用上等人答,
-                # 此期间不写 done file。若不感知这一阻塞,45min poll_timeout 会把"等人答"
-                # 误判为超时 fail(BUG #10)。检测到 pending clarification → 重置 elapsed,
-                # 让超时只在 claude 真卡死(非澄清)时触发。澄清是有限轮次(prompt 约束 ≤3 轮),
-                # 不会无限重置。
-                try:
-                    from ..mcp.clarify_server import get_pending_clarification
-
-                    if (
-                        get_pending_clarification(
-                            story_key, get_events_fn=db.get_story_events
-                        )
-                        is not None
-                    ):
-                        if elapsed > 0:
-                            log.info(
-                                "[%s] design blocked on clarification; "
-                                "resetting poll timeout clock (was %ds/%ds)",
-                                story_key,
-                                elapsed,
-                                poll_timeout,
-                            )
-                        elapsed = 0
-                except Exception:
-                    pass  # clarify 检测失败不影响主轮询
-                # STEP 1.7c:规则卡住检测(纯确定性零 LLM,DESIGN §4.3)。
-                # 读 events.jsonl 末尾取 last_output_ts + 反复报错信号;PTY 路径才查
-                # (headless 无 PTY 日志)。卡住 → escalate_human(awaiting_confirm + 通知)。
-                # 红线:不调 LLM。每 stage 同一卡住只 escalate 一次(_stuck_escalated 去重)。
-                if _agent_pty is not None and _pty_logger is not None and elapsed > 30:
-                    try:
-                        from ...infra.terminal.pty_logger import read_events as _read_ev
-                        from .supervisor import detect_stuck, escalate_stuck
-
-                        _evs = _read_ev(_pty_logger.log_dir, limit=50)
-                        _last_ts = None
-                        for _ev in reversed(_evs):
-                            if _ev.get("dir") == "output":
-                                _ts_str = _ev.get("ts", "")
-                                # ISO ts → epoch 秒(粗解析,够排序/超时判)
-                                try:
-                                    from datetime import datetime as _dt
-
-                                    _last_ts = _dt.fromisoformat(
-                                        _ts_str.replace("Z", "+00:00")
-                                    ).timestamp()
-                                except (ValueError, TypeError):
-                                    pass
-                                break
-                        _proc_alive = _agent_pty.alive
-                        _det = detect_stuck(
-                            last_output_ts=_last_ts,
-                            now_ts=time.time(),
-                            process_alive=_proc_alive,
-                            events=_evs,
-                        )
-                        if _det and not _stuck_escalated:
-                            # STEP 2.3:调度点② 卡住 LLM 诊断(摘要先行 + agentic 例外)。
-                            # STEP 1 的 escalate_stuck 升级为:diagnose_stuck_summary →
-                            # (规则触发)diagnose_stuck_agentic → 决策(restart/escalate/wait)。
-                            # 红线:无打字纠偏(restart-with-seed 替代,评审 C)。
-                            try:
-                                from ..evaluation.stuck_diagnose import (
-                                    diagnose_stuck_agentic as _diag_agentic,
-                                )
-                                from ..evaluation.stuck_diagnose import (
-                                    diagnose_stuck_summary as _diag_summary,
-                                )
-                                from ..evaluation.stuck_diagnose import (
-                                    should_upgrade_agentic as _should_upgrade,
-                                )
-
-                                _facts = {"adapter": adapter_name, "stage": stage}
-                                if _should_upgrade(story_key, stage, _det, events=_evs):
-                                    _diag = _diag_agentic(
-                                        story_key=story_key,
-                                        stage=stage,
-                                        detection=_det,
-                                        events_path=str(_pty_logger.events_path),
-                                        story_facts=_facts,
-                                    )
-                                else:
-                                    _diag = _diag_summary(
-                                        story_key=story_key,
-                                        stage=stage,
-                                        detection=_det,
-                                        events=_evs,
-                                        story_facts=_facts,
-                                    )
-                                _action = _diag.get("action", "escalate")
-                            except Exception:  # noqa: BLE001 — 诊断失败兜底 escalate
-                                log.exception(
-                                    "[%s/%s] stuck diagnose failed, fallback escalate",
-                                    story_key,
-                                    stage,
-                                )
-                                _action = "escalate"
-                                _diag = {
-                                    "action": "escalate",
-                                    "seed": "",
-                                    "reason": "诊断失败",
-                                }
-
-                            # 执行决策(Handler 副作用)
-                            if _action == "wait":
-                                # slow 类:延长超时,重置 elapsed 让 code agent 继续。
-                                log.info(
-                                    "[%s/%s] stuck diagnose: wait (slow) — 重置 poll 超时",
-                                    story_key,
-                                    stage,
-                                )
-                                elapsed = 0
-                            elif _action == "restart":
-                                # 杀 + 带 seed 重起(插 retry action,无打字纠偏)。
-                                log.info(
-                                    "[%s/%s] stuck diagnose: restart (seed=%s)",
-                                    story_key,
-                                    stage,
-                                    (_diag.get("seed") or "")[:80],
-                                )
-                                _retry = {
-                                    "action": "launch",
-                                    "stage": stage,
-                                    "adapter": adapter_name,
-                                    "focus": f"卡住诊断 restart:{_diag.get('reason', '')};seed:{_diag.get('seed', '')}",
-                                    "done_file": stage_done_file_rel(story_key, stage),
-                                }
-                                actions.insert(idx + 1, _retry)
-                                ctx["_agent_actions"] = actions
-                                db.update_story(
-                                    story_key,
-                                    context_json=json.dumps(ctx, ensure_ascii=False),
-                                )
-                                if _agent_pty is not None:
-                                    try:
-                                        _agent_pty.kill()
-                                    except Exception:
-                                        pass
-                                _stuck_escalated = True
-                                if _pty_logger is not None:
-                                    _pty_logger.log_event(
-                                        "stuck_restart",
-                                        _diag.get("reason", ""),
-                                        seed=_diag.get("seed", "")[:200],
-                                    )
-                                break  # 出 poll while,外层 while 取 idx+1 retry
-                            else:  # escalate
-                                escalate_stuck(
-                                    story_key=story_key,
-                                    stage=stage,
-                                    adapter=adapter_name,
-                                    detection=_det,
-                                    log_event_fn=db.log_event,
-                                )
-                                _stuck_escalated = True
-                                if _pty_logger is not None:
-                                    _pty_logger.log_event(
-                                        "stuck_detected",
-                                        _det.get("reason", ""),
-                                        rule=_det.get("rule", ""),
-                                    )
-                        elif not _det:
-                            _stuck_escalated = False  # 解除卡住 → 允许下次再卡再报
-                    except Exception:  # noqa: BLE001 — 卡住检测失败不影响主轮询
-                        log.debug("stuck detection failed (non-fatal)", exc_info=True)
-                # 检查成果物落地(STEP 1.4:替 done file 自报)。
-                # 完成信号 = stage.artifacts 全齐;done.json 兼容视图(story-tool declare
-                # 双写,或老 code agent 自写)若存在则作 payload 来源,不是完成判据。
-                if _artifacts_ready():
-                    try:
-                        # done_data 优先读 done.json 兼容视图(story-tool declare 写的,
-                        # 含 spec_path/summary/files_changed 给 miner + story_document 登记);
-                        # 没有兼容视图(code agent 直接写成果物文件没调 declare)→ 合成最小 payload。
-                        if done_path.exists():
-                            # robust_json_parse 接收 Path(容忍 markdown 包裹/半写,失败抛异常
-                            # 由 except 捕获轮询重试 —— 但成果物已齐,重试只是等 done 视图写完整,
-                            # 不影响完成判定)。
-                            done_data = robust_json_parse(done_path) or {}
-                        else:
-                            # 合成 done_data:成果物已齐但无 done 兼容视图(代码 agent 直接
-                            # 写文件未调 story-tool)。files_changed 用 resolve_artifact_paths
-                            # 拿落地绝对路径(含 evidence 兜底),让 _register_stage_outputs 能
-                            # 直接读文件注册 story_doc。此前漏传 evidence_candidates →
-                            # files_changed 为空 → 前端卡片"暂无产物"(real-run
-                            # tapd-1144381896001066735,2026-07-28)。
-                            from .artifact_check import (
-                                resolve_artifact_paths as _resolve_arts,
-                            )
-
-                            _resolved = _resolve_arts(
-                                _stage_artifacts,
-                                workspace,
-                                evidence_candidates=_ev_cands,
-                            )
-                            done_data = {
-                                "stage": stage,
-                                "status": "done",
-                                "summary": f"{stage} 成果物落地(未走 declare)",
-                                "files_changed": list(_resolved.values()),
-                            }
-                        db.log_event(story_key, stage, "completed", done_data)
-                        # BUG #17: 登记 stage 产出文件进 story_document(纯确定性,
-                        # 让前端「文档」卡片可追溯)。失败不阻塞主流程。
+                    else:
+                        # spec 驱动:prompt 和 readiness_marker 都从 adapter.start_session
+                        # 的返回值拿(adapter 自己声明 prompt 怎么传,见 SessionSpec)。
+                        # cwd 用 ctx.workspace_path(规划 LLM 决定的隔离空间),没有则退回主 ws。
+                        # I2 miner binding:PTY 路径也不经过 adapter.inject_prompt()(走
+                        # start_session → SessionSpec),显式补写 anchor,使 miner.link 能按
+                        # (cwd+ts) 精确回填 sessions.story_id。cwd=_spawn_cwd(code agent 的真实
+                        # cwd = worktree,link 据此匹配 claude transcript 的项目目录);workspace=
+                        # scenario workspace(miner link 扫 config.WORKSPACES 下的 anchors,
+                        # scenario ws 在 loopback 时被注册),anchor 落 scenario ws 的 .story/runs/。
+                        # 对称 headless 路径 1276 的 anchor 写。best-effort,不阻断 spawn。
                         try:
-                            _register_stage_outputs(story_key, stage, done_data)
-                        except Exception:
-                            log.exception(
-                                "[%s] register stage outputs failed for %s",
-                                story_key,
-                                stage,
-                            )
-                        log.info(
-                            f"[{story_key}] Stage {stage} completed (artifacts landed): "
-                            f"{done_data.get('summary', '')[:100]}"
-                        )
-                        # STEP 2.2:调度点① 边界纯判定 LLM(成果物全齐后判完成+质量)。
-                        # 非破坏性集成:approve → 走原 confirm-gate(不变);reject → 插 retry
-                        # action 回 code CLI(带 reject reason 作 seed),不标 completed;escalate
-                        # → 走原 paused 等人。judge_boundary 是纯 Decider,无副作用(除 log_decision)。
-                        # 红线:approve 不自动推进(confirm=true 不变量,§4.2)。
-                        try:
-                            from ..evaluation.boundary_judge import judge_boundary
-
-                            _bj = judge_boundary(
+                            adapter.write_anchor(
+                                prompt=(
+                                    _session_spec.pty_prompt
+                                    if _session_spec
+                                    else cli_prompt
+                                ),
                                 story_key=story_key,
                                 stage=stage,
+                                cwd=_spawn_cwd,
                                 workspace=workspace,
-                                ctx=ctx,
-                                artifacts=_stage_artifacts,
-                                adapter=adapter_name,
-                                evidence_candidates=_ev_cands,
                             )
-                            if _bj["decision"] == "reject":
-                                # reject → 回 code CLI 重做(带 reject reason 当 seed)。
-                                # 对称 verify-gate 的 retry 路径(planner.py:2036)。
-                                log.info(
-                                    "[%s] boundary judge reject: %s → 重做 stage=%s",
+                        except Exception:
+                            pass
+                        # STEP 1.7b:启 PTY 两层日志(raw + events.jsonl),供卡住检测 + 飞轮。
+                        # best-effort:日志目录创建失败不阻塞 spawn(logger=None 兜底)。
+                        _pty_logger = None
+                        try:
+                            from ...infra.terminal.pty_logger import PtyLogger
+
+                            _pty_logger = PtyLogger(story_key, stage, _spawn_cwd)
+                            # 回填 story_session.pty_log_ref(执行轨迹)。
+                            try:
+                                db.update_session_trace(
                                     story_key,
-                                    _bj["reason"][:80],
+                                    stage,
+                                    adapter_name,
+                                    pty_log_ref=_pty_logger.log_ref,
+                                )
+                            except Exception:  # noqa: BLE001
+                                pass
+                        except Exception:  # noqa: BLE001
+                            log.debug("PtyLogger init failed (non-fatal)", exc_info=True)
+                        _pty_session, _agent_pty = ensure_agent_pty(
+                            story_key,
+                            stage,
+                            adapter_name,
+                            launch_cmd,
+                            _spawn_cwd,
+                            _session_spec.pty_prompt if _session_spec else "",
+                            readiness_marker=(
+                                _session_spec.readiness_marker if _session_spec else None
+                            ),
+                            env=story_env,
+                            logger=_pty_logger,
+                        )
+                        log.info("[%s] PTY session started for stage=%s", story_key, stage)
+                        # sid 捕获改在 stage 完成的 clean_exit_pty 收尾时做(Phase 0 抽象):
+                        #   输出驱动(kimi)—— adapter.make_sid_capturer 在 clean_exit drain 退出
+                        #     输出时命中 'To resume: kimi -r session_<uuid>' 回填。
+                        #   文件扫描(opencode)—— adapter.capture_sid_post_exit 在 clean_exit 后
+                        #     扫存储文件取最新会话。
+                        # 不在 spawn 后扫启动 banner —— 那个时机脆弱且正则与实际输出不符
+                        # (DESIGN-session-pty-id-model.md §3.5 / 问题 9)。_need_sid_capture 标记
+                        # 传到下面 stage-done 收尾,决定是否捕获。
+                        # prespecified sid 的 adapter(claude)无需捕获,确定性 sid 主动给。
+                        # §4.1 层1 supervisor(interactive PTY):daemon 线程跑 supervise_pty_session。
+                        # run_story 在 ThreadPoolExecutor 线程里(无 asyncio loop)→ 独立 daemon 线程 + new_event_loop。
+                        # pty 死时 supervise_pty_session 退出(轮询 pty.alive)。
+                        try:
+                            import asyncio as _aio
+                            import threading as _th
+
+                            from .awaiting_detector import make_awaiting_fn
+                            from .execution import auto_confirm_from_profile
+                            from .supervisor import supervise_pty_session
+
+                            _sup_llm = get_llm().invoke
+                            _sup_sf = {
+                                "story_key": story_key,
+                                "stage": stage,
+                                "summary": focus,
+                                # supervision 模式:默认 False(人工盯,supervisor 不调 LLM、不写 PTY,
+                                # 仅落 awaiting_confirm 事件 + 桌面通知);仅 profile 显式 auto_confirm=True
+                                # 的全自动场景(benchmark/CI)才走 LLM 决策 + 自动回写。
+                                "auto_confirm": auto_confirm_from_profile(rp, stage),
+                            }
+                            _sup_pty = _agent_pty
+                            _sup_det = make_awaiting_fn(adapter_name)
+
+                            def _supervise_pty():
+                                try:
+                                    loop = _aio.new_event_loop()
+                                    _aio.set_event_loop(loop)
+                                    loop.run_until_complete(
+                                        supervise_pty_session(
+                                            pty=_sup_pty,
+                                            adapter=adapter_name,
+                                            story_facts=_sup_sf,
+                                            is_awaiting_fn=_sup_det,
+                                            llm_invoke=_sup_llm,
+                                            log_event_fn=db.log_event,
+                                        )
+                                    )
+                                except Exception:
+                                    pass
+
+                            _th.Thread(
+                                target=_supervise_pty,
+                                daemon=True,
+                                name=f"supervise-p-{story_key}",
+                            ).start()
+                        except Exception:
+                            pass
+                except Exception as exc:
+                    log.error(
+                        f"[{story_key}] Failed to launch {adapter_name} for {stage}: {exc}"
+                    )
+                    sm_mark_failed(story_key, f"CLI launch failed for {stage}: {exc}")
+                    return
+
+                # 更新执行上下文
+                ctx["_active_execution"] = {
+                    "mode": "interactive_pty",
+                    "adapter": adapter_name,
+                    "stage": stage,
+                    "start_time": time.time(),
+                }
+                db.update_story(
+                    story_key,
+                    context_json=json.dumps(ctx, ensure_ascii=False),
+                )
+
+                # 轮询成果物落地(STEP 1.4:成果物驱动,替 done.json 自报)。
+                # 完成信号 = stage.artifacts 全落地(check_artifacts_landed),不再靠 code agent
+                # 自写 done.json。done.json 兼容视图(story-tool declare 双写)仍可能存在,作为
+                # miner 兼容 + payload 来源,但不是完成判据。
+                done_path = Path(workspace) / done_file_rel
+                # 本 stage 声明的 artifacts(机器可查的完成信号)。profile 是权威;兜底空列表
+                # (理论上 1.1 schema 契约已拦,这里防御 —— 空 artifacts 时不阻塞,直接读 done 兼容视图)。
+                _stage_artifacts = list(rp.stage(stage).artifacts or [])
+                from .artifact_check import (
+                    build_evidence_candidates as _build_ev_cands,
+                )
+                from .artifact_check import check_artifacts_landed as _check_artifacts
+
+                # evidence 候选路径(robust 兜底,设计 §7.6):code agent 可能写到 story
+                # evidence 目录(story_evidence_root 向上找 AGENTS.md 脱离 workspace)或用别名
+                # 文件名(design.md vs spec.md)。为每个文件类 artifact 列出候选,check 时兜底命中。
+                _ev_cands = _build_ev_cands(_stage_artifacts, workspace, story_key, title)
+
+                # monorepo: git artifact 检查需要看绑定项目的 worktree(story workspace
+                # 本身可能不是 git 仓库,如 D:\hc-all)。从 story_project 表拿 worktree_path。
+                _git_worktrees: list[str] = []
+                try:
+                    for sp in db.get_story_projects(story_key):
+                        wt = sp.get("worktree_path") or ""
+                        if wt:
+                            _git_worktrees.append(wt)
+                except Exception:
+                    pass
+
+                def _artifacts_ready() -> bool:
+                    """本 stage 成果物是否全齐(missing 为空)。空 artifacts → 看 done 兼容视图(向后兼容老 story)。"""
+                    if _stage_artifacts:
+                        missing, _ = _check_artifacts(
+                            _stage_artifacts, workspace,
+                            evidence_candidates=_ev_cands,
+                            git_worktrees=_git_worktrees,
+                        )
+                        return not missing
+                    # 兜底:无 artifacts 声明(老 story / 测试 profile)→ 退回 done.json 兼容视图存在性。
+                    return done_path.exists()
+
+                poll_timeout = (
+                    45 * 60
+                )  # 45 minutes(realtest:大 codebase 上 kimi design/build 较慢,§0.1 时间不限,留余量)
+                poll_interval = 5  # seconds
+                elapsed = 0
+                headless_attempt = 1  # headless 重试计数（首次=1）
+                # done_data 只在 _artifacts_ready() 块内赋值(成果物落地后)。这里先置 None,
+                # 让 poll 退出后的 verify-gate 能区分"完成落地"(有 done_data)与
+                # "restart/stuck break"(没落地,done_data 仍是 None) — 后者必须跳过 gate,
+                # 否则 2119 行 done_data.get(...) 会 UnboundLocalError(2026-07-27 真实事件:
+                # claude 被判 stuck → restart break → 落到 verify-gate → 崩 → 强制切 adapter)。
+                done_data = None
+                # STEP 1.7c:规则卡住检测状态。_stuck_escalated 防同一卡住状态反复 escalate
+                # (每次 poll 都查会刷屏);卡住解除(有新输出)后重置,允许下次再卡再报。
+                _stuck_escalated = False
+
+                while elapsed < poll_timeout:
+                    # headless：claude 若已退出却没产出成果物，提前失败（不等满 30min）
+                    if (
+                        headless_proc is not None
+                        and headless_proc.poll() is not None
+                        and not _artifacts_ready()
+                    ):
+                        rc = headless_proc.returncode
+                        stderr_tail, stdout_tail = "", b""
+                        try:
+                            # stderr 已由 drain daemon(supervise_headless_stdout)排空到 _stderr_tail;
+                            # 不再 headless_proc.stderr.read()(与 drain 线程争用 / 阻塞)。
+                            stderr_tail = "".join(_stderr_tail)[-500:]
+                            if headless_proc.stdout:
+                                stdout_tail = headless_proc.stdout.read()[-800:]
+                        except Exception:
+                            pass
+                        # claude 非确定：偶发 rc!=0 退出（API 抖动/限流/崩溃）却没产出成果物
+                        # → 重试，扛住瞬时抖动（共享下方 poll_timeout 预算，不另加时）。
+                        if headless_attempt < HEADLESS_MAX_ATTEMPTS:
+                            log.warning(
+                                "[%s] claude exited rc=%d before landing artifacts (attempt %d/%d); "
+                                "re-launching. stderr=%r stdout_tail=%r",
+                                story_key,
+                                rc,
+                                headless_attempt,
+                                HEADLESS_MAX_ATTEMPTS,
+                                stderr_tail,
+                                stdout_tail,
+                            )
+                            headless_attempt += 1
+                            try:
+                                headless_proc = _sp.Popen(
+                                    launch_cmd,
+                                    cwd=_spawn_cwd,
+                                    stdin=_sp.PIPE,
+                                    stdout=_sp.PIPE,
+                                    stderr=_sp.PIPE,
+                                    env=story_env,
+                                )
+                                headless_proc.stdin.write(cli_prompt.encode("utf-8"))
+                                headless_proc.stdin.close()
+                            except Exception as exc:
+                                sm_mark_failed(
+                                    story_key,
+                                    f"Stage {stage}: headless retry spawn failed: {exc}",
+                                )
+                                return
+                            log.info(
+                                "[%s] HEADLESS retry pid=%s stage=%s (attempt %d)",
+                                story_key,
+                                headless_proc.pid,
+                                stage,
+                                headless_attempt,
+                            )
+                            continue
+                        log.warning(
+                            "[%s] claude exited rc=%d without landing artifacts after %d attempts; "
+                            "giving up. stdout_tail=%r",
+                            story_key,
+                            rc,
+                            HEADLESS_MAX_ATTEMPTS,
+                            stdout_tail,
+                        )
+                        sm_mark_failed(
+                            story_key,
+                            (
+                                f"Stage {stage}: claude exited (rc={rc}) without landing artifacts "
+                                f"after {HEADLESS_MAX_ATTEMPTS} attempts"
+                            ),
+                        )
+                        return
+                    # PTY（interactive_pty 路径）：kimi/codex 若已退出却没产出成果物，
+                    # 同样提前失败——否则进程死后 poll 循环只能傻等满 45min（且若残留
+                    # 输出被误判为 pending clarification，elapsed 会被反复重置，永不超时，
+                    # story 僵尸在 active）。对称 headless 的 1230 检查，但不重试（PTY
+                    # 重启重，交给 decide_recovery/rescue_story 层统一换 adapter 恢复）。
+                    # 容错：进程刚 spawn 时 alive 短暂为 False（启动握手期），给 30s 宽限。
+                    # STEP 1.4:完成判据从 done file 换成成果物落地(check_artifacts_landed)。
+                    if (
+                        _agent_pty is not None
+                        and elapsed > 30
+                        and not _agent_pty.alive
+                        and not _artifacts_ready()
+                    ):
+                        log.warning(
+                            "[%s] PTY %s exited without landing artifacts for stage=%s; "
+                            "marking failed (rescue layer will retry)",
+                            story_key,
+                            adapter_name,
+                            stage,
+                        )
+                        sm_mark_failed(
+                            story_key,
+                            (
+                                f"Stage {stage}: {adapter_name} PTY process exited "
+                                f"without landing required artifacts"
+                            ),
+                        )
+                        return
+                    # design 逐问澄清:claude 阻塞在 mcp__lifecycle__clarify 调用上等人答,
+                    # 此期间不写 done file。若不感知这一阻塞,45min poll_timeout 会把"等人答"
+                    # 误判为超时 fail(BUG #10)。检测到 pending clarification → 重置 elapsed,
+                    # 让超时只在 claude 真卡死(非澄清)时触发。澄清是有限轮次(prompt 约束 ≤3 轮),
+                    # 不会无限重置。
+                    try:
+                        from ..mcp.clarify_server import get_pending_clarification
+
+                        if (
+                            get_pending_clarification(
+                                story_key, get_events_fn=db.get_story_events
+                            )
+                            is not None
+                        ):
+                            if elapsed > 0:
+                                log.info(
+                                    "[%s] design blocked on clarification; "
+                                    "resetting poll timeout clock (was %ds/%ds)",
+                                    story_key,
+                                    elapsed,
+                                    poll_timeout,
+                                )
+                            elapsed = 0
+                    except Exception:
+                        pass  # clarify 检测失败不影响主轮询
+                    # STEP 1.7c:规则卡住检测(纯确定性零 LLM,DESIGN §4.3)。
+                    # 读 events.jsonl 末尾取 last_output_ts + 反复报错信号;PTY 路径才查
+                    # (headless 无 PTY 日志)。卡住 → escalate_human(awaiting_confirm + 通知)。
+                    # 红线:不调 LLM。每 stage 同一卡住只 escalate 一次(_stuck_escalated 去重)。
+                    if _agent_pty is not None and _pty_logger is not None and elapsed > 30:
+                        try:
+                            from ...infra.terminal.pty_logger import read_events as _read_ev
+                            from .supervisor import detect_stuck, escalate_stuck
+
+                            _evs = _read_ev(_pty_logger.log_dir, limit=50)
+                            _last_ts = None
+                            for _ev in reversed(_evs):
+                                if _ev.get("dir") == "output":
+                                    _ts_str = _ev.get("ts", "")
+                                    # ISO ts → epoch 秒(粗解析,够排序/超时判)
+                                    try:
+                                        from datetime import datetime as _dt
+
+                                        _last_ts = _dt.fromisoformat(
+                                            _ts_str.replace("Z", "+00:00")
+                                        ).timestamp()
+                                    except (ValueError, TypeError):
+                                        pass
+                                    break
+                            _proc_alive = _agent_pty.alive
+                            _det = detect_stuck(
+                                last_output_ts=_last_ts,
+                                now_ts=time.time(),
+                                process_alive=_proc_alive,
+                                events=_evs,
+                            )
+                            if _det and not _stuck_escalated:
+                                # STEP 2.3:调度点② 卡住 LLM 诊断(摘要先行 + agentic 例外)。
+                                # STEP 1 的 escalate_stuck 升级为:diagnose_stuck_summary →
+                                # (规则触发)diagnose_stuck_agentic → 决策(restart/escalate/wait)。
+                                # 红线:无打字纠偏(restart-with-seed 替代,评审 C)。
+                                try:
+                                    from ..evaluation.stuck_diagnose import (
+                                        diagnose_stuck_agentic as _diag_agentic,
+                                    )
+                                    from ..evaluation.stuck_diagnose import (
+                                        diagnose_stuck_summary as _diag_summary,
+                                    )
+                                    from ..evaluation.stuck_diagnose import (
+                                        should_upgrade_agentic as _should_upgrade,
+                                    )
+
+                                    _facts = {"adapter": adapter_name, "stage": stage}
+                                    if _should_upgrade(story_key, stage, _det, events=_evs):
+                                        _diag = _diag_agentic(
+                                            story_key=story_key,
+                                            stage=stage,
+                                            detection=_det,
+                                            events_path=str(_pty_logger.events_path),
+                                            story_facts=_facts,
+                                        )
+                                    else:
+                                        _diag = _diag_summary(
+                                            story_key=story_key,
+                                            stage=stage,
+                                            detection=_det,
+                                            events=_evs,
+                                            story_facts=_facts,
+                                        )
+                                    _action = _diag.get("action", "escalate")
+                                except Exception:  # noqa: BLE001 — 诊断失败兜底 escalate
+                                    log.exception(
+                                        "[%s/%s] stuck diagnose failed, fallback escalate",
+                                        story_key,
+                                        stage,
+                                    )
+                                    _action = "escalate"
+                                    _diag = {
+                                        "action": "escalate",
+                                        "seed": "",
+                                        "reason": "诊断失败",
+                                    }
+
+                                # 执行决策(Handler 副作用)
+                                if _action == "wait":
+                                    # slow 类:延长超时,重置 elapsed 让 code agent 继续。
+                                    log.info(
+                                        "[%s/%s] stuck diagnose: wait (slow) — 重置 poll 超时",
+                                        story_key,
+                                        stage,
+                                    )
+                                    elapsed = 0
+                                elif _action == "restart":
+                                    # 杀 + 带 seed 重起(插 retry action,无打字纠偏)。
+                                    log.info(
+                                        "[%s/%s] stuck diagnose: restart (seed=%s)",
+                                        story_key,
+                                        stage,
+                                        (_diag.get("seed") or "")[:80],
+                                    )
+                                    _retry = {
+                                        "action": "launch",
+                                        "stage": stage,
+                                        "adapter": adapter_name,
+                                        "focus": f"卡住诊断 restart:{_diag.get('reason', '')};seed:{_diag.get('seed', '')}",
+                                        "done_file": stage_done_file_rel(story_key, stage),
+                                    }
+                                    actions.insert(idx + 1, _retry)
+                                    ctx["_agent_actions"] = actions
+                                    db.update_story(
+                                        story_key,
+                                        context_json=json.dumps(ctx, ensure_ascii=False),
+                                    )
+                                    if _agent_pty is not None:
+                                        try:
+                                            _agent_pty.kill()
+                                        except Exception:
+                                            pass
+                                    _stuck_escalated = True
+                                    if _pty_logger is not None:
+                                        _pty_logger.log_event(
+                                            "stuck_restart",
+                                            _diag.get("reason", ""),
+                                            seed=_diag.get("seed", "")[:200],
+                                        )
+                                    break  # 出 poll while,外层 while 取 idx+1 retry
+                                else:  # escalate
+                                    escalate_stuck(
+                                        story_key=story_key,
+                                        stage=stage,
+                                        adapter=adapter_name,
+                                        detection=_det,
+                                        log_event_fn=db.log_event,
+                                    )
+                                    _stuck_escalated = True
+                                    if _pty_logger is not None:
+                                        _pty_logger.log_event(
+                                            "stuck_detected",
+                                            _det.get("reason", ""),
+                                            rule=_det.get("rule", ""),
+                                        )
+                            elif not _det:
+                                _stuck_escalated = False  # 解除卡住 → 允许下次再卡再报
+                        except Exception:  # noqa: BLE001 — 卡住检测失败不影响主轮询
+                            log.debug("stuck detection failed (non-fatal)", exc_info=True)
+                    # 检查成果物落地(STEP 1.4:替 done file 自报)。
+                    # 完成信号 = stage.artifacts 全齐;done.json 兼容视图(story-tool declare
+                    # 双写,或老 code agent 自写)若存在则作 payload 来源,不是完成判据。
+                    if _artifacts_ready():
+                        try:
+                            # done_data 优先读 done.json 兼容视图(story-tool declare 写的,
+                            # 含 spec_path/summary/files_changed 给 miner + story_document 登记);
+                            # 没有兼容视图(code agent 直接写成果物文件没调 declare)→ 合成最小 payload。
+                            if done_path.exists():
+                                # robust_json_parse 接收 Path(容忍 markdown 包裹/半写,失败抛异常
+                                # 由 except 捕获轮询重试 —— 但成果物已齐,重试只是等 done 视图写完整,
+                                # 不影响完成判定)。
+                                done_data = robust_json_parse(done_path) or {}
+                            else:
+                                # 合成 done_data:成果物已齐但无 done 兼容视图(代码 agent 直接
+                                # 写文件未调 story-tool)。files_changed 用 resolve_artifact_paths
+                                # 拿落地绝对路径(含 evidence 兜底),让 _register_stage_outputs 能
+                                # 直接读文件注册 story_doc。此前漏传 evidence_candidates →
+                                # files_changed 为空 → 前端卡片"暂无产物"(real-run
+                                # tapd-1144381896001066735,2026-07-28)。
+                                from .artifact_check import (
+                                    resolve_artifact_paths as _resolve_arts,
+                                )
+
+                                _resolved = _resolve_arts(
+                                    _stage_artifacts,
+                                    workspace,
+                                    evidence_candidates=_ev_cands,
+                                )
+                                done_data = {
+                                    "stage": stage,
+                                    "status": "done",
+                                    "summary": f"{stage} 成果物落地(未走 declare)",
+                                    "files_changed": list(_resolved.values()),
+                                }
+                            db.log_event(story_key, stage, "completed", done_data)
+                            # BUG #17: 登记 stage 产出文件进 story_document(纯确定性,
+                            # 让前端「文档」卡片可追溯)。失败不阻塞主流程。
+                            try:
+                                _register_stage_outputs(story_key, stage, done_data)
+                            except Exception:
+                                log.exception(
+                                    "[%s] register stage outputs failed for %s",
+                                    story_key,
+                                    stage,
+                                )
+                            log.info(
+                                f"[{story_key}] Stage {stage} completed (artifacts landed): "
+                                f"{done_data.get('summary', '')[:100]}"
+                            )
+                            # build 阶段完成后自动 commit(agent 只写代码不提交,
+                            # 编排器在 worktree 里 git add -A && commit,让分支可推送/diff 完整)。
+                            # 验证只针对 build stage(verify 不该产生代码改动)。
+                            if stage == "build":
+                                try:
+                                    _auto_commit_worktrees(
+                                        story_key, done_data.get("summary", stage)
+                                    )
+                                except Exception:
+                                    log.exception(
+                                        "[%s] auto-commit worktrees failed (non-fatal)",
+                                        story_key,
+                                    )
+                            # 设计12 改动1:Stage 完成裁判 —— 一次 LLM 三个决定
+                            # (quality / lifecycle_target / summary),替换 boundary_judge +
+                            # _stages_done + gate_satisfied + story_state_gate。
+                            # - quality=reject → 插 retry action 回 code CLI(不标 completed)
+                            # - quality=escalate → paused 等人
+                            # - approve → lifecycle_target 驱动状态推进(遇 ui_button 停住)
+                            # judge 内部自带 LLM 不可用降级;异常兜底 approve 不推进(不崩驱动)。
+                            from ..evaluation.stage_completion import (
+                                advance_lifecycle_to_target,
+                                collect_cumulative_outputs,
+                                judge_stage_completion,
+                            )
+
+                            _stage_cfg = profile_stages.get(stage)
+                            try:
+                                _decision = judge_stage_completion(
+                                    story_key=story_key,
+                                    stage=stage,
+                                    workspace=workspace,
+                                    ctx=ctx,
+                                    lifecycle_state=lifecycle_state,
+                                    done_data=done_data,
+                                    cumulative_outputs=collect_cumulative_outputs(
+                                        workspace, story_key, actions
+                                    ),
+                                    adapter=adapter_name,
+                                    retry_count=ctx.get("_verify_round", 1),
+                                    story_states=story_states,
+                                    artifacts=_stage_artifacts,
+                                    evidence_candidates=_ev_cands,
+                                    max_retries=(
+                                        getattr(_stage_cfg, "max_retries", 2)
+                                        if _stage_cfg
+                                        else 2
+                                    ),
+                                )
+                            except Exception:
+                                log.exception(
+                                    "[%s] stage completion judge failed "
+                                    "(fallback: approve, no advance)",
+                                    story_key,
+                                )
+                                _decision = {
+                                    "quality": "approve",
+                                    "lifecycle_target": None,
+                                    "summary": "",
+                                    "reason": "stage completion judge 异常,fallback approve",
+                                    "findings": [],
+                                    "repair_action": None,
+                                }
+                            # 改动3:存本轮 stage 摘要(给 TerminalTab 展示)。best-effort。
+                            if _decision.get("summary"):
+                                try:
+                                    db.set_session_completion_summary(
+                                        story_key,
+                                        stage,
+                                        adapter_name,
+                                        _decision["summary"],
+                                    )
+                                except Exception:
+                                    pass
+
+                            if _decision["quality"] == "reject":
+                                # reject → 回 code CLI 重做(带 reject reason 当 seed)。
+                                log.info(
+                                    "[%s] stage completion reject: %s → 重做 stage=%s",
+                                    story_key,
+                                    _decision["reason"][:80],
                                     stage,
                                 )
                                 _retry = {
                                     "action": "launch",
                                     "stage": stage,
                                     "adapter": adapter_name,
-                                    "focus": f"上轮 boundary judge reject:{_bj['reason']}",
+                                    "focus": f"上轮 stage 完成裁判 reject:{_decision['reason']}",
                                     "done_file": stage_done_file_rel(story_key, stage),
                                 }
                                 actions.insert(idx + 1, _retry)
@@ -1899,364 +2030,257 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                     story_key,
                                     stage,
                                     "boundary_reject_retry",
-                                    {"reason": _bj["reason"], "next_stage": stage},
+                                    {
+                                        "reason": _decision["reason"],
+                                        "next_stage": stage,
+                                    },
                                 )
                                 # 不 break 进 completed 分支;继续 while 让 idx+1 的 retry 跑。
-                                # 但先清本 stage 进程(同 verify-gate retry 收尾)。
-                                if headless_proc is not None:
-                                    _kill_headless(headless_proc)
-                                if _agent_pty is not None:
-                                    try:
-                                        from ...infra.terminal.pty import clean_exit_pty
-
-                                        clean_exit_pty(_agent_pty)
-                                        _agent_pty.kill()
-                                        from ...infra.terminal.pty import kill_pty
-
-                                        kill_pty(story_key, _agent_pty.session_id)
-                                    except Exception:
-                                        pass
+                                # 进程回收统一在 launch 分支 finally(设计12 改动2)。
                                 break  # 出 poll while,外层 while 取 idx+1 retry action
-                        except Exception:
-                            log.exception(
-                                "[%s] boundary judge failed (non-fatal, 继续 confirm 路径)",
+
+                            if _decision["quality"] == "escalate":
+                                # escalate → paused 等人(质量问题超限/没救了,转人)。
+                                sm_pause(story_key, ctx_updates=ctx)
+                                db.log_event(
+                                    story_key,
+                                    stage,
+                                    "stage_completion_escalated",
+                                    {"reason": _decision["reason"]},
+                                )
+                                log.info(
+                                    "[%s] stage completion escalate: %s → paused",
+                                    story_key,
+                                    _decision["reason"][:120],
+                                )
+                                return
+
+                            # quality == approve → 记进度 + lifecycle 推进。
+                            # 保留 done file(兼容视图)作为阶段完成证据：real-E2E asserters 与
+                            # 审计都需要事后读取 {stage}.json。每个 stage 的 done 路径唯一，
+                            # 重跑由 reset_workspace 清理 done/ 目录，无需在此 unlink。
+                            # 记进度(PLAN-stage-confirm-gate):追加当前 stage 到 _completed_stages
+                            # 并持久化,resume 时 start_idx 跳过本 stage(不重 spawn PTY)。
+                            if stage not in completed_stages:
+                                completed_stages.append(stage)
+                            ctx["_completed_stages"] = completed_stages
+                            db.update_story(
                                 story_key,
+                                context_json=json.dumps(ctx, ensure_ascii=False),
                             )
-                        # 保留 done file(兼容视图)作为阶段完成证据：real-E2E asserters 与
-                        # 审计都需要事后读取 {stage}.json。每个 stage 的 done 路径唯一，
-                        # 重跑由 reset_workspace 清理 done/ 目录，无需在此 unlink。
-                        # 记进度(PLAN-stage-confirm-gate):追加当前 stage 到 _completed_stages
-                        # 并持久化,resume 时 start_idx 跳过本 stage(不重 spawn PTY)。
-                        if stage not in completed_stages:
-                            completed_stages.append(stage)
-                        ctx["_completed_stages"] = completed_stages
+                            # 会话恢复回填:标记本阶段会话完成(语义:任务结束;不影响同 stage
+                            # resume 续上历史,只是跨 stage 不共享)。best-effort,失败忽略。
+                            try:
+                                db.complete_session(story_key, stage, adapter_name)
+                            except Exception:
+                                pass
+                            # 设计12 改动1:lifecycle 推进由 LLM 判的 lifecycle_target 驱动
+                            # (「最远能到哪」,替换 _stages_done + gate_satisfied 硬编码)。
+                            # 逐个状态推进,遇 ui_button 停住等人确认(记 final_target,
+                            # 确认后 /lifecycle/advance 续推)。无 story_states 时 LLM 不会
+                            # 给 target,这里 no-op 退化扁平(向后兼容)。
+                            _state_handled = False
+                            if (
+                                _decision["lifecycle_target"]
+                                and _decision["lifecycle_target"] != lifecycle_state
+                            ):
+                                _advanced = advance_lifecycle_to_target(
+                                    story_key=story_key,
+                                    ctx=ctx,
+                                    current=lifecycle_state,
+                                    target=_decision["lifecycle_target"],
+                                    story_states=story_states,
+                                )
+                                if _advanced["paused_for_confirm"]:
+                                    # 已 sm_pause;用户确认后 /lifecycle/advance 续推
+                                    return
+                                if _advanced["new_state"] != lifecycle_state:
+                                    _state_handled = True
+                                lifecycle_state = _advanced["new_state"]
+                            # 阶段间闸(PLAN-stage-confirm-gate):仅当 Story 状态闸未处理时执行。
+                            # stage_cfg.confirm=True 且后面还有未完成 launch action → paused。
+                            # verify 是最后阶段无下一 stage,走自己的 gate,不受此影响。
+                            if not _state_handled:
+                                stage_cfg = profile_stages.get(stage)
+                                confirm_on = bool(
+                                    stage_cfg
+                                    and getattr(stage_cfg, "confirm", False)
+                                    and stage != "verify"
+                                )
+                                if confirm_on:
+                                    _next_stage = None
+                                    for _j in range(idx + 1, len(actions)):
+                                        _na = actions[_j]
+                                        if _na.get("action") == "launch":
+                                            _ns = _na.get("stage", f"stage_{_j}")
+                                            if _ns not in completed_stages:
+                                                _next_stage = _ns
+                                                break
+                                    if _next_stage is not None:
+                                        ctx["_stage_gate"] = {
+                                            "completed_stage": stage,
+                                            "next_stage": _next_stage,
+                                            "awaiting_confirm": True,
+                                        }
+                                        sm_pause(story_key, ctx_updates=ctx)
+                                        db.log_event(
+                                            story_key,
+                                            stage,
+                                            "stage_gate_reached",
+                                            {
+                                                "completed_stage": stage,
+                                                "next_stage": _next_stage,
+                                            },
+                                        )
+                                        log.info(
+                                            "[%s] stage gate: %s done → paused awaiting confirm to advance to %s",
+                                            story_key,
+                                            stage,
+                                            _next_stage,
+                                        )
+                                        return  # 释放 driver claim;点「推进」→ /advance 重进
+                            break
+                        except Exception as exc:
+                            log.error(f"[{story_key}] Error parsing done file: {exc}")
+
+                    time.sleep(poll_interval)
+                    elapsed += poll_interval
+                else:
+                    # 超时:headless/PTY 由 launch 分支 finally 回收(设计12 改动2)。
+                    log.warning(
+                        f"[{story_key}] Stage {stage} timed out after {poll_timeout}s"
+                    )
+                    sm_mark_failed(story_key, f"Stage {stage} timed out")
+                    return
+
+                # Verify-stage quality gate: HIGH findings block and trigger repair round.
+                # 只在成果物真正落地(done_data 非 None)时跑。restart/stuck break 路径
+                # done_data 仍是 None(见上方初始化注释)→ 跳过 gate,由 idx+=1 取 retry action 重跑。
+                if stage == "verify" and done_data is not None:
+                    stage_cfg = profile_stages.get(stage)
+                    max_retries = (
+                        stage_cfg.max_retries if hasattr(stage_cfg, "max_retries") else 2
+                    )
+                    ctx["last_verify_summary"] = done_data.get("summary", "")
+                    ctx["last_done_data"] = done_data  # §4.2:喂给 unified gate 作 context
+                    # REFACTOR §5.3:统一 gate(一次 LLM:质量判断 + finding + decision + repair)
+                    from ..evaluation.unified_gate import run_unified_verify_gate
+
+                    gate_result = run_unified_verify_gate(
+                        story_key=story_key,
+                        stage=stage,
+                        workspace=workspace,
+                        context=ctx,
+                        quality_cfg=quality_cfg,
+                        max_retries=max_retries,
+                        done_data=done_data,
+                        adapter_name=adapter_name,
+                        retry_count=ctx.get("_verify_round", 1),
+                    )
+                    if gate_result["decision"] == "retry":
+                        # unified_gate 的 repair_action 已包含 kind/reason/new_adapter/rescue_stage
+                        repair_spec = gate_result.get("repair_action") or {}
+                        repair_action = _repair_spec_to_action(
+                            repair_spec=repair_spec,
+                            story_key=story_key,
+                            adapter_name=adapter_name,
+                            round_n=gate_result.get("round", 1),
+                            reason=gate_result.get("reason", ""),
+                        )
+                        if repair_action is None:
+                            # escalate/skip → 不插 action,标失败
+                            sm_mark_failed(story_key, str(gate_spec_reason(repair_spec)))
+                            return
+                        actions.insert(idx + 1, repair_action)
+                        ctx["_agent_actions"] = actions
                         db.update_story(
                             story_key,
                             context_json=json.dumps(ctx, ensure_ascii=False),
                         )
-                        # 会话恢复回填:标记本阶段会话完成(语义:任务结束;不影响同 stage
-                        # resume 续上历史,只是跨 stage 不共享)。best-effort,失败忽略。
-                        try:
-                            db.complete_session(story_key, stage, adapter_name)
-                        except Exception:
-                            pass
-                        # 回收 stage 进程(done 已确认,transcript 已写完整):
-                        # headless 走 _kill_headless;interactive PTY 对齐 headless —— 先
-                        # clean_exit_pty(/exit 握手 flush transcript,最长 _CLEAN_EXIT_TIMEOUT)
-                        # 再 .kill() 兜底。需要时用 claude --resume <per-stage uuid5> 回查。
-                        if headless_proc is not None:
-                            _kill_headless(headless_proc)
-                        if _agent_pty is not None:
-                            try:
+                        log.info(
+                            "[%s] Verify gate blocked (round %d/%d); repair=%s adapter=%s",
+                            story_key,
+                            gate_result.get("round", 1),
+                            gate_result.get("retry_limit", max_retries),
+                            (repair_spec or {}).get("kind", "?"),
+                            repair_action.get("adapter", "-"),
+                        )
+                    elif gate_result["decision"] == "fail":
+                        sm_mark_failed(
+                            story_key, gate_result.get("reason", "verify gate fail")
+                        )
+                        return
+
+            except Exception:
+                # 设计12 改动2:未知异常 → 标记 failed + 上抛(graph.py 层3 recovery 处理)。
+                # finally 已释放 PTY/headless,recovery 换 adapter 重跑不会被孤儿进程卡住。
+                log.exception("[%s] stage %s unexpected error", story_key, stage)
+                sm_mark_failed(story_key, f"Stage {stage}: unexpected error")
+                raise
+            finally:
+                # 设计12 改动2:PTY/headless 释放的唯一收口(sid 捕获也集中到这里)。
+                # 幂等:重复 kill / 已死 PTY 都安全。
+                if headless_proc is not None:
+                    try:
+                        _kill_headless(headless_proc)
+                    except Exception:
+                        pass
+                if _agent_pty is not None:
+                    try:
+                        if _agent_pty.alive:
+                            # 先 clean-exit 握手(flush transcript,顺带 sid 捕获),
+                            # 失败/超时再 force-kill。
+                            if _need_sid_capture and _adapter_obj is not None:
                                 from ...infra.terminal.pty import clean_exit_pty
 
-                                # sid 捕获(Phase 0 抽象):非预指定 sid 的新会话才捕获。
-                                #   输出驱动(kimi):adapter.make_sid_capturer 返回 on_output
-                                #     回调,在 clean_exit_pty drain 退出输出时命中 sid 行。
-                                #   文件扫描(opencode):adapter.capture_sid_post_exit 在
-                                #     clean_exit 后扫存储文件取最新会话。两者各管各的。
-                                # prespecified sid 的 adapter(claude)无需捕获,确定性 sid 已在 DB。
-                                if _need_sid_capture:
-                                    _capturer = adapter.make_sid_capturer(
-                                        story_key,
-                                        stage,
-                                        cwd=_spawn_cwd,
-                                        since_ts=_spawn_ts,
-                                    )
-                                    clean_exit_pty(_agent_pty, on_output=_capturer)
-                                    _captured = adapter.capture_sid_post_exit(
-                                        story_key,
-                                        stage,
-                                        cwd=_spawn_cwd,
-                                        since_ts=_spawn_ts,
-                                    )
-                                    if _captured:
-                                        try:
-                                            from ...infra.db import models as _sd
-
-                                            _sd.set_session_id(
-                                                story_key,
-                                                stage,
-                                                adapter_name,
-                                                _captured,
-                                            )
-                                            log.info(
-                                                "[%s] captured %s session sid=%s stage=%s (file-scan)",
-                                                story_key,
-                                                adapter_name,
-                                                _captured,
-                                                stage,
-                                            )
-                                        except Exception as exc:
-                                            log.warning(
-                                                "[%s] %s session backfill failed (%s); resume disabled for stage=%s",
-                                                story_key,
-                                                adapter_name,
-                                                exc,
-                                                stage,
-                                            )
-                                else:
-                                    clean_exit_pty(_agent_pty)
-                            except Exception:
-                                log.exception(
-                                    "[%s] clean_exit_pty failed for stage %s; force-killing",
+                                _capturer = _adapter_obj.make_sid_capturer(
                                     story_key,
                                     stage,
+                                    cwd=_spawn_cwd,
+                                    since_ts=_spawn_ts,
                                 )
-                            try:
-                                _agent_pty.kill()
-                            except Exception:
-                                pass
-                            # 从 PTY 注册表移除该条目(问题 7):clean_exit_pty + kill
-                            # 杀了进程但条目留在 _ptys(无 reaper 时累积)。lazy reaper
-                            # (list_pty_sessions/get_pty)也会清,但显式移除更及时。
-                            try:
-                                from ...infra.terminal.pty import kill_pty
+                                clean_exit_pty(_agent_pty, on_output=_capturer)
+                                _captured = _adapter_obj.capture_sid_post_exit(
+                                    story_key,
+                                    stage,
+                                    cwd=_spawn_cwd,
+                                    since_ts=_spawn_ts,
+                                )
+                                if _captured:
+                                    from ...infra.db import models as _sd
 
-                                kill_pty(story_key, _agent_pty.session_id)
-                            except Exception:
-                                pass
-                        # STORY-STATE-MODEL + DELIVERABLE-GATE: Story 状态闸由成果物驱动。
-                        # 当前 lifecycle_state 的所有 stages 全 done 后,检查成果物 gate
-                        # 是否满足(gate_satisfied)。满足 → 按 confirm 规则转移;不满足 →
-                        # 不阻塞 driver(让它继续跑或自然结束;用户后续补齐成果物后再推进)。
-                        # 这取代了旧的 ``all(state.stages ⊂ _completed_stages)`` 判据 ——
-                        # 成果物 gate 与 stage 数量无关,修复了 single-pass(1 stage)对不上
-                        # story_state(多 stage)的矛盾,以及 上线/结项 stages=[] 的 dead end。
-                        _state_handled = False
-                        if story_states and lifecycle_state in story_states:
-                            _state_def = story_states[lifecycle_state] or {}
-                            _state_stages = list(_state_def.get("stages") or [])
-                            _stages_done = not _state_stages or all(
-                                _ss in completed_stages for _ss in _state_stages
-                            )
-                            if _stages_done:
-                                _next_state = _state_def.get("next")
-                                _confirm = _state_def.get("confirm") or {}
-                                _ctype = _confirm.get("type", "none")
-                                # 成果物 gate 检查:看该转换的成果物是否全满足。
-                                _gate_ok = True
-                                if _next_state:
-                                    try:
-                                        from ...sourcing.deliverables import (
-                                            gate_satisfied as _gate_satisfied,
-                                        )
+                                    _sd.set_session_id(
+                                        story_key,
+                                        stage,
+                                        adapter_name,
+                                        _captured,
+                                    )
+                                    log.info(
+                                        "[%s] captured %s session sid=%s stage=%s (file-scan)",
+                                        story_key,
+                                        adapter_name,
+                                        _captured,
+                                        stage,
+                                    )
+                            else:
+                                from ...infra.terminal.pty import clean_exit_pty
 
-                                        _gate_ok, _missing = _gate_satisfied(
-                                            story_key, lifecycle_state, _next_state
-                                        )
-                                    except Exception:
-                                        _missing = []
-                                else:
-                                    _missing = []
-                                if (
-                                    _next_state
-                                    and _gate_ok
-                                    and (_ctype in ("none",) or _ctype == "config")
-                                ):
-                                    # 成果物满足 + 无条件/config → 推进到下一 Story 状态
-                                    lifecycle_state = _next_state
-                                    ctx["_lifecycle_state"] = _next_state
-                                    ctx.pop("_story_state_gate", None)
-                                    db.update_story(
-                                        story_key,
-                                        lifecycle_state=_next_state,
-                                        context_json=json.dumps(
-                                            ctx, ensure_ascii=False
-                                        ),
-                                    )
-                                    db.log_event(
-                                        story_key,
-                                        stage,
-                                        "story_state_transition",
-                                        {
-                                            "from": lifecycle_state,
-                                            "to": _next_state,
-                                            "auto": True,
-                                        },
-                                    )
-                                    log.info(
-                                        "[%s] story state auto-advanced: %s → %s",
-                                        story_key,
-                                        stage,
-                                        _next_state,
-                                    )
-                                    _state_handled = True
-                                elif _next_state and _gate_ok and _ctype == "ui_button":
-                                    # 成果物满足 + 人工确认 → paused,前端显示状态闸卡片
-                                    ctx["_story_state_gate"] = {
-                                        "from": lifecycle_state,
-                                        "to": _next_state,
-                                        "awaiting_confirm": True,
-                                        "label": _confirm.get(
-                                            "label", f"进入{_next_state}"
-                                        ),
-                                    }
-                                    sm_pause(story_key, ctx_updates=ctx)
-                                    db.log_event(
-                                        story_key,
-                                        stage,
-                                        "story_state_gate_reached",
-                                        {"from": lifecycle_state, "to": _next_state},
-                                    )
-                                    log.info(
-                                        "[%s] story state gate: deliverables satisfied → paused awaiting confirm %s → %s",
-                                        story_key,
-                                        lifecycle_state,
-                                        _next_state,
-                                    )
-                                    return
-                                elif _next_state and not _gate_ok:
-                                    # 成果物未满足 → 不推进,driver 继续跑或自然结束。
-                                    # 用户补齐成果物(写文档/确认/跳过)后,前端点推进。
-                                    # grok-build §2.3: gate 阻塞记独立事件(区别于
-                                    # 正常 stage_done / gate_reached),便于审计追溯
-                                    # 「为什么这个 story 卡在这个状态」。
-                                    db.log_event(
-                                        story_key,
-                                        stage,
-                                        "deliverable_gate_blocked",
-                                        {
-                                            "from": lifecycle_state,
-                                            "to": _next_state,
-                                            "missing": _missing,
-                                        },
-                                    )
-                                    log.info(
-                                        "[%s] story state gate NOT satisfied (%s done): missing %s — driver continues",
-                                        story_key,
-                                        stage,
-                                        _missing,
-                                    )
-                                elif not _next_state:
-                                    # 终态:所有 Story 状态跑完 → 整个 story 完成
-                                    sm_mark_completed(story_key)
-                                    log.info(
-                                        "[%s] reached terminal story state %s (all done)",
-                                        story_key,
-                                        lifecycle_state,
-                                    )
-                                    _write_retrospect(workspace, story_key, actions)
-                                    _persist_playbook_for_story(
-                                        workspace, story_key, db
-                                    )
-                                    return
-                        # 阶段间闸(PLAN-stage-confirm-gate):仅当 Story 状态闸未处理时执行。
-                        # stage_cfg.confirm=True 且后面还有未完成 launch action → paused。
-                        # verify 是最后阶段无下一 stage,走自己的 gate,不受此影响。
-                        if not _state_handled:
-                            stage_cfg = profile_stages.get(stage)
-                            confirm_on = bool(
-                                stage_cfg
-                                and getattr(stage_cfg, "confirm", False)
-                                and stage != "verify"
-                            )
-                            if confirm_on:
-                                _next_stage = None
-                                for _j in range(idx + 1, len(actions)):
-                                    _na = actions[_j]
-                                    if _na.get("action") == "launch":
-                                        _ns = _na.get("stage", f"stage_{_j}")
-                                        if _ns not in completed_stages:
-                                            _next_stage = _ns
-                                            break
-                                if _next_stage is not None:
-                                    ctx["_stage_gate"] = {
-                                        "completed_stage": stage,
-                                        "next_stage": _next_stage,
-                                        "awaiting_confirm": True,
-                                    }
-                                    sm_pause(story_key, ctx_updates=ctx)
-                                    db.log_event(
-                                        story_key,
-                                        stage,
-                                        "stage_gate_reached",
-                                        {
-                                            "completed_stage": stage,
-                                            "next_stage": _next_stage,
-                                        },
-                                    )
-                                    log.info(
-                                        "[%s] stage gate: %s done → paused awaiting confirm to advance to %s",
-                                        story_key,
-                                        stage,
-                                        _next_stage,
-                                    )
-                                    return  # 释放 driver claim;点「推进」→ /advance 重进
-                        break
+                                clean_exit_pty(_agent_pty)
                     except Exception as exc:
-                        log.error(f"[{story_key}] Error parsing done file: {exc}")
+                        log.warning("[%s] clean_exit_pty failed for stage %s: %s; force-killing",
+                            story_key, stage, exc,
+                        )
+                    try:
+                        _agent_pty.kill()
+                    except Exception:
+                        pass
+                    try:
+                        from ...infra.terminal.pty import kill_pty
 
-                time.sleep(poll_interval)
-                elapsed += poll_interval
-            else:
-                # 超时：回收 headless claude 进程，避免孤儿残留
-                if headless_proc is not None:
-                    _kill_headless(headless_proc)
-                log.warning(
-                    f"[{story_key}] Stage {stage} timed out after {poll_timeout}s"
-                )
-                sm_mark_failed(story_key, f"Stage {stage} timed out")
-                return
-
-            # Verify-stage quality gate: HIGH findings block and trigger repair round.
-            # 只在成果物真正落地(done_data 非 None)时跑。restart/stuck break 路径
-            # done_data 仍是 None(见上方初始化注释)→ 跳过 gate,由 idx+=1 取 retry action 重跑。
-            if stage == "verify" and done_data is not None:
-                stage_cfg = profile_stages.get(stage)
-                max_retries = (
-                    stage_cfg.max_retries if hasattr(stage_cfg, "max_retries") else 2
-                )
-                ctx["last_verify_summary"] = done_data.get("summary", "")
-                ctx["last_done_data"] = done_data  # §4.2:喂给 unified gate 作 context
-                # REFACTOR §5.3:统一 gate(一次 LLM:质量判断 + finding + decision + repair)
-                from ..evaluation.unified_gate import run_unified_verify_gate
-
-                gate_result = run_unified_verify_gate(
-                    story_key=story_key,
-                    stage=stage,
-                    workspace=workspace,
-                    context=ctx,
-                    quality_cfg=quality_cfg,
-                    max_retries=max_retries,
-                    done_data=done_data,
-                    adapter_name=adapter_name,
-                    retry_count=ctx.get("_verify_round", 1),
-                )
-                if gate_result["decision"] == "retry":
-                    # unified_gate 的 repair_action 已包含 kind/reason/new_adapter/rescue_stage
-                    repair_spec = gate_result.get("repair_action") or {}
-                    repair_action = _repair_spec_to_action(
-                        repair_spec=repair_spec,
-                        story_key=story_key,
-                        adapter_name=adapter_name,
-                        round_n=gate_result.get("round", 1),
-                        reason=gate_result.get("reason", ""),
-                    )
-                    if repair_action is None:
-                        # escalate/skip → 不插 action,标失败
-                        sm_mark_failed(story_key, str(gate_spec_reason(repair_spec)))
-                        return
-                    actions.insert(idx + 1, repair_action)
-                    ctx["_agent_actions"] = actions
-                    db.update_story(
-                        story_key,
-                        context_json=json.dumps(ctx, ensure_ascii=False),
-                    )
-                    log.info(
-                        "[%s] Verify gate blocked (round %d/%d); repair=%s adapter=%s",
-                        story_key,
-                        gate_result.get("round", 1),
-                        gate_result.get("retry_limit", max_retries),
-                        (repair_spec or {}).get("kind", "?"),
-                        repair_action.get("adapter", "-"),
-                    )
-                elif gate_result["decision"] == "fail":
-                    sm_mark_failed(
-                        story_key, gate_result.get("reason", "verify gate fail")
-                    )
-                    return
-
+                        kill_pty(story_key, _agent_pty.session_id)
+                    except Exception:
+                        pass
+                    _agent_pty = None
         idx += 1
 
     # 所有 action 执行完毕
@@ -2443,6 +2467,7 @@ def _build_cli_prompt(
         build_grill_protocol_section,
         build_kb_tool_section,
         build_quality_section,
+        build_test_env_section,
     )
 
     stage_desc = ""
@@ -2476,6 +2501,14 @@ def _build_cli_prompt(
         checklist = build_quality_section(story_key, stage)
         if checklist.strip():
             quality_section = f"\n{checklist}\n"
+
+    # 测试环境配置注入（verify-only）：从 workspace entity 读 confirmed 的 test_env，
+    # 让 CLI agent 知道连哪个 gateway、用哪个测试用户。failsafe（无 workspace/未确认→""）。
+    test_env_section = ""
+    if stage == "verify":
+        env_text = build_test_env_section(story_key, stage)
+        if env_text.strip():
+            test_env_section = f"\n{env_text}\n"
 
     # Knowledge context injection（冷启动 outcome/process 知识，按 task_type）。
     # 镜像 quality_section：经共享 helper 取、failsafe（任何异常不阻塞 prompt 渲染）。
@@ -2608,6 +2641,7 @@ cd ./hc-config
 {knowledge_section}
 {dimensions_section}
 {quality_section}
+{test_env_section}
 {grill_section}
 {consult_section}
 {task_list_section}

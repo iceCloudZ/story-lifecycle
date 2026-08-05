@@ -615,6 +615,8 @@ def init_db():
             ("failure_reason", "TEXT"),
             ("artifacts_prod", "TEXT"),
             ("pty_log_ref", "TEXT"),
+            # 设计12 改动3:stage 完成摘要(judge_stage_completion 的 summary,TerminalTab 展示)。
+            ("completion_summary", "TEXT"),
         ):
             try:
                 conn.execute(f"ALTER TABLE story_session ADD COLUMN {_col} {_type}")
@@ -1404,6 +1406,9 @@ def upsert_story(
         ).fetchone()
         if existing:
             kwargs["updated_at"] = now
+            # 复活软删除的 story:重新 create/upsert 同一个 key 视为恢复,
+            # 清除 deleted_at(否则列表 SQL 的 deleted_at IS NULL 会过滤掉它)。
+            kwargs["deleted_at"] = None
             if title:
                 kwargs["title"] = title
             if status:
@@ -1909,8 +1914,9 @@ WORKSPACE_INIT_STEPS = (
     "gen_wiki",
     "register_integrations",
     "init_scenarios",
+    "detect_test_env",
 )
-"""初始化管线 5 步(11-workspace-entity-design.md §3)。每步幂等、可单独重跑。"""
+"""初始化管线 6 步(11-workspace-entity-design.md §3)。每步幂等、可单独重跑。"""
 
 
 def create_workspace(
@@ -2717,6 +2723,23 @@ def complete_session(story_key: str, stage: str, adapter: str) -> None:
             "UPDATE story_session SET status = 'completed', updated_at = ? "
             "WHERE story_key = ? AND stage = ? AND adapter = ?",
             (now, story_key, stage, adapter),
+        )
+
+
+def set_session_completion_summary(
+    story_key: str, stage: str, adapter: str, summary: str
+) -> None:
+    """存 stage 完成摘要(设计12 改动3:judge_stage_completion 的 summary)。
+
+    供前端 TerminalTab 展示「本轮完成:...」。无对应 session 行(headless 路径没建
+    session)时静默 no-op —— 摘要缺失不阻断主流程。
+    """
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _db() as conn:
+        conn.execute(
+            "UPDATE story_session SET completion_summary = ?, updated_at = ? "
+            "WHERE story_key = ? AND stage = ? AND adapter = ?",
+            (summary, now, story_key, stage, adapter),
         )
 
 

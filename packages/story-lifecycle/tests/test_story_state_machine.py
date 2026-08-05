@@ -102,11 +102,42 @@ def _mock_proc():
     return p
 
 
+# ---- 设计12 改动1:Stage 完成裁判 LLM mock ----
+# judge_stage_completion 内部 `from ...infra.llm_client import get_llm` 在调用时解析,
+# patch llm_client.get_llm 即生效。invoke_structured 按调用顺序返回 side_effect 列表。
+
+
+def _mock_judge_llm(*decisions):
+    """按调用顺序返回 judge 决策(设计12:quality/lifecycle_target/summary)。"""
+    if not decisions:
+        decisions = ({"lifecycle_target": None},)
+    llm = MagicMock()
+    llm.api_key = "test-key"
+    llm.model = "mock-model"
+
+    class _Result:
+        def __init__(self, d):
+            self.quality = d.get("quality", "approve")
+            self.lifecycle_target = d.get("lifecycle_target")
+            self.summary = d.get("summary", "mock summary")
+            self.reason = d.get("reason", "mock ok")
+            self.findings = d.get("findings", [])
+            self.repair_action = None
+
+    llm.invoke_structured.side_effect = [_Result(d) for d in decisions]
+    return llm
+
+
 # ---- Story 状态闸:ui_button → paused + _story_state_gate ----
 
 
 def test_story_state_gate_pauses_when_state_stages_done(story, tmp_path):
-    """开发=[design,build] 全 done,confirm=ui_button → paused + _story_state_gate。"""
+    """开发=[design,build] 全 done,LLM 判 target=测试,confirm=ui_button → paused + _story_state_gate。
+
+    设计12 改动1:lifecycle 推进由 stage 完成裁判的 lifecycle_target 驱动(替换硬编码
+    _stages_done + gate_satisfied)。design 完成时不推进(build 还没跑,LLM 判 None),
+    build 完成后判 target=测试 → 开发→测试 ui_button → paused 等人确认。
+    """
     _set_actions(
         story,
         [
@@ -136,6 +167,11 @@ def test_story_state_gate_pauses_when_state_stages_done(story, tmp_path):
     with patch("subprocess.Popen", side_effect=_popen_side_effect), patch(
         "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
     ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"), patch(
+        "story_lifecycle.infra.llm_client.get_llm",
+        return_value=_mock_judge_llm(
+            {"lifecycle_target": None}, {"lifecycle_target": "测试"}
+        ),
+    ), patch(
         "story_lifecycle.orchestrator.engine.profile_loader.resolve_profile",
         return_value=_profile(),
     ), patch(
@@ -152,6 +188,8 @@ def test_story_state_gate_pauses_when_state_stages_done(story, tmp_path):
     assert gate["from"] == "开发"
     assert gate["to"] == "测试"
     assert gate["awaiting_confirm"] is True
+    # 设计12:记 final_target,用户确认后 /lifecycle/advance 续推
+    assert gate["final_target"] == "测试"
     # 两个 stage 都记完成
     assert "design" in ctx.get("_completed_stages", [])
     assert "build" in ctx.get("_completed_stages", [])
@@ -163,7 +201,7 @@ def test_story_state_gate_pauses_when_state_stages_done(story, tmp_path):
 
 
 def test_story_state_auto_advances_on_config(story, tmp_path):
-    """开发全 done,confirm=config 且 STORY_AUTO_ADVANCE_DEV=true → 自动推进 lifecycle_state。"""
+    """开发全 done,LLM 判 target=测试,confirm=config → 自动推进 lifecycle_state。"""
     _set_actions(
         story,
         [
@@ -190,11 +228,14 @@ def test_story_state_auto_advances_on_config(story, tmp_path):
             build_done.write_text(json.dumps({"summary": "build done"}), encoding="utf-8")
         return _mock_proc()
 
-    with patch.dict("os.environ", {"STORY_AUTO_ADVANCE_DEV": "true"}), patch(
-        "subprocess.Popen", side_effect=_popen_side_effect
-    ), patch(
+    with patch("subprocess.Popen", side_effect=_popen_side_effect), patch(
         "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
     ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"), patch(
+        "story_lifecycle.infra.llm_client.get_llm",
+        return_value=_mock_judge_llm(
+            {"lifecycle_target": None}, {"lifecycle_target": "测试"}
+        ),
+    ), patch(
         "story_lifecycle.orchestrator.engine.profile_loader.resolve_profile",
         return_value=_profile(),
     ), patch(
@@ -213,11 +254,11 @@ def test_story_state_auto_advances_on_config(story, tmp_path):
     assert ctx.get("_story_state_gate") is None
 
 
-# ---- 终态:所有 Story 状态跑完 → completed ----
+# ---- 终态:所有 action 跑完 → completed ----
 
 
 def test_terminal_state_completes_story(story, tmp_path):
-    """开发=[design] done,next=null(终态) → story completed,无 paused。"""
+    """开发=[design] done,LLM 判不推进 → story completed,无 paused。"""
     _set_actions(
         story,
         [{"action": "launch", "stage": "design", "adapter": "claude", "focus": "设计"}],
@@ -235,6 +276,9 @@ def test_terminal_state_completes_story(story, tmp_path):
     with patch("subprocess.Popen", side_effect=_popen_side_effect), patch(
         "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
     ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"), patch(
+        "story_lifecycle.infra.llm_client.get_llm",
+        return_value=_mock_judge_llm({"lifecycle_target": None}),
+    ), patch(
         "story_lifecycle.orchestrator.engine.profile_loader.resolve_profile",
         return_value=_profile(),
     ), patch(
@@ -252,7 +296,7 @@ def test_terminal_state_completes_story(story, tmp_path):
 
 
 def test_story_state_gate_takes_priority_over_stage_gate(story, tmp_path):
-    """开发=[design,build],design.confirm=True(阶段闸) 且 build 也 done(状态闸触发)。
+    """开发=[design,build],design.confirm=True(阶段闸) 且 build 完成后 LLM 判 target=测试。
     build done 时两个闸都满足 → Story 状态闸优先(_story_state_gate,不是 _stage_gate)。"""
     _set_actions(
         story,
@@ -284,6 +328,11 @@ def test_story_state_gate_takes_priority_over_stage_gate(story, tmp_path):
     with patch("subprocess.Popen", side_effect=_popen_side_effect), patch(
         "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
     ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"), patch(
+        "story_lifecycle.infra.llm_client.get_llm",
+        return_value=_mock_judge_llm(
+            {"lifecycle_target": None}, {"lifecycle_target": "测试"}
+        ),
+    ), patch(
         "story_lifecycle.orchestrator.engine.profile_loader.resolve_profile",
         return_value=_profile({"build": True}),
     ), patch(
@@ -304,7 +353,11 @@ def test_story_state_gate_takes_priority_over_stage_gate(story, tmp_path):
 
 
 def test_no_story_states_falls_back_to_flat(story, tmp_path):
-    """无 story_states 配置 → driver 走扁平阶段行为(阶段闸仍工作,无 Story 状态闸)。"""
+    """无 story_states 配置 → driver 走扁平阶段行为(阶段闸仍工作,无 Story 状态闸)。
+
+    设计12:无状态机时 LLM 不会给 lifecycle_target(judge 兜底 approve + 不推进),
+    stage 间闸(confirm)仍是唯一停顿点。
+    """
     _set_actions(
         story,
         [
@@ -323,6 +376,9 @@ def test_no_story_states_falls_back_to_flat(story, tmp_path):
     with patch("subprocess.Popen", side_effect=_popen_side_effect), patch(
         "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
     ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"), patch(
+        "story_lifecycle.infra.llm_client.get_llm",
+        return_value=_mock_judge_llm({"lifecycle_target": None}),
+    ), patch(
         "story_lifecycle.orchestrator.engine.profile_loader.resolve_profile",
         return_value=_profile({"design": True}),
     ), patch(
@@ -431,3 +487,110 @@ def test_lifecycle_advance_rejects_without_gate(story):
     client = TestClient(app)
     r = client.post(f"/api/story/{story['story_key']}/lifecycle/advance")
     assert r.status_code == 409
+
+
+# ---- 设计12 改动1:multi-state jump(final_target)+ /lifecycle/advance 续推 ----
+
+
+def test_multi_state_jump_pauses_at_first_ui_button(story, tmp_path):
+    """single-pass 场景(问题 1):verify 完成 → LLM 判 target=结项 → 在 开发→测试
+    (ui_button)停住,记 final_target=结项 —— 不再因 stage/state 数量错配卡死。"""
+    _set_actions(
+        story,
+        [{"action": "launch", "stage": "verify", "adapter": "claude", "focus": "验证"}],
+    )
+    states = {
+        "开发": {"stages": ["design", "build"], "next": "测试",
+                 "confirm": {"type": "ui_button", "label": "进入测试"}},
+        "测试": {"stages": ["verify"], "next": "上线", "confirm": {"type": "config"}},
+        "上线": {"stages": [], "next": "结项", "confirm": {"type": "none"}},
+        "结项": {"stages": [], "next": None, "confirm": {"type": "none"}},
+    }
+    verify_done = stage_done_file(tmp_path, story["story_key"], "verify")
+    verify_done.parent.mkdir(parents=True, exist_ok=True)
+
+    def _popen_side_effect(*a, **kw):
+        verify_done.write_text(json.dumps({"summary": "verify done"}), encoding="utf-8")
+        return _mock_proc()
+
+    with patch("subprocess.Popen", side_effect=_popen_side_effect), patch(
+        "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
+    ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"), patch(
+        "story_lifecycle.infra.llm_client.get_llm",
+        return_value=_mock_judge_llm({"lifecycle_target": "结项"}),
+    ), patch(
+        "story_lifecycle.orchestrator.engine.profile_loader.resolve_profile",
+        return_value=_profile(),
+    ), patch(
+        "story_lifecycle.sourcing.source_loader.resolve_source_profile",
+        return_value=_source_profile(states),
+    ):
+        continue_orchestrator_agent(story["story_key"], headless=True)
+
+    updated = db.get_story(story["story_key"])
+    ctx = json.loads(updated.get("context_json", "{}"))
+    gate = ctx.get("_story_state_gate")
+    assert gate is not None
+    assert gate["from"] == "开发"
+    assert gate["to"] == "测试"
+    assert gate["awaiting_confirm"] is True
+    assert gate["final_target"] == "结项"
+    assert updated["status"] == "paused"
+    assert updated["lifecycle_state"] == "开发"
+    # verify 已记完成(不重跑)
+    assert "verify" in ctx.get("_completed_stages", [])
+
+
+def test_lifecycle_advance_continues_to_final_target(story, tmp_path):
+    """LLM 目标推进停住后,用户点确认 → /lifecycle/advance 续推到 final_target。
+
+    开发→测试 已确认 → 续推 测试→上线(config 自动)、上线→结项(none 自动) →
+    终态 completed。不查交付物 gate(LLM 已看累积产出判过)。
+    """
+    from starlette.testclient import TestClient
+
+    from story_lifecycle.orchestrator.service.api import app
+
+    ctx = json.loads(story.get("context_json", "{}"))
+    ctx["_story_state_gate"] = {
+        "from": "开发",
+        "to": "测试",
+        "awaiting_confirm": True,
+        "label": "进入测试",
+        "final_target": "结项",
+    }
+    ctx["_lifecycle_state"] = "开发"
+    ctx["_completed_stages"] = ["verify"]
+    db.update_story(
+        story["story_key"],
+        status="paused",
+        lifecycle_state="开发",
+        context_json=json.dumps(ctx, ensure_ascii=False),
+    )
+    # 状态机注入:source_type 读 resolve_source_profile(tapd 内置四态)。
+    with patch(
+        "story_lifecycle.sourcing.source_loader.resolve_source_profile",
+        return_value=_source_profile(
+            {
+                "开发": {"stages": ["design", "build"], "next": "测试",
+                         "confirm": {"type": "ui_button"}},
+                "测试": {"stages": ["verify"], "next": "上线",
+                         "confirm": {"type": "config"}},
+                "上线": {"stages": [], "next": "结项", "confirm": {"type": "none"}},
+                "结项": {"stages": [], "next": None, "confirm": {"type": "none"}},
+            }
+        ),
+    ):
+        client = TestClient(app)
+        r = client.post(f"/api/story/{story['story_key']}/lifecycle/advance")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["lifecycle_state"] == "结项"
+    assert body["status"] == "completed"
+    updated = db.get_story(story["story_key"])
+    assert updated["lifecycle_state"] == "结项"
+    assert updated["status"] == "completed"
+    new_ctx = json.loads(updated.get("context_json", "{}"))
+    assert new_ctx.get("_lifecycle_state") == "结项"
+    assert new_ctx.get("_story_state_gate") is None
+
