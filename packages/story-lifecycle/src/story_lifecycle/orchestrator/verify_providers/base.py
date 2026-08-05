@@ -6,6 +6,7 @@ story-lifecycle 是通用引擎，不硬依赖任何特定测试框架。
 
 对应设计：docs/project-intelligence/10-test-framework-integration-design.md 改动 1。
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -18,10 +19,10 @@ class VerifyResult:
 
     passed: bool = False
     summary: str = ""  # 一句话总结
-    findings: list[dict] = field(
-        default_factory=list
-    )  # [{scenario, status, detail}]
-    evidence: dict = field(default_factory=dict)  # 任意结构化证据（journey pass/fail 明细）
+    findings: list[dict] = field(default_factory=list)  # [{scenario, status, detail}]
+    evidence: dict = field(
+        default_factory=dict
+    )  # 任意结构化证据（journey pass/fail 明细）
     evidence_ref: str = ""  # 报告路径等
 
 

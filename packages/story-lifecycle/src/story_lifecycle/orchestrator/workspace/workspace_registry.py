@@ -404,7 +404,9 @@ def _step_detect_test_env(ws: dict) -> dict:
     # 写入 integrations_json.test_env
     merged = json.loads(ws.get("integrations_json") or "{}")
     merged["test_env"] = test_env
-    db.update_workspace(ws["id"], integrations_json=json.dumps(merged, ensure_ascii=False))
+    db.update_workspace(
+        ws["id"], integrations_json=json.dumps(merged, ensure_ascii=False)
+    )
 
     sources = []
     if conftest.exists():
@@ -425,7 +427,9 @@ def confirm_test_env(ident: int | str, test_env: dict) -> dict:
     test_env["_scan_status"] = "confirmed"
     merged = json.loads(ws.get("integrations_json") or "{}")
     merged["test_env"] = test_env
-    db.update_workspace(ws["id"], integrations_json=json.dumps(merged, ensure_ascii=False))
+    db.update_workspace(
+        ws["id"], integrations_json=json.dumps(merged, ensure_ascii=False)
+    )
     return merged["test_env"]
 
 

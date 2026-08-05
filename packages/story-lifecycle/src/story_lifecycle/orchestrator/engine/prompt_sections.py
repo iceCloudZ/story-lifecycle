@@ -296,7 +296,9 @@ def build_test_env_section(story_key: str, stage: str) -> str:
         mq = test_env.get("mq") or {}
         if mq.get("proxy"):
             topic = mq.get("topic", "")
-            lines.append(f"- MQ Proxy: {mq['proxy']}" + (f" (topic: {topic})" if topic else ""))
+            lines.append(
+                f"- MQ Proxy: {mq['proxy']}" + (f" (topic: {topic})" if topic else "")
+            )
         config = test_env.get("config") or {}
         if config.get("nacos"):
             lines.append(f"- Nacos: {config['nacos']}")

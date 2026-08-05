@@ -209,7 +209,9 @@ def sync_knowledge(workspace):
         console.print(f"  原因: {result['reason']}")
         # 设计 10 改动 4.3:列出过期 scenario 及具体差异原因(代码变更 / journey 失败)
         for sc in result.get("scenarios", []):
-            console.print(f"  - [red]{sc.get('id')}[/]: {'; '.join(sc.get('reasons', []))}")
+            console.print(
+                f"  - [red]{sc.get('id')}[/]: {'; '.join(sc.get('reasons', []))}"
+            )
         console.print(f"\n建议运行: [bold]story project init-knowledge -w {ws}[/]")
     else:
         console.print("\n[green]知识包是最新的[/]")

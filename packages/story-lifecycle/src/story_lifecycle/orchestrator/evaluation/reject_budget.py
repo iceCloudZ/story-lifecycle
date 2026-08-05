@@ -101,9 +101,7 @@ def check_reject_budget(
 
     # 规则 2:理由与上次 reject 重复 → judge 在抖,强制 escalate(评审 A2)。
     try:
-        decisions = db_module.get_decisions(
-            story_key, stage, trigger=trigger, limit=10
-        )
+        decisions = db_module.get_decisions(story_key, stage, trigger=trigger, limit=10)
     except Exception:  # noqa: BLE001
         decisions = []
     prev_rejects = [d for d in decisions if d.get("decision") == "reject"]

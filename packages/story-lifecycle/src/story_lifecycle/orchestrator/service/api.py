@@ -1307,7 +1307,12 @@ def advance_lifecycle_state(story_key: str):
                 story_key,
                 "",
                 "story_state_transition",
-                {"from": _confirmed_from, "to": _resume_from, "auto": False, "confirmed": True},
+                {
+                    "from": _confirmed_from,
+                    "to": _resume_from,
+                    "auto": False,
+                    "confirmed": True,
+                },
             )
         result = advance_lifecycle_to_target(
             story_key=story_key,
@@ -4037,7 +4042,9 @@ def _bind_story_projects_for_start(
         try:
             db.unbind_story_project(story_key, sp["project_id"])
         except Exception:
-            log.debug("[%s] unbind stale project %s failed", story_key, sp.get("project_id"))
+            log.debug(
+                "[%s] unbind stale project %s failed", story_key, sp.get("project_id")
+            )
 
     if not project_ids:
         return

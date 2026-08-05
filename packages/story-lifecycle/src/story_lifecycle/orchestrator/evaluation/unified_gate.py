@@ -132,8 +132,13 @@ def run_unified_verify_gate(
         # 外部 verify 与 LLM 无关（确定性 journey），fallback 路径同样合并
         # （设计 10 改动 1.3：provider 未配置/返回 None → 原样返回，零行为变化）
         return _merge_external_verify_result(
-            story_key, stage, workspace, done_data, context,
-            _fallback_gate_decision(evidence, db, story_key), db,
+            story_key,
+            stage,
+            workspace,
+            done_data,
+            context,
+            _fallback_gate_decision(evidence, db, story_key),
+            db,
         )
 
     prompt = _build_unified_gate_prompt(evidence)
@@ -243,7 +248,9 @@ def _merge_external_verify_result(
             # 连续外部失败（超预算/理由重复）→ force-escalate：转 fail 进人视野，
             # 而非无限 retry 死循环。
             result["decision"] = "fail"
-            result["reason"] = f"外部测试连续失败(防打回循环): {budget['warn']}; {reason}"
+            result["reason"] = (
+                f"外部测试连续失败(防打回循环): {budget['warn']}; {reason}"
+            )
             result["repair_action"] = {"kind": "escalate", "reason": budget["warn"]}
             try:
                 db.log_decision(

@@ -5,6 +5,7 @@
 issubclass(BaseVerifyProvider)——hc 侧实现因此不必在运行环境硬装
 story-lifecycle 包，跨仓依赖降为纯协议。
 """
+
 from __future__ import annotations
 
 import importlib

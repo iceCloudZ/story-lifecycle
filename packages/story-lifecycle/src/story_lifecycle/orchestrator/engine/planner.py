@@ -837,7 +837,7 @@ def _auto_commit_worktrees(story_key: str, summary: str) -> None:
         return
     # commit message 规范:对齐项目约定
     short_summary = (summary or "build")[:80].replace('"', "'")
-    message = f'feat({story_key}): {short_summary}'
+    message = f"feat({story_key}): {short_summary}"
     for sp in sps:
         wt = sp.get("worktree_path") or ""
         if not wt:
@@ -846,28 +846,38 @@ def _auto_commit_worktrees(story_key: str, summary: str) -> None:
             # 检查有无改动
             status = _sp.run(
                 ["git", "-C", wt, "status", "--porcelain"],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
             if not status.stdout.strip():
                 continue  # 无改动跳过
             # add + commit
             _sp.run(
                 ["git", "-C", wt, "add", "-A"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             result = _sp.run(
                 ["git", "-C", wt, "commit", "-m", message],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             if result.returncode == 0:
                 log.info(
                     "[%s] auto-commit worktree %s: %s",
-                    story_key, wt, message[:60],
+                    story_key,
+                    wt,
+                    message[:60],
                 )
             else:
                 log.warning(
                     "[%s] auto-commit failed for %s: %s",
-                    story_key, wt, result.stderr[:200],
+                    story_key,
+                    wt,
+                    result.stderr[:200],
                 )
         except Exception as e:  # noqa: BLE001
             log.warning("[%s] auto-commit exception for %s: %s", story_key, wt, e)
@@ -1215,9 +1225,7 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         _spawn_ts = _now_utc_iso()  # 文件扫描捕获的时间窗口下界
                         if _prior and _prior.get("session_id"):
                             # 该阶段已建过会话 → resume(续上 transcript,不重读 prompt_file)。
-                            _resume_seed = (
-                                "继续上次的任务,完成后用 `story tool declare` 落地成果物。"
-                            )
+                            _resume_seed = "继续上次的任务,完成后用 `story tool declare` 落地成果物。"
                             _session_spec = adapter.start_session(
                                 model=model,
                                 prompt=_resume_seed,
@@ -1292,11 +1300,16 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             from ..mcp.clarify_server import write_mcp_config
 
                             _mcp_cfg = (
-                                safe_story_path(workspace, ".story", "context", story_key)
+                                safe_story_path(
+                                    workspace, ".story", "context", story_key
+                                )
                                 / "clarify_mcp.json"
                             )
                             write_mcp_config(_mcp_cfg, _sys.executable)
-                            launch_cmd = list(launch_cmd) + ["--mcp-config", str(_mcp_cfg)]
+                            launch_cmd = list(launch_cmd) + [
+                                "--mcp-config",
+                                str(_mcp_cfg),
+                            ]
                             # story_env 已在 headless 分支注入;这里只补 MCP config,
                             # 不再重复设 STORY_KEY/STAGE(避免双源真相漂移)。
                             log.info(
@@ -1396,7 +1409,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                 "summary": focus,
                             }
                             _sup_proc = headless_proc
-                            _sup_stderr = _stderr_tail  # drain 线程排空 stderr 到此 holder
+                            _sup_stderr = (
+                                _stderr_tail  # drain 线程排空 stderr 到此 holder
+                            )
 
                             def _drain_headless():
                                 try:
@@ -1467,7 +1482,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             except Exception:  # noqa: BLE001
                                 pass
                         except Exception:  # noqa: BLE001
-                            log.debug("PtyLogger init failed (non-fatal)", exc_info=True)
+                            log.debug(
+                                "PtyLogger init failed (non-fatal)", exc_info=True
+                            )
                         _pty_session, _agent_pty = ensure_agent_pty(
                             story_key,
                             stage,
@@ -1476,12 +1493,16 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             _spawn_cwd,
                             _session_spec.pty_prompt if _session_spec else "",
                             readiness_marker=(
-                                _session_spec.readiness_marker if _session_spec else None
+                                _session_spec.readiness_marker
+                                if _session_spec
+                                else None
                             ),
                             env=story_env,
                             logger=_pty_logger,
                         )
-                        log.info("[%s] PTY session started for stage=%s", story_key, stage)
+                        log.info(
+                            "[%s] PTY session started for stage=%s", story_key, stage
+                        )
                         # sid 捕获改在 stage 完成的 clean_exit_pty 收尾时做(Phase 0 抽象):
                         #   输出驱动(kimi)—— adapter.make_sid_capturer 在 clean_exit drain 退出
                         #     输出时命中 'To resume: kimi -r session_<uuid>' 回填。
@@ -1574,7 +1595,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 # evidence 候选路径(robust 兜底,设计 §7.6):code agent 可能写到 story
                 # evidence 目录(story_evidence_root 向上找 AGENTS.md 脱离 workspace)或用别名
                 # 文件名(design.md vs spec.md)。为每个文件类 artifact 列出候选,check 时兜底命中。
-                _ev_cands = _build_ev_cands(_stage_artifacts, workspace, story_key, title)
+                _ev_cands = _build_ev_cands(
+                    _stage_artifacts, workspace, story_key, title
+                )
 
                 # monorepo: git artifact 检查需要看绑定项目的 worktree(story workspace
                 # 本身可能不是 git 仓库,如 D:\hc-all)。从 story_project 表拿 worktree_path。
@@ -1591,7 +1614,8 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     """本 stage 成果物是否全齐(missing 为空)。空 artifacts → 看 done 兼容视图(向后兼容老 story)。"""
                     if _stage_artifacts:
                         missing, _ = _check_artifacts(
-                            _stage_artifacts, workspace,
+                            _stage_artifacts,
+                            workspace,
                             evidence_candidates=_ev_cands,
                             git_worktrees=_git_worktrees,
                         )
@@ -1744,9 +1768,15 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                     # 读 events.jsonl 末尾取 last_output_ts + 反复报错信号;PTY 路径才查
                     # (headless 无 PTY 日志)。卡住 → escalate_human(awaiting_confirm + 通知)。
                     # 红线:不调 LLM。每 stage 同一卡住只 escalate 一次(_stuck_escalated 去重)。
-                    if _agent_pty is not None and _pty_logger is not None and elapsed > 30:
+                    if (
+                        _agent_pty is not None
+                        and _pty_logger is not None
+                        and elapsed > 30
+                    ):
                         try:
-                            from ...infra.terminal.pty_logger import read_events as _read_ev
+                            from ...infra.terminal.pty_logger import (
+                                read_events as _read_ev,
+                            )
                             from .supervisor import detect_stuck, escalate_stuck
 
                             _evs = _read_ev(_pty_logger.log_dir, limit=50)
@@ -1788,7 +1818,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                     )
 
                                     _facts = {"adapter": adapter_name, "stage": stage}
-                                    if _should_upgrade(story_key, stage, _det, events=_evs):
+                                    if _should_upgrade(
+                                        story_key, stage, _det, events=_evs
+                                    ):
                                         _diag = _diag_agentic(
                                             story_key=story_key,
                                             stage=stage,
@@ -1840,13 +1872,17 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                                         "stage": stage,
                                         "adapter": adapter_name,
                                         "focus": f"卡住诊断 restart:{_diag.get('reason', '')};seed:{_diag.get('seed', '')}",
-                                        "done_file": stage_done_file_rel(story_key, stage),
+                                        "done_file": stage_done_file_rel(
+                                            story_key, stage
+                                        ),
                                     }
                                     actions.insert(idx + 1, _retry)
                                     ctx["_agent_actions"] = actions
                                     db.update_story(
                                         story_key,
-                                        context_json=json.dumps(ctx, ensure_ascii=False),
+                                        context_json=json.dumps(
+                                            ctx, ensure_ascii=False
+                                        ),
                                     )
                                     if _agent_pty is not None:
                                         try:
@@ -1879,7 +1915,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                             elif not _det:
                                 _stuck_escalated = False  # 解除卡住 → 允许下次再卡再报
                         except Exception:  # noqa: BLE001 — 卡住检测失败不影响主轮询
-                            log.debug("stuck detection failed (non-fatal)", exc_info=True)
+                            log.debug(
+                                "stuck detection failed (non-fatal)", exc_info=True
+                            )
                     # 检查成果物落地(STEP 1.4:替 done file 自报)。
                     # 完成信号 = stage.artifacts 全齐;done.json 兼容视图(story-tool declare
                     # 双写,或老 code agent 自写)若存在则作 payload 来源,不是完成判据。
@@ -2159,10 +2197,14 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                 if stage == "verify" and done_data is not None:
                     stage_cfg = profile_stages.get(stage)
                     max_retries = (
-                        stage_cfg.max_retries if hasattr(stage_cfg, "max_retries") else 2
+                        stage_cfg.max_retries
+                        if hasattr(stage_cfg, "max_retries")
+                        else 2
                     )
                     ctx["last_verify_summary"] = done_data.get("summary", "")
-                    ctx["last_done_data"] = done_data  # §4.2:喂给 unified gate 作 context
+                    ctx["last_done_data"] = (
+                        done_data  # §4.2:喂给 unified gate 作 context
+                    )
                     # REFACTOR §5.3:统一 gate(一次 LLM:质量判断 + finding + decision + repair)
                     from ..evaluation.unified_gate import run_unified_verify_gate
 
@@ -2189,7 +2231,9 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
                         )
                         if repair_action is None:
                             # escalate/skip → 不插 action,标失败
-                            sm_mark_failed(story_key, str(gate_spec_reason(repair_spec)))
+                            sm_mark_failed(
+                                story_key, str(gate_spec_reason(repair_spec))
+                            )
                             return
                         actions.insert(idx + 1, repair_action)
                         ctx["_agent_actions"] = actions
@@ -2267,8 +2311,11 @@ def continue_orchestrator_agent(story_key: str, headless: bool = False):
 
                                 clean_exit_pty(_agent_pty)
                     except Exception as exc:
-                        log.warning("[%s] clean_exit_pty failed for stage %s: %s; force-killing",
-                            story_key, stage, exc,
+                        log.warning(
+                            "[%s] clean_exit_pty failed for stage %s: %s; force-killing",
+                            story_key,
+                            stage,
+                            exc,
                         )
                     try:
                         _agent_pty.kill()

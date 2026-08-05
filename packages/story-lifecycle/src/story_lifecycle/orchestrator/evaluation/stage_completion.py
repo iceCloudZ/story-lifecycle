@@ -226,7 +226,9 @@ def judge_stage_completion(
             llm_model=llm_model,
         )
     except Exception as exc:  # noqa: BLE001 — 审计 best-effort
-        log.warning("[%s/%s] log_decision failed (non-fatal): %s", story_key, stage, exc)
+        log.warning(
+            "[%s/%s] log_decision failed (non-fatal): %s", story_key, stage, exc
+        )
         rid = 0
 
     log.info(
