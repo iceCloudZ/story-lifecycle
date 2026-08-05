@@ -1,4 +1,4 @@
-﻿"""StageExecutor 子类（设计 13 Step 3）— 半自动/全自动 stage 执行器。
+"""StageExecutor 子类（设计 13 Step 3）— 半自动/全自动 stage 执行器。
 
 - InteractiveStageExecutor: 半自动（等人点「启动 CLI」，编排线程只 poll+judge）
 - AutomaticStageExecutor: 全自动（编排线程自动 spawn + poll + judge）
@@ -232,7 +232,9 @@ class InteractiveStageExecutor(BaseStageExecutor):
             or (prespecified and marker.exists())
         )
         use_sid = (
-            _db_row["session_id"] if _db_row and _db_row.get("session_id") else session_uuid
+            _db_row["session_id"]
+            if _db_row and _db_row.get("session_id")
+            else session_uuid
         )
 
         seed = LaunchSeedBuilder().build(
@@ -244,7 +246,9 @@ class InteractiveStageExecutor(BaseStageExecutor):
         )
         spec = adapter.start_session(
             model,
-            prompt=seed if not is_resume else "继续上次的任务,完成后按完成协议写入 done 文件。",
+            prompt=seed
+            if not is_resume
+            else "继续上次的任务,完成后按完成协议写入 done 文件。",
             session_id=use_sid,
             session_name=session_name,
             resume=is_resume,
@@ -281,12 +285,18 @@ class InteractiveStageExecutor(BaseStageExecutor):
                         story_key,
                         stage,
                         adapter_name,
-                        session_id=session_uuid if adapter.prespecified_session_id else None,
+                        session_id=session_uuid
+                        if adapter.prespecified_session_id
+                        else None,
                     )
                 marker.parent.mkdir(parents=True, exist_ok=True)
                 marker.write_text(
                     json.dumps(
-                        {"session_id": session_uuid, "name": session_name, "stage": stage},
+                        {
+                            "session_id": session_uuid,
+                            "name": session_name,
+                            "stage": stage,
+                        },
                         ensure_ascii=False,
                     ),
                     encoding="utf-8",
@@ -373,7 +383,9 @@ class AutomaticStageExecutor(BaseStageExecutor):
 
                 prepare_worktrees(story_key)
             except Exception:
-                log.exception("[%s] prepare_worktrees failed; build proceeds", story_key)
+                log.exception(
+                    "[%s] prepare_worktrees failed; build proceeds", story_key
+                )
 
         # prompt 构建（PromptBuilder 统一入口）
         from .prompts import get_stage_prompt_builder
@@ -417,7 +429,14 @@ class AutomaticStageExecutor(BaseStageExecutor):
 
         if headless:
             return self._spawn_headless(
-                story_key, stage, adapter, model, prompt, prompt_file, spawn_cwd, story_env
+                story_key,
+                stage,
+                adapter,
+                model,
+                prompt,
+                prompt_file,
+                spawn_cwd,
+                story_env,
             )
 
         # PTY 路径：SessionSpec 契约（与 api spawn 一致）
@@ -457,7 +476,9 @@ class AutomaticStageExecutor(BaseStageExecutor):
                 )
             except Exception:
                 pass
-            log.info("[%s] NEW session stage=%s adapter=%s", story_key, stage, adapter_name)
+            log.info(
+                "[%s] NEW session stage=%s adapter=%s", story_key, stage, adapter_name
+            )
         launch_cmd = spec.command
 
         # anchor（I2 miner binding，best-effort）
@@ -504,7 +525,15 @@ class AutomaticStageExecutor(BaseStageExecutor):
         return getattr(pty, "session_id", "")
 
     def _spawn_headless(
-        self, story_key, stage, adapter, model, prompt, prompt_file, spawn_cwd, story_env
+        self,
+        story_key,
+        stage,
+        adapter,
+        model,
+        prompt,
+        prompt_file,
+        spawn_cwd,
+        story_env,
     ) -> str:
         """headless 路径：Popen + supervise_headless_stdout drain 线程。"""
         import subprocess as _sp

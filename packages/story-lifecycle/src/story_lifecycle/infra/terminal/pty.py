@@ -504,7 +504,9 @@ def get_pty(story_id: str, session_id: str = "") -> Optional[ManagedPty]:
         return None
 
 
-def get_pty_for_stage(story_id: str, stage: str, purpose: str = "agent") -> Optional[ManagedPty]:
+def get_pty_for_stage(
+    story_id: str, stage: str, purpose: str = "agent"
+) -> Optional[ManagedPty]:
     """Get the story's PTY bound to a stage (any adapter), or None.
 
     设计 13 编排线程按 (story_key, stage) 查 PTY —— 注册表 key 是

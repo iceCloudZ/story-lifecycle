@@ -753,7 +753,12 @@ def _spawn_story_agent_pty(
     # claude/opencode 在不存在的 cwd 里启动会立即退出 → session 表空 → 用户看不到终端。
     try:
         Path(spawn_cwd).mkdir(parents=True, exist_ok=True)
-        log.info("[%s] spawn cwd ensured: %s (exists=%s)", story_key, spawn_cwd, Path(spawn_cwd).exists())
+        log.info(
+            "[%s] spawn cwd ensured: %s (exists=%s)",
+            story_key,
+            spawn_cwd,
+            Path(spawn_cwd).exists(),
+        )
     except Exception as exc:
         log.warning("[%s] mkdir spawn_cwd failed: %s", story_key, exc)
     # session-persistence (claude --session-id / --resume; kimi -S). 真相源 = DB
@@ -897,7 +902,9 @@ def _spawn_story_agent_pty(
             if getattr(pty, "alive", False):
                 log.info(
                     "[%s] retry --resume succeeded (stage=%s sid=%s)",
-                    story_key, stage, _use_sid,
+                    story_key,
+                    stage,
+                    _use_sid,
                 )
                 is_resume = True
                 return session_id, pty, is_resume

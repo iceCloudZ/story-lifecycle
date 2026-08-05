@@ -138,7 +138,9 @@ class OrchestratorThread(threading.Thread):
             try:
                 self._tick_story(story)
             except Exception:
-                log.exception("[%s] orchestrator tick story failed (non-fatal)", story_key)
+                log.exception(
+                    "[%s] orchestrator tick story failed (non-fatal)", story_key
+                )
 
     def _tick_story(self, story: dict):
         story_key = story["story_key"]
@@ -254,7 +256,14 @@ class OrchestratorThread(threading.Thread):
             }
 
     def _tick_alive_pty(
-        self, story_key: str, stage: str, pty, executor, story: dict, ctx: dict, actions: list
+        self,
+        story_key: str,
+        stage: str,
+        pty,
+        executor,
+        story: dict,
+        ctx: dict,
+        actions: list,
     ):
         """PTY 活着：成果物落地 → judge；否则卡住检测 + 超时。"""
         # 成果物落地 → judge（先释放 PTY，对齐 driver finally 收口）
@@ -268,7 +277,12 @@ class OrchestratorThread(threading.Thread):
         if now - spawned_ts > self.STAGE_TIMEOUT:
             from ..sourcing.state_machine import mark_failed as sm_mark_failed
 
-            log.warning("[%s] stage=%s timed out after %ss", story_key, stage, self.STAGE_TIMEOUT)
+            log.warning(
+                "[%s] stage=%s timed out after %ss",
+                story_key,
+                stage,
+                self.STAGE_TIMEOUT,
+            )
             self._clear_stage_state(story_key)
             try:
                 sm_mark_failed(story_key, f"Stage {stage} timed out")
@@ -276,7 +290,9 @@ class OrchestratorThread(threading.Thread):
                 pass
             return
         # 卡住检测（PTY 路径，对齐 driver STEP 1.7c + STEP 2）
-        self._tick_stuck_check(story_key, stage, pty, executor, story, ctx, actions, now)
+        self._tick_stuck_check(
+            story_key, stage, pty, executor, story, ctx, actions, now
+        )
 
     def _tick_stuck_check(
         self, story_key, stage, pty, executor, story, ctx, actions, now
@@ -351,7 +367,12 @@ class OrchestratorThread(threading.Thread):
                 log.info("[%s/%s] stuck diagnose: wait (slow)", story_key, stage)
                 state["spawned_ts"] = time.time()  # 重置超时时钟
             elif action == "restart":
-                log.info("[%s/%s] stuck diagnose: restart (seed=%s)", story_key, stage, (diag.get("seed") or "")[:80])
+                log.info(
+                    "[%s/%s] stuck diagnose: restart (seed=%s)",
+                    story_key,
+                    stage,
+                    (diag.get("seed") or "")[:80],
+                )
                 retry = {
                     "action": "launch",
                     "stage": stage,
@@ -368,7 +389,9 @@ class OrchestratorThread(threading.Thread):
                         insert_at = _i + 1
                 actions.insert(insert_at, retry)
                 ctx["_agent_actions"] = actions
-                db.update_story(story_key, context_json=json.dumps(ctx, ensure_ascii=False))
+                db.update_story(
+                    story_key, context_json=json.dumps(ctx, ensure_ascii=False)
+                )
                 try:
                     pty.kill()
                 except Exception:
@@ -387,7 +410,12 @@ class OrchestratorThread(threading.Thread):
                 )
                 state["stuck_escalated"] = True
         except Exception:
-            log.debug("[%s/%s] stuck check failed (non-fatal)", story_key, stage, exc_info=True)
+            log.debug(
+                "[%s/%s] stuck check failed (non-fatal)",
+                story_key,
+                stage,
+                exc_info=True,
+            )
 
     def _maybe_retry_headless(self, story_key, stage, executor, ctx) -> bool:
         """headless 进程死了没产出 → 重试（对齐 driver HEADLESS_MAX_ATTEMPTS）。
@@ -412,7 +440,11 @@ class OrchestratorThread(threading.Thread):
         )
         try:
             action = next(
-                (a for a in (ctx.get("_agent_actions") or []) if a.get("stage") == stage),
+                (
+                    a
+                    for a in (ctx.get("_agent_actions") or [])
+                    if a.get("stage") == stage
+                ),
                 {"action": "launch", "stage": stage, "adapter": "", "focus": ""},
             )
             executor.spawn(story_key, stage, action)
@@ -474,7 +506,9 @@ class OrchestratorThread(threading.Thread):
 
     # ---- judge 子线程 ----
 
-    def _submit_judge(self, story_key: str, stage: str, ctx: dict, executor, story: dict):
+    def _submit_judge(
+        self, story_key: str, stage: str, ctx: dict, executor, story: dict
+    ):
         """submit judge 到子线程池（不阻塞主循环）。"""
         judge_key = f"{story_key}:{stage}"
         with self._lock:
@@ -500,7 +534,9 @@ class OrchestratorThread(threading.Thread):
 
                 _auto_commit_worktrees(story_key, done_data.get("summary", stage))
             except Exception:
-                log.exception("[%s] auto-commit worktrees failed (non-fatal)", story_key)
+                log.exception(
+                    "[%s] auto-commit worktrees failed (non-fatal)", story_key
+                )
         # 成果物已落地 → 释放本 stage 的 PTY（设计12 改动2：PTY try/finally 释放语义
         # 保留；judge 在子线程跑，释放不能等 judge 完 —— 编排线程这里同步收尾）。
         self._release_stage(story_key, stage, executor)
@@ -535,7 +571,9 @@ class OrchestratorThread(threading.Thread):
         except Exception:
             log.debug("[%s] release stage %s failed (non-fatal)", story_key, stage)
 
-    def _judge_task(self, story_key: str, stage: str, done_data: dict, ctx: dict, story: dict):
+    def _judge_task(
+        self, story_key: str, stage: str, done_data: dict, ctx: dict, story: dict
+    ):
         """子线程：调 judge_stage_completion，结果写 _judge_results。"""
         judge_key = f"{story_key}:{stage}"
         try:
@@ -558,7 +596,9 @@ class OrchestratorThread(threading.Thread):
                 ctx=ctx,
                 lifecycle_state=ctx.get("_lifecycle_state", "待启动"),
                 done_data=done_data,
-                cumulative_outputs=collect_cumulative_outputs(workspace, story_key, actions),
+                cumulative_outputs=collect_cumulative_outputs(
+                    workspace, story_key, actions
+                ),
                 adapter=adapter,
                 retry_count=ctx.get("_verify_round", 1),
                 story_states=_story_states(story),
@@ -597,7 +637,13 @@ class OrchestratorThread(threading.Thread):
     # ---- 决策处理 ----
 
     def _handle_decision(
-        self, story_key: str, stage: str, decision: dict, ctx: dict, actions: list, handler
+        self,
+        story_key: str,
+        stage: str,
+        decision: dict,
+        ctx: dict,
+        actions: list,
+        handler,
     ):
         """judge 决策三分支 → DecisionHandler。"""
         quality = decision.get("quality", "approve")

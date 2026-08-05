@@ -1,4 +1,4 @@
-﻿"""PromptBuilder 子类（设计 13 Step 2）— stage prompt 构建统一入口。
+"""PromptBuilder 子类（设计 13 Step 2）— stage prompt 构建统一入口。
 
 从 planner.py（_build_cli_prompt）+ api.py（_build_interactive_stage_prompt /
 _build_stage_launch_prompt）抽出。编排线程 / executors 只通过 PromptBuilder 接口
@@ -82,7 +82,11 @@ class LaunchSeedBuilder(PromptBuilder):
         action: dict,
     ) -> str:
         return _render_launch_seed(
-            story_key=story_key, stage=stage, workspace=workspace, ctx=ctx, action=action
+            story_key=story_key,
+            stage=stage,
+            workspace=workspace,
+            ctx=ctx,
+            action=action,
         )
 
 
@@ -204,7 +208,11 @@ def _render_launch_seed(
         from ..infra.story_paths import safe_story_path
 
         full = _render_stage_prompt(
-            story_key=story_key, stage=stage, workspace=workspace, ctx=ctx, action=action
+            story_key=story_key,
+            stage=stage,
+            workspace=workspace,
+            ctx=ctx,
+            action=action,
         )
         pdir = safe_story_path(workspace, ".story", "context", story_key)
         pdir.mkdir(parents=True, exist_ok=True)

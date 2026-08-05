@@ -42,11 +42,11 @@ class BaseDecisionHandler(DecisionHandler):
     def _persist_ctx(self, story_key: str, ctx: dict) -> None:
         from ..infra.db import models as db
 
-        db.update_story(
-            story_key, context_json=json.dumps(ctx, ensure_ascii=False)
-        )
+        db.update_story(story_key, context_json=json.dumps(ctx, ensure_ascii=False))
 
-    def _save_summary(self, story_key: str, stage: str, adapter: str, summary: str) -> None:
+    def _save_summary(
+        self, story_key: str, stage: str, adapter: str, summary: str
+    ) -> None:
         from ..infra.db import models as db
 
         if not summary:
@@ -92,7 +92,9 @@ class BaseDecisionHandler(DecisionHandler):
         self._save_summary(story_key, stage, adapter, decision.get("summary", ""))
 
         # lifecycle 推进(LLM 判的 lifecycle_target,遇 ui_button 停住)
-        lifecycle_state = ctx.get("_lifecycle_state") or story.get("lifecycle_state") or "待启动"
+        lifecycle_state = (
+            ctx.get("_lifecycle_state") or story.get("lifecycle_state") or "待启动"
+        )
         target = decision.get("lifecycle_target")
         if target and target != lifecycle_state:
             from .evaluation.stage_completion import advance_lifecycle_to_target
@@ -134,7 +136,9 @@ class BaseDecisionHandler(DecisionHandler):
             self._handle_all_stages_done(story_key, ctx, actions)
         return False
 
-    def _maybe_stage_gate(self, story_key: str, stage: str, ctx: dict, actions: list) -> bool:
+    def _maybe_stage_gate(
+        self, story_key: str, stage: str, ctx: dict, actions: list
+    ) -> bool:
         """阶段间确认闸（与 driver 同逻辑）。返回 True 若 paused。"""
         from ..infra.db import models as db
         from ..sourcing.state_machine import pause as sm_pause
@@ -148,9 +152,7 @@ class BaseDecisionHandler(DecisionHandler):
             profile_stages = {}
         stage_cfg = profile_stages.get(stage)
         confirm_on = bool(
-            stage_cfg
-            and getattr(stage_cfg, "confirm", False)
-            and stage != "verify"
+            stage_cfg and getattr(stage_cfg, "confirm", False) and stage != "verify"
         )
         if not confirm_on:
             return False
@@ -236,9 +238,13 @@ class InteractiveDecisionHandler(BaseDecisionHandler):
             )
         except Exception:
             pass
-        log.info("[%s] interactive reject %s: %s → paused", story_key, stage, reason[:120])
+        log.info(
+            "[%s] interactive reject %s: %s → paused", story_key, stage, reason[:120]
+        )
 
-    def handle_escalate(self, story_key: str, stage: str, decision: dict, ctx: dict) -> None:
+    def handle_escalate(
+        self, story_key: str, stage: str, decision: dict, ctx: dict
+    ) -> None:
         from ..infra.db import models as db
         from ..sourcing.state_machine import pause as sm_pause
 
@@ -298,9 +304,7 @@ class AutomaticDecisionHandler(BaseDecisionHandler):
         actions.insert(insert_at, retry)
         ctx["_agent_actions"] = actions
         try:
-            db.update_story(
-                story_key, context_json=json.dumps(ctx, ensure_ascii=False)
-            )
+            db.update_story(story_key, context_json=json.dumps(ctx, ensure_ascii=False))
             db.log_event(
                 story_key,
                 stage,
@@ -309,9 +313,13 @@ class AutomaticDecisionHandler(BaseDecisionHandler):
             )
         except Exception:
             log.exception("[%s] reject retry persist failed", story_key)
-        log.info("[%s] auto reject %s → retry inserted: %s", story_key, stage, reason[:80])
+        log.info(
+            "[%s] auto reject %s → retry inserted: %s", story_key, stage, reason[:80]
+        )
 
-    def handle_escalate(self, story_key: str, stage: str, decision: dict, ctx: dict) -> None:
+    def handle_escalate(
+        self, story_key: str, stage: str, decision: dict, ctx: dict
+    ) -> None:
         from ..infra.db import models as db
         from ..sourcing.state_machine import pause as sm_pause
 

@@ -76,7 +76,9 @@ class DecisionHandler(ABC):
         """reject: 半自动→pause；全自动→插 retry action。"""
 
     @abstractmethod
-    def handle_escalate(self, story_key: str, stage: str, decision: dict, ctx: dict) -> None:
+    def handle_escalate(
+        self, story_key: str, stage: str, decision: dict, ctx: dict
+    ) -> None:
         """escalate: pause 等人。"""
 
 

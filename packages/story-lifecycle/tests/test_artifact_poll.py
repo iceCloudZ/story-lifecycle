@@ -231,11 +231,21 @@ def test_orchestrator_does_not_judge_without_artifact(story, tmp_path, monkeypat
 
     _setup_planning(story)
     monkeypatch.setattr(_time, "sleep", lambda s: None)
+    # mock Popen:CI 机器上没有真实 claude 二进制,Popen 抛 FileNotFoundError →
+    # spawn 标 failed(本地有 claude 才 active)。mock 后行为与环境无关。
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = None
+    mock_proc.stdin = MagicMock()
+    mock_proc.stdout = MagicMock()
+    mock_proc.stderr = MagicMock()
 
     thr = OrchestratorThread(poll_interval=0)
     try:
-        thr._tick()
-        thr._tick()
+        with patch("subprocess.Popen", return_value=mock_proc), patch(
+            "story_lifecycle.orchestrator.engine.claude_stream.supervise_headless_stdout"
+        ), patch("story_lifecycle.orchestrator.engine.planner._kill_headless"):
+            thr._tick()
+            thr._tick()
     finally:
         thr.stop()
         thr._executor_pool.shutdown(wait=False)
