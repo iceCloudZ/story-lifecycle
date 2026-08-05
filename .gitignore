@@ -64,7 +64,7 @@ packages/eval/dataset/
 packages/eval/results/
 .tmp/eval_runs/
 
-# round2 �ط�ɳ�䣨story_home/ws/gold ȫ���ԣ�ֻ�� profiles ģ�壩
+# round2 释放缓存（story_home/ws/gold 全排除，只留 profiles 模板）
 packages/eval/sandbox/story_home/
 packages/eval/sandbox/ws/
 packages/eval/sandbox/gold/
