@@ -206,11 +206,11 @@ def inject_conformance_findings(
     result: ConformanceResult,
     alignment_threshold: int = 2,
 ) -> list[dict]:
-    """conformance 结果转 findings（4.4）：
+    """conformance 结果转 findings（4.4，迭代 1 收尾修订）：
 
-    - alignment ≤ threshold → HIGH finding（进 gate evidence 的 open_high_findings）
-    - alignment == threshold+1 → MEDIUM finding（记录不阻断）
-    - alignment ≥ threshold+2 → 无 finding（分数已写入 done_data）
+    - alignment ≤ threshold **或 coverage ≤ 2** → HIGH finding（管线内完整交付要求）
+    - alignment == threshold+1 且 coverage > 2 → MEDIUM finding（记录不阻断）
+    - alignment ≥ threshold+2 且 coverage ≥ 3 → 无 finding（分数已写入 done_data）
     """
     if result.skipped:
         return []
@@ -219,14 +219,14 @@ def inject_conformance_findings(
         f"conformance: alignment={result.alignment} coverage={result.coverage} "
         f"scope_drift={result.scope_drift} (ref={result.reference_type}) | {result.summary}"
     )
-    if result.alignment <= alignment_threshold:
+    if result.alignment <= alignment_threshold or result.coverage <= 2:
         findings.append({
             "severity": "HIGH",
             "category": "conformance",
             "description": desc,
             "location": "conformance_check",
         })
-    elif result.alignment == alignment_threshold + 1:
+    elif result.alignment == alignment_threshold + 1 and result.coverage > 2:
         findings.append({
             "severity": "MEDIUM",
             "category": "conformance",
