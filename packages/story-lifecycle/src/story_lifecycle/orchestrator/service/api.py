@@ -671,10 +671,15 @@ def _spawn_story_agent_pty(
     Both ``api_spawn_session`` and ``_ensure_story_agent_pty`` go through here
     so the two spawn paths can't drift on prompt delivery (the prior bug:
     sessions/spawn used ``spawn_pty`` which never injects → empty kimi session).
+
+    设计 14 (D3)：spawn 主体收敛到 infra/terminal/spawn_recipe.spawn_agent_pty
+    （与 executors.InteractiveStageExecutor.spawn 同源），本函数保留 api 路径
+    特有的「死后 resume 重试 + 清 marker」后处理。
     """
     import json as _json
 
-    from ...infra.story_paths import build_story_spawn_env, safe_story_path
+    from ...infra.story_paths import build_story_spawn_env
+    from ...infra.terminal.spawn_recipe import spawn_agent_pty
 
     workspace = story.get("workspace", "")
     story_key = story["story_key"]
@@ -695,107 +700,29 @@ def _spawn_story_agent_pty(
         log.info(
             "[%s] spawn cwd ensured: %s (exists=%s)",
             story_key,
-            spawn_cwd,
+            stage,
             Path(spawn_cwd).exists(),
         )
     except Exception as exc:
         log.warning("[%s] mkdir spawn_cwd failed: %s", story_key, exc)
-    # session-persistence (claude --session-id / --resume; kimi -S). 真相源 = DB
-    # (story_session 表),marker 文件作兼容副本。resume 判据:DB 有 session_id,或 marker 在。
+
     _adapter_name = getattr(adapter, "name", "") or ""
-    # claude 的确定性 sid:统一走 compute_session_id(三字段),保证两条 spawn 路径
-    # (api 交互式 / planner 自动循环)算出同一个 id,resume 才能对上历史。
-    # DESIGN-session-pty-id-model.md §3.5 / 问题 4。
-    session_uuid = db.compute_session_id(story_key, stage, _adapter_name)
-    session_name = f"{story_key}-{stage}"
-    marker = (
-        safe_story_path(workspace, ".story", "context", story_key)
-        / f"session_{stage}.json"
-    )
-    _db_row = db.get_session(story_key, stage, _adapter_name) if _adapter_name else None
-    _prespecified = bool(getattr(adapter, "prespecified_session_id", False))
-    # resume 判据:DB 有捕获 sid;或 prespecified sid 的 adapter(claude, sid 是
-    # 确定性 uuid5)且 marker 在。CLI 自分配 sid 的 adapter(kimi)只有 marker 而
-    # 无捕获 sid 时不能 resume —— 否则 `-S <uuid5>` 指向一个不存在的会话。
-    is_resume = bool(
-        (_db_row and _db_row.get("session_id")) or (_prespecified and marker.exists())
-    )
-    # resume 时用 DB 里捕获的 id(kimi)或确定性 uuid5(claude);否则用新 uuid5。
-    _use_sid = (
-        _db_row["session_id"] if _db_row and _db_row.get("session_id") else session_uuid
-    )
     seed = _build_stage_launch_prompt(story)
-    spec = adapter.start_session(
+    _res = spawn_agent_pty(
+        adapter,
         model,
-        prompt=seed
-        if not is_resume
-        else "继续上次的任务,完成后按完成协议写入 done 文件。",
-        session_id=_use_sid,
-        session_name=session_name,
-        resume=is_resume,
-    )
-    # 文件扫描捕获的时间窗口下界必须在 spawn 前取(opencode 的 session 行
-    # time_created 是 CLI 启动那一刻,spawn 后取会把它漏掉;对齐 planner._spawn_ts)。
-    _spawn_ts = now_utc_iso()
-    # spawn env:与 planner 两条路径同源(build_story_spawn_env),让交互式 PTY
-    # spawn 的 code agent 也能跑 `story consult` / `story tool declare`。此前这里
-    # 不传 env → 子进程继承 serve 进程环境,什么 STORY_* 都没有 → declare 直接
-    # ValueError 缺 story_key;且 STORY_TITLE 漏注入 → evidence 子目录退化成 "-需求"。
-    session_id, pty = ensure_agent_pty(
-        story_key,
-        stage,
-        _adapter_name,
-        spec.command,
-        spawn_cwd,
-        spec.pty_prompt,
+        story_key=story_key,
+        stage=stage,
+        workspace=workspace,
+        spawn_cwd=spawn_cwd,
+        seed=seed,
         env=build_story_spawn_env(story, stage, _adapter_name),
-        readiness_marker=spec.readiness_marker,
-        startup_delay=0
-        if spec.readiness_marker is None and not spec.pty_prompt
-        else 2.0,
     )
-    # sid 捕获策略(三种 sid 模型统一入口,见 infra/terminal/sid_capture.py):
-    # prespecified(claude)启动即知 sid 无需捕获;输出行捕获(kimi)走 PTY tap
-    # 线程;文件扫描捕获(opencode)走 post-exit watcher。api 交互式路径的 PTY 由
-    # 用户自行 /exit,planner 的 stage-done 捕获钩不到,必须在 spawn 时 arm。
-    # resume 的会话 DB 已有 sid,无需重复捕获。
-    if _adapter_name and not is_resume:
-        arm_sid_capture(
-            adapter,
-            pty,
-            story_key=story_key,
-            stage=stage,
-            cwd=spawn_cwd,
-            since_ts=_spawn_ts,
-        )
-    # write session marker for NEW sessions (so next spawn resumes)
-    if not is_resume:
-        # DB(预指定 sid 的 adapter 如 claude,sid 已知;kimi/opencode 由捕获回填,这里占位)
-        if _adapter_name:
-            try:
-                db.upsert_session(
-                    story_key,
-                    stage,
-                    _adapter_name,
-                    # sid 模型是 adapter 的职责(Phase 0):prespecified_session_id=True
-                    # 的 adapter 启动即知 sid;否则 None,由 tap 捕获线程回填。
-                    session_id=session_uuid
-                    if adapter.prespecified_session_id
-                    else None,
-                )
-            except Exception:
-                pass
-        try:
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(
-                _json.dumps(
-                    {"session_id": session_uuid, "name": session_name, "stage": stage},
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
-        except Exception:
-            pass
+    session_id, pty = _res.session_id, _res.pty
+    is_resume = _res.is_resume
+    marker, _use_sid = _res.marker, _res.use_sid
+    _prespecified = bool(getattr(adapter, "prespecified_session_id", False))
+
     # spawn 后存活检查：PTY 立即死了（cwd 不存在 / resume 死 sid / claude 崩溃）
     # 时清 marker + DB session，让下次 spawn 起新会话而非反复 resume 死 sid 秒退。
     # 现象：spawn 返回 resumed=True 但 claude 进程不存在 → 前端「没有 CLI 会话」死循环。
@@ -823,7 +750,7 @@ def _spawn_story_agent_pty(
                 model,
                 prompt="继续上次的任务,完成后按完成协议写入 done 文件。",
                 session_id=_use_sid,
-                session_name=session_name,
+                session_name=f"{story_key}-{stage}",
                 resume=True,
             )
             session_id, pty = ensure_agent_pty(

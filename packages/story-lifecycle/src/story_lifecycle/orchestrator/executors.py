@@ -213,10 +213,15 @@ class InteractiveStageExecutor(BaseStageExecutor):
     """
 
     def spawn(self, story_key: str, stage: str, action: dict) -> str:
-        """按 api._spawn_story_agent_pty 契约 spawn（交互式路径）。"""
+        """按 api._spawn_story_agent_pty 契约 spawn（交互式路径）。
+
+        设计 14 (D3)：spawn 主体收敛到 infra/terminal/spawn_recipe.spawn_agent_pty
+        （与 api._spawn_story_agent_pty 同源），本函数保留 executors 路径特有的
+        _last_pty 缓存（编排线程跨 tick 查询用）。
+        """
         from ..infra.db import models as db
         from ..knowledge.adapters import get_adapter
-        from ..infra.terminal.sid_capture import arm_sid_capture, now_utc_iso
+        from ..infra.terminal.spawn_recipe import spawn_agent_pty
         from .prompts import LaunchSeedBuilder
 
         story = db.get_story(story_key)
@@ -242,29 +247,6 @@ class InteractiveStageExecutor(BaseStageExecutor):
             pass
 
         spawn_cwd = ctx.get("workspace_path") or workspace
-        try:
-            Path(spawn_cwd).mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-
-        session_uuid = db.compute_session_id(story_key, stage, adapter_name)
-        session_name = f"{story_key}-{stage}"
-        marker = (
-            story_paths.safe_story_path(workspace, ".story", "context", story_key)
-            / f"session_{stage}.json"
-        )
-        _db_row = db.get_session(story_key, stage, adapter_name)
-        prespecified = bool(getattr(adapter, "prespecified_session_id", False))
-        is_resume = bool(
-            (_db_row and _db_row.get("session_id"))
-            or (prespecified and marker.exists())
-        )
-        use_sid = (
-            _db_row["session_id"]
-            if _db_row and _db_row.get("session_id")
-            else session_uuid
-        )
-
         seed = LaunchSeedBuilder().build(
             story_key=story_key,
             stage=stage,
@@ -272,67 +254,18 @@ class InteractiveStageExecutor(BaseStageExecutor):
             ctx=ctx,
             action=action or {},
         )
-        spec = adapter.start_session(
+        _res = spawn_agent_pty(
+            adapter,
             model,
-            prompt=seed
-            if not is_resume
-            else "继续上次的任务,完成后按完成协议写入 done 文件。",
-            session_id=use_sid,
-            session_name=session_name,
-            resume=is_resume,
-        )
-        spawn_ts = now_utc_iso()
-        from ..infra.terminal.pty import ensure_agent_pty
-
-        session_id, pty = ensure_agent_pty(
-            story_key,
-            stage,
-            adapter_name,
-            spec.command,
-            spawn_cwd,
-            spec.pty_prompt,
+            story_key=story_key,
+            stage=stage,
+            workspace=workspace,
+            spawn_cwd=spawn_cwd,
+            seed=seed,
             env=self._story_env(story, stage, adapter_name),
-            readiness_marker=spec.readiness_marker,
-            startup_delay=0
-            if spec.readiness_marker is None and not spec.pty_prompt
-            else 2.0,
         )
-        if adapter_name and not is_resume:
-            arm_sid_capture(
-                adapter,
-                pty,
-                story_key=story_key,
-                stage=stage,
-                cwd=spawn_cwd,
-                since_ts=spawn_ts,
-            )
-        if not is_resume:
-            try:
-                if adapter_name:
-                    db.upsert_session(
-                        story_key,
-                        stage,
-                        adapter_name,
-                        session_id=session_uuid
-                        if adapter.prespecified_session_id
-                        else None,
-                    )
-                marker.parent.mkdir(parents=True, exist_ok=True)
-                marker.write_text(
-                    json.dumps(
-                        {
-                            "session_id": session_uuid,
-                            "name": session_name,
-                            "stage": stage,
-                        },
-                        ensure_ascii=False,
-                    ),
-                    encoding="utf-8",
-                )
-            except Exception:
-                pass
-        self._last_pty = pty
-        return session_id
+        self._last_pty = _res.pty
+        return _res.session_id
 
 
 class AutomaticStageExecutor(BaseStageExecutor):

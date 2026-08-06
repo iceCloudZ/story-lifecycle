@@ -87,6 +87,8 @@ class _FakeAdapter:
 
 
 def _stub_spawn_deps(monkeypatch, db_row, capture=None):
+    import story_lifecycle.infra.terminal.pty as pty_mod
+
     monkeypatch.setattr(api.db, "get_session", lambda *a: db_row)
     monkeypatch.setattr(api.db, "upsert_session", lambda *a, **k: None)
     monkeypatch.setattr(api, "_build_stage_launch_prompt", lambda s: "seed")
@@ -96,7 +98,9 @@ def _stub_spawn_deps(monkeypatch, db_row, capture=None):
             capture.append(k.get("env"))
         return ("reg-id", _FakePty())
 
-    monkeypatch.setattr(api, "ensure_agent_pty", _fake_ensure)
+    # 设计14(D3):spawn 主体收敛到 spawn_recipe,ensure_agent_pty 由 pty 模块
+    # 提供(api 不再直接持有)—— 补丁打在真实调用点。
+    monkeypatch.setattr(pty_mod, "ensure_agent_pty", _fake_ensure)
 
 
 def test_no_resume_without_captured_sid(monkeypatch, tmp_path):

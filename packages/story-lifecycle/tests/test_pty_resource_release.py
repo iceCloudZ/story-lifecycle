@@ -254,7 +254,10 @@ class TestMarkerUnlink:
         def _fake_ensure(*a, **kw):
             return ("sess-uuid5", dead_pty)
 
-        monkeypatch.setattr(api, "ensure_agent_pty", _fake_ensure)
+        # 设计14(D3):spawn 主体收敛到 spawn_recipe,补丁打在真实调用点 pty 模块
+        import story_lifecycle.infra.terminal.pty as _pty_mod
+
+        monkeypatch.setattr(_pty_mod, "ensure_agent_pty", _fake_ensure)
 
         session_id, pty, is_resume = api._spawn_story_agent_pty(story, _DeadAdapter(), "sonnet")
         assert is_resume is False
