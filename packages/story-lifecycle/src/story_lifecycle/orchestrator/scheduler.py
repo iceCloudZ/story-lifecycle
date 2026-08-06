@@ -25,6 +25,7 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 from ..infra.db import models as db
 from ..sourcing.state_machine import pause as sm_pause
@@ -95,6 +96,23 @@ def _read_done_data(story_key: str, stage: str, workspace: str, actions: list) -
         "summary": f"{stage} 成果物落地",
         "files_changed": [],
     }
+
+
+@dataclass
+class StuckCheckInput:
+    """_tick_stuck_check 的入参打包（设计15 阶段D：8 参数 → 1 参数对象）。
+
+    字段 = 原 _tick_stuck_check 参数，类型照搬。纯数据容器，不改逻辑。
+    """
+
+    story_key: str
+    stage: str
+    pty: object
+    executor: object
+    story: dict
+    ctx: dict
+    actions: list
+    now: float
 
 
 class OrchestratorThread(threading.Thread):
@@ -176,17 +194,9 @@ class OrchestratorThread(threading.Thread):
         executor = self._resolve_executor(story, ctx, stage)
         handler = make_decision_handler(story, ctx)
         if self._force_auto:
-            from .executors import AutomaticStageExecutor
-            from .handlers import AutomaticDecisionHandler
-
-            if not isinstance(executor, AutomaticStageExecutor):
-                executor = AutomaticStageExecutor()
-                try:
-                    executor._stage_for = stage
-                except Exception:
-                    pass
-                self._executors[story_key] = executor
-            handler = AutomaticDecisionHandler()
+            executor, handler = self._force_auto_executor_handler(
+                story_key, stage, executor, handler
+            )
         judge_key = f"{story_key}:{stage}"
 
         # 0. current_stage 与 actions 错配/已完成时推进到第一个未完成 launch stage
@@ -203,23 +213,8 @@ class OrchestratorThread(threading.Thread):
         # 0. skip action:记录跳过 + 推进到下一个未完成 launch stage(对齐 driver)。
         action = find_action(actions, stage)
         if action is not None and action.get("action") == "skip":
-            reason = action.get("reason", "")
-            db.log_event(story_key, stage, "skipped", {"reason": reason})
-            log.info("[%s] Skipped stage %s: %s", story_key, stage, reason)
-            completed = list(ctx.get("_completed_stages") or [])
-            if stage not in completed:
-                completed.append(stage)
-            ctx["_completed_stages"] = completed
-            next_stage = self._next_launch_stage(actions, completed)
-            if next_stage:
-                db.update_story(
-                    story_key,
-                    current_stage=next_stage,
-                    context_json=json.dumps(ctx, ensure_ascii=False),
-                )
-            else:
-                self._complete_story(story_key, ctx, actions)
-            return
+            if self._handle_skip_action(story_key, stage, action, ctx, actions):
+                return
 
         # 0b. 所有 launch stage 已完成 → completed(对齐 driver 末尾 sm_mark_completed)。
         if not self._next_launch_stage(actions, ctx.get("_completed_stages") or []):
@@ -353,17 +348,32 @@ class OrchestratorThread(threading.Thread):
             return
         # 卡住检测（PTY 路径，对齐 driver STEP 1.7c + STEP 2）
         self._tick_stuck_check(
-            story_key, stage, pty, executor, story, ctx, actions, now
+            StuckCheckInput(
+                story_key=story_key,
+                stage=stage,
+                pty=pty,
+                executor=executor,
+                story=story,
+                ctx=ctx,
+                actions=actions,
+                now=now,
+            )
         )
 
-    def _tick_stuck_check(
-        self, story_key, stage, pty, executor, story, ctx, actions, now
-    ):
+    def _tick_stuck_check(self, req: "StuckCheckInput"):
         """规则卡住检测（零 LLM）+ 命中后的 LLM 诊断（restart/escalate/wait）。
 
         对齐 driver poll 循环 STEP 1.7c/STEP 2：读 pty_logger events 判卡住，
         detect_stuck → diagnose → 执行决策。_stage_state.stuck_escalated 去重。
         """
+        story_key = req.story_key
+        stage = req.stage
+        pty = req.pty
+        executor = req.executor
+        story = req.story
+        ctx = req.ctx
+        actions = req.actions
+        now = req.now
         state = self._stage_state.get(story_key) or {}
         if state.get("stuck_escalated"):
             return
@@ -395,82 +405,9 @@ class OrchestratorThread(threading.Thread):
             )
             if not det:
                 return
-            # STEP 2：LLM 诊断（summary 优先，规则触发 agentic 例外）
-            from .evaluation.stuck_diagnose import (
-                diagnose_stuck_agentic,
-                diagnose_stuck_summary,
-                should_upgrade_agentic,
+            self._execute_stuck_diagnosis(
+                story_key, stage, det, events, state, pty, actions, ctx
             )
-            from ..infra.db import models as db
-
-            _adapter_attr = getattr(pty, "adapter", "")
-            if not isinstance(_adapter_attr, str):
-                _adapter_attr = ""
-            facts = {"adapter": _adapter_attr, "stage": stage}
-            events_path = getattr(pty, "events_path", "") or ""
-            if should_upgrade_agentic(story_key, stage, det, events=events):
-                diag = diagnose_stuck_agentic(
-                    story_key=story_key,
-                    stage=stage,
-                    detection=det,
-                    events_path=events_path,
-                    story_facts=facts,
-                )
-            else:
-                diag = diagnose_stuck_summary(
-                    story_key=story_key,
-                    stage=stage,
-                    detection=det,
-                    events=events,
-                    story_facts=facts,
-                )
-            action = diag.get("action", "escalate")
-            if action == "wait":
-                log.info("[%s/%s] stuck diagnose: wait (slow)", story_key, stage)
-                state["spawned_ts"] = time.time()  # 重置超时时钟
-            elif action == "restart":
-                log.info(
-                    "[%s/%s] stuck diagnose: restart (seed=%s)",
-                    story_key,
-                    stage,
-                    (diag.get("seed") or "")[:80],
-                )
-                retry = {
-                    "action": "launch",
-                    "stage": stage,
-                    "adapter": _adapter_attr,
-                    "focus": f"卡住诊断 restart:{diag.get('reason', '')};seed:{diag.get('seed', '')}",
-                }
-                from ..infra.paths import stage_done_file_rel
-
-                retry["done_file"] = stage_done_file_rel(story_key, stage)
-                # 插到当前 stage action 之后(对齐 driver idx+1 插入语义)
-                insert_at = len(actions)
-                for _i, _a in enumerate(actions):
-                    if _a.get("stage") == stage:
-                        insert_at = _i + 1
-                actions.insert(insert_at, retry)
-                ctx["_agent_actions"] = actions
-                db.update_story(
-                    story_key, context_json=json.dumps(ctx, ensure_ascii=False)
-                )
-                try:
-                    pty.kill()
-                except Exception:
-                    pass
-                state["stuck_escalated"] = True
-                self._clear_stage_state(story_key)
-            else:  # escalate
-                from .engine.supervisor import escalate_stuck
-
-                escalate_stuck(
-                    story_key=story_key,
-                    stage=stage,
-                    adapter=getattr(pty, "adapter", ""),
-                    detection=det,
-                    log_event_fn=db.log_event,
-                )
-                state["stuck_escalated"] = True
         except Exception:
             log.debug(
                 "[%s/%s] stuck check failed (non-fatal)",
@@ -478,6 +415,90 @@ class OrchestratorThread(threading.Thread):
                 stage,
                 exc_info=True,
             )
+
+    def _execute_stuck_diagnosis(
+        self, story_key, stage, det, events, state, pty, actions, ctx
+    ):
+        """STEP 2：LLM 诊断（summary 优先，规则触发 agentic 例外）+ 执行决策。
+
+        设计15 阶段D 从 _tick_stuck_check 抽出。决策：restart（插 retry action +
+        杀 PTY）/ escalate（转人）/ wait（重置超时时钟）。
+        """
+        from .evaluation.stuck_diagnose import (
+            diagnose_stuck_agentic,
+            diagnose_stuck_summary,
+            should_upgrade_agentic,
+        )
+        from ..infra.db import models as db
+
+        _adapter_attr = getattr(pty, "adapter", "")
+        if not isinstance(_adapter_attr, str):
+            _adapter_attr = ""
+        facts = {"adapter": _adapter_attr, "stage": stage}
+        events_path = getattr(pty, "events_path", "") or ""
+        if should_upgrade_agentic(story_key, stage, det, events=events):
+            diag = diagnose_stuck_agentic(
+                story_key=story_key,
+                stage=stage,
+                detection=det,
+                events_path=events_path,
+                story_facts=facts,
+            )
+        else:
+            diag = diagnose_stuck_summary(
+                story_key=story_key,
+                stage=stage,
+                detection=det,
+                events=events,
+                story_facts=facts,
+            )
+        action = diag.get("action", "escalate")
+        if action == "wait":
+            log.info("[%s/%s] stuck diagnose: wait (slow)", story_key, stage)
+            state["spawned_ts"] = time.time()  # 重置超时时钟
+        elif action == "restart":
+            log.info(
+                "[%s/%s] stuck diagnose: restart (seed=%s)",
+                story_key,
+                stage,
+                (diag.get("seed") or "")[:80],
+            )
+            retry = {
+                "action": "launch",
+                "stage": stage,
+                "adapter": _adapter_attr,
+                "focus": f"卡住诊断 restart:{diag.get('reason', '')};seed:{diag.get('seed', '')}",
+            }
+            from ..infra.paths import stage_done_file_rel
+
+            retry["done_file"] = stage_done_file_rel(story_key, stage)
+            # 插到当前 stage action 之后(对齐 driver idx+1 插入语义)
+            insert_at = len(actions)
+            for _i, _a in enumerate(actions):
+                if _a.get("stage") == stage:
+                    insert_at = _i + 1
+            actions.insert(insert_at, retry)
+            ctx["_agent_actions"] = actions
+            db.update_story(
+                story_key, context_json=json.dumps(ctx, ensure_ascii=False)
+            )
+            try:
+                pty.kill()
+            except Exception:
+                pass
+            state["stuck_escalated"] = True
+            self._clear_stage_state(story_key)
+        else:  # escalate
+            from .engine.supervisor import escalate_stuck
+
+            escalate_stuck(
+                story_key=story_key,
+                stage=stage,
+                adapter=getattr(pty, "adapter", ""),
+                detection=det,
+                log_event_fn=db.log_event,
+            )
+            state["stuck_escalated"] = True
 
     def _maybe_retry_headless(self, story_key, stage, executor, ctx) -> bool:
         """headless 进程死了没产出 → 重试（对齐 driver HEADLESS_MAX_ATTEMPTS）。
@@ -536,6 +557,24 @@ class OrchestratorThread(threading.Thread):
         self._executors[story["story_key"]] = executor
         return executor
 
+    def _force_auto_executor_handler(self, story_key, stage, executor, handler):
+        """force_auto 语义：强制 Automatic 执行器 + 决策 handler（设计15 阶段D 抽取）。
+
+        force_auto=旧 driver 语义（CLI 同步入口总是自动 spawn，不按 profile 分
+        半自动/全自动）。返回 (executor, handler) 替换对。
+        """
+        from .executors import AutomaticStageExecutor
+        from .handlers import AutomaticDecisionHandler
+
+        if not isinstance(executor, AutomaticStageExecutor):
+            executor = AutomaticStageExecutor()
+            try:
+                executor._stage_for = stage
+            except Exception:
+                pass
+            self._executors[story_key] = executor
+        return executor, AutomaticDecisionHandler()
+
     def _clear_stage_state(self, story_key: str):
         self._stage_state.pop(story_key, None)
         self._executors.pop(story_key, None)
@@ -549,6 +588,29 @@ class OrchestratorThread(threading.Thread):
                 if st and st not in completed:
                     return st
         return None
+
+    def _handle_skip_action(self, story_key, stage, action, ctx, actions) -> bool:
+        """skip action：记录跳过 + 推进到下一个未完成 launch stage（设计15 阶段D 抽取）。
+
+        Returns True 若已处理（调用方 return）。
+        """
+        reason = action.get("reason", "")
+        db.log_event(story_key, stage, "skipped", {"reason": reason})
+        log.info("[%s] Skipped stage %s: %s", story_key, stage, reason)
+        completed = list(ctx.get("_completed_stages") or [])
+        if stage not in completed:
+            completed.append(stage)
+        ctx["_completed_stages"] = completed
+        next_stage = self._next_launch_stage(actions, completed)
+        if next_stage:
+            db.update_story(
+                story_key,
+                current_stage=next_stage,
+                context_json=json.dumps(ctx, ensure_ascii=False),
+            )
+        else:
+            self._complete_story(story_key, ctx, actions)
+        return True
 
     def _complete_story(self, story_key: str, ctx: dict, actions: list):
         """所有 launch stage 完成 → story completed + 复盘/飞轮回写。"""

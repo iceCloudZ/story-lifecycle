@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from .abc import StageExecutor
@@ -87,6 +88,23 @@ def resolve_stage_artifacts(
     except Exception:
         pass
     return stage_artifacts, ev, git_worktrees
+
+
+@dataclass
+class SpawnRequest:
+    """_spawn_headless 的入参打包（设计15 阶段D：8 参数 → 1 参数对象）。
+
+    字段 = 原 _spawn_headless 参数，类型照搬。纯数据容器，不改逻辑。
+    """
+
+    story_key: str
+    stage: str
+    adapter: object
+    model: str
+    prompt: str
+    prompt_file: object
+    spawn_cwd: str
+    story_env: dict
 
 
 class BaseStageExecutor(StageExecutor):
@@ -333,8 +351,6 @@ class AutomaticStageExecutor(BaseStageExecutor):
         """
         from ..infra.db import models as db
         from ..knowledge.adapters import get_adapter
-        from ..infra.terminal.pty import ensure_agent_pty
-        from ..infra.terminal.pty_logger import PtyLogger
         from .engine.planner import resolve_stage_adapter
         from .engine.profile_loader import resolve_profile
 
@@ -411,17 +427,59 @@ class AutomaticStageExecutor(BaseStageExecutor):
 
         if headless:
             return self._spawn_headless(
-                story_key,
-                stage,
-                adapter,
-                model,
-                prompt,
-                prompt_file,
-                spawn_cwd,
-                story_env,
+                SpawnRequest(
+                    story_key=story_key,
+                    stage=stage,
+                    adapter=adapter,
+                    model=model,
+                    prompt=prompt,
+                    prompt_file=prompt_file,
+                    spawn_cwd=spawn_cwd,
+                    story_env=story_env,
+                )
             )
 
         # PTY 路径：SessionSpec 契约（与 api spawn 一致）
+        return self._spawn_pty_path(
+            story_key=story_key,
+            stage=stage,
+            adapter=adapter,
+            model=model,
+            adapter_name=adapter_name,
+            prompt_file=prompt_file,
+            prompt=prompt,
+            spawn_cwd=spawn_cwd,
+            story_env=story_env,
+            story=story,
+            workspace=workspace,
+            focus=focus,
+            ctx=ctx,
+        )
+
+    def _spawn_pty_path(
+        self,
+        *,
+        story_key,
+        stage,
+        adapter,
+        model,
+        adapter_name,
+        prompt_file,
+        prompt,
+        spawn_cwd,
+        story_env,
+        story,
+        workspace,
+        focus,
+        ctx,
+    ):
+        """PTY spawn 路径（设计15 阶段D 从 spawn 抽出）：SessionSpec 契约 + supervisor。
+
+        NEW/RESUME 判定 → adapter.start_session → ensure_agent_pty → supervisor 线程。
+        与 api spawn 路径同一套 SessionSpec 契约。
+        """
+        from ..infra.terminal.pty import ensure_agent_pty
+        from ..infra.terminal.pty_logger import PtyLogger
         from ..infra.db import models as _sd
 
         _prior = _sd.get_session(story_key, stage, adapter_name)
@@ -507,17 +565,17 @@ class AutomaticStageExecutor(BaseStageExecutor):
         return getattr(pty, "session_id", "")
 
     def _spawn_headless(
-        self,
-        story_key,
-        stage,
-        adapter,
-        model,
-        prompt,
-        prompt_file,
-        spawn_cwd,
-        story_env,
+        self, req: "SpawnRequest"
     ) -> str:
         """headless 路径：Popen + supervise_headless_stdout drain 线程。"""
+        story_key = req.story_key
+        stage = req.stage
+        adapter = req.adapter
+        model = req.model
+        prompt = req.prompt
+        prompt_file = req.prompt_file
+        spawn_cwd = req.spawn_cwd
+        story_env = req.story_env
         import subprocess as _sp
 
         from ..infra.llm_client import get_llm

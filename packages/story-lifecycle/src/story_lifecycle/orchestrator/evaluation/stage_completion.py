@@ -153,39 +153,11 @@ def judge_stage_completion(req: JudgeRequest) -> dict:
 
     # F2：verify stage 跑 conformance 质检（spec vs 实现 diff），结果注入判定上下文。
     # 配置：ctx 的 conformance_check（默认 true）；失败时 fail-closed（转 escalate）。
-    conformance_ev = ""
-    if stage == "verify" and ctx.get("conformance_check", True):
-        try:
-            from .conformance import check_conformance, inject_conformance_findings
-
-            conformance_result = check_conformance(
-                story_key=story_key,
-                workspace=workspace,
-                spec_path=done_data.get("spec_path") or "",
-                diff_text=done_data.get("delivery_diff"),
-                delivery_diff_path=done_data.get("delivery_diff_path"),
-                files_changed=done_data.get("files_changed"),
-            )
-            if conformance_result.skipped:
-                conformance_ev = f"（conformance 跳过: {conformance_result.skip_reason}）"
-            else:
-                conf_findings = inject_conformance_findings(conformance_result)
-                judge_ctx["conformance"] = conformance_result.model_dump()
-                judge_ctx["conformance_findings"] = conf_findings
-                sev = "HIGH" if conf_findings and conf_findings[0]["severity"] == "HIGH" else "OK"
-                conformance_ev = (
-                    f"conformance 检查: alignment={conformance_result.alignment} "
-                    f"coverage={conformance_result.coverage} scope_drift={conformance_result.scope_drift} "
-                    f"(ref={conformance_result.reference_type}) → {sev}\n"
-                    f"  摘要: {conformance_result.summary[:200]}"
-                )
-        except Exception as exc:
-            # fail-closed：conformance 自身失败不允许跳过检查静默放行 → escalate
-            log.warning("[%s/%s] conformance 失败,转 escalate: %s", story_key, stage, exc)
-            return _fallback_decision(
-                story_key, stage, cref, db_module,
-                reason=f"conformance 检查失败(fail-closed): {exc}",
-            )
+    conformance_ev, fallback = _run_conformance_check(
+        story_key, stage, workspace, ctx, done_data, judge_ctx, cref, db_module
+    )
+    if fallback is not None:
+        return fallback
 
     # 2. LLM 调用(纯判定,无工具)
     if llm is None:
@@ -213,61 +185,18 @@ def judge_stage_completion(req: JudgeRequest) -> dict:
         judge_ctx=judge_ctx,
         conformance_ev=conformance_ev,
     )
-    try:
-        result = llm.invoke_structured(
-            prompt, StageCompletionDecision, temperature=0.1, timeout=90
-        )
-        quality = result.quality
-        target = result.lifecycle_target
-        summary = (result.summary or "").strip()
-        reason = result.reason or f"stage completion: {quality}"
-        findings = result.findings or []
-        repair = result.repair_action.model_dump() if result.repair_action else None
-        llm_model = getattr(llm, "model", "")
-    except Exception as exc:
-        log.warning(
-            "[%s/%s] stage completion LLM failed, fallback approve: %s",
-            story_key,
-            stage,
-            exc,
-        )
+    llm_out = _call_judge_llm(
+        llm, prompt, story_key, stage, cref, db_module
+    )
+    if llm_out is None:
         return _fallback_decision(
-            story_key, stage, cref, db_module, reason=f"LLM 调用失败:{exc}"
+            story_key, stage, cref, db_module, reason="LLM 调用失败"
         )
+    quality, target, summary, reason, findings, repair, llm_model = llm_out
 
-    # 规范化 lifecycle_target:必须是合法状态且 != 当前,否则视为不推进。
-    if target and target not in LIFECYCLE_ORDER:
-        log.warning(
-            "[%s/%s] judge returned invalid lifecycle_target=%r, treating as None",
-            story_key,
-            stage,
-            target,
-        )
-        target = None
-    if target == lifecycle_state:
-        target = None
-
-    # 纪律:quality != approve 时 lifecycle_target 恒为 None(不合格不算产出)。
-    if quality != "approve":
-        target = None
-
-    # 3. reject 上限防护(§4.9 / 评审 A2)
-    if quality == "reject":
-        from .reject_budget import check_reject_budget
-
-        budget = check_reject_budget(story_key, stage, reason, db_module=db_module)
-        if not budget["allow"]:
-            log.warning(
-                "[%s/%s] reject 被 reject_budget 拦(force=%s, warn=%s)→ 强制 escalate",
-                story_key,
-                stage,
-                budget["force"],
-                budget["warn"],
-            )
-            quality = "escalate"
-            reason = (
-                f"reject 被防打回循环拦:{budget['warn']};原 reject 理由:{reason[:120]}"
-            )
+    quality, target, reason = _normalize_judge_decision(
+        quality, target, reason, story_key, stage, lifecycle_state, db_module
+    )
 
     # 4. 落 orchestrator_decision(审计,无状态编排前提)
     try:
@@ -310,6 +239,131 @@ def judge_stage_completion(req: JudgeRequest) -> dict:
         "logged_decision_id": rid,
         "context_ref": cref,
     }
+
+
+def _run_conformance_check(
+    story_key, stage, workspace, ctx, done_data, judge_ctx, cref, db_module
+):
+    """verify stage 的 conformance 质检（设计15 阶段D 从 judge_stage_completion 抽出）。
+
+    Returns: (conformance_ev, fallback_response)。fallback 非 None 表示
+    fail-closed（conformance 自身失败转 escalate）。
+    """
+    conformance_ev = ""
+    if stage == "verify" and ctx.get("conformance_check", True):
+        try:
+            from .conformance import check_conformance, inject_conformance_findings
+
+            conformance_result = check_conformance(
+                story_key=story_key,
+                workspace=workspace,
+                spec_path=done_data.get("spec_path") or "",
+                diff_text=done_data.get("delivery_diff"),
+                delivery_diff_path=done_data.get("delivery_diff_path"),
+                files_changed=done_data.get("files_changed"),
+            )
+            if conformance_result.skipped:
+                conformance_ev = f"（conformance 跳过: {conformance_result.skip_reason}）"
+            else:
+                conf_findings = inject_conformance_findings(conformance_result)
+                judge_ctx["conformance"] = conformance_result.model_dump()
+                judge_ctx["conformance_findings"] = conf_findings
+                sev = (
+                    "HIGH"
+                    if conf_findings and conf_findings[0]["severity"] == "HIGH"
+                    else "OK"
+                )
+                conformance_ev = (
+                    f"conformance 检查: alignment={conformance_result.alignment} "
+                    f"coverage={conformance_result.coverage} scope_drift={conformance_result.scope_drift} "
+                    f"(ref={conformance_result.reference_type}) → {sev}\n"
+                    f"  摘要: {conformance_result.summary[:200]}"
+                )
+        except Exception as exc:
+            # fail-closed：conformance 自身失败不允许跳过检查静默放行 → escalate
+            log.warning(
+                "[%s/%s] conformance 失败,转 escalate: %s", story_key, stage, exc
+            )
+            return "", _fallback_decision(
+                story_key,
+                stage,
+                cref,
+                db_module,
+                reason=f"conformance 检查失败(fail-closed): {exc}",
+            )
+    return conformance_ev, None
+
+
+def _call_judge_llm(llm, prompt, story_key, stage, cref, db_module):
+    """调 LLM 拿三决定（设计15 阶段D 从 judge_stage_completion 抽出）。
+
+    Returns: (quality, target, summary, reason, findings, repair, llm_model)；
+    失败返回 None（调用方走 fallback）。
+    """
+    try:
+        result = llm.invoke_structured(
+            prompt, StageCompletionDecision, temperature=0.1, timeout=90
+        )
+        quality = result.quality
+        target = result.lifecycle_target
+        summary = (result.summary or "").strip()
+        reason = result.reason or f"stage completion: {quality}"
+        findings = result.findings or []
+        repair = result.repair_action.model_dump() if result.repair_action else None
+        llm_model = getattr(llm, "model", "")
+    except Exception as exc:
+        log.warning(
+            "[%s/%s] stage completion LLM failed, fallback approve: %s",
+            story_key,
+            stage,
+            exc,
+        )
+        return None
+    return quality, target, summary, reason, findings, repair, llm_model
+
+
+def _normalize_judge_decision(
+    quality, target, reason, story_key, stage, lifecycle_state, db_module
+):
+    """规范化三决定（设计15 阶段D 从 judge_stage_completion 抽出）。
+
+    - lifecycle_target 必须是合法状态且 != 当前，否则视为不推进。
+    - 纪律：quality != approve 时 lifecycle_target 恒为 None。
+    - reject 上限防护（§4.9 / 评审 A2）：超预算强制 escalate。
+    """
+    if target and target not in LIFECYCLE_ORDER:
+        log.warning(
+            "[%s/%s] judge returned invalid lifecycle_target=%r, treating as None",
+            story_key,
+            stage,
+            target,
+        )
+        target = None
+    if target == lifecycle_state:
+        target = None
+
+    # 纪律:quality != approve 时 lifecycle_target 恒为 None(不合格不算产出)。
+    if quality != "approve":
+        target = None
+
+    # 3. reject 上限防护(§4.9 / 评审 A2)
+    if quality == "reject":
+        from .reject_budget import check_reject_budget
+
+        budget = check_reject_budget(story_key, stage, reason, db_module=db_module)
+        if not budget["allow"]:
+            log.warning(
+                "[%s/%s] reject 被 reject_budget 拦(force=%s, warn=%s)→ 强制 escalate",
+                story_key,
+                stage,
+                budget["force"],
+                budget["warn"],
+            )
+            quality = "escalate"
+            reason = (
+                f"reject 被防打回循环拦:{budget['warn']};原 reject 理由:{reason[:120]}"
+            )
+    return quality, target, reason
 
 
 # ---- Fallback(LLM 不可用)----
@@ -412,6 +466,28 @@ def collect_cumulative_outputs(workspace: str, story_key: str, actions: list) ->
 # ---- Prompt 构建 ----
 
 
+@dataclass
+class JudgePromptRequest:
+    """_build_prompt 的入参打包（设计15 阶段D：13 参数 → 1 参数对象）。
+
+    字段 = 原 _build_prompt 参数，类型照搬。纯数据容器，不改逻辑。
+    """
+
+    story_key: str
+    stage: str
+    workspace: str
+    ctx: dict
+    lifecycle_state: str
+    done_data: dict
+    cumulative_outputs: str
+    adapter: str
+    retry_count: int
+    max_retries: int
+    story_states: dict
+    judge_ctx: dict
+    conformance_ev: str = ""
+
+
 def _build_prompt(
     *,
     story_key: str,
@@ -428,7 +504,44 @@ def _build_prompt(
     judge_ctx: dict,
     conformance_ev: str = "",
 ) -> str:
-    """组装 stage 完成裁判 prompt(设计 §1.3)。"""
+    """组装 stage 完成裁判 prompt(设计 §1.3)。
+
+    设计15 阶段D：薄转发到 _build_prompt_req（JudgePromptRequest 单参数）。
+    """
+    return _build_prompt_req(
+        JudgePromptRequest(
+            story_key=story_key,
+            stage=stage,
+            workspace=workspace,
+            ctx=ctx,
+            lifecycle_state=lifecycle_state,
+            done_data=done_data,
+            cumulative_outputs=cumulative_outputs,
+            adapter=adapter,
+            retry_count=retry_count,
+            max_retries=max_retries,
+            story_states=story_states,
+            judge_ctx=judge_ctx,
+            conformance_ev=conformance_ev,
+        )
+    )
+
+
+def _build_prompt_req(req: JudgePromptRequest) -> str:
+    """组装 stage 完成裁判 prompt 主体（原 _build_prompt 正文，设计15 阶段D 迁入）。"""
+    story_key = req.story_key
+    stage = req.stage
+    workspace = req.workspace
+    ctx = req.ctx
+    lifecycle_state = req.lifecycle_state
+    done_data = req.done_data
+    cumulative_outputs = req.cumulative_outputs
+    adapter = req.adapter
+    retry_count = req.retry_count
+    max_retries = req.max_retries
+    story_states = req.story_states
+    judge_ctx = req.judge_ctx
+    conformance_ev = req.conformance_ev
     task_type = ctx.get("task_type", "") or "未知"
     prd = judge_ctx.get("prd", "") or "(无 PRD)"
     artifacts = judge_ctx.get("artifacts", [])
