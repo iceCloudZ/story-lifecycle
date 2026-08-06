@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
 from ....infra.db import models as db
 from pydantic import BaseModel, Field

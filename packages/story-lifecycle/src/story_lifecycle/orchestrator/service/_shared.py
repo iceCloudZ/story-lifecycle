@@ -111,6 +111,56 @@ def _get_story_change_items(story_key: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _workspace_root_for_project(repo_path: str):
+    """Infer the story workspace root for a registered project path.
+
+    In a monorepo, a sub-project like ``D:/hc-all/frontends/hc-admin`` should
+    resolve to ``D:/hc-all`` when the monorepo root carries ``.story``/``.agents``
+    markers. For standalone projects, the project directory itself is the root.
+    The walk is bounded by the git top-level (when present) and a small max depth
+    so unrelated ancestor directories (e.g. the user's home directory) that happen
+    to have markers are not picked.
+    """
+    import subprocess
+    from pathlib import Path
+
+    path = Path(repo_path).resolve()
+
+    # Find the git top-level to bound the ancestor walk.
+    git_root = None
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            git_root = Path(result.stdout.strip()).resolve()
+    except Exception:
+        pass
+
+    max_depth = 5
+    candidates = [path]
+    for i, parent in enumerate(path.parents):
+        if git_root is not None and parent == git_root:
+            candidates.append(parent)
+            break
+        if i >= max_depth:
+            break
+        candidates.append(parent)
+
+    for candidate in candidates:
+        if (
+            (candidate / ".story").exists()
+            or (candidate / ".agents").exists()
+            or (candidate / "AGENTS.md").exists()
+        ):
+            return candidate
+    return git_root if git_root is not None else path
+
+
 __all__ = [
     "_load_tapd_config",
     "_serialize_story_summary",
@@ -119,4 +169,5 @@ __all__ = [
     "_wiki_knowledge_root",
     "_get_story_documents",
     "_get_story_change_items",
+    "_workspace_root_for_project",
 ]

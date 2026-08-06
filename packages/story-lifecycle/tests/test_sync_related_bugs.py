@@ -70,8 +70,16 @@ def test_sync_related_bugs_upserts_with_parent(
     key = db.find_by_source_id("tapd", "1144381896001065460")["story_key"]
 
     monkeypatch.setattr(tapi_mod, "TapdApi", _FakeTapdApi)
+    # 设计15 阶段C:_load_tapd_config 移到 _shared,bugs router 从它 import。
+    # patch 需打在 _shared(定义点)和 bugs(函数内名字绑定点)两处。
+    import story_lifecycle.orchestrator.service._shared as shared_mod
+    import story_lifecycle.orchestrator.service.routers.bugs as bugs_mod
+
     monkeypatch.setattr(
-        api_mod, "_load_tapd_config", lambda: {"workspace_id": "44381896"}
+        shared_mod, "_load_tapd_config", lambda: {"workspace_id": "44381896"}
+    )
+    monkeypatch.setattr(
+        bugs_mod, "_load_tapd_config", lambda: {"workspace_id": "44381896"}
     )
 
     client = TestClient(app)

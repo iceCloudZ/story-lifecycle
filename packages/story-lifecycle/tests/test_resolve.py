@@ -32,8 +32,16 @@ def test_resolve_bug_updates_status_and_tapd(
 
     fake = _FakeTapdApi()
     monkeypatch.setattr(tapi_mod, "TapdApi", lambda **kw: fake)
+    # 设计15 阶段C:_load_tapd_config 移到 _shared,bugs router 从它 import。
+    # patch 需打在 _shared(定义点)和 bugs(函数内名字绑定点)两处。
+    import story_lifecycle.orchestrator.service._shared as shared_mod
+    import story_lifecycle.orchestrator.service.routers.bugs as bugs_mod
+
     monkeypatch.setattr(
-        api_mod, "_load_tapd_config", lambda: {"workspace_id": "44381896"}
+        shared_mod, "_load_tapd_config", lambda: {"workspace_id": "44381896"}
+    )
+    monkeypatch.setattr(
+        bugs_mod, "_load_tapd_config", lambda: {"workspace_id": "44381896"}
     )
 
     client = TestClient(app)
