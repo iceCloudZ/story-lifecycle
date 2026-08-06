@@ -104,10 +104,39 @@ class TestInteractiveStageExecutor:
         executor = InteractiveStageExecutor()
         assert executor.is_artifacts_ready(tmp_story, "design") is False
 
-    def test_is_artifacts_ready_true_when_spec_landed(self, tmp_story_with_spec):
-        """spec.md 存在时 True"""
+    def test_is_artifacts_ready_requires_declare_when_pty_alive(
+        self, tmp_story_with_spec
+    ):
+        """PTY 活时只认 declare event —— 写了 spec.md 但没 declare 不算完成（1068018 事故修复）。"""
         executor = InteractiveStageExecutor()
-        assert executor.is_artifacts_ready(tmp_story_with_spec, "design") is True
+        # spec.md 已写（tmp_story_with_spec fixture），但没 declare + PTY 活 → False
+        assert (
+            executor.is_artifacts_ready(tmp_story_with_spec, "design", pty_alive=True)
+            is False
+        )
+
+    def test_is_artifacts_ready_true_when_declared(self, tmp_story_with_spec):
+        """declare 后（event 落库）→ True（PTY 活/死都认 declare）。"""
+        executor = InteractiveStageExecutor()
+        db.log_event(
+            tmp_story_with_spec,
+            "design",
+            "artifact_declared",
+            {"doc_type": "spec", "version": 1, "summary": "ok", "files_changed": []},
+        )
+        assert (
+            executor.is_artifacts_ready(tmp_story_with_spec, "design", pty_alive=True)
+            is True
+        )
+
+    def test_is_artifacts_ready_fallback_file_when_pty_dead(self, tmp_story_with_spec):
+        """PTY 死 + 没 declare → 文件兜底（状态冻结可信，容错 agent 崩溃/declare 失败）。"""
+        executor = InteractiveStageExecutor()
+        # spec.md 已写，没 declare，但 PTY 死了 → 文件兜底 True
+        assert (
+            executor.is_artifacts_ready(tmp_story_with_spec, "design", pty_alive=False)
+            is True
+        )
 
     def test_maybe_spawn_does_nothing_in_interactive(self, tmp_story):
         """半自动模式 maybe_spawn 不 spawn"""
@@ -139,9 +168,9 @@ class TestAutomaticStageExecutor:
         monkeypatch.setattr(
             pty_mod,
             "get_pty_for_stage",
-            lambda story_id, stage, purpose="agent": FakePty()
-            if spawned.get("called")
-            else None,
+            lambda story_id, stage, purpose="agent": (
+                FakePty() if spawned.get("called") else None
+            ),
         )
 
         class FakeAdapter:
@@ -153,7 +182,9 @@ class TestAutomaticStageExecutor:
             def start_session(self, *a, **kw):
                 from story_lifecycle.knowledge.adapters.base import SessionSpec
 
-                return SessionSpec(command=["claude-fake"], pty_prompt="", readiness_marker=None)
+                return SessionSpec(
+                    command=["claude-fake"], pty_prompt="", readiness_marker=None
+                )
 
             def write_anchor(self, **kw):
                 return None

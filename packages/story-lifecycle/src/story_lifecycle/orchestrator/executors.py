@@ -127,9 +127,31 @@ class BaseStageExecutor(StageExecutor):
         # executor 实例才有效，直接新建实例的调用方走不到这里）。
         return self._last_pty
 
-    def is_artifacts_ready(self, story_key: str, stage: str) -> bool:
-        """stage 声明的 artifacts 是否全部落地（与 driver poll 同口径）。"""
+    def is_artifacts_ready(
+        self,
+        story_key: str,
+        stage: str,
+        *,
+        pty_alive: bool = True,
+        base_version: int = 0,
+    ) -> bool:
+        """stage 成果物是否完成（归一化判定，1068018 事故修复）。
+
+        真相源是 ``artifact_declared`` event（agent 调 ``story tool declare`` 时写）。
+        - PTY 活（agent 还在跑）→ 只认 declare event（version > base_version），
+          **不看文件**（agent 边写边存，文件存在不代表完成）。
+        - PTY 死/无（文件状态冻结）→ 认 declare event，OR 文件兜底（容错 agent
+          崩溃/declare 失败）。
+        """
         from ..infra.db import models as db
+
+        # 1. 本轮 declare event？（PTY 活/死都认 — 这是唯一可靠的完成信号）
+        if db.get_latest_declare(story_key, stage, since_version=base_version):
+            return True
+        # 2. PTY 活 → 不兜底文件（防边写边判）
+        if pty_alive:
+            return False
+        # 3. PTY 死/无 → 文件兜底（状态冻结可信，容错 agent 崩溃/declare 失败）
         from ..infra.paths import stage_done_file_rel
         from .engine.artifact_check import check_artifacts_landed
 
@@ -143,7 +165,6 @@ class BaseStageExecutor(StageExecutor):
         if not stage_artifacts:
             # 无 artifacts 声明（老 profile / 测试 profile）→ done.json 兼容视图。
             return (Path(workspace) / stage_done_file_rel(story_key, stage)).exists()
-
         missing, _ = check_artifacts_landed(
             stage_artifacts,
             workspace,

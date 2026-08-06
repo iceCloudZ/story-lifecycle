@@ -284,7 +284,7 @@ class TestJudgeTask:
         key = _make_active_story(tmp_path)
         monkeypatch.setattr(
             "story_lifecycle.orchestrator.evaluation.stage_completion.judge_stage_completion",
-            lambda **kw: {
+            lambda req: {
                 "quality": "approve",
                 "lifecycle_target": None,
                 "summary": "ok",
@@ -310,7 +310,7 @@ class TestJudgeTask:
         key = _make_active_story(tmp_path)
         monkeypatch.setattr(
             "story_lifecycle.orchestrator.evaluation.stage_completion.judge_stage_completion",
-            lambda **kw: (_ for _ in ()).throw(RuntimeError("llm down")),
+            lambda req: (_ for _ in ()).throw(RuntimeError("llm down")),
         )
         story = db.get_story(key)
         _orchestrator._judge_task(
@@ -346,11 +346,11 @@ class TestJudgeArtifactNormalization:
         edir = sp.story_evidence_dir(story["workspace"], key, story["title"])
         edir.mkdir(parents=True, exist_ok=True)
         (edir / "spec.md").write_text("# 方案\n提现门槛", encoding="utf-8")
-        # 捕获 judge_stage_completion 收到的 kwargs
+        # 捕获 judge_stage_completion 收到的 JudgeRequest 字段
         captured = {}
 
-        def _capture(**kw):
-            captured.update(kw)
+        def _capture(req):
+            captured.update(req.__dict__)
             return {
                 "quality": "approve",
                 "lifecycle_target": None,
@@ -444,10 +444,17 @@ class TestStageFinalizeTiming:
         edir = sp.story_evidence_dir(story["workspace"], key, story["title"])
         edir.mkdir(parents=True, exist_ok=True)
         (edir / "spec.md").write_text("# spec", encoding="utf-8")
+        # 新口径：PTY 活时只认 declare event（1068018 归一化）→ 必须 declare 才触发 submit judge
+        db.log_event(
+            key,
+            "design",
+            "artifact_declared",
+            {"doc_type": "spec", "version": 1, "summary": "ok", "files_changed": []},
+        )
         # judge 返回 approve
         monkeypatch.setattr(
             "story_lifecycle.orchestrator.evaluation.stage_completion.judge_stage_completion",
-            lambda **kw: {
+            lambda req: {
                 "quality": "approve",
                 "lifecycle_target": None,
                 "summary": "ok",

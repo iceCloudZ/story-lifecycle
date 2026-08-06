@@ -40,8 +40,23 @@ class StageExecutor(ABC):
         """spawn PTY for stage，返回 session_id。"""
 
     @abstractmethod
-    def is_artifacts_ready(self, story_key: str, stage: str) -> bool:
-        """stage 的成果物是否全部落地。"""
+    def is_artifacts_ready(
+        self,
+        story_key: str,
+        stage: str,
+        *,
+        pty_alive: bool = True,
+        base_version: int = 0,
+    ) -> bool:
+        """stage 成果物是否完成（agent 已显式声明）。
+
+        归一化判定（1068018 事故修复）：
+        - PTY 活（agent 还在跑）→ 只认 ``artifact_declared`` event（version > base），
+          不看文件（防 agent 边写边存被误判完成）。
+        - PTY 死/无（agent 不会再改文件）→ 认 declare event，OR 文件兜底
+          （状态冻结可信，容错 agent 崩溃/declare 失败）。
+        - base_version：spawn 时快照的最新 declare version，过滤上轮残留 event。
+        """
 
 
 class DecisionHandler(ABC):

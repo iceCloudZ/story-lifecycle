@@ -15,7 +15,9 @@ _build_stage_launch_prompt）抽出。编排线程 / executors 只通过 PromptB
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from .abc import PromptBuilder
 
@@ -220,6 +222,74 @@ def _render_cli_prompt(
     ``interactive``:交互式终端路径(``claude "query"``,无 MCP)传 True —— design 维度
     协议的逐问澄清改为「在终端直接问人」(见 prompt_sections.build_design_dimensions_section)。
     """
+    req = CliPromptRequest(
+        story_key=story_key,
+        title=title,
+        stage=stage,
+        focus=focus,
+        done_file=done_file,
+        profile_stages=profile_stages,
+        prd_path=prd_path,
+        project_section=project_section,
+        workspace=workspace,
+        workspace_path=workspace_path,
+        transcript_section=transcript_section,
+        interactive=interactive,
+        task_actions=task_actions,
+        grill=grill,
+        is_single_stage=is_single_stage,
+        seed_context=seed_context,
+    )
+    return _render_cli_prompt_req(req)
+
+
+@dataclass
+class CliPromptRequest:
+    """_render_cli_prompt 的入参打包（设计 14 F2：16 参数 → 1 参数对象）。
+
+    字段 = 原 _render_cli_prompt 参数，类型照搬。
+    """
+
+    story_key: str
+    title: str
+    stage: str
+    focus: str
+    done_file: str
+    profile_stages: dict
+    prd_path: str = ""
+    project_section: str = ""
+    workspace: str = ""
+    workspace_path: str = ""
+    transcript_section: str = ""
+    interactive: bool = False
+    task_actions: Optional[list[str]] = None
+    grill: bool = False
+    is_single_stage: bool = False
+    seed_context: str = ""
+
+
+def _render_cli_prompt_req(req: CliPromptRequest) -> str:
+    """渲染 CLI 执行 prompt 主体（原 _build_cli_prompt 正文，设计 14 迁入）。
+
+    ``interactive``:交互式终端路径(``claude "query"``,无 MCP)传 True —— design 维度
+    协议的逐问澄清改为「在终端直接问人」(见 prompt_sections.build_design_dimensions_section)。
+    """
+    story_key = req.story_key
+    title = req.title
+    stage = req.stage
+    focus = req.focus
+    done_file = req.done_file
+    profile_stages = req.profile_stages
+    prd_path = req.prd_path
+    project_section = req.project_section
+    workspace = req.workspace
+    workspace_path = req.workspace_path
+    transcript_section = req.transcript_section
+    interactive = req.interactive
+    task_actions = req.task_actions
+    grill = req.grill
+    is_single_stage = req.is_single_stage
+    seed_context = req.seed_context
     from ..infra.story_paths import story_evidence_dir
     from .engine.prompt_sections import (
         build_consult_protocol_section,
@@ -442,12 +512,11 @@ def _render_artifacts_obligation(
 
     lines = [
         "",
-        "### ⚠️ 本阶段必须产出的文件(完成判据 —— 不产出这些 stage 不算完成)",
+        "### ⚠️ 本阶段必须 declare 的成果物(完成判据 —— 不 declare stage 不算完成)",
         "",
-        "编排器**只看下列文件是否落地**(不看你是否说「完成了」)。任一缺失,stage 永远卡住。",
-        "两条等价落地方式(任选其一,推荐第 1 条):",
-        "  1. `story tool declare <doc_type> <相对路径>`(原子写 + 版本化 + 自动落正确位置)",
-        "  2. 直接 Write 到下列**绝对路径**(code agent 不调 declare 时用这条)",
+        "编排器**只认 `story tool declare` 信号**(不看文件存在)。写完文件后**必须**调",
+        "`story tool declare <doc_type> <相对路径>` 落地，编排器才会判定 stage 完成、推进 judge。",
+        "只写文件不 declare → stage 永远卡住。declare 会原子写文件 + 版本化 + 自动落正确位置。",
         "",
     ]
     file_artifacts = []
@@ -466,10 +535,14 @@ def _render_artifacts_obligation(
 
     for art, doc_type, abs_path in file_artifacts:
         if abs_path:
-            lines.append(f"- **必写文件**: `{abs_path}`(非空)")
+            lines.append(f"- **必 declare**: `{art}`(对应文件 `{abs_path}`,非空)")
             if doc_type:
-                lines.append(f"  - declare 方式: `story tool declare {doc_type} {art}`")
-                lines.append("  - 或直接 Write 到上面的绝对路径(内容非空)")
+                lines.append(
+                    f"  - 写完文件后调: `story tool declare {doc_type} {art}`"
+                )
+                lines.append(
+                    "  - 或直接用 declare 的 --content 参数原子写(推荐,免去路径错位)"
+                )
         else:
             lines.append(f"- **必落地**: `{art}`")
     if has_git:
@@ -477,8 +550,9 @@ def _render_artifacts_obligation(
 
     lines.append("")
     lines.append(
-        "**不要**用别的文件名(如 design.md 而非 spec.md)或别的目录 —— "
-        "编排器只查上面列的绝对路径。写完确认文件存在且非空再退出。"
+        "**关键**:全部写完后,逐个调 declare。可以先用 Write 写草稿、确认内容完整,"
+        "再用 `story tool declare <doc_type> <相对路径> --content \"$(cat 文件)\"` 落地。"
+        "没 declare = stage 没完成。"
     )
     lines.append("")
     return "\n".join(lines)

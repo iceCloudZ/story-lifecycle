@@ -109,11 +109,17 @@ def declare(doc_type, path, summary, content, files_changed):
 
 @tool.command()
 def todo():
-    """打印当前 stage 还缺哪些 artifacts(调 check_artifacts_landed)。
+    """打印当前 stage 还缺哪些 artifacts 要 declare。
 
-    code agent 调这个自查:还差什么文件没落地,继续干。
+    code agent 调这个自查:哪些 artifact 已 declare(算完成)、哪些还没。
+    完成判据归一化为 ``artifact_declared`` event(1068018 事故修复)——
+    写了文件但没 declare 不算完成,得调 ``story tool declare`` 才算。
     """
-    from ...orchestrator.engine.artifact_check import check_artifacts_landed
+    from ...orchestrator.engine.artifact_check import (
+        build_evidence_candidates,
+        check_artifacts_landed,
+    )
+    from ...orchestrator.engine.artifact_check import _ARTIFACT_TO_DOC_TYPE
     from ...orchestrator.engine.profile_loader import resolve_profile
 
     from ...infra.db import models as db
@@ -141,22 +147,43 @@ def todo():
         )
         return
 
-    # 补 evidence 候选:code agent 可能把 spec.md 写到 evidence 子目录(story/<id>-slug/)
-    # 或用别名(design.md)。漏传会误判"还缺文件"(real-run tapd-1144381896001066735)。
-    from ...orchestrator.engine.artifact_check import build_evidence_candidates
+    console.print(f"Stage [cyan]{st}[/] artifacts (workspace={ws}):")
+    # 查本轮最新 declare event(doc_type → 已 declare)
+    declared_docs: set[str] = set()
+    try:
+        payload = db.get_latest_declare(sk, st, since_version=-1)
+        if payload:
+            declared_docs.add(payload.get("doc_type", ""))
+    except Exception:  # noqa: BLE001
+        pass
 
     _title = (story or {}).get("title", "") or ""
     _ev = build_evidence_candidates(artifacts, ws, sk, _title)
     missing, landed = check_artifacts_landed(artifacts, ws, evidence_candidates=_ev)
-    console.print(f"Stage [cyan]{st}[/] artifacts (workspace={ws}):")
-    for a in landed:
-        console.print(f"  [green]✓[/] {a}")
-    for a in missing:
-        console.print(f"  [red]✗[/] {a}")
-    if not missing:
-        console.print("[green]全部落地,可推进。[/]")
+    n_pending = 0
+    for art in artifacts:
+        if art == "git":
+            done = art in landed
+            mark = "[green]✓[/]" if done else "[red]✗[/]"
+            tip = "" if done else "（需要未提交的代码改动）"
+            console.print(f"  {mark} {art}{tip}")
+            if not done:
+                n_pending += 1
+            continue
+        doc_type = _ARTIFACT_TO_DOC_TYPE.get(art, "")
+        if doc_type and doc_type in declared_docs:
+            console.print(f"  [green]✓[/] {art}（已 declare）")
+        elif art in landed:
+            # 文件写了但没 declare → 提醒调 declare
+            console.print(f"  [yellow]⚠[/] {art}（文件已写，但还没 declare → 调 `story tool declare {doc_type} {art}`）")
+            n_pending += 1
+        else:
+            console.print(f"  [red]✗[/] {art}（还没写，也没 declare）")
+            n_pending += 1
+    if n_pending == 0:
+        console.print("[green]全部 declare 完成，stage 可推进。[/]")
     else:
-        console.print(f"[yellow]还缺 {len(missing)} 个,继续干。[/]")
+        console.print(f"[yellow]还差 {n_pending} 个未 declare，继续干。[/]")
         raise SystemExit(2)
 
 

@@ -160,7 +160,9 @@ class TestTickStoryPtyBranches:
             lambda self, k, st: _FakePty(),
         )
         submitted = []
-        monkeypatch.setattr(_orchestrator, "_submit_judge", lambda *a, **k: submitted.append(1))
+        monkeypatch.setattr(
+            _orchestrator, "_submit_judge", lambda *a, **k: submitted.append(1)
+        )
         _orchestrator._tick()
         assert submitted == []  # 无成果物 → 不 judge
 
@@ -187,7 +189,9 @@ class TestTickStoryPtyBranches:
             lambda self, k, st: _DeadPty(),
         )
         submitted = []
-        monkeypatch.setattr(_orchestrator, "_submit_judge", lambda *a, **k: submitted.append(1))
+        monkeypatch.setattr(
+            _orchestrator, "_submit_judge", lambda *a, **k: submitted.append(1)
+        )
         _orchestrator._tick()
         assert submitted, "PTY 死 + 成果物落地 → 应 submit judge"
 
@@ -220,7 +224,7 @@ class TestJudgeTaskWritesResult:
         key = _make_active_story(tmp_path)
         monkeypatch.setattr(
             "story_lifecycle.orchestrator.evaluation.stage_completion.judge_stage_completion",
-            lambda **kw: {
+            lambda req: {
                 "quality": "approve",
                 "lifecycle_target": "开发",
                 "summary": "设计完成",
@@ -247,7 +251,7 @@ class TestJudgeTaskWritesResult:
         key = _make_active_story(tmp_path)
         monkeypatch.setattr(
             "story_lifecycle.orchestrator.evaluation.stage_completion.judge_stage_completion",
-            lambda **kw: {
+            lambda req: {
                 "quality": "approve",
                 "lifecycle_target": None,
                 "summary": "ok",
@@ -275,6 +279,7 @@ class TestNoResidualTasks:
         thr = OrchestratorThread(poll_interval=0.01, max_judge_workers=2)
         try:
             thr.start()
+
             # 塞两个假 judge 任务（模拟正在跑的 LLM 调用）
             def _slow(**kw):
                 time.sleep(0.3)

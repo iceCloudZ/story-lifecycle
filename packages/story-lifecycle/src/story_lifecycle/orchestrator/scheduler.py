@@ -62,6 +62,23 @@ def _read_done_data(story_key: str, stage: str, workspace: str, actions: list) -
     from ..infra.json_helpers import robust_json_parse
     from ..infra.paths import stage_done_file_rel
 
+    # 优先从本轮 declare event payload 读（归一化真相源，1068018 事故修复）。
+    # declare payload 含 summary/files_changed/doc_type，比读/合成 done.json 可靠。
+    try:
+        from ..infra.db import models as db
+
+        declared = db.get_latest_declare(story_key, stage, since_version=-1)
+        if declared:
+            return {
+                "stage": stage,
+                "status": "done",
+                "summary": declared.get("summary", "") or f"{stage} 成果物落地",
+                "files_changed": declared.get("files_changed") or [],
+                "doc_type": declared.get("doc_type", ""),
+            }
+    except Exception:
+        pass
+    # 兜底：读 done.json 兼容视图（declare 写的，miner/swebench 也在用）。
     done_rel = stage_done_file_rel(story_key, stage)
     done_path = workspace and f"{workspace}/{done_rel}"
     try:
@@ -229,7 +246,12 @@ class OrchestratorThread(threading.Thread):
 
         # 3. PTY 死了 → 看 artifacts（headless 死了没产出 → 重试，对齐 driver）
         if pty is not None:
-            if executor.is_artifacts_ready(story_key, stage):
+            if executor.is_artifacts_ready(
+                story_key,
+                stage,
+                pty_alive=False,
+                base_version=self._base_declare_version(story_key),
+            ):
                 self._submit_judge(story_key, stage, ctx, executor, story)
                 return
             # headless 重试（对齐 driver HEADLESS_MAX_ATTEMPTS）
@@ -249,17 +271,53 @@ class OrchestratorThread(threading.Thread):
         #    （orphan 情形：无 PTY 也无 driver）也要被 judge —— 这替代旧
         #    consume_orphan_artifacts（GET /story 副作用）。全自动 executor
         #    的 maybe_spawn 会自己 spawn，spawn 后下一轮走 PTY 分支。
-        if executor.is_artifacts_ready(story_key, stage):
+        if executor.is_artifacts_ready(
+            story_key,
+            stage,
+            pty_alive=False,
+            base_version=self._base_declare_version(story_key),
+        ):
             self._submit_judge(story_key, stage, ctx, executor, story)
             return
         executor.maybe_spawn(story_key, stage, ctx)
-        # spawn 后记录 stage 启动时刻（超时判据）
+        # spawn 后记录 stage 启动时刻（超时判据）+ 本轮 declare 基准（防旧 event 残留）
         if executor.get_pty(story_key, stage) is not None:
             self._stage_state[story_key] = {
                 "stage": stage,
                 "spawned_ts": time.time(),
                 "stuck_escalated": False,
+                "base_declare_version": self._snapshot_declare_version(
+                    story_key, stage
+                ),
             }
+
+    def _base_declare_version(self, story_key: str) -> int:
+        """取本 story 当前 spawn 轮次的 declare 基准 version。
+
+        从 ``_stage_state`` 读（spawn 时快照）；缺失（serve 重启后内存丢、
+        或非 spawn 路径）→ 实时查 DB 当前最新 version 作为安全默认。
+        """
+        state = self._stage_state.get(story_key) or {}
+        base = state.get("base_declare_version")
+        if base is not None:
+            return base
+        # 内存态丢失 → 实时查（偏宽松：当前已有的 declare 都算旧。可接受，
+        # 因为重启后 story 一般会重走 spawn 重置基准）。
+        return self._snapshot_declare_version(story_key, "")
+
+    @staticmethod
+    def _snapshot_declare_version(story_key: str, stage: str) -> int:
+        """查 event_log 最新 artifact_declared 的 version，无则 0。"""
+        try:
+            from ..infra.db import models as db
+
+            # stage 空时取该 story 所有 stage 的最新（serve 重启兜底）
+            payload = db.get_latest_declare(story_key, stage, since_version=-1)
+            if payload is None:
+                return 0
+            return payload.get("version", 0)
+        except Exception:
+            return 0
 
     def _tick_alive_pty(
         self,
@@ -273,7 +331,13 @@ class OrchestratorThread(threading.Thread):
     ):
         """PTY 活着：成果物落地 → judge；否则卡住检测 + 超时。"""
         # 成果物落地 → judge（先释放 PTY，对齐 driver finally 收口）
-        if executor.is_artifacts_ready(story_key, stage):
+        # PTY 活 → 只认 declare event（防 agent 边写边判，1068018 事故修复）
+        if executor.is_artifacts_ready(
+            story_key,
+            stage,
+            pty_alive=True,
+            base_version=self._base_declare_version(story_key),
+        ):
             self._submit_judge(story_key, stage, ctx, executor, story)
             return
         state = self._stage_state.get(story_key) or {}
@@ -624,21 +688,26 @@ class OrchestratorThread(threading.Thread):
             from .executors import resolve_stage_artifacts
 
             stage_artifacts, ev, _ = resolve_stage_artifacts(story, stage)
+            # 设计 14 (F2)：长参数列表收成 JudgeRequest dataclass
+            from .evaluation.stage_completion import JudgeRequest
+
             decision = judge_stage_completion(
-                story_key=story_key,
-                stage=stage,
-                workspace=workspace,
-                ctx=ctx,
-                lifecycle_state=ctx.get("_lifecycle_state", "待启动"),
-                done_data=done_data,
-                cumulative_outputs=collect_cumulative_outputs(
-                    workspace, story_key, actions
-                ),
-                adapter=adapter,
-                retry_count=ctx.get("_verify_round", 1),
-                story_states=_story_states(story),
-                artifacts=stage_artifacts,
-                evidence_candidates=ev,
+                JudgeRequest(
+                    story_key=story_key,
+                    stage=stage,
+                    workspace=workspace,
+                    ctx=ctx,
+                    lifecycle_state=ctx.get("_lifecycle_state", "待启动"),
+                    done_data=done_data,
+                    cumulative_outputs=collect_cumulative_outputs(
+                        workspace, story_key, actions
+                    ),
+                    adapter=adapter,
+                    retry_count=ctx.get("_verify_round", 1),
+                    story_states=_story_states(story),
+                    artifacts=stage_artifacts,
+                    evidence_candidates=ev,
+                )
             )
         except Exception:
             log.exception("[%s] judge failed for %s", story_key, stage)

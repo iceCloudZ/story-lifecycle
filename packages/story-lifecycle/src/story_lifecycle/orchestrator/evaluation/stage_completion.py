@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Literal, Optional
 
 from pydantic import BaseModel
@@ -68,28 +69,35 @@ class StageCompletionDecision(BaseModel):
 # ---- 主函数(纯 Decider)----
 
 
-def judge_stage_completion(
-    *,
-    story_key: str,
-    stage: str,
-    workspace: str,
-    ctx: dict,
-    lifecycle_state: str,
-    done_data: dict | None = None,
-    cumulative_outputs: str = "",
-    adapter: str = "",
-    retry_count: int = 1,
-    story_states: dict | None = None,
-    artifacts: list[str] | None = None,
-    evidence_candidates: dict[str, list[str]] | None = None,
-    max_retries: int = _DEFAULT_MAX_RETRIES,
-    llm=None,
-    db_module=None,
-) -> dict:
+@dataclass
+class JudgeRequest:
+    """judge_stage_completion 的入参打包（设计 14 F2：15 参数 → 1 参数对象）。
+
+    字段 = 原 judge_stage_completion 参数，类型照搬。
+    """
+
+    story_key: str
+    stage: str
+    workspace: str
+    ctx: dict
+    lifecycle_state: str
+    done_data: dict | None = None
+    cumulative_outputs: str = ""
+    adapter: str = ""
+    retry_count: int = 1
+    story_states: dict | None = None
+    artifacts: list[str] | None = None
+    evidence_candidates: dict[str, list[str]] | None = None
+    max_retries: int = _DEFAULT_MAX_RETRIES
+    llm=None
+    db_module=None
+
+
+def judge_stage_completion(req: JudgeRequest) -> dict:
     """调度点①' stage 完成裁判:一次 LLM 做三个决定。
 
     Args:
-        story_key / stage: 当前判定的 story+stage。
+        req: JudgeRequest——story_key / stage: 当前判定的 story+stage。
         workspace: 工作区根(组装上下文读成果物)。
         ctx: story context_json(取 task_type 等)。
         lifecycle_state: 当前 lifecycle 状态(LLM 决定 target 的起点)。
@@ -109,6 +117,22 @@ def judge_stage_completion(
         }
         quality=reject 时 lifecycle_target 恒为 None(成果物不合格不算产出)。
     """
+    story_key = req.story_key
+    stage = req.stage
+    workspace = req.workspace
+    ctx = req.ctx
+    lifecycle_state = req.lifecycle_state
+    done_data = req.done_data
+    cumulative_outputs = req.cumulative_outputs
+    adapter = req.adapter
+    retry_count = req.retry_count
+    story_states = req.story_states
+    artifacts = req.artifacts
+    evidence_candidates = req.evidence_candidates
+    max_retries = req.max_retries
+    llm = req.llm
+    db_module = req.db_module
+
     if db_module is None:
         from ...infra.db import models as db_module
 
@@ -340,10 +364,12 @@ def _action_taken_for(quality: str) -> str:
 def collect_cumulative_outputs(workspace: str, story_key: str, actions: list) -> str:
     """收集所有已完成 stage 的产出摘要(喂给 LLM 判 lifecycle_target)。
 
-    从 ``<workspace>/.story/done/<story_key>/<stage>.json``(done 兼容视图)读每个
-    launch action 的 stage 摘要。没跑过的 stage 不出现。best-effort,读坏不崩。
+    优先从 ``artifact_declared`` event 读每个 launch stage 的摘要（归一化真相源，
+    1068018 事故修复）；event 读不到时兜底读 done.json 兼容视图。best-effort。
     """
     from pathlib import Path
+
+    from ...infra.db import models as db
 
     done_dir = Path(workspace) / ".story" / "done" / story_key
     lines = []
@@ -353,13 +379,27 @@ def collect_cumulative_outputs(workspace: str, story_key: str, actions: list) ->
         _st = action.get("stage", "")
         if not _st:
             continue
-        dj = done_dir / f"{_st}.json"
-        if not dj.exists():
-            continue
+        # 1. 优先从 declare event 读
+        declared = None
         try:
-            data = json.loads(dj.read_text(encoding="utf-8"))
+            declared = db.get_latest_declare(story_key, _st, since_version=-1)
         except Exception:  # noqa: BLE001
-            data = {}
+            pass
+        data = {}
+        if declared:
+            data = {
+                "summary": declared.get("summary", ""),
+                "files_changed": declared.get("files_changed") or [],
+            }
+        else:
+            # 2. 兜底 done.json 兼容视图
+            dj = done_dir / f"{_st}.json"
+            if not dj.exists():
+                continue
+            try:
+                data = json.loads(dj.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                data = {}
         _sum = (data.get("summary") or "").strip() or "（无摘要）"
         _fc = data.get("files_changed") or []
         line = f"- {_st}(已完成): {_sum}"
