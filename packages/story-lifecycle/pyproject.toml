@@ -59,6 +59,7 @@ story-tool = "story_lifecycle.entry.cli.story_tool:main"
 
 
 [tool.pytest.ini_options]
+addopts = ["-n", "auto"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 

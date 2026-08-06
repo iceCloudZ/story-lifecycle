@@ -31,6 +31,7 @@ dev = [
 packages = []
 
 [tool.pytest.ini_options]
+addopts = ["-n", "auto"]
 testpaths = [
     "packages/story-lifecycle/tests",
     "packages/story-miner/tests",
