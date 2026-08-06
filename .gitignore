@@ -69,3 +69,12 @@ packages/eval/sandbox/story_home/
 packages/eval/sandbox/ws/
 packages/eval/sandbox/gold/
 packages/eval/sandbox/selfcheck_report.json
+
+# 测试覆盖率 / 运行日志 / ZCode 工作区（runtime artifact，过程非产物）
+.coverage
+*.log
+.zcode/
+
+# 本地 token 用量报告（每次跑生成，不入库）
+docs/local-token-usage-chart.html
+docs/local-token-usage-report.md
