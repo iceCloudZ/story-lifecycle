@@ -585,22 +585,14 @@ def _kill_headless(proc):
 
     claude/codex CLIs spawn children (node runtime, MCP servers); killing only
     the top PID orphans them — and a claude that already wrote its done file but
-    keeps running will otherwise linger. On Windows use ``taskkill /T`` to take
-    the whole tree; elsewhere fall back to ``proc.kill()``.
+    keeps running will otherwise linger. Delegates to platform_ops.kill_tree
+    (Windows 进程树杀；Unix killpg)。
     """
-    import os as _os
-    import subprocess as _sp
+    from ...infra.terminal.platform_ops import kill_tree
 
     try:
         if proc.poll() is None:
-            if _os.name == "nt":
-                _sp.run(
-                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                    capture_output=True,
-                    timeout=15,
-                )
-            else:
-                proc.kill()
+            kill_tree(proc.pid)
     except Exception:
         try:
             proc.kill()

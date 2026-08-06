@@ -37,8 +37,8 @@ _SCROLLBACK_MAX_BYTES = 256 * 1024
 
 
 # ---- Windows Job Object: kill the whole process tree on .kill() ----
-# taskkill /T walks parent-child links and misses children that detached from
-# the parent (codex.exe helpers survived kill_pty, leaking hundreds of MB). A
+# Process-tree kill walks parent-child links and misses children that detached
+# from the parent (codex.exe helpers survived kill_pty, leaking hundreds of MB). A
 # Job Object with KILL_ON_JOB_CLOSE kills every process in the job when its
 # handle is closed — including detached ones. We assign the spawned process to
 # such a job at spawn time and CloseHandle it on kill().
@@ -110,7 +110,8 @@ if sys.platform == "win32":
 def _create_kill_job(pid: int):
     """Assign `pid` (and its future children) to a KILL_ON_JOB_CLOSE Job Object.
     Returns the job handle (int) to keep alive; CloseHandle on it kills the job.
-    Returns None on non-Windows or any failure (caller falls back to taskkill)."""
+    Returns None on non-Windows or any failure (caller falls back to
+    kill_tree in platform_ops)."""
     if not _WIN_JOB_OK:
         return None
     try:
@@ -390,8 +391,8 @@ class ManagedPty:
         # Kill the WHOLE process tree, not just the direct child.
         # Unix runs the child in its own process group (setsid) -> killpg.
         # Windows: close the KILL_ON_JOB_CLOSE Job Object (kills the whole job,
-        # including grandchildren that detached — taskkill /T misses those).
-        # Fall back to taskkill /T if no job was set up.
+        # including grandchildren that detached — process-tree kill misses those).
+        # Fall back to kill_tree (platform_ops) if no job was set up.
         if self._mode == "unix":
             try:
                 os.killpg(self._unix_pid, signal.SIGTERM)
@@ -408,14 +409,9 @@ class ManagedPty:
             _close_kill_job(self._job)
             self._job = None
         elif sys.platform == "win32" and pid:
-            try:
-                subprocess.run(
-                    ["taskkill", "/PID", str(pid), "/T", "/F"],
-                    capture_output=True,
-                    timeout=10,
-                )
-            except Exception:
-                pass
+            from .platform_ops import kill_tree
+
+            kill_tree(pid)
         try:
             if self._mode == "winpty":
                 self._process.terminate(force=True)

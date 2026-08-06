@@ -3,7 +3,36 @@
 import os
 import shlex
 import shutil
+import signal
 import subprocess
+import sys
+
+
+# ---- process: kill tree ----
+
+_TASKKILL = ("taskkill", "/T", "/F", "/PID")
+
+
+def kill_tree(pid: int) -> bool:
+    """Kill a process AND its whole child tree. Windows: taskkill /T /F /PID
+    （子进程 node runtime / MCP servers 也要回收，否则孤儿）；Unix: killpg
+    （SIGKILL 整个进程组）。Returns True if the kill was issued.
+    """
+    if sys.platform == "win32":
+        try:
+            r = subprocess.run(
+                [*_TASKKILL, str(pid)],
+                capture_output=True,
+                timeout=15,
+            )
+            return r.returncode == 0
+        except Exception:
+            return False
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
 
 
 # ---- process: kill by port ----
@@ -20,11 +49,7 @@ def _kill_by_port_windows(port: int):
         for line in r.stdout.splitlines():
             if f":{port}" in line and "LISTENING" in line:
                 pid = line.split()[-1]
-                subprocess.run(
-                    ["taskkill", "/F", "/PID", pid],
-                    capture_output=True,
-                    timeout=5,
-                )
+                kill_tree(int(pid))
                 break
     except Exception:
         pass

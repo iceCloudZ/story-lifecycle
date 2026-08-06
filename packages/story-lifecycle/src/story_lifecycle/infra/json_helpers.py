@@ -15,18 +15,55 @@ from pathlib import Path
 
 
 def _extract_json_object(text: str) -> str | None:
-    """Extract the first complete JSON object using bracket counting."""
-    depth = 0
-    start = None
+    """Extract first complete JSON object via bracket counting (string-aware).
+
+    字符串感知：跳过大括号/方括号内的字符串字面量及其转义，避免把 JSON 内容里
+    的 ``{"a": "}"}`` 当结构括号。唯一定义点（llm_client 从这里 import）。
+    """
+    pairs = {"{": "}", "[": "]"}
+    in_string = False
+    escape_next = False
+    first_pos = None
     for i, ch in enumerate(text):
-        if ch == "{":
-            if depth == 0:
-                start = i
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if not in_string and ch in pairs:
+            first_pos = i
+            break
+    if first_pos is None:
+        return None
+
+    opener = text[first_pos]
+    closer = pairs[opener]
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i in range(first_pos, len(text)):
+        ch = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == opener:
             depth += 1
-        elif ch == "}":
+        elif ch == closer:
             depth -= 1
-            if depth == 0 and start is not None:
-                return text[start : i + 1]
+            if depth == 0:
+                return text[first_pos : i + 1]
     return None
 
 

@@ -18,6 +18,8 @@ from types import UnionType
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from .json_helpers import _extract_json_object
+
 log = logging.getLogger("story-lifecycle.llm")
 
 T = TypeVar("T", bound=BaseModel)
@@ -159,55 +161,6 @@ def with_story_key(arg_name: str = "story_key", *, from_state: bool = False):
         return wrapper
 
     return decorator
-
-
-def _extract_json_object(text: str) -> str | None:
-    """Extract first complete JSON object via bracket counting (string-aware)."""
-    pairs = {"{": "}", "[": "]"}
-    in_string = False
-    escape_next = False
-    first_pos = None
-    for i, ch in enumerate(text):
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == "\\" and in_string:
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if not in_string and ch in pairs:
-            first_pos = i
-            break
-    if first_pos is None:
-        return None
-
-    opener = text[first_pos]
-    closer = pairs[opener]
-    depth = 0
-    in_string = False
-    escape_next = False
-    for i in range(first_pos, len(text)):
-        ch = text[i]
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == "\\" and in_string:
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == opener:
-            depth += 1
-        elif ch == closer:
-            depth -= 1
-            if depth == 0:
-                return text[first_pos : i + 1]
-    return None
 
 
 # Models known to support vision/multimodal input (OpenAI-compatible).

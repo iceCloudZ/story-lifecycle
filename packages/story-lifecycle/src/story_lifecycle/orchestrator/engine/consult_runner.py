@@ -233,15 +233,14 @@ def _build_reviewer_prompt(*, focus: str, result_file: str) -> str:
 
 
 def _default_kill(proc):
-    """复用 planner._kill_headless 的 taskkill /T 逻辑(Windows 进程树)。
+    """复用 platform_ops.kill_tree 的进程树杀逻辑（Windows 进程树杀）。
 
-    DESGIN §6.2 选项 A:第一版直接 import 同包 planner 的 _kill_headless,
-    不下沉到 infra(避免改动面扩散)。planner._kill_headless 是 Windows taskkill /T
-    杀整进程树(子进程 node runtime 也要回收,否则孤儿)。
+    杀整进程树（子进程 node runtime 也要回收，否则孤儿）。统一走
+    infra/terminal/platform_ops.kill_tree（planner._kill_headless 同源）。
     """
-    from .planner import _kill_headless
+    from ...infra.terminal.platform_ops import kill_tree
 
-    _kill_headless(proc)
+    kill_tree(getattr(proc, "pid", 0))
 
 
 def _close_quiet(fh):

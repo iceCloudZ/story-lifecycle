@@ -940,7 +940,7 @@ def api_kill_all_pty():
 
     Sends ``/exit`` to each agent first (so claude flushes its transcript —
     needed for a complete ``--resume`` later), force-killing any that don't exit
-    in time. Called by the serve-restart bat (before its taskkill) and by serve
+    in time. Called by the serve-restart bat (before its process-tree kill) and by serve
     shutdown. For tearing down a single story's sessions use
     ``DELETE /api/pty/{story_id}`` instead. See handoff §12.
     """
