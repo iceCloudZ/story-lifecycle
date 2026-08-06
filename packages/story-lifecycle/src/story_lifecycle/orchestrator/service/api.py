@@ -50,6 +50,16 @@ from ...sourcing.lifecycle_state import LifecycleState
 
 log = logging.getLogger("story-lifecycle.api")
 
+from ._shared import (
+    _load_tapd_config,
+    _serialize_story_summary,
+    _story_list_json,
+    _resolve_workspace_or_404,
+    _wiki_knowledge_root,
+    _get_story_documents,
+    _get_story_change_items,
+)
+
 
 # -------- WebSocket broadcast --------
 
@@ -184,44 +194,6 @@ async def ws_stories(ws: WebSocket):
     finally:
         if ws in _ws_clients:
             _ws_clients.remove(ws)
-
-
-def _serialize_story_summary(s: dict) -> dict:
-    """camelCase summary of a story for list views — REST /api/story and the
-    /ws/stories push share this so the two payloads can't drift. (The WS version
-    previously omitted tapdType/intakeState, leaving the Dashboard's filters
-    matching nothing — see the dashboard-zero-stories bug.)"""
-    return {
-        "storyKey": s["story_key"],
-        "title": s["title"],
-        "currentStage": s["current_stage"],
-        "status": s["status"],
-        "complexity": s.get("complexity"),
-        "workspace": s.get("workspace"),
-        "profile": s["profile"],
-        "executionCount": s["execution_count"],
-        "createdAt": s.get("created_at"),
-        "updatedAt": s["updated_at"],
-        "deadline": s.get("deadline"),
-        "priority": s.get("priority"),
-        "owner": s.get("owner"),
-        "tapdStatus": s.get("tapd_status"),
-        "tapdUrl": s.get("tapd_url"),
-        "tapdType": s.get("tapd_type"),
-        "intakeState": s.get("intake_state"),
-        "sourceType": s.get("source_type"),
-        "sourceId": s.get("source_id"),
-        "parentKey": s.get("parent_key"),
-        "lifecycleState": s.get("lifecycle_state"),
-        "releaseTrain": s.get("release_train"),
-        "isTest": bool(s.get("is_test")),
-    }
-
-
-def _story_list_json() -> list[dict]:
-    # Same gathering + serialization as the REST /api/story endpoint, so the
-    # WS-pushed list and the REST list are identical (incl. candidate stories).
-    return [_serialize_story_summary(s) for s in db.list_visible_stories()]
 
 
 async def notify_story_update(story_key: str, status: str = "", stage: str = ""):
@@ -1483,13 +1455,6 @@ def get_terminal(story_key: str):
     info = _ensure_story_agent_pty(s)
     info["url"] = f"/ws/pty/{story_key}"
     return JSONResponse(info)
-
-
-@app.get("/api/session/health")
-def health():
-    return {"status": "ok", "version": "0.1.0"}
-
-
 # -------- Timeline API (Task 3.1) --------
 
 
@@ -1742,82 +1707,7 @@ def api_create_gate_result(story_key: str, req: CreateGateResultRequest):
 
 
 # -------- Loop Trace API (Task 3.3) --------
-
-
-@app.get("/api/story/{story_key}/loop-trace")
-def get_loop_trace(story_key: str):
-    """Return adversarial loop trace for a story."""
-    s = db.get_story(story_key)
-    if not s:
-        raise HTTPException(404, "Story not found")
-
-    events = db.get_story_events(story_key)
-
-    plan_rounds = []
-    code_rounds = []
-
-    for ev in events:
-        payload = db.parse_event_payload(ev)
-        ev_type = ev.get("event_type", "")
-        stage = ev.get("stage", "")
-
-        # Plan loop rounds
-        if ev_type == "plan" and payload.get("adversarial_loop"):
-            plan_rounds.append(
-                {
-                    "stage": stage,
-                    "loop_rounds": payload.get("loop_rounds", 0),
-                    "loop_decision": payload.get("loop_decision", ""),
-                    "summary": payload.get("summary", "")[:200],
-                    "trajectory_score": payload.get("trajectory_score"),
-                    "created_at": ev.get("created_at", ""),
-                }
-            )
-
-        # Code review loop rounds
-        if ev_type == "review" and payload.get("adversarial_loop"):
-            code_rounds.append(
-                {
-                    "stage": stage,
-                    "loop_rounds": payload.get("loop_rounds", 0),
-                    "loop_decision": payload.get("loop_decision", ""),
-                    "quality": payload.get("quality", ""),
-                    "summary": payload.get("summary", "")[:200],
-                    "issues_count": payload.get("issues_count", 0),
-                    "trajectory_score": payload.get("trajectory_score"),
-                    "created_at": ev.get("created_at", ""),
-                }
-            )
-
-    return {
-        "story_key": story_key,
-        "plan_loop": {"rounds": plan_rounds},
-        "code_loop": {"rounds": code_rounds},
-    }
-
-
 # -------- Findings API enhancement (Task 3.4) --------
-
-
-@app.get("/api/story/{story_key}/debug")
-def debug_story(story_key: str, limit: int = 50, event_type: str = ""):
-    """Read-only debug endpoint. Returns observability events and quality status.
-
-    Query params:
-        limit: Max recentEvents (default 50). Applies at DB level.
-        event_type: Filter recentEvents to this type at DB level.
-    """
-    from ..observability.events import build_debug_response
-
-    response = build_debug_response(
-        story_key, recent_limit=limit, event_type=event_type
-    )
-    if "error" in response:
-        raise HTTPException(404, response["error"])
-
-    return response
-
-
 # -------- quality endpoints --------
 
 
@@ -2100,16 +1990,6 @@ def api_decide_finding(finding_id: str, req: DecideFindingRequest):
 
     updated = db.get_finding(finding_id)
     return {"status": updated["status"], "severity": updated["severity"]}
-
-
-@app.get("/api/approvals")
-def api_approvals():
-    """Get approval queue: all pending (open + accepted) findings with evidence."""
-    findings = db.get_all_pending_findings()
-    db.enrich_findings_with_evidence(findings)
-    return {"findings": findings}
-
-
 # -------- TAPD Sync API --------
 
 
@@ -2234,19 +2114,6 @@ def api_sync_status():
         "configured": bool(config),
         "workspace_id": config.get("workspace_id", ""),
     }
-
-
-def _load_tapd_config() -> dict:
-    import yaml
-
-    from ...infra.paths import story_home
-
-    config_file = story_home() / "config.yaml"
-    if not config_file.exists():
-        return {}
-    with open(config_file, encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    return data.get("tapd", {})
 
 
 # -------- Context endpoints --------
@@ -2641,36 +2508,6 @@ def api_add_document(story_key: str, req: AddDocumentRequest):
         log.debug("[%s] doc backfill dual-write skipped: %s", story_key, exc)
     db.bump_context_revision(story_key)
     return doc
-
-
-class AddChangeItemRequest(BaseModel):
-    kind: str
-    ref: str = ""
-    summary: str = ""
-    evidence_ref: str = ""
-    environment: str = ""
-    project_id: int | None = None
-
-
-@app.post("/api/story/{story_key}/context/change-items")
-def api_add_change_item(story_key: str, req: AddChangeItemRequest):
-    """Add a change item (ddl/nacos) — agent backfill."""
-    if not db.get_story(story_key):
-        raise HTTPException(status_code=404, detail=f"story not found: {story_key}")
-    ci = db.create_change_item(
-        story_key,
-        req.kind,
-        project_id=req.project_id,
-        ref=req.ref,
-        summary=req.summary,
-        evidence_ref=req.evidence_ref,
-        environment=req.environment,
-        source="agent",
-    )
-    db.bump_context_revision(story_key)
-    return ci
-
-
 class SetBranchRequest(BaseModel):
     project_id: int
     branch: str
@@ -2728,15 +2565,6 @@ def api_set_branch(story_key: str, req: SetBranchRequest):
 
 
 # -------- Project registry endpoints --------
-
-
-class CreateProjectRequest(BaseModel):
-    name: str
-    repo_path: str
-    default_branch: str = "main"
-    remote_url: str = ""
-
-
 def _workspace_root_for_project(repo_path: str) -> Path:
     """Infer the story workspace root for a registered project path.
 
@@ -2821,53 +2649,6 @@ def api_list_profiles():
     from ..engine.profile_loader import list_profiles
 
     return {"profiles": list_profiles()}
-
-
-@app.get("/api/projects")
-def api_list_projects():
-    """List all registered projects with fresh availability."""
-    from ..workspace.project_registry import check_project_availability
-
-    projects = db.list_projects()
-    # 刷新每个项目的 availability（轻量 git rev-parse）
-    for p in projects:
-        check_project_availability(p["id"])
-    return {"projects": db.list_projects()}
-
-
-@app.post("/api/projects")
-def api_create_project(req: CreateProjectRequest):
-    """Register a new project."""
-    from ..workspace.project_registry import register_project
-
-    proj = register_project(
-        name=req.name,
-        repo_path=req.repo_path,
-        default_branch=req.default_branch,
-        remote_url=req.remote_url,
-    )
-    return proj
-
-
-class UpdateProjectRequest(BaseModel):
-    name: str | None = None
-    repo_path: str | None = None
-    default_branch: str | None = None
-    remote_url: str | None = None
-
-
-@app.put("/api/projects/{project_id}")
-def api_update_project(project_id: int, req: UpdateProjectRequest):
-    """Update a project."""
-    updates = {k: v for k, v in req.model_dump().items() if v is not None}
-    if not updates:
-        raise HTTPException(status_code=400, detail="no fields to update")
-    from ..workspace.project_registry import update_project
-
-    update_project(project_id, **updates)
-    return db.get_project(project_id)
-
-
 # -------- Workspace entity endpoints (11-workspace-entity-design.md Phase 2) --------
 # 与 /api/workspaces(旧含义:intake 主工作区目录选项)区分:
 # workspace-entities 是新的业务项目实体。旧端点保持不动,前端 IntakeStartModal 继续用。
@@ -2883,15 +2664,6 @@ class WorkspaceInitRequest(BaseModel):
     step: str | None = None
     repos: list[str] = []
     integrations_json: dict | None = None
-
-
-def _resolve_workspace_or_404(ident: str | int) -> dict:
-    from ..workspace.workspace_registry import get_workspace
-
-    ws = get_workspace(ident)
-    if not ws:
-        raise HTTPException(status_code=404, detail=f"Workspace not found: {ident}")
-    return ws
 
 
 def _workspace_scenarios(ws: dict) -> list[dict]:
@@ -3094,249 +2866,8 @@ def api_get_test_suites(slug: str):
 
 
 # -------- Wiki endpoints(11-workspace-entity-design.md §4/§5, Phase 3) --------
-
-
-class WikiSaveRequest(BaseModel):
-    title: str
-    content: str
-    source: str = "human"  # human | story:<key> | probe:<name>
-    summary: str = ""
-    evidence_refs: list[dict] = []
-    related: list[str] = []
-    source_refs: list[str] = []
-    slug: str | None = None
-
-
-class WikiReviewRequest(BaseModel):
-    decision: str  # approve | reject
-    reviewer: str = ""
-    reason: str = ""
-
-
-def _wiki_knowledge_root(slug: str) -> tuple[dict, str]:
-    """解析 workspace + 知识根;无知识根 → 400(还没跑 gen_wiki)。"""
-    from ..workspace.workspace_registry import _knowledge_root_for
-
-    ws = _resolve_workspace_or_404(slug)
-    kroot = _knowledge_root_for(ws)
-    if not kroot:
-        raise HTTPException(
-            status_code=400,
-            detail="Workspace 无知识根目录,先跑 story workspace init --step gen_wiki",
-        )
-    return ws, kroot
-
-
-@app.get("/api/workspace-entities/{slug}/wiki")
-def api_list_wiki(slug: str, review_state: str = ""):
-    """列出 wiki 条目(review_state=draft|merged|'')。"""
-    from ...knowledge.wiki_pipeline import list_wiki_entries
-
-    _, kroot = _wiki_knowledge_root(slug)
-    return {"wiki": list_wiki_entries(kroot, review_state)}
-
-
-@app.post("/api/workspace-entities/{slug}/wiki")
-def api_save_wiki(slug: str, req: WikiSaveRequest):
-    """保存 wiki 条目。source=human → 直接生效;AI/probe → draft(§4.3)。"""
-    from ...knowledge.wiki_pipeline import save_wiki_entry
-
-    _, kroot = _wiki_knowledge_root(slug)
-    try:
-        entry = save_wiki_entry(
-            kroot,
-            title=req.title,
-            content=req.content,
-            source=req.source,
-            summary=req.summary,
-            evidence_refs=req.evidence_refs,
-            related=req.related,
-            source_refs=req.source_refs,
-            slug=req.slug,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return entry
-
-
-@app.post("/api/workspace-entities/{slug}/wiki/{wiki_id}/review")
-def api_review_wiki(slug: str, wiki_id: str, req: WikiReviewRequest):
-    """人工确认:approve → merged(写 verified_at);reject → 回 draft + reason。"""
-    from ...knowledge.wiki_pipeline import review_wiki
-
-    _, kroot = _wiki_knowledge_root(slug)
-    try:
-        return review_wiki(
-            kroot, wiki_id, req.decision, reviewer=req.reviewer, reason=req.reason
-        )
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Wiki 条目不存在: {wiki_id}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.delete("/api/workspace-entities/{slug}/wiki/{wiki_id}")
-def api_delete_wiki(slug: str, wiki_id: str):
-    from ...knowledge.wiki_pipeline import delete_wiki
-
-    _, kroot = _wiki_knowledge_root(slug)
-    return {"ok": delete_wiki(kroot, wiki_id)}
-
-
-@app.post("/api/workspace-entities/{slug}/wiki/generate")
-def api_generate_wiki_drafts(slug: str):
-    """跑 probe 生成/刷新 wiki draft(gen_wiki step 的 API 形态)。"""
-    from ..workspace.workspace_registry import _knowledge_root_for
-    from ...knowledge.wiki_pipeline import generate_wiki_drafts
-
-    ws = _resolve_workspace_or_404(slug)
-    kroot = _knowledge_root_for(ws)
-    if not kroot:
-        raise HTTPException(status_code=400, detail="Workspace 无知识根目录")
-    ws_dict = {
-        "id": ws["id"],
-        "name": ws["name"],
-        "knowledge_root": kroot,
-        "repos": db.list_projects_by_workspace(ws["id"]),
-    }
-    drafts = generate_wiki_drafts(ws_dict)
-    return {"created": len(drafts), "drafts": [d["id"] for d in drafts]}
-
-
 # -------- Worktree endpoints --------
-
-
-class WorktreePrepareRequest(BaseModel):
-    worktree_root: str = ""
-
-
-@app.post("/api/story/{story_key}/worktrees/prepare")
-def api_prepare_worktrees(
-    story_key: str, req: WorktreePrepareRequest = WorktreePrepareRequest()
-):
-    """Prepare worktrees for all project bindings of a story."""
-    from ..workspace.worktree.handler import prepare_worktrees
-
-    results = prepare_worktrees(story_key, worktree_root=req.worktree_root)
-    return {"results": results}
-
-
-@app.get("/api/story/{story_key}/worktrees/cleanup-preview")
-def api_cleanup_preview(story_key: str):
-    """Preview worktree cleanup for a story."""
-    from ..workspace.worktree.resolver import resolve_story_worktree
-    from .delivery import can_cleanup_worktree
-
-    worktree_states = resolve_story_worktree(story_key)
-    can_clean, reason = can_cleanup_worktree(story_key)
-    return {
-        "worktrees": worktree_states,
-        "can_cleanup": can_clean,
-        "reason": reason,
-    }
-
-
-class CleanupRequest(BaseModel):
-    project_id: int
-    delivery_state: str = ""
-    force: bool = False
-
-
-@app.post("/api/story/{story_key}/worktrees/cleanup")
-def api_cleanup_worktree(story_key: str, req: CleanupRequest):
-    """Remove a worktree. Requires user confirmation."""
-    from ..workspace.worktree.handler import cleanup_worktree
-
-    result = cleanup_worktree(
-        story_key,
-        req.project_id,
-        delivery_state=req.delivery_state,
-        force=req.force,
-    )
-    if result["action"] == "reject":
-        return JSONResponse(
-            status_code=409,
-            content={
-                "ok": False,
-                "reasonCode": result.get("reject_reason", "unknown"),
-                "message": result["reason"],
-            },
-        )
-    return {"ok": True, "worktree_path": result["worktree_path"]}
-
-
 # -------- Delivery artifact endpoints --------
-
-
-class CreateDeliveryRequest(BaseModel):
-    kind: str
-    project_id: int | None = None
-    provider: str = ""
-    external_id: str = ""
-    url: str = ""
-    source_branch: str = ""
-    target_branch: str = ""
-    delivery_state: str = "not_started"
-    merge_commit: str = ""
-    review_summary: str = ""
-    source: str = "user"
-    evidence_ref: str = ""
-
-
-@app.get("/api/story/{story_key}/delivery-artifacts")
-def api_list_delivery_artifacts(story_key: str):
-    """List all delivery artifacts for a story."""
-    from .delivery import list_delivery_artifacts
-
-    return {"artifacts": list_delivery_artifacts(story_key)}
-
-
-@app.post("/api/story/{story_key}/delivery-artifacts")
-def api_create_delivery_artifact(story_key: str, req: CreateDeliveryRequest):
-    """Register a delivery artifact."""
-    from .delivery import register_delivery
-
-    try:
-        artifact = register_delivery(
-            story_key=story_key,
-            kind=req.kind,
-            project_id=req.project_id,
-            provider=req.provider,
-            external_id=req.external_id,
-            url=req.url,
-            source_branch=req.source_branch,
-            target_branch=req.target_branch,
-            delivery_state=req.delivery_state,
-            merge_commit=req.merge_commit,
-            review_summary=req.review_summary,
-            source=req.source,
-            evidence_ref=req.evidence_ref,
-        )
-        return artifact
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-class UpdateDeliveryRequest(BaseModel):
-    delivery_state: str | None = None
-    source: str = "user"
-
-
-@app.put("/api/story/{story_key}/delivery-artifacts/{artifact_id}")
-def api_update_delivery(story_key: str, artifact_id: int, req: UpdateDeliveryRequest):
-    """Update delivery artifact state."""
-    from .delivery import update_delivery_state
-
-    if req.delivery_state:
-        try:
-            return update_delivery_state(artifact_id, req.delivery_state, req.source)
-        except PermissionError as e:
-            raise HTTPException(status_code=403, detail=str(e))
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-    return db.get_delivery_artifact(artifact_id)
-
-
 # -------- Versioned docs endpoints (story_doc / story_doc_version) --------
 # DB is the source of truth for business docs (prd/spec/plan/research/...).
 # The API layer syncs the latest version to a local .md cache on save so code
@@ -3560,65 +3091,6 @@ def api_confirm_doc(story_key: str, doc_type: str):
     if not db.confirm_story_doc(story_key, doc_type):
         raise HTTPException(404, f"doc not found: {doc_type}")
     return {"ok": True}
-
-
-@app.get("/api/story/{story_key}/deliverables")
-def api_get_deliverables(story_key: str):
-    """成果物清单 + 当前 gate 状态(概览第二层进度条用)。"""
-    from ...sourcing.deliverables import check_deliverables, gate_for_current_state
-
-    return {
-        "deliverables": check_deliverables(story_key),
-        "gate": gate_for_current_state(story_key),
-    }
-
-
-@app.post("/api/story/{story_key}/deliverables/{deliv_key}/skip")
-def api_skip_deliverable(story_key: str, deliv_key: str):
-    """跳过某成果物(存 context_json._skipped_deliverables)。
-
-    跳过的成果物在 gate 检查时视为 satisfied(不阻塞推进)。
-    """
-    import json as _json
-
-    s = db.get_story(story_key)
-    if not s:
-        raise HTTPException(404, "Story not found")
-    try:
-        ctx = _json.loads(s.get("context_json") or "{}")
-    except (ValueError, TypeError):
-        ctx = {}
-    skipped = set(ctx.get("_skipped_deliverables", []))
-    skipped.add(deliv_key)
-    ctx["_skipped_deliverables"] = sorted(skipped)
-    db.update_story(story_key, context_json=_json.dumps(ctx, ensure_ascii=False))
-    return {"ok": True, "skipped": sorted(skipped)}
-
-
-@app.post("/api/story/{story_key}/deliverables/{deliv_key}/confirm")
-def api_confirm_deliverable(story_key: str, deliv_key: str):
-    """人工确认某成果物(非 doc 类,如 code/delivery)。存 context_json._confirmed_deliverables。
-
-    doc 类(spec/test_report)走 PUT /docs/{type}/confirm(写 story_doc.confirmed_by)。
-    非 doc 类(code/delivery)走本端点(写 context_json)。
-    只有 user 手动调用 —— AI 不能自我确认。
-    """
-    import json as _json
-
-    s = db.get_story(story_key)
-    if not s:
-        raise HTTPException(404, "Story not found")
-    try:
-        ctx = _json.loads(s.get("context_json") or "{}")
-    except (ValueError, TypeError):
-        ctx = {}
-    confirmed = set(ctx.get("_confirmed_deliverables", []))
-    confirmed.add(deliv_key)
-    ctx["_confirmed_deliverables"] = sorted(confirmed)
-    db.update_story(story_key, context_json=_json.dumps(ctx, ensure_ascii=False))
-    return {"ok": True, "confirmed": sorted(confirmed)}
-
-
 # -------- Lifecycle endpoints --------
 
 
@@ -4554,23 +4026,29 @@ def api_tapd_writeback_suggestion(story_key: str):
 # -------- helpers --------
 
 
-def _get_story_documents(story_key: str) -> list[dict]:
-    with db._db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM story_document WHERE story_key = ? ORDER BY id",
-            (story_key,),
-        ).fetchall()
-    return [dict(r) for r in rows]
+# -------- domain routers（设计15 阶段C） --------
 
-
-def _get_story_change_items(story_key: str) -> list[dict]:
-    with db._db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM story_change_item WHERE story_key = ? ORDER BY id",
-            (story_key,),
-        ).fetchall()
-    return [dict(r) for r in rows]
-
+from .routers import (
+    change_items,
+    deliverables,
+    deliveries,
+    diagnostics,
+    patterns,
+    projects,
+    wiki,
+    worktrees,
+)
+for _mod in (
+    diagnostics,
+    change_items,
+    deliverables,
+    worktrees,
+    deliveries,
+    projects,
+    wiki,
+    patterns,
+):
+    app.include_router(_mod.router)
 
 # -------- static frontend (must be last) --------
 
@@ -4607,3 +4085,6 @@ if _WEB_DIR.is_dir() and any(_WEB_DIR.iterdir()):
         @app.get("/", include_in_schema=False)
         async def root():
             return FileResponse(str(_index_html))
+
+
+
