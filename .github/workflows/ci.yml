@@ -47,6 +47,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ['3.10', '3.12']
+        # Windows 3.10 的 DB fixture setup 异常慢(实测 31min vs 3.12 的 12min,
+        # 每个测试 setup 9-16s)——Windows 平台覆盖由 3.12 承担,Python 版本
+        # 矩阵由 ubuntu/macos 的 3.10 覆盖。
+        exclude:
+          - os: windows-latest
+            python-version: '3.10'
 
     steps:
       - uses: actions/checkout@v4
