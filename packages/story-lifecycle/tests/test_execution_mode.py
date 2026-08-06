@@ -183,7 +183,10 @@ def test_advance_starts_active_unstarted_story(isolated_story_home, tmp_path, mo
     )
 
     started = MagicMock()
-    monkeypatch.setattr(api_mod, "start_story_async", started)
+    # 设计15 C3c: advance_story 移到 routers.lifecycle,patch 打在真实模块
+    import story_lifecycle.orchestrator.service.routers.lifecycle as _lifecycle_mod
+
+    monkeypatch.setattr(_lifecycle_mod, "start_story_async", started)
 
     client = TestClient(app)
     r = client.put("/api/story/ADV-START-1/advance")
@@ -221,7 +224,10 @@ def test_advance_does_not_restart_active_running_story(isolated_story_home, tmp_
     )
 
     started = MagicMock()
-    monkeypatch.setattr(api_mod, "start_story_async", started)
+    # 设计15 C3c: advance_story 移到 routers.lifecycle,patch 打在真实模块
+    import story_lifecycle.orchestrator.service.routers.lifecycle as _lifecycle_mod
+
+    monkeypatch.setattr(_lifecycle_mod, "start_story_async", started)
 
     client = TestClient(app)
     r = client.put("/api/story/ADV-RUN-1/advance")
