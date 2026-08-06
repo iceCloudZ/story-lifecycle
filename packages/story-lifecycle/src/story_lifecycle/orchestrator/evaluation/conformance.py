@@ -16,10 +16,8 @@ diff 来源（4.3）:
 from __future__ import annotations
 
 import logging
-import re
 import subprocess
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -49,9 +47,15 @@ class _ConformanceScore(BaseModel):
 
     alignment: int = Field(ge=1, le=5, description="实现与参照物语义一致度")
     coverage: int = Field(ge=1, le=5, description="参照物要求的实现完整度")
-    scope_drift: int = Field(ge=1, le=5, description="范围漂移控制(5=无越界改动,1=大量无关改动)")
-    reference_type: str = Field(default="", description="实际使用的参照物: spec/prd/tapd")
-    findings: list[str] = Field(default_factory=list, description="扣分/缺点的具体问题列表")
+    scope_drift: int = Field(
+        ge=1, le=5, description="范围漂移控制(5=无越界改动,1=大量无关改动)"
+    )
+    reference_type: str = Field(
+        default="", description="实际使用的参照物: spec/prd/tapd"
+    )
+    findings: list[str] = Field(
+        default_factory=list, description="扣分/缺点的具体问题列表"
+    )
     summary: str = Field(default="", description="一句话总评")
 
 
@@ -70,8 +74,13 @@ def _repo_diff(workspace: str, base: str | None = None) -> str:
         else:
             cmd += ["HEAD"]
         r = subprocess.run(
-            cmd, cwd=workspace, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=120,
+            cmd,
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
         )
         if r.returncode == 0:
             return r.stdout
@@ -87,7 +96,9 @@ def _diff_from_paths(workspace: str, files_changed: list[str]) -> str:
         p = Path(workspace) / f
         if p.exists() and p.is_file():
             try:
-                parts.append(f"===== {f} =====\n{p.read_text(encoding='utf-8', errors='replace')[:200_000]}")
+                parts.append(
+                    f"===== {f} =====\n{p.read_text(encoding='utf-8', errors='replace')[:200_000]}"
+                )
             except OSError:
                 continue
     return "\n\n".join(parts)
@@ -147,7 +158,8 @@ def check_conformance(
 
     if diff_text is None:
         diff_text = _collect_diff(
-            workspace, spec_path,
+            workspace,
+            spec_path,
             delivery_diff_path=delivery_diff_path,
             files_changed=files_changed,
             git_base=git_base,
@@ -187,7 +199,9 @@ findings 列 2-6 条具体差异;summary 一句话总评。
 
     llm = get_llm()
     try:
-        res = llm.invoke_structured(prompt, _ConformanceScore, temperature=0.1, timeout=timeout)
+        res = llm.invoke_structured(
+            prompt, _ConformanceScore, temperature=0.1, timeout=timeout
+        )
         return ConformanceResult(
             alignment=res.alignment,
             coverage=res.coverage,
@@ -220,17 +234,21 @@ def inject_conformance_findings(
         f"scope_drift={result.scope_drift} (ref={result.reference_type}) | {result.summary}"
     )
     if result.alignment <= alignment_threshold or result.coverage <= 2:
-        findings.append({
-            "severity": "HIGH",
-            "category": "conformance",
-            "description": desc,
-            "location": "conformance_check",
-        })
+        findings.append(
+            {
+                "severity": "HIGH",
+                "category": "conformance",
+                "description": desc,
+                "location": "conformance_check",
+            }
+        )
     elif result.alignment == alignment_threshold + 1 and result.coverage > 2:
-        findings.append({
-            "severity": "MEDIUM",
-            "category": "conformance",
-            "description": desc,
-            "location": "conformance_check",
-        })
+        findings.append(
+            {
+                "severity": "MEDIUM",
+                "category": "conformance",
+                "description": desc,
+                "location": "conformance_check",
+            }
+        )
     return findings

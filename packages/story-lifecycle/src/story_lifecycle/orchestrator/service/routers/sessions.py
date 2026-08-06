@@ -11,7 +11,8 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from ....infra.db import models as db
 from ....infra.terminal.pty import (
@@ -21,7 +22,6 @@ from ....infra.terminal.pty import (
     kill_pty,
     list_pty_sessions,
 )
-from ....infra.terminal.sid_capture import arm_sid_capture, now_utc_iso
 from ....infra.story_paths import build_story_spawn_env
 from ....knowledge.adapters import get_adapter
 from ...engine.profile_loader import resolve_profile
@@ -29,6 +29,7 @@ from ...engine.profile_loader import resolve_profile
 log = logging.getLogger("story-lifecycle.api.sessions")
 
 router = APIRouter(tags=["sessions"])
+
 
 class SpawnSessionRequest(BaseModel):
     adapter: str = "claude"
@@ -70,7 +71,6 @@ def _spawn_story_agent_pty(
     """
     import json as _json
 
-    from ....infra.story_paths import build_story_spawn_env
     from ....infra.terminal.spawn_recipe import spawn_agent_pty
 
     workspace = story.get("workspace", "")
@@ -494,4 +494,3 @@ def get_terminal(story_key: str):
     info = _ensure_story_agent_pty(s)
     info["url"] = f"/ws/pty/{story_key}"
     return JSONResponse(info)
-

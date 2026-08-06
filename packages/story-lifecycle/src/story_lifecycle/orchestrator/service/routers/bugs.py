@@ -7,9 +7,10 @@ from fastapi.responses import JSONResponse
 
 from ....infra.db import models as db
 from .._shared import _load_tapd_config, _serialize_story_summary
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 router = APIRouter(tags=["bugs"])
+
 
 class BatchFixPromptRequest(BaseModel):
     bug_keys: list[str]
@@ -143,4 +144,3 @@ def api_resolve_bug(bug_key: str):
         api.update_bug(bug_id, {"status": "resolved"})
     db.update_story(bug_key, status="completed", tapd_status="resolved")
     return {"ok": True, "has_bugfix_report": has_evidence}
-

@@ -6,6 +6,8 @@ import sqlite3
 from datetime import datetime, timezone, timedelta
 
 from .connection import _db
+
+
 def init_db():
     """Create tables if not exist. Idempotent — safe to call on every startup.
 
@@ -125,15 +127,11 @@ def _create_story_tables(conn):
             pass
     # Story context & TAPD lifecycle columns
     try:
-        conn.execute(
-            "ALTER TABLE story ADD COLUMN intake_state TEXT DEFAULT 'ready'"
-        )
+        conn.execute("ALTER TABLE story ADD COLUMN intake_state TEXT DEFAULT 'ready'")
     except sqlite3.OperationalError:
         pass
     try:
-        conn.execute(
-            "ALTER TABLE story ADD COLUMN context_revision INTEGER DEFAULT 0"
-        )
+        conn.execute("ALTER TABLE story ADD COLUMN context_revision INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
     # driver_claim: cross-process driver mutual-exclusion token (optimistic
@@ -315,9 +313,7 @@ def _create_runtime_fact_tables(conn):
             UNIQUE(story_key, project_id)
         )
     """)
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sp_story ON story_project(story_key)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sp_story ON story_project(story_key)")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sp_project ON story_project(project_id)"
     )
@@ -405,9 +401,7 @@ def _create_doc_tables(conn):
             FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE SET NULL
         )
     """)
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sd_story ON story_document(story_key)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sd_story ON story_document(story_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sd_kind ON story_document(kind)")
 
     # Migration: normalize path separators, dedupe, then enforce uniqueness.
@@ -453,9 +447,7 @@ def _create_doc_tables(conn):
     # Migration: 人工确认字段(成果物 gate 用)。AI 不能自我确认,只有 user 点确认才写。
     for _col in ("confirmed_by", "confirmed_at"):
         try:
-            conn.execute(
-                f"ALTER TABLE story_doc ADD COLUMN {_col} TEXT DEFAULT NULL"
-            )
+            conn.execute(f"ALTER TABLE story_doc ADD COLUMN {_col} TEXT DEFAULT NULL")
         except Exception:
             pass  # column already exists
     conn.execute(
@@ -617,7 +609,7 @@ def _backfill_llm_trace_story_keys(conn) -> None:
     two by timestamp proximity (within 5 minutes). It is idempotent and only
     touches rows whose story_key is still empty.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime
 
     traced = conn.execute(
         "SELECT id, story_key, model, created_at FROM llm_trace WHERE story_key != ''"
@@ -654,5 +646,3 @@ def _backfill_llm_trace_story_keys(conn) -> None:
                 "UPDATE llm_trace SET story_key = ?, model = ? WHERE id = ?",
                 (best["story_key"], best["model"], u["id"]),
             )
-
-

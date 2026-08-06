@@ -6,6 +6,8 @@ import sqlite3
 from datetime import datetime, timezone
 
 from .connection import _db
+
+
 class WorktreePathConflict(Exception):
     """worktree_path 已被一个活跃绑定占用,无法登记。"""
 
@@ -173,5 +175,3 @@ def unbind_story_project(story_key: str, project_id: int) -> None:
 
 
 _DISPLACEABLE_STATES = {"unprepared", "missing"}
-
-

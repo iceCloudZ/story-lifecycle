@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 
 from .connection import _db
+
+
 def create_project(
     name: str,
     repo_path: str,
@@ -102,5 +103,3 @@ def delete_project(project_id: int) -> None:
     """Delete a project and all related rows (CASCADE handles children)."""
     with _db() as conn:
         conn.execute("DELETE FROM project WHERE id = ?", (project_id,))
-
-

@@ -119,9 +119,7 @@ def spawn_agent_pty(
 
     if startup_delay is None:
         startup_delay = (
-            0.0
-            if spec.readiness_marker is None and not spec.pty_prompt
-            else 2.0
+            0.0 if spec.readiness_marker is None and not spec.pty_prompt else 2.0
         )
     session_id, pty = ensure_agent_pty(
         story_key,

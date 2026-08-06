@@ -5,9 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ....infra.db import models as db
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 router = APIRouter(tags=["projects"])
+
 
 class CreateProjectRequest(BaseModel):
     name: str
@@ -59,4 +60,3 @@ def api_update_project(project_id: int, req: UpdateProjectRequest):
 
     update_project(project_id, **updates)
     return db.get_project(project_id)
-

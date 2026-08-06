@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
-import uuid
 from datetime import datetime, timezone
 
 from .connection import _db
+
+
 def compute_session_id(story_key: str, stage: str, adapter: str) -> str:
     """Deterministic session id for a (story_key, stage, adapter) triple.
 
@@ -196,5 +196,3 @@ def update_session_trace(
             "WHERE story_key = ? AND stage = ? AND adapter = ?",
             vals,
         )
-
-

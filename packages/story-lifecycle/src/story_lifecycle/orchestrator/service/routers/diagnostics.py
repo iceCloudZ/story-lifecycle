@@ -8,6 +8,7 @@ from ....infra.db import models as db
 
 router = APIRouter(tags=["diagnostics"])
 
+
 @router.get("/api/session/health")
 def health():
     return {"status": "ok", "version": "0.1.0"}
@@ -82,4 +83,3 @@ def debug_story(story_key: str, limit: int = 50, event_type: str = ""):
         raise HTTPException(404, response["error"])
 
     return response
-

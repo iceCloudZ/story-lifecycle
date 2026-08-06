@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from ....infra.db import models as db
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from .._shared import _get_story_change_items, _get_story_documents
+
+log = logging.getLogger("story-lifecycle.api.context")
 
 router = APIRouter(tags=["context"])
+
 
 class PutContextRequest(BaseModel):
     revision: int
@@ -323,4 +328,3 @@ def api_set_branch(story_key: str, req: SetBranchRequest):
                 "worktree_path": e.worktree_path,
             },
         )
-

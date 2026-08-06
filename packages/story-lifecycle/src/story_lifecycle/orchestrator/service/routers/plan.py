@@ -2,24 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Body, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from ....infra.db import models as db
 from ....sourcing.state_machine import activate as sm_activate
 from ...engine import planner
 from ...engine.graph import start_story_async
-from .._shared import _workspace_root_for_project
-from .._shared import (
-    _load_tapd_config,
-    _serialize_story_summary,
-    _story_list_json,
-)
+
+log = logging.getLogger("story-lifecycle.api.plan")
 
 router = APIRouter(tags=["plan"])
+
+
 class UpdateActionAdapterRequest(BaseModel):
     adapter: str
 
@@ -31,6 +31,8 @@ class AnswerRequest(BaseModel):
 class ClarifyAnswerRequest(BaseModel):
     answer: str
     id: str | None = None
+
+
 @router.get("/api/story/{story_key}/plan")
 def api_get_plan(story_key: str):
     """获取 Story 的当前规划。支持 Agent 模式和 Legacy 模式。"""
@@ -367,6 +369,8 @@ def api_tapd_writeback_suggestion(story_key: str):
         "note": "P0: TAPD writeback is read-only. User must manually update TAPD.",
     }
     return suggestion
+
+
 @router.get("/api/story/{story_key}/plan/stream")
 async def api_plan_stream(story_key: str):
     """SSE 流式规划 — Agent Function Calling 模式。

@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ....infra.db import models as db
 from ....sourcing.workspace_diff import get_story_workspace_diff
-from ....knowledge.adapters import get_adapter as _unused_get_adapter  # noqa: F401
 from ...engine.graph import start_story_async
 from .sessions import _story_headless
 from .._shared import (
-    _load_tapd_config,
     _serialize_story_summary,
-    _story_list_json,
 )
 
+log = logging.getLogger("story-lifecycle.api.stories")
+
 router = APIRouter(tags=["stories"])
+
 
 class CreateStoryRequest(BaseModel):
     key: str
@@ -248,4 +251,3 @@ def create_story(req: CreateStoryRequest):
             "workspace": s["workspace"],
         }
     )
-

@@ -373,8 +373,8 @@ class OrchestratorThread(threading.Thread):
         story_key = req.story_key
         stage = req.stage
         pty = req.pty
-        executor = req.executor
-        story = req.story
+        executor = req.executor  # noqa: F841 — 保持与 StuckCheckInput 字段对应
+        story = req.story  # noqa: F841 — 保持与 StuckCheckInput 字段对应
         ctx = req.ctx
         actions = req.actions
         now = req.now

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["timeline"])
 
+
 class CreateGateResultRequest(BaseModel):
     stage: str
     gate_name: str
@@ -319,4 +320,3 @@ def get_dependency_graph(story_key: str):
             edges.append({"from": sub_key, "to": ds_key})
 
     return {"nodes": nodes, "edges": edges}
-

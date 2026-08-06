@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 
 from .connection import _db
+
+
 def create_change_item(
     story_key: str,
     kind: str,
@@ -92,5 +93,3 @@ def update_change_item(item_id: int, **kwargs) -> None:
     values = list(kwargs.values()) + [item_id]
     with _db() as conn:
         conn.execute(f"UPDATE story_change_item SET {sets} WHERE id = ?", values)
-
-

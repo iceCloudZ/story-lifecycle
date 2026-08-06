@@ -540,7 +540,9 @@ class LLMClient:
                         delay = 5 * (2**attempt)
                         log.warning(
                             "LLM HTTP %s（attempt %d/3）: %.0fs 后退避重试",
-                            resp.status_code, attempt + 1, delay,
+                            resp.status_code,
+                            attempt + 1,
+                            delay,
                         )
                         time.sleep(delay)
                         continue
@@ -561,21 +563,29 @@ class LLMClient:
                     delay = 5 * (2**attempt)
                     log.warning(
                         "LLM 瞬态错误（attempt %d/3）: %s; %.0fs 后退避重试",
-                        attempt + 1, exc, delay,
+                        attempt + 1,
+                        exc,
+                        delay,
                     )
                     time.sleep(delay)
                     continue
             except Exception as exc:
                 # 4xx 业务错误 / JSON 解析失败 → 永久，直接抛
-                if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None \
-                        and exc.response.status_code < 500 and exc.response.status_code != 429:
+                if (
+                    isinstance(exc, httpx.HTTPStatusError)
+                    and exc.response is not None
+                    and exc.response.status_code < 500
+                    and exc.response.status_code != 429
+                ):
                     raise
                 last_exc = exc
                 if attempt < 2:
                     delay = 5 * (2**attempt)
                     log.warning(
                         "LLM 瞬态错误（attempt %d/3）: %s; %.0fs 后退避重试",
-                        attempt + 1, exc, delay,
+                        attempt + 1,
+                        exc,
+                        delay,
                     )
                     time.sleep(delay)
                     continue

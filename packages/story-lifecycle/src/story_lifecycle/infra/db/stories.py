@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .connection import _db, _validate_columns
+
+
 def create_story(
     story_key: str,
     title: str,
@@ -379,7 +380,6 @@ def _driver_pid_alive(token: str) -> bool:
         regardless of liveness, so use ``OpenProcess`` via ctypes — succeeds
         for live PIDs, fails (returns NULL) for dead ones.
     """
-    import os
 
     try:
         pid = int(str(token).split(":", 1)[0])
@@ -577,5 +577,3 @@ def upsert_story_from_source(
 
 
 COMPLETED_STATES = frozenset({"resolved", "rejected", "closed"})
-
-

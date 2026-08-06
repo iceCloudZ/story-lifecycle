@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import uuid
 from datetime import datetime, timezone
 
 from .connection import _db
+
+
 def create_learned_pattern(
     pattern, applies_to, rule, source_findings=None, confidence="medium"
 ) -> str:
-    import uuid
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     pid = f"pattern-{uuid.uuid4().hex[:12]}"
@@ -98,5 +98,3 @@ def find_relevant_patterns(tags: list[str], limit: int = 5) -> list[dict]:
             scored.append((overlap, p))
     scored.sort(key=lambda x: -x[0])
     return [p for _, p in scored[:limit]]
-
-

@@ -5,9 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ....infra.db import models as db
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 router = APIRouter(tags=["quality"])
+
 
 class ReviewFeedbackRequest(BaseModel):
     content: str
@@ -97,7 +98,6 @@ def api_decide_finding(finding_id: str, req: DecideFindingRequest):
 
     updated = db.get_finding(finding_id)
     return {"status": updated["status"], "severity": updated["severity"]}
-
 
 
 @router.get("/api/story/{story_key}/findings")

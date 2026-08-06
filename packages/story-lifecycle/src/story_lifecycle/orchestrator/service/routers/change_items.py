@@ -5,9 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ....infra.db import models as db
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 router = APIRouter(tags=["change_items"])
+
 
 class AddChangeItemRequest(BaseModel):
     kind: str
@@ -35,4 +36,3 @@ def api_add_change_item(story_key: str, req: AddChangeItemRequest):
     )
     db.bump_context_revision(story_key)
     return ci
-

@@ -89,8 +89,8 @@ class JudgeRequest:
     artifacts: list[str] | None = None
     evidence_candidates: dict[str, list[str]] | None = None
     max_retries: int = _DEFAULT_MAX_RETRIES
-    llm=None
-    db_module=None
+    llm = None
+    db_module = None
 
 
 def judge_stage_completion(req: JudgeRequest) -> dict:
@@ -185,9 +185,7 @@ def judge_stage_completion(req: JudgeRequest) -> dict:
         judge_ctx=judge_ctx,
         conformance_ev=conformance_ev,
     )
-    llm_out = _call_judge_llm(
-        llm, prompt, story_key, stage, cref, db_module
-    )
+    llm_out = _call_judge_llm(llm, prompt, story_key, stage, cref, db_module)
     if llm_out is None:
         return _fallback_decision(
             story_key, stage, cref, db_module, reason="LLM 调用失败"
@@ -263,7 +261,9 @@ def _run_conformance_check(
                 files_changed=done_data.get("files_changed"),
             )
             if conformance_result.skipped:
-                conformance_ev = f"（conformance 跳过: {conformance_result.skip_reason}）"
+                conformance_ev = (
+                    f"（conformance 跳过: {conformance_result.skip_reason}）"
+                )
             else:
                 conf_findings = inject_conformance_findings(conformance_result)
                 judge_ctx["conformance"] = conformance_result.model_dump()

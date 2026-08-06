@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ....infra.db import models as db
 from .._shared import (
     _load_tapd_config,
-    _serialize_story_summary,
-    _story_list_json,
 )
 
 router = APIRouter(tags=["sync"])
+
 
 class SyncRequest(BaseModel):
     workspace: str = ""
@@ -144,4 +144,3 @@ def api_list_profiles():
     from ...engine.profile_loader import list_profiles
 
     return {"profiles": list_profiles()}
-

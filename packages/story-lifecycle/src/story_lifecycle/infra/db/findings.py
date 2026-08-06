@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import uuid
 from datetime import datetime, timezone
 
 from .connection import _db
+
+
 def create_finding(
     story_key,
     stage,
@@ -20,7 +21,6 @@ def create_finding(
     root_cause=None,
     evidence=None,
 ) -> str:
-    import uuid
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     fid = f"finding-{uuid.uuid4().hex[:12]}"
@@ -130,5 +130,3 @@ def enrich_findings_with_evidence(findings: list[dict]) -> list[dict]:
 
 
 SEVERITY_ORDER = {"high": 3, "medium": 2, "low": 1}
-
-

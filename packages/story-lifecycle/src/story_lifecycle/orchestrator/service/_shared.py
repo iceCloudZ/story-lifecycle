@@ -10,7 +10,6 @@ routers/*.py 从这里 import，避免跨 router 复制。
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import HTTPException
 

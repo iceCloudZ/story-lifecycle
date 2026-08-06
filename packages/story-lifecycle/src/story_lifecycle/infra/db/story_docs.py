@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import sqlite3
 from datetime import datetime, timezone
 
 from .connection import _db
+
+
 def upsert_story_doc(
     story_key: str,
     doc_type: str,
@@ -186,5 +186,3 @@ def search_docs(
     with _db() as conn:
         rows = conn.execute(sql, args).fetchall()
     return [dict(r) for r in rows]
-
-

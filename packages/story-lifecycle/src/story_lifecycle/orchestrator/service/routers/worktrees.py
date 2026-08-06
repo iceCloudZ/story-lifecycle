@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from ....infra.db import models as db
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 router = APIRouter(tags=["worktrees"])
+
 
 class WorktreePrepareRequest(BaseModel):
     worktree_root: str = ""
@@ -67,4 +67,3 @@ def api_cleanup_worktree(story_key: str, req: CleanupRequest):
             },
         )
     return {"ok": True, "worktree_path": result["worktree_path"]}
-

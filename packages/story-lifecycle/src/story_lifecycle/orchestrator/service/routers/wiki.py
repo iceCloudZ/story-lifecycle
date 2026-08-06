@@ -5,10 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ....infra.db import models as db
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from .._shared import _resolve_workspace_or_404, _wiki_knowledge_root
 
 router = APIRouter(tags=["wiki"])
+
 
 class WikiSaveRequest(BaseModel):
     title: str
@@ -101,4 +102,3 @@ def api_generate_wiki_drafts(slug: str):
     }
     drafts = generate_wiki_drafts(ws_dict)
     return {"created": len(drafts), "drafts": [d["id"] for d in drafts]}
-

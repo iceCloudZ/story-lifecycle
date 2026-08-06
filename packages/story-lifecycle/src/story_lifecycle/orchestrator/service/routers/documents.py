@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from ....infra.db import models as db
+from pydantic import BaseModel
 
-log = __import__("logging").getLogger("story-lifecycle.api.documents")
-from pydantic import BaseModel, Field
+log = logging.getLogger("story-lifecycle.api.documents")
 
 router = APIRouter(tags=["documents"])
+
 
 class SaveDocRequest(BaseModel):
     content: str
@@ -228,4 +231,3 @@ def api_confirm_doc(story_key: str, doc_type: str):
     if not db.confirm_story_doc(story_key, doc_type):
         raise HTTPException(404, f"doc not found: {doc_type}")
     return {"ok": True}
-

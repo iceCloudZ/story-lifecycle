@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+
+
 def get_db_path() -> Path:
     from ..paths import story_home
 
@@ -75,5 +77,3 @@ VALID_COLUMNS = frozenset(
         "deleted_at",  # 软删除时间戳(NULL=未删);卡片删除走软删,可 restore 恢复
     }
 )
-
-

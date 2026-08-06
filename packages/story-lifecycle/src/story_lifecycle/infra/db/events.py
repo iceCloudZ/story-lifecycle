@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 
 from .connection import _db
+
+
 def log_event(story_key: str, stage: str, event_type: str, payload: dict | None = None):
     """Record an event to event_log. Structured replacement for log_stage."""
     with _db() as conn:
@@ -128,5 +130,3 @@ def get_recent_events_by_type(event_types: list[str], limit: int = 100) -> list[
             list(event_types) + [limit],
         ).fetchall()
     return [dict(r) for r in rows]
-
-

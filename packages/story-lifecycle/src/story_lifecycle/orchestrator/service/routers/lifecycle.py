@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, HTTPException
+import logging
+
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ....infra.db import models as db
 from ....infra.terminal.pty import kill_pty
@@ -15,13 +17,11 @@ from ....sourcing.state_machine import (
     pause as sm_pause,
 )
 from ...engine.graph import force_stop_story, start_story_async
-from .._shared import (
-    _load_tapd_config,
-    _serialize_story_summary,
-    _story_list_json,
-)
+
+log = logging.getLogger("story-lifecycle.api.lifecycle")
 
 router = APIRouter(tags=["lifecycle"])
+
 
 class AdvanceRequest(BaseModel):
     description: str = ""
@@ -433,4 +433,3 @@ def api_resume_parent(parent_key: str, req: ResumeParentRequest = None):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"ok": True}
-

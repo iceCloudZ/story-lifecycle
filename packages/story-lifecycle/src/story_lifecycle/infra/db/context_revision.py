@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 
 from .connection import _db
+
+
 def get_context_revision(story_key: str) -> int:
     """Return the current context_revision for a story, or 0 if not found."""
     with _db() as conn:
@@ -28,5 +29,3 @@ def bump_context_revision(story_key: str) -> int:
             "SELECT context_revision FROM story WHERE story_key = ?", (story_key,)
         ).fetchone()
     return row["context_revision"] if row else 0
-
-

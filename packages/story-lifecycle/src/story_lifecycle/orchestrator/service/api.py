@@ -1,56 +1,33 @@
 """FastAPI server — REST API for story management and terminal access."""
 
 import asyncio
-import json
 import logging
-import tempfile
 from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import (
-    Body,
     FastAPI,
-    File,
-    Form,
     HTTPException,
-    UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
 
-from ...knowledge.adapters import get_adapter
-from ...sourcing.workspace_diff import get_story_workspace_diff
 from ...infra.db import models as db
 from ...infra.db.models import init_db
 from ...infra.terminal.pty import (
     cleanup_all,
     get_pty,
-    ensure_agent_pty,
-    kill_pty,
-    list_pty_sessions,
 )
-from ...infra.terminal.sid_capture import arm_sid_capture, now_utc_iso
 from ..engine.graph import (
-    start_story_async,
     recover_orphan_stories,
-    force_stop_story,
 )
-from ..engine.profile_loader import resolve_profile
-from ..engine import planner
-from ...sourcing.state_machine import (
-    activate as sm_activate,
-    mark_completed as sm_mark_completed,
-    pause as sm_pause,
-)
-from ...sourcing.lifecycle_state import LifecycleState
 
 
 log = logging.getLogger("story-lifecycle.api")
 
-from .routers.sessions import (  # noqa: F401  (设计15 C3b: 测试直接 import 路由函数)
+from .routers.sessions import (  # noqa: E402,F401  (设计15 C3b: 测试直接 import 路由函数)
     _story_headless,
     _spawn_story_agent_pty,
     _ensure_story_agent_pty,
@@ -67,16 +44,9 @@ from .routers.sessions import (  # noqa: F401  (设计15 C3b: 测试直接 impor
     WritebackSessionRequest,
 )
 
-from ._shared import _workspace_root_for_project
 
-from ._shared import (
-    _load_tapd_config,
-    _serialize_story_summary,
+from ._shared import (  # noqa: E402
     _story_list_json,
-    _resolve_workspace_or_404,
-    _wiki_knowledge_root,
-    _get_story_documents,
-    _get_story_change_items,
 )
 
 
@@ -369,7 +339,7 @@ async def notify_per_story(story_key: str, msg: dict):
 
 # -------- domain routers（设计15 阶段C） --------
 
-from .routers import (
+from .routers import (  # noqa: E402
     change_items,
     deliverables,
     deliveries,
@@ -379,6 +349,7 @@ from .routers import (
     wiki,
     worktrees,
 )
+
 for _mod in (
     diagnostics,
     change_items,
@@ -392,10 +363,10 @@ for _mod in (
     app.include_router(_mod.router)
 
 
-
 # -------- domain routers C2（设计15 阶段C） --------
 
-from .routers import bugs, documents, quality, timeline, workspaces
+from .routers import bugs, documents, quality, timeline, workspaces  # noqa: E402
+
 for _mod in (
     timeline,
     quality,
@@ -406,26 +377,26 @@ for _mod in (
     app.include_router(_mod.router)
 
 
-
 # -------- domain routers C3（设计15 阶段C） --------
 
-from .routers import context
+from .routers import context  # noqa: E402
+
 for _mod in (context,):
     app.include_router(_mod.router)
 
 
-
 # -------- domain routers C3b（设计15 阶段C） --------
 
-from .routers import sessions
+from .routers import sessions  # noqa: E402
+
 for _mod in (sessions,):
     app.include_router(_mod.router)
 
 
-
 # -------- domain routers C3c（设计15 阶段C） --------
 
-from .routers import intake, lifecycle, plan, stories, sync
+from .routers import intake, lifecycle, plan, stories, sync  # noqa: E402
+
 for _mod in (stories, lifecycle, plan, sync, intake):
     app.include_router(_mod.router)
 
@@ -464,6 +435,3 @@ if _WEB_DIR.is_dir() and any(_WEB_DIR.iterdir()):
         @app.get("/", include_in_schema=False)
         async def root():
             return FileResponse(str(_index_html))
-
-
-

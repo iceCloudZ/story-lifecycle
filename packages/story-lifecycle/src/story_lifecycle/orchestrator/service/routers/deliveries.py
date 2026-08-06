@@ -5,9 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ....infra.db import models as db
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 router = APIRouter(tags=["deliveries"])
+
 
 class CreateDeliveryRequest(BaseModel):
     kind: str
@@ -76,4 +77,3 @@ def api_update_delivery(story_key: str, artifact_id: int, req: UpdateDeliveryReq
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     return db.get_delivery_artifact(artifact_id)
-

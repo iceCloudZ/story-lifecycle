@@ -6,6 +6,8 @@ import json
 import os
 
 from .connection import _db
+
+
 def log_llm_trace(
     *,
     story_key: str = "",
@@ -95,7 +97,6 @@ def _pricing_for_model(model: str) -> dict[str, float]:
     Falls back to longest prefix match, then default. Env var
     STORY_TOKEN_PRICING_JSON can override or extend the table.
     """
-    import os
 
     pricing = dict(MODEL_PRICING_CNY)
     env_json = os.environ.get("STORY_TOKEN_PRICING_JSON", "")
@@ -202,5 +203,3 @@ MODEL_PRICING_CNY: dict[str, dict[str, float]] = {
     "claude-3-5-sonnet": {"input": 21.0, "output": 105.0},
     "claude-3-5-sonnet-20241022": {"input": 21.0, "output": 105.0},
 }
-
-

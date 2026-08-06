@@ -482,9 +482,7 @@ cd ./hc-config
 {done_protocol_section}"""
 
 
-def _render_artifacts_obligation(
-    stage: str, profile_stages: dict, story_dir
-) -> str:
+def _render_artifacts_obligation(stage: str, profile_stages: dict, story_dir) -> str:
     """STEP 1.4 强化:把本 stage 必须产出的文件(绝对路径)放 prompt 最显眼处。
 
     code agent(claude)验证发现:即使文末有 declare 协议段,也可能不调 declare 也不
@@ -537,9 +535,7 @@ def _render_artifacts_obligation(
         if abs_path:
             lines.append(f"- **必 declare**: `{art}`(对应文件 `{abs_path}`,非空)")
             if doc_type:
-                lines.append(
-                    f"  - 写完文件后调: `story tool declare {doc_type} {art}`"
-                )
+                lines.append(f"  - 写完文件后调: `story tool declare {doc_type} {art}`")
                 lines.append(
                     "  - 或直接用 declare 的 --content 参数原子写(推荐,免去路径错位)"
                 )
@@ -551,7 +547,7 @@ def _render_artifacts_obligation(
     lines.append("")
     lines.append(
         "**关键**:全部写完后,逐个调 declare。可以先用 Write 写草稿、确认内容完整,"
-        "再用 `story tool declare <doc_type> <相对路径> --content \"$(cat 文件)\"` 落地。"
+        '再用 `story tool declare <doc_type> <相对路径> --content "$(cat 文件)"` 落地。'
         "没 declare = stage 没完成。"
     )
     lines.append("")

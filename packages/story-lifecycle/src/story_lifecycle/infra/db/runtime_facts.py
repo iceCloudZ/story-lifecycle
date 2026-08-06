@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 
 from .connection import _db
+
+
 def upsert_runtime_facts(
     project_id: int,
     runtime_type: str,
@@ -73,5 +74,3 @@ def get_runtime_facts(project_id: int) -> list[dict]:
             (project_id,),
         ).fetchall()
     return [dict(r) for r in rows]
-
-

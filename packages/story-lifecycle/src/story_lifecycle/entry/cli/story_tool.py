@@ -175,7 +175,9 @@ def todo():
             console.print(f"  [green]✓[/] {art}（已 declare）")
         elif art in landed:
             # 文件写了但没 declare → 提醒调 declare
-            console.print(f"  [yellow]⚠[/] {art}（文件已写，但还没 declare → 调 `story tool declare {doc_type} {art}`）")
+            console.print(
+                f"  [yellow]⚠[/] {art}（文件已写，但还没 declare → 调 `story tool declare {doc_type} {art}`）"
+            )
             n_pending += 1
         else:
             console.print(f"  [red]✗[/] {art}（还没写，也没 declare）")

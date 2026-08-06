@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 
 from .connection import _db
+
+
 def create_delivery_artifact(
     story_key: str,
     kind: str,
@@ -105,5 +106,3 @@ def update_delivery_artifact(artifact_id: int, **kwargs) -> None:
     values = list(kwargs.values()) + [artifact_id]
     with _db() as conn:
         conn.execute(f"UPDATE story_delivery_artifact SET {sets} WHERE id = ?", values)
-
-

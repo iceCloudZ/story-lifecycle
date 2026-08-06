@@ -12,21 +12,18 @@ import tempfile
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ....infra.db import models as db
-from ....sourcing.state_machine import activate as sm_activate
 from ....sourcing.sources import tapd_source
-from ....sourcing.sources.tapd_source import TapdSource
-from ....knowledge.adapters import get_adapter
 from ...engine import planner
-from ...engine.graph import start_story_async
 from .._shared import _load_tapd_config, _workspace_root_for_project
 from .. import prd_generator
 
 log = logging.getLogger("story-lifecycle.api.intake")
 
 router = APIRouter(tags=["intake"])
+
 
 class IntakePreviewRequest(BaseModel):
     source_type: str = "tapd"
@@ -142,8 +139,6 @@ def _prepare_intake_prd_content(story_key: str, story: dict, content: str):
             },
         )
 
-    from .. import prd_generator
-
     try:
         result = prd_generator.generate_prd_from_source(source_snapshot)
     except Exception as exc:
@@ -213,7 +208,6 @@ def api_intake_preview(
         )
 
     source_id = source_id.removeprefix("tapd-")
-    from ....sourcing.sources import tapd_source
     from .. import prd_generator
 
     source = tapd_source.TapdSource(_load_tapd_config())
@@ -436,7 +430,6 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
 
 
 def _load_story_source_snapshot(story_key: str, story: dict):
-    from .. import prd_generator
 
     source_type = story.get("source_type") or ""
     source_id = story.get("source_id") or ""
@@ -471,4 +464,3 @@ def _load_story_source_snapshot(story_key: str, story: dict):
         owner=story.get("owner", ""),
         status=story.get("tapd_status", ""),
     )
-

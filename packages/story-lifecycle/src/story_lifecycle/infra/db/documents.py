@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .connection import _db
+
+
 def _normalize_doc_ref(ref: str) -> str:
     """Normalize a document ref so equivalent paths compare equal."""
     if not ref:
@@ -116,5 +117,3 @@ def delete_document(doc_id: int) -> None:
     """Delete a document by id."""
     with _db() as conn:
         conn.execute("DELETE FROM story_document WHERE id = ?", (doc_id,))
-
-

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from ....infra.db import models as db
 
 router = APIRouter(tags=["patterns"])
+
 
 @router.get("/api/approvals")
 def api_approvals():
@@ -14,4 +15,3 @@ def api_approvals():
     findings = db.get_all_pending_findings()
     db.enrich_findings_with_evidence(findings)
     return {"findings": findings}
-

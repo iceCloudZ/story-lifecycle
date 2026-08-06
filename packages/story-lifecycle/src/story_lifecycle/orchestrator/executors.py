@@ -455,6 +455,7 @@ class AutomaticStageExecutor(BaseStageExecutor):
         NEW/RESUME 判定 → adapter.start_session → ensure_agent_pty → supervisor 线程。
         与 api spawn 路径同一套 SessionSpec 契约。
         """
+        from ..infra.db import models as db
         from ..infra.terminal.pty import ensure_agent_pty
         from ..infra.terminal.pty_logger import PtyLogger
         from ..infra.db import models as _sd
@@ -541,16 +542,14 @@ class AutomaticStageExecutor(BaseStageExecutor):
 
         return getattr(pty, "session_id", "")
 
-    def _spawn_headless(
-        self, req: "SpawnRequest"
-    ) -> str:
+    def _spawn_headless(self, req: "SpawnRequest") -> str:
         """headless 路径：Popen + supervise_headless_stdout drain 线程。"""
         story_key = req.story_key
         stage = req.stage
         adapter = req.adapter
         model = req.model
         prompt = req.prompt
-        prompt_file = req.prompt_file
+        prompt_file = req.prompt_file  # noqa: F841 — 保持与 SpawnRequest 字段对应
         spawn_cwd = req.spawn_cwd
         story_env = req.story_env
         import subprocess as _sp

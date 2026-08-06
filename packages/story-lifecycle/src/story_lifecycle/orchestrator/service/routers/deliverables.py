@@ -8,6 +8,7 @@ from ....infra.db import models as db
 
 router = APIRouter(tags=["deliverables"])
 
+
 @router.get("/api/story/{story_key}/deliverables")
 def api_get_deliverables(story_key: str):
     """成果物清单 + 当前 gate 状态(概览第二层进度条用)。"""
@@ -63,4 +64,3 @@ def api_confirm_deliverable(story_key: str, deliv_key: str):
     ctx["_confirmed_deliverables"] = sorted(confirmed)
     db.update_story(story_key, context_json=_json.dumps(ctx, ensure_ascii=False))
     return {"ok": True, "confirmed": sorted(confirmed)}
-
