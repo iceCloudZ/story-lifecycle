@@ -267,18 +267,10 @@ class OrchestratorThread(threading.Thread):
             sm_pause(story_key, error=f"PTY died without artifacts for {stage}")
             return
 
-        # 4. 没有 PTY → 半自动等人点「启动 CLI」；但用户手动跑完的成果物
-        #    （orphan 情形：无 PTY 也无 driver）也要被 judge —— 这替代旧
-        #    consume_orphan_artifacts（GET /story 副作用）。全自动 executor
-        #    的 maybe_spawn 会自己 spawn，spawn 后下一轮走 PTY 分支。
-        if executor.is_artifacts_ready(
-            story_key,
-            stage,
-            pty_alive=False,
-            base_version=self._base_declare_version(story_key),
-        ):
-            self._submit_judge(story_key, stage, ctx, executor, story)
-            return
+        # 4. 没有 PTY → 半自动等人点「启动 CLI」/ 全自动 maybe_spawn 自动起。
+        #    设计 13 删 orphan 后，无 PTY **不判成果物完成**（曾经残留的 orphan
+        #    兜底会导致 story 刚 active 还没 spawn 就被残留文件误判 ready →
+        #    虚假 approve）。成果物完成只能靠 PTY 活时 declare 或 PTY 死了兜底。
         executor.maybe_spawn(story_key, stage, ctx)
         # spawn 后记录 stage 启动时刻（超时判据）+ 本轮 declare 基准（防旧 event 残留）
         if executor.get_pty(story_key, stage) is not None:
