@@ -13,7 +13,7 @@ stages:
     max_retries: 0
     expected_outputs: []
     artifacts:
-      - story/spec.md
+      - story/*/spec.md
     next_default: [verify]
 
   verify:

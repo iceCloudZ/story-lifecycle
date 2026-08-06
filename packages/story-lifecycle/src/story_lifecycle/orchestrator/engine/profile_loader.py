@@ -1,11 +1,13 @@
 import dataclasses
+import os
 import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 
 # STORY_HOME migrated here when legacy nodes/state.py was removed (ISS-005).
 # Mirrors the constant defined in nodes/__init__.py and planner.py.
-STORY_HOME = Path.home() / ".story-lifecycle"
+# P3：优先读 STORY_HOME 环境变量（沙箱隔离需要），否则回退用户目录。
+STORY_HOME = Path(os.environ.get("STORY_HOME") or (Path.home() / ".story-lifecycle"))
 
 
 class ProfileValidationError(ValueError):

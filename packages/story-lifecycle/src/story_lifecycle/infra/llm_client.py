@@ -570,32 +570,69 @@ class LLMClient:
         if not self.api_key:
             raise RuntimeError("LLM API key not configured. Run 'story setup' first.")
 
-        t0 = time.monotonic()
-        try:
-            resp = httpx.post(
-                self._chat_completions_url(),
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json=body,
-                timeout=timeout,
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            self._trace(
-                result.get("usage", {}),
-                int((time.monotonic() - t0) * 1000),
-                model=self.model,
-                req_body=body,
-                resp_body=result,
-            )
-            return result
-        except Exception as exc:
-            self._trace(
-                {},
-                int((time.monotonic() - t0) * 1000),
-                model=self.model,
-                error=str(exc),
-            )
-            raise
+        # P4：瞬态错误退避重试（read timeout / 连接错误 / HTTP 5xx / 429）。
+        # 4xx（非 429）与 JSON 解析失败判永久，不重试。
+        last_exc: Exception | None = None
+        for attempt in range(3):  # 1 次 + 重试 2 次
+            t0 = time.monotonic()
+            try:
+                resp = httpx.post(
+                    self._chat_completions_url(),
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json=body,
+                    timeout=timeout,
+                )
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    if attempt < 2:
+                        delay = 5 * (2**attempt)
+                        log.warning(
+                            "LLM HTTP %s（attempt %d/3）: %.0fs 后退避重试",
+                            resp.status_code, attempt + 1, delay,
+                        )
+                        time.sleep(delay)
+                        continue
+                    resp.raise_for_status()
+                resp.raise_for_status()
+                result = resp.json()
+                self._trace(
+                    result.get("usage", {}),
+                    int((time.monotonic() - t0) * 1000),
+                    model=self.model,
+                    req_body=body,
+                    resp_body=result,
+                )
+                return result
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_exc = exc
+                if attempt < 2:
+                    delay = 5 * (2**attempt)
+                    log.warning(
+                        "LLM 瞬态错误（attempt %d/3）: %s; %.0fs 后退避重试",
+                        attempt + 1, exc, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+            except Exception as exc:
+                # 4xx 业务错误 / JSON 解析失败 → 永久，直接抛
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None \
+                        and exc.response.status_code < 500 and exc.response.status_code != 429:
+                    raise
+                last_exc = exc
+                if attempt < 2:
+                    delay = 5 * (2**attempt)
+                    log.warning(
+                        "LLM 瞬态错误（attempt %d/3）: %s; %.0fs 后退避重试",
+                        attempt + 1, exc, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+        self._trace(
+            {},
+            int((time.monotonic() - t0) * 1000),
+            model=self.model,
+            error=str(last_exc),
+        )
+        raise RuntimeError(f"LLM 请求重试耗尽: {last_exc}")
 
     @staticmethod
     def _extract_content(body: dict) -> str:

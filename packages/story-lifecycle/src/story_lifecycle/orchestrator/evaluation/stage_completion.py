@@ -127,15 +127,51 @@ def judge_stage_completion(
     )
     cref = context_ref(judge_ctx)
 
+    # F2：verify stage 跑 conformance 质检（spec vs 实现 diff），结果注入判定上下文。
+    # 配置：ctx 的 conformance_check（默认 true）；失败时 fail-closed（转 escalate）。
+    conformance_ev = ""
+    if stage == "verify" and ctx.get("conformance_check", True):
+        try:
+            from .conformance import check_conformance, inject_conformance_findings
+
+            conformance_result = check_conformance(
+                story_key=story_key,
+                workspace=workspace,
+                spec_path=done_data.get("spec_path") or "",
+                diff_text=done_data.get("delivery_diff"),
+                delivery_diff_path=done_data.get("delivery_diff_path"),
+                files_changed=done_data.get("files_changed"),
+            )
+            if conformance_result.skipped:
+                conformance_ev = f"（conformance 跳过: {conformance_result.skip_reason}）"
+            else:
+                conf_findings = inject_conformance_findings(conformance_result)
+                judge_ctx["conformance"] = conformance_result.model_dump()
+                judge_ctx["conformance_findings"] = conf_findings
+                sev = "HIGH" if conf_findings and conf_findings[0]["severity"] == "HIGH" else "OK"
+                conformance_ev = (
+                    f"conformance 检查: alignment={conformance_result.alignment} "
+                    f"coverage={conformance_result.coverage} scope_drift={conformance_result.scope_drift} "
+                    f"(ref={conformance_result.reference_type}) → {sev}\n"
+                    f"  摘要: {conformance_result.summary[:200]}"
+                )
+        except Exception as exc:
+            # fail-closed：conformance 自身失败不允许跳过检查静默放行 → escalate
+            log.warning("[%s/%s] conformance 失败,转 escalate: %s", story_key, stage, exc)
+            return _fallback_decision(
+                story_key, stage, cref, db_module,
+                reason=f"conformance 检查失败(fail-closed): {exc}",
+            )
+
     # 2. LLM 调用(纯判定,无工具)
     if llm is None:
         from ...infra.llm_client import get_llm
 
         llm = get_llm()
     if not llm.api_key:
-        log.warning("[%s/%s] no LLM api_key, fallback approve", story_key, stage)
+        log.warning("[%s/%s] no LLM api_key, fallback escalate", story_key, stage)
         return _fallback_decision(
-            story_key, stage, cref, db_module, reason="LLM 不可用,默认 approve 让人兜底"
+            story_key, stage, cref, db_module, reason="LLM 不可用,转人确认(fail-closed)"
         )
 
     prompt = _build_prompt(
@@ -151,6 +187,7 @@ def judge_stage_completion(
         max_retries=max_retries,
         story_states=story_states or {},
         judge_ctx=judge_ctx,
+        conformance_ev=conformance_ev,
     )
     try:
         result = llm.invoke_structured(
@@ -257,26 +294,26 @@ def judge_stage_completion(
 def _fallback_decision(
     story_key: str, stage: str, cref: str, db_module, *, reason: str
 ) -> dict:
-    """LLM 不可用时降级:approve + 不推进 + 空摘要(设计 §1.6)。
+    """LLM 不可用时降级（F1 fail-closed）：escalate + 不推进 + 标记摘要。
 
-    approve 让人确认兜底(红线 4);lifecycle_target=None 让状态推进退化为
-    人工 /lifecycle/advance(交付物 gate 路径),不自动跳状态。
+    迭代 1 改动：quality 由 approve 改为 escalate——LLM 基础设施失败不得静默放行，
+    转人工确认（红线 4：人不确认不推进）。lifecycle_target=None 不自动跳状态。
     """
     try:
         rid = db_module.log_decision(
             story_key,
             stage,
             "stage_completion",
-            "approve",
+            "escalate",
             reason=f"[FALLBACK] {reason}",
             context_ref=cref,
-            action_taken="fallback_approve",
+            action_taken="fallback_escalate",
             llm_model="",
         )
     except Exception:  # noqa: BLE001
         rid = 0
     return {
-        "quality": "approve",
+        "quality": "escalate",
         "lifecycle_target": None,
         "summary": "",
         "reason": f"[FALLBACK] {reason}",
@@ -349,6 +386,7 @@ def _build_prompt(
     max_retries: int,
     story_states: dict,
     judge_ctx: dict,
+    conformance_ev: str = "",
 ) -> str:
     """组装 stage 完成裁判 prompt(设计 §1.3)。"""
     task_type = ctx.get("task_type", "") or "未知"
@@ -437,6 +475,9 @@ def _build_prompt(
 
 ## 成果物内容(质量判定依据)
 {arts_text}
+
+## 额外质检证据(conformance: 需求↔实现吻合度)
+{conformance_ev}
 
 ## 累积产出(所有已完成的 stage,判 lifecycle_target 的依据)
 {cumulative_outputs}

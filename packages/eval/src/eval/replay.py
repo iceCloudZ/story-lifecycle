@@ -50,10 +50,10 @@ def _write_replay_profile(stages: list[str]) -> str:
     stage_lines = []
     order = 0
     artifacts = {
-        "design": ["story/spec.md"],
+        "design": ["story/*/spec.md"],
         "implement": ["git"],
         "build": ["git"],
-        "verify": ["story/test-report.md"],
+        "verify": ["story/*/test-report.md"],
     }
     for name in stages:
         order += 1
