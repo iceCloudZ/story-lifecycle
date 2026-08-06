@@ -77,7 +77,6 @@ def _isolated_db(tmp_path, monkeypatch):
     story_home.mkdir()
     db_path = story_home / "story.db"
     monkeypatch.setattr(db, "get_db_path", lambda: db_path)
-    monkeypatch.setattr(nodes_mod, "STORY_HOME", story_home)
     monkeypatch.setenv("STORY_HOME", str(story_home))
     db.init_db()
 

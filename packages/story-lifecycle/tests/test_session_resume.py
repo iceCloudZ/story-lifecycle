@@ -41,45 +41,6 @@ def test_launch_cmd_plain_no_session_still_works():
     assert "--session-id" not in cmd and "--resume" not in cmd
 
 
-def test_build_stage_launch_cmd_new_writes_marker(tmp_path, monkeypatch):
-    import story_lifecycle.orchestrator.service.api as api
-
-    story = {"story_key": "tapd-1", "workspace": str(tmp_path), "current_stage": "design", "profile": "minimal"}
-    monkeypatch.setattr(api, "_build_stage_launch_prompt", lambda s: "READ-FILE-INSTR")
-    cmd, is_resume = api._build_stage_launch_cmd(story, ClaudeAdapter(), "sonnet")
-    assert is_resume is False
-    assert "--session-id" in cmd
-    assert cmd[-1] == "READ-FILE-INSTR"
-    marker = tmp_path / ".story" / "context" / "tapd-1" / "session_design.json"
-    assert marker.exists()
-    data = json.loads(marker.read_text(encoding="utf-8"))
-    assert data["name"] == "tapd-1-design"
-    # compute_session_id 三字段(story:stage:adapter),adapter=claude
-    assert data["session_id"] == db.compute_session_id("tapd-1", "design", "claude")
-
-
-def test_build_stage_launch_cmd_resume_when_marker_exists(tmp_path, monkeypatch):
-    import story_lifecycle.orchestrator.service.api as api
-
-    story = {"story_key": "tapd-1", "workspace": str(tmp_path), "current_stage": "design", "profile": "minimal"}
-    marker = tmp_path / ".story" / "context" / "tapd-1" / "session_design.json"
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    sid = db.compute_session_id("tapd-1", "design", "claude")
-    marker.write_text(json.dumps({"session_id": sid, "name": "tapd-1-design"}), encoding="utf-8")
-    # new-prompt builder must NOT be called on resume
-    called = {"n": 0}
-    def boom(s):
-        called["n"] += 1
-        return "SHOULD-NOT-BE-USED"
-    monkeypatch.setattr(api, "_build_stage_launch_prompt", boom)
-    cmd, is_resume = api._build_stage_launch_cmd(story, ClaudeAdapter(), "sonnet")
-    assert is_resume is True
-    assert called["n"] == 0
-    assert "--resume" in cmd and sid in cmd
-    assert "--session-id" not in cmd
-    assert "SHOULD-NOT-BE-USED" not in cmd
-
-
 # ---------------------------------------------------------------------------
 # kimi (ShellAdapter) session resume + banner capture + DB persistence
 # ---------------------------------------------------------------------------

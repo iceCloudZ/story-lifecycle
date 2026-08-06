@@ -12,8 +12,6 @@ ISS-006 moved `json_helpers` (robust_json_parse) up to the top-level infra
 module `story_lifecycle.json_helpers`; callers import it directly from there.
 """
 
-from pathlib import Path
-
 # ---- Module-level attributes (tests access nodes.planner, nodes.ttyd, etc.) ----
 from ..engine import planner as planner  # noqa: F401
 from ..engine import router as llm_router  # noqa: F401
@@ -35,9 +33,3 @@ from ..engine.prompt_renderer import (
     _derive_relevance_tags as _derive_relevance_tags,
     _build_prd_task_section as _build_prd_task_section,
 )
-
-# ---- Constants (previously from state.py, now defined here) ----
-STORY_HOME = Path.home() / ".story-lifecycle"
-TIMEOUT_SECONDS = 30 * 60  # 30 minutes per stage
-POLL_INTERVAL = 15  # seconds between poll checks
-MAX_REVIEW_RETRIES = 3

@@ -94,9 +94,7 @@ def _run_demo_inner(workspace: Path, db_path: Path, checkpoint_path: Path):
         mock_ttyd.session_alive.return_value = True
         mock_ttyd._MPLEX = None
 
-        from story_lifecycle.orchestrator import nodes as nodes_mod
-
-        with patch.object(nodes_mod, "STORY_HOME", workspace):
+        with patch.object(graph_mod, "STORY_HOME", workspace):
             graph_mod._run_story_impl(_DEMO_KEY)
 
         for mp in mock_planners:

@@ -654,67 +654,6 @@ def _build_stage_launch_prompt(story: dict) -> str:
         return ""
 
 
-def _build_stage_launch_cmd(story: dict, adapter, model: str) -> tuple[list[str], bool]:
-    """Build the claude launch cmd for a story+stage: NEW or RESUME.
-
-    Deterministic session UUID (compute_session_id of ``story_key:stage:adapter``)
-    + a marker file (``.story/context/<key>/session_<stage>.json``) decide:
-      NEW    → claude --session-id <uuid> --name <key>-<stage> "<read-file seed>"
-               + write marker. (seeds the stage task via claude "query")
-      RESUME → claude --resume <uuid> "<continue>"   (loads transcript, continues)
-
-    Both run with cwd=workspace — required: ``--resume`` lookup is cwd-scoped,
-    so resume must run from the same dir as the original session. Transcripts
-    persist at ``~/.claude/projects/<project>/<uuid>.jsonl`` (claude auto-saves),
-    so a killed/orphan claude resumes here with full history.
-    Returns ``(cmd, is_resume)``. See docs/handoff-design-hitl.md §11 +
-    tests/test_session_resume.py.
-    """
-    import json as _json
-
-    from ...infra.story_paths import safe_story_path
-
-    story_key = story["story_key"]
-    workspace = story.get("workspace", "")
-    stage = story.get("current_stage", "design") or "design"
-    # 统一走 compute_session_id(三字段),与 _spawn_story_agent_pty / planner 一致。
-    _adapter_name = getattr(adapter, "name", "") or ""
-    session_id = db.compute_session_id(story_key, stage, _adapter_name)
-    session_name = f"{story_key}-{stage}"
-    marker = (
-        safe_story_path(workspace, ".story", "context", story_key)
-        / f"session_{stage}.json"
-    )
-    if marker.exists():
-        cmd = adapter.interactive_launch_cmd(
-            model,
-            prompt="继续上次的任务,完成后按完成协议写入 done 文件。",
-            session_id=session_id,
-            resume=True,
-        )
-        return cmd, True
-    seed = _build_stage_launch_prompt(story)
-    cmd = adapter.interactive_launch_cmd(
-        model,
-        prompt=seed,
-        session_id=session_id,
-        session_name=session_name,
-        resume=False,
-    )
-    try:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(
-            _json.dumps(
-                {"session_id": session_id, "name": session_name, "stage": stage},
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
-    return cmd, False
-
-
 def _spawn_story_agent_pty(
     story: dict, adapter, model: str
 ) -> tuple[str, object, bool]:

@@ -66,7 +66,7 @@ def generate_prd_from_source(source: StorySourceSnapshot) -> PrdGenerationResult
             len(images),
         )
         content = _invoke_kimi_cli_vision(prompt, images)
-        data = _parse_json_or_none(content)
+        data = LLMClient._parse_json(content)
         if data is None:
             raise ValueError(
                 f"Cannot parse Kimi CLI vision response as JSON. "
@@ -92,7 +92,7 @@ def generate_prd_from_source(source: StorySourceSnapshot) -> PrdGenerationResult
                 timeout=180,
                 max_tokens=4000,
             )
-        data = _parse_json_or_none(content)
+        data = LLMClient._parse_json(content)
         if data is None:
             raise ValueError(
                 f"Cannot parse vision LLM response as JSON. "
@@ -122,11 +122,6 @@ def generate_prd_from_source(source: StorySourceSnapshot) -> PrdGenerationResult
 
 
 # ── helpers ──
-
-
-def _parse_json_or_none(content: str) -> dict | None:
-    """Reuse the LLM client's robust JSON parser."""
-    return LLMClient._parse_json(content)
 
 
 def _use_kimi_cli_vision() -> bool:
