@@ -51,10 +51,10 @@ class StageExecutor(ABC):
         """stage 成果物是否完成（agent 已显式声明）。
 
         归一化判定（1068018 事故修复）：
-        - PTY 活（agent 还在跑）→ 只认 ``artifact_declared`` event（version > base），
-          不看文件（防 agent 边写边存被误判完成）。
-        - PTY 死/无（agent 不会再改文件）→ 认 declare event，OR 文件兜底
-          （状态冻结可信，容错 agent 崩溃/declare 失败）。
+        **只认 ``artifact_declared`` event**（version > base_version）。不看文件 ——
+        agent 边写边存，任何"文件存在"判定都会撞上半成品。pty_alive 参数保留但
+        不再分支：PTY 活/死都只认 declare。不调 declare 的 agent 卡到
+        STAGE_TIMEOUT 判 failed（能 /plan/regenerate 重跑，比误判半成品 reject 安全）。
         - base_version：spawn 时快照的最新 declare version，过滤上轮残留 event。
         """
 

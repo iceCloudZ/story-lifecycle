@@ -1,3 +1,4 @@
+<!-- dry-run 预览模板：完成协议与生产路径（declare）不一致，仅用于 story create --dry-run 调试。生产 prompt 见 prompts.py:_render_cli_prompt_req -->
 生成最终 patch 用于 SWE-bench 评估。
 
 ## 任务信息

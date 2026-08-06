@@ -1,3 +1,4 @@
+<!-- dry-run 预览模板：完成协议与生产路径（declare）不一致，仅用于 story create --dry-run 调试。生产 prompt 见 prompts.py:_render_cli_prompt_req -->
 运行编译验证和测试。
 
 ## 任务信息

@@ -24,12 +24,5 @@ from ..engine.profile_loader import (
     get_stage_config as get_stage_config,
 )
 
-# ---- Prompt rendering (used by cli/main.py) ----
-from ..engine.prompt_renderer import (
-    _strip_planner_contract_duplicates as _strip_planner_contract_duplicates,
-    _build_stage_contract as _build_stage_contract,
-    _build_plan_executor_prompt as _build_plan_executor_prompt,
-    _render_prompt as _render_prompt,
-    _derive_relevance_tags as _derive_relevance_tags,
-    _build_prd_task_section as _build_prd_task_section,
-)
+# ---- Prompt rendering (used by cli/main.py dry-run) ----
+from ..engine.prompt_renderer import _render_prompt as _render_prompt
