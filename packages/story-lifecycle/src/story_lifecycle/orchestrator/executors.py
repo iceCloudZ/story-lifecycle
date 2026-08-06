@@ -155,41 +155,18 @@ class BaseStageExecutor(StageExecutor):
     ) -> bool:
         """stage 成果物是否完成（归一化判定，1068018 事故修复）。
 
-        真相源是 ``artifact_declared`` event（agent 调 ``story tool declare`` 时写）。
-        - PTY 活（agent 还在跑）→ 只认 declare event（version > base_version），
-          **不看文件**（agent 边写边存，文件存在不代表完成）。
-        - PTY 死/无（文件状态冻结）→ 认 declare event，OR 文件兜底（容错 agent
-          崩溃/declare 失败）。
+        **只认 ``artifact_declared`` event**（agent 调 ``story tool declare`` 时写，
+        version > base_version）。不看文件 —— agent 边写边存，任何"文件存在"判定
+        都会撞上半成品（claude 先 Write 后 declare；spawn retry 间隙 PTY 短暂死，
+        文件兜底读到 Write 的截断内容）。
+
+        pty_alive 参数保留（调用方语义清晰）但不再分支 —— PTY 活/死都只认 declare。
+        不调 declare 的 agent 会卡到 STAGE_TIMEOUT 判 failed（failed 能 /plan/regenerate
+        重跑，比误判半成品 reject 安全）。
         """
         from ..infra.db import models as db
 
-        # 1. 本轮 declare event？（PTY 活/死都认 — 这是唯一可靠的完成信号）
-        if db.get_latest_declare(story_key, stage, since_version=base_version):
-            return True
-        # 2. PTY 活 → 不兜底文件（防边写边判）
-        if pty_alive:
-            return False
-        # 3. PTY 死/无 → 文件兜底（状态冻结可信，容错 agent 崩溃/declare 失败）
-        from ..infra.paths import stage_done_file_rel
-        from .engine.artifact_check import check_artifacts_landed
-
-        story = db.get_story(story_key)
-        if not story:
-            return False
-        workspace = story.get("workspace", "")
-        if not workspace:
-            return False
-        stage_artifacts, ev, git_worktrees = resolve_stage_artifacts(story, stage)
-        if not stage_artifacts:
-            # 无 artifacts 声明（老 profile / 测试 profile）→ done.json 兼容视图。
-            return (Path(workspace) / stage_done_file_rel(story_key, stage)).exists()
-        missing, _ = check_artifacts_landed(
-            stage_artifacts,
-            workspace,
-            evidence_candidates=ev,
-            git_worktrees=git_worktrees,
-        )
-        return not missing
+        return bool(db.get_latest_declare(story_key, stage, since_version=base_version))
 
     def spawn(self, story_key: str, stage: str, action: dict) -> str:
         """spawn stage 的 CLI 会话，返回 session_id。子类实现具体策略。"""

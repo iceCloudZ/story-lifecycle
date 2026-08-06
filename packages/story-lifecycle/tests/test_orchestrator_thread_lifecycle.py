@@ -169,16 +169,15 @@ class TestTickStoryPtyBranches:
     def test_tick_story_judges_when_dead_pty_with_artifacts(
         self, tmp_path, isolated_story_home, _orchestrator, monkeypatch
     ):
-        """PTY 死了 + 成果物落地 → submit judge。"""
+        """PTY 死了 + declare event → submit judge（砍文件兜底后只认 declare）。"""
         key = _make_active_story(tmp_path)
-        import story_lifecycle.infra.story_paths as sp
-        from pathlib import Path as _P
-
-        monkeypatch.setattr(sp, "story_evidence_root", lambda ws: _P(str(ws)) / "story")
-        story = db.get_story(key)
-        edir = sp.story_evidence_dir(story["workspace"], key, story["title"])
-        edir.mkdir(parents=True, exist_ok=True)
-        (edir / "spec.md").write_text("# spec", encoding="utf-8")
+        # declare event（归一化真相源，砍文件兜底后唯一完成信号）
+        db.log_event(
+            key,
+            "design",
+            "artifact_declared",
+            {"doc_type": "spec", "version": 1, "summary": "ok", "files_changed": []},
+        )
 
         class _DeadPty:
             alive = False
@@ -193,7 +192,7 @@ class TestTickStoryPtyBranches:
             _orchestrator, "_submit_judge", lambda *a, **k: submitted.append(1)
         )
         _orchestrator._tick()
-        assert submitted, "PTY 死 + 成果物落地 → 应 submit judge"
+        assert submitted, "PTY 死 + declare → 应 submit judge"
 
     def test_tick_story_pauses_when_dead_pty_no_artifacts(
         self, tmp_path, isolated_story_home, _orchestrator, monkeypatch

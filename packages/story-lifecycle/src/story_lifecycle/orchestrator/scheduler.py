@@ -239,7 +239,11 @@ class OrchestratorThread(threading.Thread):
             self._tick_alive_pty(story_key, stage, pty, executor, story, ctx, actions)
             return
 
-        # 3. PTY 死了 → 看 artifacts（headless 死了没产出 → 重试，对齐 driver）
+        # 3. PTY 死了 → 看 declare event（agent 崩溃前可能已 declare）；没 declare
+        #    → headless 重试 / pause。**不走文件兜底**：spawn retry 间隙（NEW spawn
+        #    秒死→retry --resume 成功，约 5s）PTY 短暂死，文件兜底会撞上 agent 边写
+        #    边存的半成品（1068018 事故：claude Write 到 workspace/story/spec.md
+        #    根目录，PTY 死间隙文件兜底读到截断内容 → 误 reject）。
         if pty is not None:
             if executor.is_artifacts_ready(
                 story_key,
@@ -252,14 +256,14 @@ class OrchestratorThread(threading.Thread):
             # headless 重试（对齐 driver HEADLESS_MAX_ATTEMPTS）
             if self._maybe_retry_headless(story_key, stage, executor, ctx):
                 return
-            # PTY 死了没产出 → pause（等人介入）
+            # PTY 死了没 declare → pause（等人介入）
             log.warning(
-                "[%s] PTY died without artifacts for stage=%s → paused",
+                "[%s] PTY died without declare for stage=%s → paused",
                 story_key,
                 stage,
             )
             self._clear_stage_state(story_key)
-            sm_pause(story_key, error=f"PTY died without artifacts for {stage}")
+            sm_pause(story_key, error=f"PTY died without declare for {stage}")
             return
 
         # 4. 没有 PTY → 半自动等人点「启动 CLI」/ 全自动 maybe_spawn 自动起。
@@ -479,9 +483,7 @@ class OrchestratorThread(threading.Thread):
                     insert_at = _i + 1
             actions.insert(insert_at, retry)
             ctx["_agent_actions"] = actions
-            db.update_story(
-                story_key, context_json=json.dumps(ctx, ensure_ascii=False)
-            )
+            db.update_story(story_key, context_json=json.dumps(ctx, ensure_ascii=False))
             try:
                 pty.kill()
             except Exception:

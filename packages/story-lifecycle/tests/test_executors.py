@@ -129,13 +129,15 @@ class TestInteractiveStageExecutor:
             is True
         )
 
-    def test_is_artifacts_ready_fallback_file_when_pty_dead(self, tmp_story_with_spec):
-        """PTY 死 + 没 declare → 文件兜底（状态冻结可信，容错 agent 崩溃/declare 失败）。"""
+    def test_is_artifacts_ready_no_file_fallback_even_when_pty_dead(
+        self, tmp_story_with_spec
+    ):
+        """PTY 死 + 没 declare → 不文件兜底（砍文件兜底，防 spawn retry 间隙边写边判）。"""
         executor = InteractiveStageExecutor()
-        # spec.md 已写，没 declare，但 PTY 死了 → 文件兜底 True
+        # spec.md 已写，没 declare，PTY 死了 → 仍 False（只认 declare event）
         assert (
             executor.is_artifacts_ready(tmp_story_with_spec, "design", pty_alive=False)
-            is True
+            is False
         )
 
     def test_maybe_spawn_does_nothing_in_interactive(self, tmp_story):

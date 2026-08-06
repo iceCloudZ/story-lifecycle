@@ -198,18 +198,16 @@ class TestOrchestratorTick:
     def test_tick_judges_when_artifacts_ready(
         self, tmp_path, isolated_story_home, _orchestrator, monkeypatch
     ):
-        """PTY 死了 + artifacts ready → submit judge"""
+        """PTY 死了 + declare event → submit judge（砍文件兜底后只认 declare）"""
         key = _make_active_story(tmp_path)
-        # 落地 design 成果物（story/spec.md）
-        import story_lifecycle.infra.story_paths as sp
-        from pathlib import Path as _P
-
-        monkeypatch.setattr(sp, "story_evidence_root", lambda ws: _P(str(ws)) / "story")
-        story = db.get_story(key)
-        edir = sp.story_evidence_dir(story["workspace"], key, story["title"])
-        edir.mkdir(parents=True, exist_ok=True)
-        (edir / "spec.md").write_text("# spec", encoding="utf-8")
-        # mock 一个死了的 PTY（设计循环语义：PTY 死了 + artifacts ready → judge）
+        # 落地 declare event（归一化真相源，砍文件兜底后唯一完成信号）
+        db.log_event(
+            key,
+            "design",
+            "artifact_declared",
+            {"doc_type": "spec", "version": 1, "summary": "ok", "files_changed": []},
+        )
+        # mock 一个死了的 PTY（PTY 死 + declare → judge）
         dead = _FakePty(alive=False)
         monkeypatch.setattr(
             "story_lifecycle.orchestrator.executors.InteractiveStageExecutor.get_pty",
