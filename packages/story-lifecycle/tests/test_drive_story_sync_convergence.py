@@ -68,14 +68,20 @@ class TestConvergence:
 
 
 class TestForceAuto:
-    def test_force_auto_uses_automatic_executor(self, story_row):
-        """force_auto=True → 即使 minimal(半自动)profile 也强制 Automatic 执行器。"""
+    def test_force_auto_uses_automatic_executor(self, story_row, monkeypatch):
+        """force_auto=True → 即使 minimal(半自动)profile 也强制 Automatic 执行器。
+
+        只验证执行器被换掉,不让 _tick_story 真 spawn(CI 无 claude → FileNotFoundError)。
+        """
         from story_lifecycle.orchestrator.scheduler import OrchestratorThread
         from story_lifecycle.orchestrator.executors import (
             AutomaticStageExecutor,
             make_stage_executor,
         )
 
+        monkeypatch.setattr(
+            AutomaticStageExecutor, "maybe_spawn", lambda self, *a, **kw: None
+        )
         thr = OrchestratorThread(poll_interval=0, force_auto=True)
         try:
             story = db.get_story(story_row)
