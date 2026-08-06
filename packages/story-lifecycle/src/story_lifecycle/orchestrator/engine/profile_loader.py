@@ -5,9 +5,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # STORY_HOME migrated here when legacy nodes/state.py was removed (ISS-005).
-# Mirrors the constant defined in nodes/__init__.py and planner.py.
-# P3：优先读 STORY_HOME 环境变量（沙箱隔离需要），否则回退用户目录。
-STORY_HOME = Path(os.environ.get("STORY_HOME") or (Path.home() / ".story-lifecycle"))
+# Mirrors the constant defined in planner.py. 认 STORY_HOME 环境变量（sandbox/测试隔离）。
+from ...infra.paths import story_home as _story_home
+
+STORY_HOME = _story_home()
 
 
 class ProfileValidationError(ValueError):
@@ -252,12 +253,8 @@ def list_profiles() -> list[dict]:
     Deduplicated by name (project .story/ overrides STORY_HOME overrides built-in).
     """
     import importlib.resources as _ir
-    import os as _os
-    from pathlib import Path as _Path
 
-    _STORY_HOME = _Path(
-        _os.environ.get("STORY_HOME", str(_Path.home() / ".story-lifecycle"))
-    )
+    _STORY_HOME = _story_home()
 
     seen: dict[str, dict] = {}
 

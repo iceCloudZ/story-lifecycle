@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from ...infra.db import models as db
+from ...infra.paths import story_home
 from ...infra.story_paths import safe_story_path
 
 
@@ -235,7 +236,7 @@ def build_debug_response(
     workspace = s.get("workspace", "") or str(Path.cwd())
     story_context = safe_story_path(workspace, ".story", "context", story_key)
     done_dir = safe_story_path(workspace, ".story", "done", story_key)
-    story_home = Path.home() / ".story-lifecycle"
+    story_home_dir = story_home()
 
     route_decisions = _load_events_by_type(story_key, ["route_decision"], limit=20)
     node_errors = _load_events_by_type(story_key, ["node_error"], limit=20)
@@ -278,7 +279,7 @@ def build_debug_response(
         "fileHints": {
             "storyContextDir": str(story_context.relative_to(workspace)),
             "doneDir": str(done_dir.relative_to(workspace)),
-            "graphErrorLog": str(story_home / "graph_error.log"),
-            "plannerErrorLog": str(story_home / "planner_error.log"),
+            "graphErrorLog": str(story_home_dir / "graph_error.log"),
+            "plannerErrorLog": str(story_home_dir / "planner_error.log"),
         },
     }

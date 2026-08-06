@@ -380,7 +380,9 @@ _REPOS = [
 
 
 def _story_db_path() -> Path:
-    return Path.home() / ".story-lifecycle" / "story.db"
+    from ...infra.paths import story_home
+
+    return story_home() / "story.db"
 
 
 def _extract_short_id(story_key: str) -> str:

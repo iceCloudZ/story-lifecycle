@@ -8,6 +8,8 @@ the regression guards for the path-traversal / arbitrary-delete findings
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,100 @@ from story_lifecycle.infra.story_paths import (
     safe_segment,
     safe_story_path,
 )
+
+
+# ── story_home (STORY_HOME 环境变量隔离) ──────────────────────────────────────
+
+
+class TestStoryHome:
+    def test_story_home_returns_path(self):
+        from story_lifecycle.infra.paths import story_home
+
+        assert isinstance(story_home(), Path)
+
+    def test_story_home_uses_env_when_set(self, monkeypatch):
+        from story_lifecycle.infra.paths import story_home
+
+        monkeypatch.setenv("STORY_HOME", "/tmp/test-isolation")
+        assert story_home() == Path("/tmp/test-isolation")
+
+    def test_story_home_falls_back_to_home_dir(self, monkeypatch):
+        from story_lifecycle.infra.paths import story_home
+
+        monkeypatch.delenv("STORY_HOME", raising=False)
+        assert story_home() == Path.home() / ".story-lifecycle"
+
+    def test_story_home_env_isolation_end_to_end(self, tmp_path):
+        """D1 核心验证：STORY_HOME 指向临时目录时，DB 与所有路径助手都落在那。
+
+        回归：只有 3 处认 STORY_HOME 环境变量，其余 17 处硬编码
+        Path.home()/.story-lifecycle → 测试隔离静默失效。用子进程验证（模块级
+        常量在 import 时求值，子进程的 import 能看到新 env；同进程 reload 会
+        破坏 dataclass 身份，污染其他测试）。
+        """
+        import os
+        import subprocess
+        import sys
+
+        iso = tmp_path / "iso-home"
+        code = (
+            "import json, sys;"
+            "import story_lifecycle.infra.db.models as db_mod;"
+            "import story_lifecycle.infra.config as config_mod;"
+            "import story_lifecycle.orchestrator.engine.planner as planner_mod;"
+            "import story_lifecycle.orchestrator.engine.graph as graph_mod;"
+            "import story_lifecycle.orchestrator.engine.profile_loader as pl_mod;"
+            "print(json.dumps({"
+            "'db': str(db_mod.get_db_path()),"
+            "'config': str(config_mod.CONFIG_DIR),"
+            "'planner': str(planner_mod.STORY_HOME),"
+            "'graph': str(graph_mod.STORY_HOME),"
+            "'profile_loader': str(pl_mod.STORY_HOME),"
+            "}))"
+        )
+        env = dict(os.environ)
+        env["STORY_HOME"] = str(iso)
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert proc.returncode == 0, proc.stderr
+        homes = json.loads(proc.stdout.strip().splitlines()[-1])
+        for name, path in homes.items():
+            assert path.startswith(str(iso)), (
+                f"{name} 必须落在 STORY_HOME 指向的目录（D1）：{path}"
+            )
+
+    def test_no_inline_story_home_outside_paths(self):
+        """D1 静态守卫：.story-lifecycle 字面量只允许出现在 infra/paths.py。
+
+        其余文件若有内联计算 = 隔离静默失效（新代码加了不认 env 的路径）。
+        例外：infra/config.py 是架构不变量规定的 infra leaf（不得 import 内部
+        模块），必须内联 —— 它认 STORY_HOME 环境变量，语义与 story_home 一致。
+        """
+        import story_lifecycle as _pkg
+
+        pkg_root = Path(_pkg.__file__).resolve().parent
+        offenders = []
+        for path in pkg_root.rglob("*.py"):
+            if path.name == "paths.py":
+                continue
+            if path.name == "config.py" and path.parent.name == "infra":
+                continue  # infra leaf 不变量例外（内联但认 env）
+            text = path.read_text(encoding="utf-8")
+            # 忽略注释/docstring 行（历史引用），只看可执行代码
+            for lineno, line in enumerate(text.splitlines(), 1):
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+                if ".story-lifecycle" in stripped and "~/.story-lifecycle" not in stripped:
+                    offenders.append(f"{path.relative_to(pkg_root)}:{lineno}")
+        assert not offenders, (
+            "以下文件内联 .story-lifecycle（应改用 infra.paths.story_home()）：\n"
+            + "\n".join(offenders)
+        )
 
 
 # ── safe_segment ──────────────────────────────────────────────────────────────

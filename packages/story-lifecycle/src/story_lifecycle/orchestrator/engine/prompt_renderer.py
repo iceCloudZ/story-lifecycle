@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TypedDict, Optional
 
 from ...infra.db import models as db
+from ...infra.paths import story_home
 from ...infra.story_paths import story_evidence_dir
 from .prompt_sections import (
     build_knowledge_section,
@@ -15,8 +16,8 @@ from .profile_loader import get_stage_config
 
 # Story execution state (TypedDict) + home dir, migrated here when the legacy
 # nodes/state.py was removed (ISS-005). prompt_renderer is the only remaining
-# consumer of StoryState; STORY_HOME mirrors the constant in nodes/__init__.py.
-STORY_HOME = Path.home() / ".story-lifecycle"
+# consumer of StoryState; STORY_HOME mirrors the unified story_home() entry.
+STORY_HOME = story_home()
 
 
 class StoryState(TypedDict, total=False):

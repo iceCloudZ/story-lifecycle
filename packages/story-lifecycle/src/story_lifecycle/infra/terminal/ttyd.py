@@ -14,8 +14,9 @@ from typing import Optional
 
 from .platform_ops import kill_by_port, port_in_use
 from ..story_paths import safe_segment
+from ..paths import story_home
 
-STORY_HOME = Path.home() / ".story-lifecycle"
+STORY_HOME = story_home()
 
 # Port range for dynamic ttyd allocation
 BASE_PORT = 7701

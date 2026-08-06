@@ -11,7 +11,14 @@ like ``Path(workspace) / ".story-done" / ...``.  The on-disk layout:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+
+def story_home() -> Path:
+    """story-lifecycle 数据根目录。认 STORY_HOME 环境变量（sandbox/测试隔离）。"""
+    env = os.environ.get("STORY_HOME")
+    return Path(env) if env else Path.home() / ".story-lifecycle"
 
 
 def story_dir(workspace: str | Path) -> Path:

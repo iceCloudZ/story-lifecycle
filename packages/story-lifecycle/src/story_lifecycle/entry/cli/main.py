@@ -14,13 +14,14 @@ from pathlib import Path
 from rich.console import Console
 
 from ...infra.db.models import init_db
+from ...infra.paths import story_home
 from .setup import is_configured, load_config_to_env, run_setup
 from .doctor import run_doctor, run_doctor_fix, has_missing_tools, run_linkage_health
 
 console = Console()
 
 # Track first-run state
-_FIRST_RUN_MARKER = Path.home() / ".story-lifecycle" / ".initialized"
+_FIRST_RUN_MARKER = story_home() / ".initialized"
 
 
 def _cleanup_broken_dists():
@@ -40,7 +41,7 @@ def _cleanup_broken_dists():
 
 def _protect_config():
     """Auto-backup config.yaml on startup; restore if missing."""
-    config_dir = Path.home() / ".story-lifecycle"
+    config_dir = story_home()
     config_file = config_dir / "config.yaml"
     backup_file = config_dir / "config.yaml.bak"
 
@@ -358,7 +359,7 @@ if not errorlevel 1 goto wait
 "{python_exe}" -m pip install --upgrade story-lifecycle
 del "%~f0" 2>nul
 """
-        _ensure_dir = Path.home() / ".story-lifecycle"
+        _ensure_dir = story_home()
         _ensure_dir.mkdir(parents=True, exist_ok=True)
         bat_path = _ensure_dir / "upgrade.bat"
         bat_path.write_text(bat, encoding="ascii")

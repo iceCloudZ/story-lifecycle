@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ...infra.llm_client import get_llm, with_story_key
 from ...infra.story_paths import safe_story_path
-from ...infra.paths import stage_done_file_rel
+from ...infra.paths import stage_done_file_rel, story_home
 from ...sourcing.state_machine import (
     activate as sm_activate,
     mark_failed as sm_mark_failed,
@@ -23,7 +23,7 @@ from ...sourcing.state_machine import (
 
 log = logging.getLogger("story-lifecycle.planner")
 
-STORY_HOME = Path.home() / ".story-lifecycle"
+STORY_HOME = story_home()
 
 
 def _load_team_knowledge() -> str:

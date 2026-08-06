@@ -12,6 +12,7 @@ from pathlib import Path
 from filelock import FileLock, Timeout
 
 from ...infra.db import models as db
+from ...infra.paths import story_home
 from ...sourcing.state_machine import (
     activate as sm_activate,
     mark_failed as sm_mark_failed,
@@ -20,7 +21,7 @@ from ...sourcing.state_machine import (
 
 log = logging.getLogger("story-lifecycle.graph")
 
-STORY_HOME = Path.home() / ".story-lifecycle"
+STORY_HOME = story_home()
 
 _executor = ThreadPoolExecutor(max_workers=4)
 

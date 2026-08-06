@@ -17,9 +17,11 @@ from pathlib import Path
 
 import yaml
 
+from ..infra.paths import story_home
+
 # STORY_HOME migrated here when legacy nodes/state.py was removed (ISS-005).
-# Mirrors the constant defined in profile_loader.py.
-STORY_HOME = Path.home() / ".story-lifecycle"
+# 认 STORY_HOME 环境变量（sandbox/测试隔离），与 profile_loader 同一入口。
+STORY_HOME = story_home()
 
 log = logging.getLogger(__name__)
 

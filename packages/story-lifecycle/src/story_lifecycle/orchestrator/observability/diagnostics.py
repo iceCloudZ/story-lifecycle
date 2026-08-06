@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .debug_packet import build_debug_packet, redact_text, redact_mapping
 from ...infra.db import models as db
+from ...infra.paths import story_home
 from ...infra.story_paths import safe_segment
 
 
@@ -151,7 +152,7 @@ def create_global_diagnostics_bundle(
     Returns {"path": str} on success, {"error": str} on failure.
     """
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    home = Path.home() / ".story-lifecycle"
+    home = story_home()
 
     if output_path:
         out_dir = Path(output_path)
@@ -322,7 +323,7 @@ def _make_zip(src_dir: Path, dest: Path) -> None:
 
 
 def _collect_redacted_config(bundle_dir: Path, manifest: dict) -> None:
-    config_path = Path.home() / ".story-lifecycle" / "config.yaml"
+    config_path = story_home() / "config.yaml"
     if config_path.exists():
         text = config_path.read_text(encoding="utf-8")
         dest = bundle_dir / "config.redacted.yaml"

@@ -65,11 +65,11 @@ MODEL_PRICING_CNY: dict[str, dict[str, float]] = {
 
 
 def get_db_path() -> Path:
-    import os
+    from ..paths import story_home
 
-    home = os.environ.get("STORY_HOME", str(Path.home() / ".story-lifecycle"))
-    Path(home).mkdir(parents=True, exist_ok=True)
-    return Path(home) / "story.db"
+    home = story_home()
+    home.mkdir(parents=True, exist_ok=True)
+    return home / "story.db"
 
 
 def get_conn() -> sqlite3.Connection:

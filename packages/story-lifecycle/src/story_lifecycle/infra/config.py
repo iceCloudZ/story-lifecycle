@@ -14,7 +14,9 @@ from pathlib import Path
 
 import yaml
 
-CONFIG_DIR = Path.home() / ".story-lifecycle"
+# infra leaf：不 import 内部模块（架构不变量）。认 STORY_HOME 环境变量
+# （sandbox/测试隔离），与 infra/paths.story_home 同语义。
+CONFIG_DIR = Path(os.environ.get("STORY_HOME") or (Path.home() / ".story-lifecycle"))
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
 

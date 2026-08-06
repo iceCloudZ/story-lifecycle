@@ -18,6 +18,7 @@ from ...infra.paths import (
     malformed_done_file,
     context_dir,
     done_dir,
+    story_home,
 )
 
 
@@ -299,7 +300,7 @@ def build_debug_packet(story_key: str) -> dict:
     gate_results = db.get_gate_results(story_key, limit=20)
 
     # --- file hints ---
-    story_home = Path.home() / ".story-lifecycle"
+    story_home_dir = story_home()
     ctx_dir = context_dir(workspace, story_key)
     dn_dir = done_dir(workspace)
 
@@ -352,8 +353,8 @@ def build_debug_packet(story_key: str) -> dict:
             "done_dir": str(dn_dir.relative_to(workspace))
             if workspace
             else str(dn_dir),
-            "graph_error_log": str(story_home / "graph_error.log"),
-            "planner_error_log": str(story_home / "planner_error.log"),
+            "graph_error_log": str(story_home_dir / "graph_error.log"),
+            "planner_error_log": str(story_home_dir / "planner_error.log"),
         },
     }
 

@@ -2398,12 +2398,11 @@ def api_sync_status():
 
 
 def _load_tapd_config() -> dict:
-    import os
-    from pathlib import Path
     import yaml
 
-    home = os.environ.get("STORY_HOME", str(Path.home() / ".story-lifecycle"))
-    config_file = Path(home) / "config.yaml"
+    from ...infra.paths import story_home
+
+    config_file = story_home() / "config.yaml"
     if not config_file.exists():
         return {}
     with open(config_file, encoding="utf-8") as f:

@@ -97,10 +97,11 @@ def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id):
 
 
 def _load_tapd_config() -> dict:
-    from pathlib import Path
     import yaml
 
-    config_file = Path.home() / ".story-lifecycle" / "config.yaml"
+    from ...infra.paths import story_home
+
+    config_file = story_home() / "config.yaml"
     if not config_file.exists():
         return {}
     with open(config_file, encoding="utf-8") as f:

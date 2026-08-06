@@ -8,8 +8,9 @@ from typing import Any
 import yaml
 
 from .base import BaseAdapter, SessionSpec
+from ...infra.paths import story_home
 
-_CONFIG_PATH = Path.home() / ".story-lifecycle" / "adapters.yaml"
+_CONFIG_PATH = story_home() / "adapters.yaml"
 
 
 def _load_adapter_configs() -> dict[str, dict]:
