@@ -22,6 +22,12 @@
   1. 评分/基线/标签三者必须同源——judge 升级（端点/模型/prompt 任一变化）后，**标签必须同源重评**，旧标签衡量新 gate 的结果不算漏拦/误拦；
   2. **snapshot v2 全量按 Go 重基**（所有 conformance/标签/基线用 Go 端点重跑）；
   3. 报告与对比必须注明 judge 三元组，跨三元组对比需标注「端点漂移」风险。
+- **★ 端点 pre-flight 检查（2026-08-06 快照 v2 新增）**：**一切 LLM 批量任务（重评/回放/选样打分/构造验证）放量前必须先单条验证实际端点**——打印 `STORY_LLM_BASE_URL`（或查 calls 日志确认请求 URL），确认走 opencode-go 才放量。
+  教训（快照 v2 前置清理发现）：`packages/eval/dataset/.env` 残留 i1 阶段临时切的 **DeepSeek 官方配置**（`.env.deepseek` 的复制品），`configure_llm_env()` 无参调用时会加载它 → 单条验证打印出 `base_url: https://api.deepseek.com`，差点让 750 merge 全量误走 DeepSeek。处置：删 `.env`（`.env.deepseek` 保留为存档）、恢复 Go 默认后重验通过才放量。
+  规则：
+  1. 放量前跑单条（1-2 个 case），**打印 base_url 确认 `https://opencode.ai/zen/go/v1`**；
+  2. 批量任务挂 calls 日志（`LLMClient._request` hook 记 base_url），跑完 grep `api.deepseek.com` 必须 0 命中；
+  3. `dataset/.env` 只允许放 Go 配置或不存在；临时切 DeepSeek 用 `.env.deepseek` + 显式 env_file 参数，用完即删 `.env`。
 
 ## 1. 已核实的关键事实（直接可用，勿重复调研）
 
