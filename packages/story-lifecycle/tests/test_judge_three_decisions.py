@@ -45,6 +45,22 @@ def _decision(quality="approve", target=None, summary="完成", reason="ok"):
     )
 
 
+def _judge(**kw) -> dict:
+    """构造 JudgeRequest 调 judge_stage_completion（设计 14 F2 后单参数）。"""
+    from story_lifecycle.orchestrator.evaluation.stage_completion import JudgeRequest
+
+    base = dict(
+        story_key="JUDGE-1",
+        stage="design",
+        workspace=db.get_story("JUDGE-1")["workspace"],
+        ctx={},
+        lifecycle_state="待启动",
+        done_data={"summary": "x", "files_changed": []},
+    )
+    base.update(kw)
+    return judge_stage_completion(JudgeRequest(**base))
+
+
 @pytest.fixture
 def judge_story(tmp_path, isolated_story_home):
     """建一条 active story + workspace + 最小 judge 输入。"""
@@ -77,14 +93,7 @@ class TestThreeDecisionsParse:
             "story_lifecycle.infra.llm_client.get_llm",
             lambda: llm,
         )
-        out = judge_stage_completion(
-            story_key="JUDGE-1",
-            stage="design",
-            workspace=db.get_story("JUDGE-1")["workspace"],
-            ctx={},
-            lifecycle_state="待启动",
-            done_data={"summary": "spec 落地", "files_changed": ["story/spec.md"]},
-        )
+        out = _judge(done_data={"summary": "spec 落地", "files_changed": ["story/spec.md"]})
         assert llm.invoked
         assert out["quality"] == "approve"
         assert out["lifecycle_target"] == "开发"
@@ -99,14 +108,7 @@ class TestThreeDecisionsParse:
             "story_lifecycle.infra.llm_client.get_llm",
             lambda: llm,
         )
-        out = judge_stage_completion(
-            story_key="JUDGE-1",
-            stage="design",
-            workspace=db.get_story("JUDGE-1")["workspace"],
-            ctx={},
-            lifecycle_state="待启动",
-            done_data={"summary": "空", "files_changed": []},
-        )
+        out = _judge(done_data={"summary": "空", "files_changed": []})
         assert out["quality"] == "reject"
         assert out["lifecycle_target"] is None
 
@@ -117,14 +119,7 @@ class TestThreeDecisionsParse:
             "story_lifecycle.infra.llm_client.get_llm",
             lambda: llm,
         )
-        out = judge_stage_completion(
-            story_key="JUDGE-1",
-            stage="design",
-            workspace=db.get_story("JUDGE-1")["workspace"],
-            ctx={},
-            lifecycle_state="待启动",
-            done_data={"summary": "x"},
-        )
+        out = _judge(done_data={"summary": "x"})
         assert out["lifecycle_target"] is None
         assert out["quality"] == "approve"
 
@@ -137,14 +132,7 @@ class TestThreeDecisionsParse:
             "story_lifecycle.infra.llm_client.get_llm",
             lambda: type("L", (), {"api_key": "k", "invoke_structured": _boom})(),
         )
-        out = judge_stage_completion(
-            story_key="JUDGE-1",
-            stage="design",
-            workspace=db.get_story("JUDGE-1")["workspace"],
-            ctx={},
-            lifecycle_state="待启动",
-            done_data={"summary": "x"},
-        )
+        out = _judge(done_data={"summary": "x"})
         assert out["quality"] in ("approve", "escalate")
         assert out["fallback"] is True
 
@@ -158,14 +146,7 @@ class TestRejectInsertsRetry:
             "story_lifecycle.infra.llm_client.get_llm",
             lambda: _FakeLLM(_decision(quality="reject", reason="质量不达标")),
         )
-        out = judge_stage_completion(
-            story_key="JUDGE-1",
-            stage="design",
-            workspace=db.get_story("JUDGE-1")["workspace"],
-            ctx={},
-            lifecycle_state="待启动",
-            done_data={"summary": "差", "files_changed": []},
-        )
+        out = _judge(done_data={"summary": "差", "files_changed": []})
         assert out["quality"] == "reject"
 
         # 全自动 handler 处理 reject → 插 retry action
