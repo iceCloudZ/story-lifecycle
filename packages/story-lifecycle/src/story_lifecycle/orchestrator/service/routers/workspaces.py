@@ -224,7 +224,7 @@ def api_get_test_suites(slug: str):
         # knowledge scenario → journey 映射(反查 test_ref)
         scenario_map: dict[str, str] = {}
         try:
-            from ...knowledge.context_providers.knowledge_provider import _KNOWLEDGE_ROOT
+            from ....knowledge.context_providers.knowledge_provider import _KNOWLEDGE_ROOT
             from knowledge import KnowledgeIndex
 
             idx = KnowledgeIndex(str(_KNOWLEDGE_ROOT))
