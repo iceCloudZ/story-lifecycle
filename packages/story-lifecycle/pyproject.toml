@@ -63,6 +63,14 @@ addopts = ["-n", "auto"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 
+[tool.pylint."MESSAGES CONTROL"]
+disable = "all"
+enable = "too-many-arguments,too-many-lines,too-many-locals,too-many-branches"
+
+[tool.pylint."FORMAT"]
+max-args = 12          # 设计15 阶段A:基线 top 16 → 先定 12,后续分阶段降 12→8
+max-line-length = 120
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/story_lifecycle"]
 artifacts = ["src/story_lifecycle/entry/profiles/**", "src/story_lifecycle/infra/prompts/**", "src/story_lifecycle/entry/web/**"]
