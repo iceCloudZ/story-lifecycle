@@ -1,4 +1,5 @@
-"""Tests for _build_cli_prompt — the prompt handed to headless agents (kimi/claude).
+"""Tests for the CLI execution prompt (原 _build_cli_prompt，设计 14 迁入
+prompts.py 的 _render_cli_prompt) — the prompt handed to headless agents (kimi/claude).
 
 Root-cause guard (real-run 2026-07-06): in code-writing stages kimi-code self-verified by
 running ``mvn compile`` + ``tsc --noEmit`` on large Java/Vue repos -> blocked many minutes
@@ -9,7 +10,7 @@ REFACTOR task_actions: 执行约束现在由 task_actions 内容决定(选了 ru
 轻量测试,没选就禁)。不再按 stage 名硬编码。
 """
 
-from story_lifecycle.orchestrator.engine.planner import _build_cli_prompt
+from story_lifecycle.orchestrator.prompts import _render_cli_prompt
 
 
 def _build(stage, tmp_path, **kw):
@@ -26,7 +27,7 @@ def _build(stage, tmp_path, **kw):
         "transcript_section": "",
     }
     defaults.update(kw)  # kw 覆盖默认(允许定制 profile_stages 等)
-    return _build_cli_prompt(**defaults)
+    return _render_cli_prompt(**defaults)
 
 
 class TestExecConstraint:

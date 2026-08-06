@@ -303,15 +303,14 @@ class TestStartStoryWorkspace:
 
 class TestBuildCliPromptPrd:
     def test_prd_path_injected_not_content(self, tmp_path):
-        """Regression: _build_cli_prompt must inject the PRD file PATH (not inline
-        the content — that would blow up the CLI's context). LangGraph→Agent FC
-        migration dropped PRD injection entirely."""
-        from story_lifecycle.orchestrator.engine.planner import _build_cli_prompt
+        """Regression: prompt 渲染必须注入 PRD 文件 PATH（不内联内容——那会撑爆
+        CLI 上下文）。LangGraph→Agent FC migration dropped PRD injection entirely."""
+        from story_lifecycle.orchestrator.prompts import _render_cli_prompt
 
         prd = tmp_path / "prd" / "X.md"
         prd.parent.mkdir()
         prd.write_text("# 需求\n登录记录查询 字段：用户/IP/时间", encoding="utf-8")
-        prompt = _build_cli_prompt(
+        prompt = _render_cli_prompt(
             story_key="X",
             title="T",
             stage="design",
@@ -325,9 +324,9 @@ class TestBuildCliPromptPrd:
         assert "登录记录查询" not in prompt  # content NOT inlined (no context bloat)
 
     def test_no_prd_section_when_path_empty(self):
-        from story_lifecycle.orchestrator.engine.planner import _build_cli_prompt
+        from story_lifecycle.orchestrator.prompts import _render_cli_prompt
 
-        prompt = _build_cli_prompt(
+        prompt = _render_cli_prompt(
             story_key="X",
             title="T",
             stage="design",
@@ -341,9 +340,9 @@ class TestBuildCliPromptPrd:
 
 class TestBuildCliPromptTranscript:
     def test_transcript_section_injected(self):
-        from story_lifecycle.orchestrator.engine.planner import _build_cli_prompt
+        from story_lifecycle.orchestrator.prompts import _render_cli_prompt
 
-        prompt = _build_cli_prompt(
+        prompt = _render_cli_prompt(
             story_key="X",
             title="T",
             stage="design",
@@ -358,9 +357,9 @@ class TestBuildCliPromptTranscript:
         assert "曾调研 hc-user" in prompt
 
     def test_no_transcript_section_when_empty(self):
-        from story_lifecycle.orchestrator.engine.planner import _build_cli_prompt
+        from story_lifecycle.orchestrator.prompts import _render_cli_prompt
 
-        prompt = _build_cli_prompt(
+        prompt = _render_cli_prompt(
             story_key="X",
             title="T",
             stage="design",
@@ -1014,13 +1013,12 @@ class TestInteractiveStagePrompt:
     """交互终端 spawn 时应自动注入 stage prompt(不是空白 ❯ 让人手打)。
 
     `_ensure_story_agent_pty` 之前传 "" → 起空白 claude。修:复用自主路径的
-    _build_cli_prompt 构建 design 提示词注入。人只管 steer,不用手填需求。
+    prompt 构建（prompts.py StagePromptBuilder）构建 design 提示词注入。
+    人只管 steer,不用手填需求。
     """
 
     def test_design_prompt_has_title_prd_protocol_donepath(self, isolated_story_home):
-        from story_lifecycle.orchestrator.service.api import (
-            _build_interactive_stage_prompt,
-        )
+        from story_lifecycle.orchestrator.prompts import get_stage_prompt_builder
 
         db.upsert_story(
             "IP-1",
@@ -1033,7 +1031,13 @@ class TestInteractiveStagePrompt:
         db.update_context("IP-1", "prd_path", "/tmp/ip-ws/PRD.md")
         story = db.get_story("IP-1")
 
-        p = _build_interactive_stage_prompt(story, "design")
+        p = get_stage_prompt_builder("design").build(
+            story_key="IP-1",
+            stage="design",
+            workspace=story["workspace"],
+            ctx={"prd_path": "/tmp/ip-ws/PRD.md"},
+            action={},
+        )
 
         assert "借款增加第二紧急联系人" in p  # 标题
         assert "/tmp/ip-ws/PRD.md" in p  # PRD 路径注入(让 claude 读)
@@ -1043,12 +1047,16 @@ class TestInteractiveStagePrompt:
         assert ".story/done/IP-1/design.json" not in p  # 旧 done 握手已废
 
     def test_non_design_stage_still_builds(self, isolated_story_home):
-        from story_lifecycle.orchestrator.service.api import (
-            _build_interactive_stage_prompt,
-        )
+        from story_lifecycle.orchestrator.prompts import get_stage_prompt_builder
 
         db.upsert_story("IP-2", title="t", workspace="/tmp/ip-ws2", profile="minimal")
-        p = _build_interactive_stage_prompt(db.get_story("IP-2"), "build")
+        p = get_stage_prompt_builder("build").build(
+            story_key="IP-2",
+            stage="build",
+            workspace="/tmp/ip-ws2",
+            ctx={},
+            action={},
+        )
         assert isinstance(p, str) and len(p) > 0  # 不抛、非空
 
 

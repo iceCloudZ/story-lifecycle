@@ -556,104 +556,6 @@ def api_spawn_pty(story_id: str):
     return _ensure_story_agent_pty(s)
 
 
-def _build_interactive_stage_prompt(story: dict, stage: str) -> str:
-    """构建交互终端 spawn 时注入的 stage prompt(复用自主路径 ``_build_cli_prompt``)。
-
-    让点「启动终端」后 claude 直接拿到 design/build 任务上下文(需求 PRD 路径 + 设计维度
-    协议 + done 握手 + 项目仓库),人只管 steer(Esc 打断 + 打字纠偏),不用手打需求。
-    之前 ``_ensure_story_agent_pty`` 传空 prompt → 起空白 ❯ = 这个 bug 的修。
-    """
-    from ...knowledge.context_providers import get_transcript_context
-    from ...infra.paths import stage_done_file_rel
-    from ..engine import planner
-    import json as _json
-
-    story_key = story["story_key"]
-    workspace = story.get("workspace", "")
-    try:
-        ctx = _json.loads(story.get("context_json") or "{}")
-    except (_json.JSONDecodeError, TypeError):
-        ctx = {}
-    profile_stages = {}
-    try:
-        rp = resolve_profile(story.get("profile", "minimal"))
-        profile_stages = {n: c for n, c in rp.stages.items()}
-    except Exception:
-        pass
-    stage_cfg = profile_stages.get(stage)
-    focus = (
-        stage_cfg.description if stage_cfg and hasattr(stage_cfg, "description") else ""
-    ) or ""
-    project_lines = []
-    try:
-        for sp in db.get_story_projects(story_key):
-            proj = db.get_project(sp["project_id"])
-            if proj:
-                project_lines.append(
-                    f"- 仓库 `{proj['repo_path']}`: 分支 `{sp['branch']}`, "
-                    f"基线 `{sp.get('base_branch', 'main')}`"
-                )
-    except Exception:
-        pass
-    transcript_section = ""
-    try:
-        transcript_section = get_transcript_context(story_key, workspace, stage) or ""
-    except Exception:
-        pass
-    # 交互终端路径不经过 LLM 规划,用 fallback 默认动作 + single-pass 保底:
-    # 否则 task_actions 为空 → 任务清单段缺失 + 禁测试约束 + 完成协议只 4 字段。
-    from ..engine.task_actions import get_default_task_actions
-
-    _is_single = len(profile_stages) <= 1
-    _default_actions = get_default_task_actions(stage, _is_single)
-    return planner._build_cli_prompt(
-        story_key=story_key,
-        title=story.get("title", ""),
-        stage=stage,
-        focus=focus,
-        done_file=stage_done_file_rel(story_key, stage),
-        profile_stages=profile_stages,
-        prd_path=planner._resolve_prd_for_exec(
-            story_key, workspace, story.get("title", ""), ctx.get("prd_path", "")
-        ),
-        project_section="\n".join(project_lines),
-        workspace=workspace,
-        workspace_path=ctx.get("workspace_path", ""),
-        transcript_section=transcript_section,
-        interactive=True,  # 交互式 claude("query",无 MCP):逐问澄清改「终端问人」
-        task_actions=_default_actions,
-        grill=True if _is_single else False,  # single-pass 默认 grill(对齐 fallback)
-        is_single_stage=_is_single,
-        seed_context=ctx.get("seed_context", ""),
-    )
-
-
-def _build_stage_launch_prompt(story: dict) -> str:
-    """Build the short read-file instruction that seeds a spawn with the current
-    stage's full prompt. Writes the full prompt to
-    ``.story/context/<key>/prompt_<stage>.md`` and returns a one-line instruction
-    to read+execute it (passed as ``claude "query"`` so claude auto-starts once
-    its own startup finishes — no PTY injection / readiness guessing). Empty
-    string on failure (spawn proceeds without a seed → blank claude).
-    """
-    workspace = story.get("workspace", "")
-    stage = story.get("current_stage", "design") or "design"
-    try:
-        from ...infra.story_paths import safe_story_path
-
-        full = _build_interactive_stage_prompt(story, stage)
-        pdir = safe_story_path(workspace, ".story", "context", story["story_key"])
-        pdir.mkdir(parents=True, exist_ok=True)
-        pfile = pdir / f"prompt_{stage}.md"
-        pfile.write_text(full, encoding="utf-8")
-        return (
-            f"请读取 `{pfile}` 并严格按其中的说明执行本阶段({stage})任务,"
-            f"完成后按其完成协议写入 done 文件。"
-        )
-    except Exception:
-        return ""
-
-
 def _spawn_story_agent_pty(
     story: dict, adapter, model: str
 ) -> tuple[str, object, bool]:
@@ -707,7 +609,17 @@ def _spawn_story_agent_pty(
         log.warning("[%s] mkdir spawn_cwd failed: %s", story_key, exc)
 
     _adapter_name = getattr(adapter, "name", "") or ""
-    seed = _build_stage_launch_prompt(story)
+    # 设计 14 (D4)：seed 构建统一走 prompts.LaunchSeedBuilder（同一份
+    # read-file seed 契约）。
+    from ..prompts import LaunchSeedBuilder
+
+    seed = LaunchSeedBuilder().build(
+        story_key=story_key,
+        stage=stage,
+        workspace=workspace,
+        ctx=_ctx_spawn,
+        action={},
+    )
     _res = spawn_agent_pty(
         adapter,
         model,
@@ -4076,7 +3988,7 @@ def api_start_story(story_key: str, req: StartStoryRequest | None = None):
         prd_file.write_text(prd_content, encoding="utf-8")
         db.update_context(story_key, "prd_path", str(prd_file))
         # 接手中途需求:把 seed_context 写进 context_json,供规划 LLM
-        # (run_orchestrator_agent)和执行 prompt(_build_cli_prompt 的
+        # (run_orchestrator_agent)和执行 prompt(prompts.py 的
         # "### 已有工作(接手)" section)读取。
         if req.seed_context.strip():
             db.update_context(story_key, "seed_context", req.seed_context.strip())

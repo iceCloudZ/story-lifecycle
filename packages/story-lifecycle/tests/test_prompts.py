@@ -110,14 +110,14 @@ class TestPromptBuilder:
         assert "test_report" in prompt
 
     def test_prompt_matches_old_output(self, tmp_story):
-        """新 builder 输出 == 老 _build_cli_prompt 输出（回归保护）"""
-        from story_lifecycle.orchestrator.engine.planner import _build_cli_prompt
-        from story_lifecycle.orchestrator.prompts import _render_stage_prompt
+        """新 builder 输出 == 老 _build_cli_prompt 输出（回归保护，设计 14 迁入
+        prompts.py 的 _render_cli_prompt，内容级一致）。"""
+        from story_lifecycle.orchestrator.prompts import _render_cli_prompt, _render_stage_prompt
 
         ws = str(db.get_story(tmp_story)["workspace"])
         ctx = _ctx(tmp_story)
         story = db.get_story(tmp_story)
-        old_prompt = _build_cli_prompt(
+        old_prompt = _render_cli_prompt(
             story_key=tmp_story,
             title=story["title"],
             stage="design",

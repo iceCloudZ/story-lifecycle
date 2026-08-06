@@ -101,7 +101,10 @@ class TestBothPathsUseSpawnRecipe:
             )
 
         monkeypatch.setattr(recipe, "spawn_agent_pty", _fake_recipe)
-        monkeypatch.setattr(api, "_build_stage_launch_prompt", lambda s: "seed")
+        # 设计14(D4):seed 构建统一走 LaunchSeedBuilder(旧 _build_stage_launch_prompt 已删)
+        from story_lifecycle.orchestrator.prompts import LaunchSeedBuilder
+
+        monkeypatch.setattr(LaunchSeedBuilder, "build", lambda *a, **k: "seed")
         # 跳过死后存活检查的 sleep
         import time as _time
 

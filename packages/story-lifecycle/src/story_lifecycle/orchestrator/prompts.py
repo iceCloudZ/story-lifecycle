@@ -15,6 +15,7 @@ _build_stage_launch_prompt）抽出。编排线程 / executors 只通过 PromptB
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from .abc import PromptBuilder
 
@@ -173,7 +174,7 @@ def _render_stage_prompt(
         stage, is_single
     )
 
-    return planner._build_cli_prompt(
+    return _render_cli_prompt(
         story_key=story_key,
         title=title,
         stage=stage,
@@ -193,6 +194,294 @@ def _render_stage_prompt(
         is_single_stage=is_single,
         seed_context=ctx.get("seed_context", ""),
     )
+
+
+def _render_cli_prompt(
+    *,
+    story_key: str,
+    title: str,
+    stage: str,
+    focus: str,
+    done_file: str,
+    profile_stages: dict,
+    prd_path: str = "",
+    project_section: str = "",
+    workspace: str = "",
+    workspace_path: str = "",
+    transcript_section: str = "",
+    interactive: bool = False,
+    task_actions: list[str] | None = None,
+    grill: bool = False,
+    is_single_stage: bool = False,
+    seed_context: str = "",
+) -> str:
+    """构建给 CLI 的执行 prompt（原 planner._build_cli_prompt，设计 14 迁入）。
+
+    ``interactive``:交互式终端路径(``claude "query"``,无 MCP)传 True —— design 维度
+    协议的逐问澄清改为「在终端直接问人」(见 prompt_sections.build_design_dimensions_section)。
+    """
+    from ..infra.story_paths import story_evidence_dir
+    from .engine.prompt_sections import (
+        build_consult_protocol_section,
+        build_design_dimensions_section,
+        build_grill_protocol_section,
+        build_kb_tool_section,
+        build_quality_section,
+        build_test_env_section,
+    )
+
+    stage_desc = ""
+    if stage in profile_stages:
+        cfg = profile_stages[stage]
+        stage_desc = cfg.description if hasattr(cfg, "description") else str(cfg)
+
+    story_dir = story_evidence_dir(workspace or Path.cwd(), story_key, title)
+
+    # PRD 注入：只注入文件路径，让 CLI 自行读取（内联内容会把上下文撑爆）。
+    # PRD 在 story-lifecycle Intake 阶段落到 story evidence 目录，路径存在
+    # context_json.prd_path。
+    prd_section = ""
+    if prd_path:
+        prd_section = (
+            f"\n### PRD / 需求详情\n请读取 PRD 文件了解完整需求: `{prd_path}`\n"
+        )
+
+    # 接手中途需求:已有工作说明(纯文字,内联)。与 PRD 的区别——PRD 是"需求是什么",
+    # seed_context 是"已经做到哪了、还差什么"。镜像 prd_section 的条件渲染模式:
+    # 字段空就不出 section,新建 story 零影响。
+    seed_section = ""
+    if seed_context:
+        seed_section = f"\n### 已有工作(接手)\n{seed_context}\n"
+
+    # Quality checklist injection for verify stage (uses existing quality_checklist slot
+    # semantics without touching prompt_renderer vars_map).
+    # section 内容走共享 helper（与 _render_prompt 同一份），verify 门控留在本调用点。
+    quality_section = ""
+    if stage == "verify":
+        checklist = build_quality_section(story_key, stage)
+        if checklist.strip():
+            quality_section = f"\n{checklist}\n"
+
+    # 测试环境配置注入（verify-only）：从 workspace entity 读 confirmed 的 test_env，
+    # 让 CLI agent 知道连哪个 gateway、用哪个测试用户。failsafe（无 workspace/未确认→""）。
+    test_env_section = ""
+    if stage == "verify":
+        env_text = build_test_env_section(story_key, stage)
+        if env_text.strip():
+            test_env_section = f"\n{env_text}\n"
+
+    # Knowledge context injection（冷启动 outcome/process 知识，按 task_type）。
+    # 镜像 quality_section：经共享 helper 取、failsafe（任何异常不阻塞 prompt 渲染）。
+    # Agentic RAG：不预注入死包，给 agent kb.py 工具引导（agent 自己决定查什么）。
+    # task_type 让 agent 知道查哪个域；kb.py 做精确取数（graph/bugs/playbook）。
+    knowledge_section = build_kb_tool_section(story_key, workspace, stage)
+
+    # design 阶段:维度 checklist(brainstorming 发散 + checklist 收敛)+ 逐问澄清
+    # (调 mcp__lifecycle__clarify)+ 高价值维度 playbook。遇关键岔路 claude 调外接 MCP clarify
+    # 工具(见 orchestrator/mcp/),人答经它返回,claude 带答继续(context 保留)。
+    # 详见 memory story-lifecycle-design-hitl。
+    dimensions_section = ""
+    if stage == "design":
+        dimensions_section = build_design_dimensions_section(
+            story_key, workspace, stage, interactive=interactive
+        )
+
+    # grill-me:非 design stage 但 grill=True 时,注入通用澄清协议。
+    # design stage 的澄清协议已在 dimensions_section 里(不重复注入)。
+    # single-pass 的 stage 名虽叫 verify,但本质含设计、没有后续阶段兜底澄清,
+    # 所以 is_single_stage 时也允许 grill 段(此时 dimensions_section 为空,
+    # 不会与 design 维度段内的澄清协议重复)。
+    grill_section = ""
+    if grill and (stage != "design" or is_single_stage):
+        grill_section = build_grill_protocol_section(interactive=interactive)
+
+    # consult (DESIGN-consult-tool §5.3): 所有 headless 路径注入 consult 协议段
+    # (claude/kimi caller 都能用,无 claude-only 限制 —— 与 grill 不同)。
+    # interactive 路径 code agent 在终端可直接问人,不注入。
+    consult_section = ""
+    if not interactive:
+        consult_section = build_consult_protocol_section(interactive=interactive)
+
+    # BUG #18: worktree 已建(build 阶段 prepare_worktrees 跑过)→ 确定性指令:
+    # "直接在 worktree 路径下改代码,不要自己建 worktree 或切分支"。
+    # worktree 未建(design 阶段 / prepare 失败 / 无绑定)→ 降级 advisory(原逻辑)。
+    _has_worktree = "→ worktree" in project_section
+    worktree_section = ""
+    if project_section and _has_worktree:
+        worktree_section = f"""
+### 项目仓库与分支隔离（worktree 已就绪）
+
+系统已为每个绑定仓库创建好 worktree 和 feature 分支，**请直接在对应 worktree 路径下改代码**：
+
+{project_section}
+
+**不要自己创建 worktree 或切换分支**——隔离环境已由编排层准备完毕。
+直接 `cd` 到上述 worktree 路径，在对应分支上写代码即可。
+
+**硬约束**：若发现 worktree 路径不存在或分支异常，**立即停止**，不要尝试在主分支或其他分支上继续。不要 `story tool declare` 成果物(本阶段没产出有效结果)。
+"""
+    elif project_section:
+        worktree_section = f"""
+### 项目仓库与分支隔离
+
+已绑定以下项目仓库，系统为每个仓库规划了工作分支：
+
+{project_section}
+
+**由你判断本次改动需要的隔离级别**：
+- 纯文档/分析类改动 → 可直接在当前工作区进行，无需隔离
+- 涉及代码修改、跨服务、或高风险 → 建议建立隔离环境
+
+建立隔离环境的两种方式（按项目仓库分别执行）：
+- 方式 A（独立目录，推荐用于多项目并行）： `git -C <repo_path> worktree add <新路径> <分支>` 或基于基线 `git -C <repo_path> worktree add -b <分支> <新路径> <基线>`
+- 方式 B（在主仓库切分支）： `git -C <repo_path> checkout -b <分支> <基线>`（已有则 `git -C <repo_path> checkout <分支>`）
+
+**硬约束**：若 git 操作失败（分支已存在且冲突、无权限、仓库不可写等），**立即停止后续工作**，不要尝试在错误的分支或主分支上继续。不要 `story tool declare` 成果物(本阶段没产出有效结果)。
+"""
+    elif workspace_path:
+        # 规划 LLM 决定的 per-story 隔离沙箱(无项目绑定场景):后端建了空目录,
+        # agent 自己把要改的项目 worktree add 进来。主 workspace(ws,如 D:/hc-all)下
+        # 有多个独立项目仓库,agent 凭需求自己判断要改哪个 → 把那个项目 worktree 进来。
+        worktree_section = f"""
+### 工作沙箱 (Sandbox)
+
+本 story 的隔离沙箱已建好(空目录)：`{workspace_path}`
+
+**这是你的工作目录(cwd)**。请把本次改动涉及的项目仓库 `git worktree add` 进来,在隔离分支上改代码：
+
+```bash
+# 例:判断要改 hc-config,基于 main 切 feature 分支并加进沙箱
+cd {workspace_path}
+git -C {workspace or "<主工作区>"}/hc-config worktree add -b feature/{story_key} ./hc-config main
+cd ./hc-config
+```
+
+**判断方法**：先读 PRD 了解需求,扫主工作区下的项目目录(每个子目录都是独立 git 仓库),凭需求决定要改哪个。可以 worktree add 多个(跨服务改动)。
+
+**不要**直接在主工作区的项目里改 —— 必须先 worktree add 到 `{workspace_path}` 下,在 feature 分支上改。
+
+**硬约束**：若 git worktree add 失败(分支冲突、仓库不可写),立即停止,不要在主分支继续。不要 `story tool declare` 成果物(本阶段没产出有效结果)。
+"""
+
+    # 执行约束:由 task_actions 内容决定(替 _is_single_stage 硬编码)。
+    # 选了 run_tests → 允许轻量测试;没选 → 禁测试。都禁重构建。
+    from .engine.task_actions import _build_exec_constraint as _build_constraint
+    from .engine.task_actions import _build_task_list
+    from .engine.task_actions import build_done_protocol
+
+    _task_actions = task_actions or []
+    exec_constraint_section = _build_constraint(_task_actions)
+    # 任务清单:LLM 选的动作 → prompt 里的有序步骤(按 order 排序)
+    task_list_section = _build_task_list(_task_actions)
+    # 成果物落地协议(STEP 1.4:替旧 done.json 自报协议):一鱼两吃 —— task_actions 既
+    # 驱动任务清单,又驱动该 declare 哪种 doc_type(选了 write_test_report → declare
+    # test_report;write_design_doc → declare spec)。让 CLI 提前知道要交什么成果物。
+    done_protocol_section = build_done_protocol(stage, done_file, _task_actions)
+
+    # STEP 1.4 强化(验证发现):code agent 不一定调 story tool declare,也不一定写到
+    # 约定路径。把"本阶段必须产出的文件"绝对路径提到 prompt 最显眼位置(Story 信息
+    # 紧下方),并给两条等价落地方式(declare / 直接 Write),让 code agent 必落其一。
+    # artifacts_obligation_section 用绝对路径消除歧义(evidence 目录 vs workspace)。
+    artifacts_obligation_section = _render_artifacts_obligation(
+        stage, profile_stages, story_dir
+    )
+
+    return f"""## 任务: {stage}
+
+### Story 信息
+- Key: {story_key}
+- 标题: {title}
+- Story 证据目录: {story_dir}
+{artifacts_obligation_section}
+### 阶段说明
+{stage_desc}
+{prd_section}
+{seed_section}
+{transcript_section}
+{knowledge_section}
+{dimensions_section}
+{quality_section}
+{test_env_section}
+{grill_section}
+{consult_section}
+{task_list_section}
+### 关键要点
+{focus}
+{worktree_section}
+{exec_constraint_section}
+{done_protocol_section}"""
+
+
+def _render_artifacts_obligation(
+    stage: str, profile_stages: dict, story_dir
+) -> str:
+    """STEP 1.4 强化:把本 stage 必须产出的文件(绝对路径)放 prompt 最显眼处。
+
+    code agent(claude)验证发现:即使文末有 declare 协议段,也可能不调 declare 也不
+    写约定路径的文件(实测把 design 写成 design.md 而非 spec.md,或写到别的目录)。
+    本段在 Story 信息紧下方用**绝对路径 + 红色警告语气**列清楚:必须产出哪些文件、
+    写到哪里、两条等价落地方式(declare / 直接 Write)。
+
+    artifacts 来自 profile stage.artifacts(1.1 schema 契约)。文件类 artifact 给绝对
+    路径(story_dir 下的 canonical 文件名);git 类给"必须有未提交改动"。
+    """
+    cfg = profile_stages.get(stage) if profile_stages else None
+    artifacts = []
+    if cfg:
+        # profile_stages 可能是 StageConfig dataclass 或 dict(两路调用)
+        arts = getattr(cfg, "artifacts", None)
+        if arts is None and isinstance(cfg, dict):
+            arts = cfg.get("artifacts")
+        artifacts = list(arts or [])
+    if not artifacts:
+        return ""
+
+    # artifact 路径 → canonical 文件名(story_dir 下的绝对路径)
+    from .engine.artifact_check import _ARTIFACT_TO_DOC_TYPE
+    from ..infra.story_paths import doc_filename
+
+    lines = [
+        "",
+        "### ⚠️ 本阶段必须产出的文件(完成判据 —— 不产出这些 stage 不算完成)",
+        "",
+        "编排器**只看下列文件是否落地**(不看你是否说「完成了」)。任一缺失,stage 永远卡住。",
+        "两条等价落地方式(任选其一,推荐第 1 条):",
+        "  1. `story tool declare <doc_type> <相对路径>`(原子写 + 版本化 + 自动落正确位置)",
+        "  2. 直接 Write 到下列**绝对路径**(code agent 不调 declare 时用这条)",
+        "",
+    ]
+    file_artifacts = []
+    has_git = False
+    for art in artifacts:
+        if art == "git":
+            has_git = True
+            continue
+        doc_type = _ARTIFACT_TO_DOC_TYPE.get(art)
+        if doc_type:
+            fname = doc_filename(doc_type)
+            abs_path = f"{story_dir}/{fname}"
+            file_artifacts.append((art, doc_type, abs_path))
+        else:
+            file_artifacts.append((art, None, None))
+
+    for art, doc_type, abs_path in file_artifacts:
+        if abs_path:
+            lines.append(f"- **必写文件**: `{abs_path}`(非空)")
+            if doc_type:
+                lines.append(f"  - declare 方式: `story tool declare {doc_type} {art}`")
+                lines.append("  - 或直接 Write 到上面的绝对路径(内容非空)")
+        else:
+            lines.append(f"- **必落地**: `{art}`")
+    if has_git:
+        lines.append("- **必须有未提交的代码改动**(`git status` 非空)")
+
+    lines.append("")
+    lines.append(
+        "**不要**用别的文件名(如 design.md 而非 spec.md)或别的目录 —— "
+        "编排器只查上面列的绝对路径。写完确认文件存在且非空再退出。"
+    )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _render_launch_seed(

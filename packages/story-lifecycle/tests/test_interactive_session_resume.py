@@ -88,10 +88,12 @@ class _FakeAdapter:
 
 def _stub_spawn_deps(monkeypatch, db_row, capture=None):
     import story_lifecycle.infra.terminal.pty as pty_mod
+    from story_lifecycle.orchestrator.prompts import LaunchSeedBuilder
 
     monkeypatch.setattr(api.db, "get_session", lambda *a: db_row)
     monkeypatch.setattr(api.db, "upsert_session", lambda *a, **k: None)
-    monkeypatch.setattr(api, "_build_stage_launch_prompt", lambda s: "seed")
+    # 设计14(D4):seed 构建统一走 LaunchSeedBuilder(旧 _build_stage_launch_prompt 已删)
+    monkeypatch.setattr(LaunchSeedBuilder, "build", lambda *a, **k: "seed")
 
     def _fake_ensure(*a, **k):
         if capture is not None:
