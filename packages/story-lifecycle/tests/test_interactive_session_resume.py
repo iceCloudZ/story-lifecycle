@@ -11,6 +11,7 @@ import time
 from types import SimpleNamespace
 
 import story_lifecycle.orchestrator.service.api as api
+import story_lifecycle.orchestrator.service.routers.sessions as sess_mod
 from story_lifecycle.infra.db import models as db
 
 
@@ -51,13 +52,14 @@ def test_spawn_reuses_live_pty(monkeypatch, tmp_path):
     旧进程泄漏(「启动终端」连点 = N 个 CLI 进程)。
     """
     _stub_story(monkeypatch, tmp_path)
-    monkeypatch.setattr(api, "get_adapter", lambda name: object())
-    monkeypatch.setattr(api, "get_pty", lambda k, sid="": _FakePty())
+    # 设计15 C3b: 路由移到 routers.sessions, mock 打在真实模块
+    monkeypatch.setattr(sess_mod, "get_adapter", lambda name: object())
+    monkeypatch.setattr(sess_mod, "get_pty", lambda k, sid="": _FakePty())
 
     def _boom(*a, **k):
         raise AssertionError("ensure_agent_pty must not be called when reusing")
 
-    monkeypatch.setattr(api, "ensure_agent_pty", _boom)
+    monkeypatch.setattr(sess_mod, "ensure_agent_pty", _boom)
 
     req = api.SpawnSessionRequest(adapter="kimi", model="")
     out = api.api_spawn_session("S1", req)

@@ -127,7 +127,11 @@ def test_terminal_spawn_starts_profile_agent_not_shell(
                 readiness_marker=None,
             )
 
-    monkeypatch.setattr(api, "get_adapter", lambda name: FakeAdapter(), raising=False)
+    import story_lifecycle.orchestrator.service.routers.sessions as _sess_mod
+
+    monkeypatch.setattr(
+        _sess_mod, "get_adapter", lambda name: FakeAdapter(), raising=False
+    )
     # 设计14(D3):spawn 主体收敛到 spawn_recipe,ensure_agent_pty 由 pty 模块
     # 提供(api 不再直接持有)—— 补丁打在真实调用点。
     import story_lifecycle.infra.terminal.pty as _pty_mod

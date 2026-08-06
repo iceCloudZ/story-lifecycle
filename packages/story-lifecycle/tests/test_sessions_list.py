@@ -5,10 +5,11 @@ DESIGN-session-pty-id-model.md §3.4 / 问题 2、3:此前 DB 行的 status 直�
 显示 active → 前端用 status==='running' 判断永远匹配不到。
 """
 import story_lifecycle.orchestrator.service.api as api
+import story_lifecycle.orchestrator.service.routers.sessions as sess_mod
 
 
 def _stub_story(monkeypatch, story_key="S1"):
-    """让 db.get_story 返回一个最小 story(避免 404)。"""
+    """把 db.get_story 换成一个最小 story(避免 404)。"""
     monkeypatch.setattr(
         api.db, "get_story", lambda k: {"story_key": k, "workspace": "/tmp"}
     )
@@ -20,8 +21,9 @@ def _stub_db_sessions(monkeypatch, rows):
 
 def _stub_pty_sessions(monkeypatch, ptys):
     """ptys: list of (stage, adapter, alive: bool)."""
+    # 设计15 C3b: 路由移到 routers.sessions, mock 打在真实模块
     monkeypatch.setattr(
-        api,
+        sess_mod,
         "list_pty_sessions",
         lambda k: [
             {

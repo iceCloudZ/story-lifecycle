@@ -124,6 +124,7 @@ def test_api_kill_all_pty_endpoint_cleans_all_sessions(monkeypatch):
     clean-exit flag, not 404 or 422.
     """
     import story_lifecycle.orchestrator.service.api as api_mod
+    import story_lifecycle.orchestrator.service.routers.sessions as sess_mod
     from fastapi.testclient import TestClient
 
     captured = {}
@@ -131,7 +132,8 @@ def test_api_kill_all_pty_endpoint_cleans_all_sessions(monkeypatch):
     def _fake_cleanup(prefer_clean_exit=True):
         captured["prefer_clean_exit"] = prefer_clean_exit
 
-    monkeypatch.setattr(api_mod, "cleanup_all", _fake_cleanup)
+    # 设计15 C3b: api_kill_all_pty 移到 routers.sessions, mock 打在真实模块
+    monkeypatch.setattr(sess_mod, "cleanup_all", _fake_cleanup)
 
     client = TestClient(api_mod.app)
     r = client.delete("/api/pty")
