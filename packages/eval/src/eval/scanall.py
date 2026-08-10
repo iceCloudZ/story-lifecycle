@@ -202,19 +202,14 @@ def _tapd_desc(tapd: dict[str, dict], tid: str) -> str:
 
 
 def _evidence_reference(entity: dict) -> tuple[str, str]:
-    """证据目录里取参照物:spec > PRD。返回 (text, type)。"""
-    ed = entity.get("evidence_dir") or ""
-    if not ed:
-        return "", ""
-    d = Path(ed)
-    if not d.is_dir():
-        return "", ""
-    for doc_key, cands in (("spec", ["spec.md", "Spec.md", "design.md"]), ("prd", ["PRD.md", "prd.md", "Prd.md"])):
-        for cand in cands:
-            f = d / cand
-            if f.exists() and f.stat().st_size > 0:
-                return dataset._read_text_robust(f), doc_key
-    return "", ""
+    """证据目录里取参照物:spec > PRD。返回 (text, type)。
+
+    快照优先（snapshot_v2_20260806/evidence/），活目录兜底——evidence 目录
+    曾因清理事故丢失（2026-08-10），快照是唯一可信来源。
+    """
+    from .evidence_snapshot import read_evidence_reference
+
+    return read_evidence_reference(entity.get("evidence_dir") or "")
 
 
 def _tapd_reference(tapd: dict, tapd_id: str) -> tuple[str, str]:

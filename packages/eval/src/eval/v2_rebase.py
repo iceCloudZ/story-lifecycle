@@ -134,19 +134,16 @@ def _strip_html(text: str) -> str:
 
 
 def reference_for(entity: dict, tapd: dict[str, dict]) -> tuple[str, str]:
-    """参照物优先级: evidence spec > evidence PRD > story_refs > TAPD 描述。返回 (text, type)。"""
+    """参照物优先级: evidence spec > evidence PRD > story_refs > TAPD 描述。返回 (text, type)。
+
+    evidence 读取快照优先（snapshot_v2_20260806/evidence/），活目录兜底。
+    """
+    from eval.evidence_snapshot import read_evidence_reference
     from eval.ref_fetch import is_link_only
 
-    ed = entity.get("evidence_dir") or ""
-    if ed:
-        d = Path(ed)
-        if d.is_dir():
-            for doc_key, cands in (("spec", ["spec.md", "Spec.md", "design.md"]),
-                                   ("prd", ["PRD.md", "prd.md", "Prd.md"])):
-                for cand in cands:
-                    f = d / cand
-                    if f.exists() and f.stat().st_size > 0:
-                        return f.read_text(encoding="utf-8", errors="replace")[:120_000], doc_key
+    text, t = read_evidence_reference(entity.get("evidence_dir") or "")
+    if text:
+        return text, t
     tid = entity.get("tapd_id") or ""
     rec = tapd.get(tid) or {}
     desc = rec.get("description") or ""

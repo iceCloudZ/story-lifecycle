@@ -120,18 +120,17 @@ def _read_text_robust(p: Path) -> str:
 
 
 def _reference_for(row: dict, entities: dict, tapd: dict, story_refs_dir: Path) -> tuple[str, str]:
-    """参照物重建：spec > prd > story_refs > tapd 描述（与 scanall 同序）。"""
+    """参照物重建：spec > prd > story_refs > tapd 描述（与 scanall 同序）。
+
+    evidence 读取快照优先（snapshot_v2_20260806/evidence/），活目录兜底。
+    """
+    from .evidence_snapshot import read_evidence_reference
+
     tid = row.get("tapd_id") or ""
     ent = entities.get(tid) or {}
-    ed = ent.get("evidence_dir") or ""
-    if ed:
-        d = Path(ed)
-        for doc_key, cands in (("spec", ["spec.md", "Spec.md", "design.md"]),
-                               ("prd", ["PRD.md", "prd.md", "Prd.md"])):
-            for cand in cands:
-                f = d / cand
-                if f.exists() and f.stat().st_size > 0:
-                    return _read_text_robust(f), doc_key
+    text, ref_type = read_evidence_reference(ent.get("evidence_dir") or "")
+    if text:
+        return text, ref_type
     # story_refs：快照里 link-only 富化
     from eval.ref_fetch import is_link_only, load_story_ref
 

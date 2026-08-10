@@ -28,6 +28,14 @@
   1. 放量前跑单条（1-2 个 case），**打印 base_url 确认 `https://opencode.ai/zen/go/v1`**；
   2. 批量任务挂 calls 日志（`LLMClient._request` hook 记 base_url），跑完 grep `api.deepseek.com` 必须 0 命中；
   3. `dataset/.env` 只允许放 Go 配置或不存在；临时切 DeepSeek 用 `.env.deepseek` + 显式 env_file 参数，用完即删 `.env`。
+- **★ 清理/删除铁律（2026-08-10 两次事故后新增）**：任何清理/删除脚本/命令必须遵守：
+  1. **只允许操作 `packages/eval/sandbox/`（含 sandbox-ui/）内部**；该目录之外的任何删除/移动操作，**必须先列出完整清单（路径逐条）经人工逐条确认**后才可执行；
+  2. **必须用白名单**：只删脚本自己创建的路径（显式记录于脚本头部/输出），禁止按 mtime / 模式匹配（`*`、`-like`、`st_mtime > x` 之类）启发式批量删除；
+  3. 删除前先**干跑预览**（dry-run 打印将删清单），确认后再实删；
+  4. 事故记录：
+     - **事故 1（baseline --force）**：baseline 的 `--force` 清空 partial 文件，重复运行覆盖续跑数据——重跑必须确认 partial 语义；
+     - **事故 2（story 目录误删）**：2026-08-10 UI E2E 清理脚本用 `st_mtime > 1764000000` 判断「本次创建」批量删 `D:/hc-all/story/` 下 68 个目录——其中 31 个是快照引用的真实 evidence（27 个从 dataset 副本恢复、3 个 PRD 重建、1 个永久缺失）；**教训：mtime 启发式批量删除=灾难，只删白名单自建路径**。
+  5. 涉及 `D:/hc-all/` 的任何操作默认拒绝（只读铁律），`packages/story-lifecycle/` 同样只读（核心包零改动）。
 
 ## 1. 已核实的关键事实（直接可用，勿重复调研）
 
