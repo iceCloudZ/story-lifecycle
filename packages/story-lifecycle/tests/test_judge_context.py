@@ -75,6 +75,28 @@ def test_artifact_content_truncated(tmp_path):
     assert len(ctx["artifacts"][0]["content"]) == MAX_ARTIFACT_CHARS
 
 
+def test_artifact_content_beyond_old_2000_limit_included(tmp_path):
+    """回归(2026-08-06 real-run 1068018):>2000 字符的 spec 后段必须可见。
+
+    旧 MAX_ARTIFACT_CHARS=2000 只喂开头,§4 接口契约/§5 核心逻辑全在截断外
+    → judge 误 reject 完整 spec。现在默认 30K,一段 6000 字符、关键内容在
+    尾部的 spec 应整体进入上下文。
+    """
+    spec = tmp_path / "story" / "spec.md"
+    spec.parent.mkdir(parents=True)
+    body = "现状分析\n" + ("代码引用占位\n" * 200)
+    tail = "## 5. 核心逻辑\nrepayAmount = unpaid + MIN - available - coupon"
+    spec.write_text(body + tail, encoding="utf-8")
+    assert len(body) < 30_000  # 保证在默认阈值内,防阈值回落时误报
+
+    ctx = assemble_judge_context(
+        "JC-1", "design", str(tmp_path), artifacts=["story/spec.md"]
+    )
+    content = ctx["artifacts"][0]["content"]
+    assert "## 5. 核心逻辑" in content
+    assert "repayAmount = unpaid + MIN - available - coupon" in content
+
+
 def test_git_artifact_excluded_from_content(tmp_path):
     """git 类 artifact 不读文件内容(它查 git status,不是文件)。"""
     ctx = assemble_judge_context(

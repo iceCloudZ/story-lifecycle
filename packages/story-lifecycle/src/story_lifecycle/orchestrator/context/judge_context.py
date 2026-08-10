@@ -23,7 +23,11 @@ log = logging.getLogger("story-lifecycle.judge_context")
 
 # 裁剪阈值(§7.7)。
 MAX_DECISIONS = 5  # 决策历史最多喂最近 5 条(老的摘要化或丢弃)
-MAX_ARTIFACT_CHARS = 2000  # 单个成果物文件内容截断前 2000 字符
+# 单个成果物文件内容截断阈值。2026-08-06 real-run 1068018:2000 字符只够读完
+# 现状分析,§4 接口契约/§5 核心逻辑(repayAmount 公式/API 契约)全在被裁掉的
+# 88% 里 → judge 误 reject 完整 spec。设计文档以 10-30KB 常见,2000 是"摘录"级别,
+# 不是"评审"级别。调到 30K 覆盖典型设计文档;仍超长的文档靠 judge 挑重点读。
+MAX_ARTIFACT_CHARS = 30_000  # 单个成果物文件内容截断前 N 字符
 MAX_EVENTS_FOR_TRACE = 20  # 执行轨迹(events.jsonl)喂最近 20 条
 
 
