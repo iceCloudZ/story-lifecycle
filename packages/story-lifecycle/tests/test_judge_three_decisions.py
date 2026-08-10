@@ -33,9 +33,11 @@ class _FakeLLM:
     def __init__(self, decision):
         self._decision = decision
         self.invoked = False
+        self.last_prompt = ""
 
     def invoke_structured(self, prompt, schema, **kwargs):
         self.invoked = True
+        self.last_prompt = prompt
         return self._decision
 
 
@@ -255,3 +257,86 @@ class TestAdvanceLifecycleToTarget:
         )
         assert out["new_state"] == "开发"
         assert out["paused_for_confirm"] is False
+
+
+class TestExternalVerifyEvidence:
+    """F2b: verify stage 外部测试 provider 证据进 judge 上下文。
+
+    回归(2026-08-06 real-run 1068018):design 12 收敛后 run_unified_verify_gate
+    无调用方,provider 成孤儿 —— journey 执行证据永远进不了 judge 上下文,
+    judge 只能看 agent 自述(静态核对→连续 reject/escalate)。
+    """
+
+    def _run_judge_verify(self, monkeypatch, judge_story, ext, llm):
+        from story_lifecycle.orchestrator.evaluation import unified_gate as ug
+        from story_lifecycle.orchestrator.verify_providers.base import VerifyResult
+
+        monkeypatch.setattr(
+            "story_lifecycle.infra.llm_client.get_llm",
+            lambda: llm,
+        )
+        if ext is not None:
+            monkeypatch.setattr(
+                ug, "_run_external_verify", lambda *a, **k: ext
+            )
+        else:
+            monkeypatch.setattr(
+                ug, "_run_external_verify", lambda *a, **k: None
+            )
+        return _judge(
+            stage="verify",
+            done_data={
+                "summary": "测试报告",
+                "files_changed": ["story/test-report.md"],
+            },
+            ctx={"_agent_actions": [{"stage": "verify", "adapter": "claude"}]},
+        )
+
+    def test_verify_provider_evidence_in_prompt(self, judge_story, monkeypatch):
+        """provider PASS 证据必须出现在 judge prompt(LLM 才能基于真实执行判)。"""
+        from story_lifecycle.orchestrator.verify_providers.base import VerifyResult
+
+        llm = _FakeLLM(_decision(quality="approve", summary="ok"))
+        ext = VerifyResult(
+            passed=True,
+            summary="1 passed, 7 deselected in 94.44s",
+            evidence_ref="D:/hc-all/hc-pytest/reports/old_user_repeat_borrow.html",
+            evidence={"runs": [{"scenario": "borrow-flow", "status": "PASS"}]},
+        )
+        self._run_judge_verify(monkeypatch, judge_story, ext, llm)
+        assert llm.invoked
+        assert "## 外部测试证据" in llm.last_prompt
+        assert "PASS" in llm.last_prompt
+        assert "old_user_repeat_borrow" in llm.last_prompt
+
+    def test_verify_provider_none_prompt_has_empty_section(self, judge_story, monkeypatch):
+        """provider 未配置/返回 None → 段落为空,judge 维持 LLM-only 不崩。"""
+        llm = _FakeLLM(_decision(quality="approve", summary="ok"))
+        self._run_judge_verify(monkeypatch, judge_story, None, llm)
+        assert llm.invoked
+        assert "## 外部测试证据" in llm.last_prompt
+        assert "（无外部测试参与）" in llm.last_prompt or "外部测试" in llm.last_prompt
+
+    def test_verify_provider_fail_records_finding(self, judge_story, monkeypatch):
+        """provider FAIL → 记 finding(source=test_failure)进 open_findings。"""
+        from story_lifecycle.orchestrator.evaluation import unified_gate as ug
+        from story_lifecycle.orchestrator.verify_providers.base import VerifyResult
+
+        recorded = {}
+
+        def _fake_record_finding(story_key, stage, finding):
+            recorded["finding"] = finding
+
+        monkeypatch.setattr(
+            "story_lifecycle.orchestrator.evaluation.quality.record_finding",
+            _fake_record_finding,
+        )
+        llm = _FakeLLM(_decision(quality="reject", reason="测试失败"))
+        ext = VerifyResult(
+            passed=False,
+            summary="journey 失败",
+            findings=[{"scenario": "borrow-flow", "status": "FAIL", "detail": "断言超时"}],
+        )
+        self._run_judge_verify(monkeypatch, judge_story, ext, llm)
+        assert recorded.get("finding", {}).get("source") == "test_failure"
+        assert recorded["finding"]["location"] == "borrow-flow"

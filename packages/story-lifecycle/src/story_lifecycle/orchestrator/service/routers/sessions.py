@@ -32,7 +32,10 @@ router = APIRouter(tags=["sessions"])
 
 
 class SpawnSessionRequest(BaseModel):
-    adapter: str = "claude"
+    # 默认空:让空请求走 resolve_stage_adapter(拿 plan _agent_actions 的 adapter)。
+    # 2026-08-06 real-run 1068018:默认 "claude" → 客户端发 {} 时 `if req.adapter`
+    # 恒真 → resolver 分支死代码 → build(plan=opencode)实际跑了 claude。
+    adapter: str = ""
     model: str = ""
 
 
@@ -403,8 +406,9 @@ def api_spawn_session(story_key: str, req: SpawnSessionRequest = None):
     # adapter 来源(req 显式传 > _agent_actions[当前 stage] > profile > claude):
     # 前端 TerminalTab 默认传空,这里走 resolver 拿用户在 plan UI 选的 adapter。
     # 老逻辑硬编码 "claude" → 用户在 plan 改 kimi,点启动终端还是 claude,不一致。
-    if req.adapter:
-        adapter_name = req.adapter
+    _req_adapter = (req.adapter or "").strip()
+    if _req_adapter:
+        adapter_name = _req_adapter
     else:
         import json as _json
 

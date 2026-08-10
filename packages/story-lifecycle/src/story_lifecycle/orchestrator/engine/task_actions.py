@@ -161,9 +161,11 @@ def _build_exec_constraint(action_keys: list[str]) -> str:
     if has_tests:
         return (
             "\n### 执行约束\n"
-            "可以跑轻量自检（pytest/ruff check/tsc --noEmit）确认改动正确，"
-            "但**不要跑重构建**（mvn/npm install/yarn install）——"
-            "它们在大型仓库上常阻塞超 10 分钟。\n"
+            "**必须实际运行测试**确认改动正确：Java/Maven 用 `mvn test -pl <module>`"
+            "（或 `mvnw`），Python 用 `pytest`，前端用 `npm test`，也可加 tsc --noEmit/"
+            "ruff check 等轻量自检。运行测试（mvn test / pytest 等）**不算重构建，允许**；"
+            "但**不要重构建/安装依赖**（mvn install / mvn package / npm install / "
+            "yarn install 等全量构建）——它们在大型仓库上常阻塞超 10 分钟。\n"
         )
     return (
         "\n### 执行约束\n"

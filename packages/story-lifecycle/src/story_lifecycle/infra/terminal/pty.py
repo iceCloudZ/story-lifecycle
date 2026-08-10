@@ -178,7 +178,17 @@ class ManagedPty:
         self.purpose = purpose
         # STEP 1.7b:可选 PtyLogger(raw.log + events.jsonl 两层日志)。None 时不记日志
         # (兼容老调用点 + 测试)。传入时 _distribute 记 output,write 记 injection。
+        # 2026-08-06 real-run 1068018:交互式 spawn 路径(api/executors 双路径合一后
+        # 经 spawn_recipe)从不传 logger → events.jsonl 缺失 + scheduler 卡住检测
+        # (读 pty.log_dir)完全失效。ensure_agent_pty 已在 logger=None 时自动创建,
+        # 这里兜底 + 暴露 log_dir/events_path 给 scheduler 用。
         self._logger = logger
+        self.log_dir = (
+            getattr(logger, "log_dir", None) or ""
+        )  # 卡住检测读 events 用(设计13 STEP 1)
+        self.events_path = (
+            getattr(logger, "events_path", None) or ""
+        )  # stuck_diagnose agentic 读 events 用
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=512)
         self._taps: list[
             asyncio.Queue
@@ -598,8 +608,18 @@ def ensure_agent_pty(
     session_id = compute_session_id(story_key, stage, adapter)(确定性),由
     spawn_pty 算出并注册。调用方都已有三元组在手上(api/planner 两条 spawn 路径)。
 
-    STEP 1.7b:可选 logger(PtyLogger)透传给 spawn_pty → ManagedPty,启两层日志。
+    STEP 1.7b:logger(PtyLogger)透传给 spawn_pty → ManagedPty,启两层日志。
+    logger=None 时自动创建 —— 2026-08-06 real-run 1068018:交互式 spawn 路径
+    (spawn_recipe 合一后)从不传 logger → events.jsonl 缺失 + scheduler 卡住
+    检测失效。统一在此兜底,两条 spawn 路径都拿到日志。
     """
+    if logger is None:
+        try:
+            from .pty_logger import PtyLogger
+
+            logger = PtyLogger(story_key, stage, cwd)
+        except Exception:  # noqa: BLE001 — 日志初始化失败不阻断 spawn
+            logger = None
     session_id, pty = spawn_pty(
         story_key,
         stage,

@@ -7,6 +7,7 @@
 """
 
 import asyncio
+import json
 import time
 from types import SimpleNamespace
 
@@ -66,6 +67,50 @@ def test_spawn_reuses_live_pty(monkeypatch, tmp_path):
     assert out["reused"] is True
     assert out["session_id"] == "reg-id"
     assert out["ok"] is True
+
+
+def test_spawn_empty_adapter_resolves_from_plan(monkeypatch, tmp_path):
+    """空 adapter 请求(默认值 "")必须走 resolver 拿 plan 的 adapter。
+
+    回归(2026-08-06 real-run 1068018):SpawnSessionRequest.adapter 默认 "claude"
+    → 客户端发 {} 时 `if req.adapter` 恒真 → resolver 分支死代码,build
+    (plan=opencode)实际 spawn 了 claude。
+    """
+    story = {
+        "story_key": "S1",
+        "workspace": str(tmp_path),
+        "current_stage": "build",
+        "context_json": json.dumps(
+            {
+                "_agent_actions": [
+                    {
+                        "stage": "build",
+                        "action": "launch",
+                        "adapter": "opencode",
+                    }
+                ]
+            }
+        ),
+    }
+    monkeypatch.setattr(sess_mod.db, "get_story", lambda k: story)
+
+    seen = {}
+
+    def _fake_get_adapter(name):
+        seen["adapter"] = name
+        return object()
+
+    monkeypatch.setattr(sess_mod, "get_adapter", _fake_get_adapter)
+    monkeypatch.setattr(sess_mod, "get_pty", lambda k, sid="": None)
+    monkeypatch.setattr(
+        sess_mod, "_spawn_story_agent_pty", lambda *a, **k: ("sid-x", None, False)
+    )
+
+    req = api.SpawnSessionRequest()  # 默认 adapter=""
+    sess_mod.api_spawn_session("S1", req)
+    assert seen.get("adapter") == "opencode", (
+        f"空 adapter 未走 resolver,实际 adapter={seen.get('adapter')!r}"
+    )
 
 
 class _FakeAdapter:

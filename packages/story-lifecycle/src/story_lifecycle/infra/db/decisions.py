@@ -2,9 +2,34 @@
 
 from __future__ import annotations
 
+import logging
+import sqlite3
+import time
 from datetime import datetime, timezone
 
 from .connection import _db
+
+log = logging.getLogger("story-lifecycle.db.decisions")
+
+
+def _insert_with_retry(conn, sql, args) -> int:
+    """执行 INSERT，遇瞬时写锁(sqlite3.OperationalError locked/busy)重试。
+
+    2026-08-06 real-run 1068018:外部 `story tool declare` 进程与 serve 并发写,
+    approve 决策行的 INSERT 撞 "database is locked" → log_decision 抛异常 →
+    调用方 best-effort 吞掉 → 审计链断裂(approve 行丢失)。审计写入必须可靠。
+    """
+    for attempt in range(3):
+        try:
+            cur = conn.execute(sql, args)
+            return int(cur.lastrowid)
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+                if attempt < 2:
+                    time.sleep(0.2 * (attempt + 1))
+                    continue
+            raise
+    raise RuntimeError("unreachable")
 
 
 def log_decision(
@@ -37,7 +62,8 @@ def log_decision(
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with _db() as conn:
-        cur = conn.execute(
+        rid = _insert_with_retry(
+            conn,
             """INSERT INTO orchestrator_decision
                (story_key, stage, trigger, context_ref, decision, reason,
                 action_taken, action_payload, llm_model, decided_at)
@@ -57,7 +83,7 @@ def log_decision(
                 now,
             ),
         )
-    return int(cur.lastrowid)
+    return rid
 
 
 def get_decisions(

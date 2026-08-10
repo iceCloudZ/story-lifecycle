@@ -159,6 +159,16 @@ def judge_stage_completion(req: JudgeRequest) -> dict:
     if fallback is not None:
         return fallback
 
+    # F2b：verify stage 跑外部测试 provider（设计 10 R8 接线）。2026-08-06
+    # real-run 1068018：design 12 收敛后 run_unified_verify_gate 无调用方,
+    # provider 成孤儿 —— verify 的 journey 执行证据永远进不了 judge 上下文,
+    # judge 只能看到 agent 自述(静态核对→连续 reject/escalate)。
+    external_verify_ev = ""
+    if stage == "verify":
+        external_verify_ev = _run_external_verify_evidence(
+            story_key, stage, workspace, done_data, ctx, db_module
+        )
+
     # 2. LLM 调用(纯判定,无工具)
     if llm is None:
         from ...infra.llm_client import get_llm
@@ -184,6 +194,7 @@ def judge_stage_completion(req: JudgeRequest) -> dict:
         story_states=story_states or {},
         judge_ctx=judge_ctx,
         conformance_ev=conformance_ev,
+        external_verify_ev=external_verify_ev,
     )
     llm_out = _call_judge_llm(llm, prompt, story_key, stage, cref, db_module)
     if llm_out is None:
@@ -292,6 +303,74 @@ def _run_conformance_check(
                 reason=f"conformance 检查失败(fail-closed): {exc}",
             )
     return conformance_ev, None
+
+
+def _run_external_verify_evidence(
+    story_key: str,
+    stage: str,
+    workspace: str,
+    done_data: dict,
+    ctx: dict,
+    db_module,
+) -> str:
+    """verify stage 跑外部测试 provider，把真实执行证据格式化成 judge prompt 段落。
+
+    设计 10 R8 接线（2026-08-06 real-run 1068018 修复）：design 12 收敛后
+    run_unified_verify_gate 无调用方 → provider 成孤儿。这里在 stage_completion
+    （verify 阶段的实际裁判）补上调用：证据进 judge 上下文，judge 才能基于真实
+    执行结果而非 agent 自述做决定。
+
+    - provider 未配置 / 返回 None（异步起跑模式）→ 空段落，judge 维持 LLM-only。
+    - FAIL → 同时落 finding（source=test_failure，open_findings 会喂进证据）。
+    - 任何异常 → 空段落（provider 容错哲学，不阻断 judge）。
+
+    Returns: 格式化证据文本（空串 = 无外部测试参与）。
+    """
+    try:
+        from .unified_gate import _run_external_verify
+
+        ext = _run_external_verify(story_key, workspace, done_data, ctx)
+    except Exception as exc:  # noqa: BLE001 — provider 容错，不阻断 judge
+        log.warning("[%s/%s] external verify 失败(忽略): %s", story_key, stage, exc)
+        return ""
+    if ext is None:
+        return ""
+
+    lines = [f"- 结果: {'PASS' if ext.passed else 'FAIL'}", f"- 摘要: {ext.summary[:300]}"]
+    if ext.evidence_ref:
+        lines.append(f"- 证据: {ext.evidence_ref}")
+    if ext.evidence:
+        import json as _json
+
+        lines.append(f"- 明细: {_json.dumps(ext.evidence, ensure_ascii=False)[:1000]}")
+    for f in ext.findings:
+        lines.append(
+            f"- finding: {f.get('scenario') or ''} {f.get('status') or ''} "
+            f"{(f.get('detail') or f.get('description') or '')[:200]}"
+        )
+
+    if not ext.passed:
+        try:
+            from .quality import record_finding
+
+            for f in ext.findings:
+                record_finding(
+                    story_key,
+                    stage,
+                    {
+                        "source": "test_failure",
+                        "severity": f.get("severity") or "high",
+                        "category": "test_failure",
+                        "description": (
+                            f.get("detail") or f.get("description") or ext.summary
+                        ),
+                        "location": f.get("scenario"),
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001 — finding 记录失败不阻断
+            log.warning("[%s/%s] record_finding failed (non-fatal): %s", story_key, stage, exc)
+
+    return "\n".join(lines)
 
 
 def _call_judge_llm(llm, prompt, story_key, stage, cref, db_module):
@@ -486,6 +565,7 @@ class JudgePromptRequest:
     story_states: dict
     judge_ctx: dict
     conformance_ev: str = ""
+    external_verify_ev: str = ""
 
 
 def _build_prompt(
@@ -503,6 +583,7 @@ def _build_prompt(
     story_states: dict,
     judge_ctx: dict,
     conformance_ev: str = "",
+    external_verify_ev: str = "",
 ) -> str:
     """组装 stage 完成裁判 prompt(设计 §1.3)。
 
@@ -523,6 +604,7 @@ def _build_prompt(
             story_states=story_states,
             judge_ctx=judge_ctx,
             conformance_ev=conformance_ev,
+            external_verify_ev=external_verify_ev,
         )
     )
 
@@ -542,6 +624,7 @@ def _build_prompt_req(req: JudgePromptRequest) -> str:
     story_states = req.story_states
     judge_ctx = req.judge_ctx
     conformance_ev = req.conformance_ev
+    external_verify_ev = req.external_verify_ev
     task_type = ctx.get("task_type", "") or "未知"
     prd = judge_ctx.get("prd", "") or "(无 PRD)"
     artifacts = judge_ctx.get("artifacts", [])
@@ -631,6 +714,9 @@ def _build_prompt_req(req: JudgePromptRequest) -> str:
 
 ## 额外质检证据(conformance: 需求↔实现吻合度)
 {conformance_ev}
+
+## 外部测试证据(verify_provider,真实执行结果)
+{external_verify_ev}
 
 ## 累积产出(所有已完成的 stage,判 lifecycle_target 的依据)
 {cumulative_outputs}

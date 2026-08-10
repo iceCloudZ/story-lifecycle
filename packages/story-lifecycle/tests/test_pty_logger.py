@@ -114,3 +114,47 @@ def test_log_output_invalid_utf8_replaced(tmp_path):
     events = read_events(logger.log_dir)
     assert len(events) == 1
     assert "bad bytes" in events[0]["text"]
+
+
+def test_ensure_agent_pty_auto_creates_logger(monkeypatch, tmp_path):
+    """回归(2026-08-06 real-run 1068018):logger=None 时 ensure_agent_pty 自动挂
+    PtyLogger —— 交互式 spawn 路径(spawn_recipe 合一后不传 logger)此前零日志,
+    events.jsonl 缺失 + scheduler 卡住检测(读 pty.log_dir)失效。
+
+    自动创建的 logger 必须让 ManagedPty 暴露 log_dir/events_path(卡住检测
+    与 stuck_diagnose agentic 都靠这两个属性读 events)。
+    """
+    from story_lifecycle.infra.terminal import pty as pty_mod
+
+    calls = {"logger": None}
+
+    def _fake_spawn_pty(
+        story_key, stage, adapter, command, cwd, env=None, purpose="agent", logger=None
+    ):
+        calls["logger"] = logger
+        return "sid-auto", object()
+
+    monkeypatch.setattr(pty_mod, "spawn_pty", _fake_spawn_pty)
+
+    pty_mod.ensure_agent_pty("STORY-A1", "design", "claude", ["claude"], str(tmp_path), "")
+
+    assert calls["logger"] is not None, "ensure_agent_pty 未自动创建 PtyLogger"
+    assert calls["logger"].log_dir == (
+        tmp_path / ".story" / "runs" / "STORY-A1" / "pty_design"
+    )
+
+
+def test_managed_pty_exposes_log_dir_and_events_path(tmp_path):
+    """ManagedPty 暴露 log_dir/events_path(scheduler 卡住检测的读取口)。"""
+    from story_lifecycle.infra.terminal.pty_logger import PtyLogger
+    from story_lifecycle.infra.terminal.pty import ManagedPty
+
+    logger = PtyLogger("STORY-A2", "verify", str(tmp_path))
+    pty = ManagedPty.__new__(ManagedPty)
+    pty._logger = logger
+    pty.log_dir = logger.log_dir
+    pty.events_path = logger.events_path
+
+    assert pty.log_dir == tmp_path / ".story" / "runs" / "STORY-A2" / "pty_verify"
+    assert pty.events_path == logger.events_path
+    assert pty.events_path.name == "events.jsonl"

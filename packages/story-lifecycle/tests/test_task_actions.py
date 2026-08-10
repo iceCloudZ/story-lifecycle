@@ -104,6 +104,20 @@ class TestBuildExecConstraint:
         )
         # 允许轻量测试,不该说"不要 Edit/Write 源文件"
         assert "轻量自检" in c or "pytest" in c
+
+    def test_run_tests_explicitly_allows_mvn_test(self):
+        """回归(2026-08-06 real-run 1068018):含 run_tests 时约束必须显式允许
+        测试执行(`mvn test` 等),只禁重构建/安装依赖。
+
+        老措辞"不要跑重构建（mvn/npm install/yarn install）"把 mvn 与 install
+        并列,verify agent 把 `mvn test` 整体读成禁止 → 不跑测试 → judge 连拒。
+        """
+        c = _build_exec_constraint(["run_tests", "accept_review", "write_test_report"])
+        # 显式允许测试执行(mvn test 必须出现在"允许"语境)
+        assert "mvn test" in c
+        assert "允许" in c
+        # 重构建仍禁(mvn install / mvn package / npm install / yarn install)
+        assert "mvn install" in c or "npm install" in c
         assert "Edit" not in c and "源文件" not in c
 
     def test_write_code_without_tests_allows_writing_code(self):
