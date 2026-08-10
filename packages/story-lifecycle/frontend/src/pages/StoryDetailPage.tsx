@@ -7,6 +7,7 @@ import StorySidebar from '../components/StorySidebar'
 import OverviewTab from '../components/OverviewTab'
 import CodeChangesTab from '../components/CodeChangesTab'
 import DocsTab from '../components/DocsTab'
+import QualityPanel from '../components/QualityPanel'
 import ClarifyDialog from '../components/ClarifyDialog'
 import './StoryDetailPage.css'
 
@@ -115,13 +116,20 @@ export default function StoryDetailPage() {
     queryKey: ['plan', storyKey],
     queryFn: () => planApi.get(storyKey),
     // /plan 现在也回 stages 进度 + stage_gate(确认闸卡片),active/paused 期间也要拉。
-    // planning 阶段才需要高频轮询(SSE 流式规划);执行期降到 10s 够看进度/gate。
+    // 迭代 2 探明:detail.status 无 'planning' 值 → 高频轮询分支恒不命中,恒 10s
+    // (现状规划走 /start 同步,无需 5s 高频)。enabled 靠 active/paused 命中。
     enabled: !!detail && ['planning', 'active', 'paused', 'implementing'].includes(detail.status),
-    refetchInterval: planTriggered ? false : (detail?.status === 'planning' ? 5000 : 10000),
+    refetchInterval: planTriggered ? false : 10000,
   })
 
   // SSE stream for Agent planning
   useEffect(() => {
+    // 迭代 2 探明（P4-UI §3.1）：story.status 无 'planning' 值（execution_status
+    // 四态 active/paused/completed/failed，planning 已移出 status 语义）→ 本条件
+    // 恒 false → SSE 流式规划不激活。这是「start 即规划」时代的残留：当时 /start
+    // 设 status=planning + SSE 流式推送 actions；现状规划走 /start 同步（intake
+    // modal 内完成），/plan 轮询取 actions，SSE 非主链路依赖。保持不激活，
+    // 避免连上 /plan/stream 触发重复规划。
     if (detail?.status !== 'planning') return
     // BUG #5:"start 即规划"(#4 决策保留)下,进 effect 时 actions 应为空(SSE 触发后端规划)。
     // 仅当规划已完成(actions 非空且 confirmed=false)时不重复建 SSE;否则建连消费流式。
@@ -324,6 +332,8 @@ export default function StoryDetailPage() {
               onResolve={detail.tapdType === 'bug' ? handleResolve : undefined}
             />
           )}
+          {/* 迭代 2（P2-UI）：质量门禁面板（gate 决策时间线 + findings + repair_action） */}
+          {validTab === 'overview' && <QualityPanel storyKey={storyKey} />}
           {validTab === 'code' && <CodeChangesTab storyKey={storyKey} />}
           {validTab === 'docs' && <DocsTab storyKey={storyKey} />}
           {/* 测试场景 tab:复用 DocsTab(doc_type 开放,scenario_report 自动可见) */}

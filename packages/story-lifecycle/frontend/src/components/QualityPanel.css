@@ -1,0 +1,108 @@
+/* 质量门禁面板（迭代 2 P2-UI）—— Linear 风，遵循 AGENTS.md UI 规范。 */
+
+.qp-panel {
+  margin-top: 12px;
+}
+
+.qp-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qp-high-count {
+  margin-left: 4px;
+}
+
+.qp-section {
+  margin-top: 10px;
+}
+
+.qp-sub {
+  margin-bottom: 6px;
+}
+
+.qp-decisions,
+.qp-findings {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.qp-decision,
+.qp-finding {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--text-sm, 13px);
+}
+
+.qp-decision-badge {
+  flex: none;
+}
+
+.qp-decision-stage {
+  flex: none;
+  color: var(--gray-500, #71717a);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.qp-decision-reason {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gray-600, #52525b);
+}
+
+.qp-decision-at {
+  flex: none;
+  color: var(--gray-400, #a1a1aa);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+
+.qp-fallback {
+  background: var(--gray-50, #fafafa);
+}
+
+.qp-fb-tag {
+  flex: none;
+}
+
+.qp-repair-tag {
+  flex: none;
+  background: var(--indigo-50, #eef2ff);
+  color: var(--indigo-600, #4f46e5);
+}
+
+.qp-escalate .qp-decision-badge {
+  background: var(--red-600, #dc2626);
+  color: #fff;
+}
+
+.qp-finding {
+  align-items: flex-start;
+}
+
+.qp-finding-cat {
+  flex: none;
+  color: var(--gray-500, #71717a);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+
+.qp-finding-desc {
+  flex: 1;
+  color: var(--gray-700, #3f3f46);
+}
+
+.qp-finding-loc {
+  flex: none;
+  color: var(--gray-400, #a1a1aa);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+
+.qp-sev-high .qp-finding-desc {
+  color: var(--red-700, #b91c1c);
+}

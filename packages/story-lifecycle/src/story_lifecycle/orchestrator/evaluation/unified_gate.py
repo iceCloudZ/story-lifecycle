@@ -444,7 +444,11 @@ def _load_playbook_for_verify(workspace: str, task_type: str) -> str:
 def _log_gate_event(
     db, story_key: str, stage: str, result: dict, findings: list
 ) -> None:
-    """记录 gate_decision 事件(供 reflect 沉淀,§5.1.1 消费)。"""
+    """记录 gate_decision 事件(供 reflect 沉淀,§5.1.1 消费)。
+
+    迭代 2（P2-UI）：payload 补全 findings 列表 / repair_action / fallback 标记——
+    前端质量面板（gate-history）直接消费这些字段，此前只落 count/kind 摘要。
+    """
     try:
         repair = result.get("repair_action") or {}
         db.log_event(
@@ -459,6 +463,9 @@ def _log_gate_event(
                 "repair_kind": repair.get("kind"),
                 "new_adapter": repair.get("new_adapter"),
                 "findings_count": len(findings),
+                "findings": findings,
+                "repair_action": repair,
+                "fallback": bool(result.get("fallback")) or bool(result.get("_fallback")),
             },
         )
     except Exception as exc:

@@ -104,6 +104,16 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
             _ctx = _json.loads(s.get("context_json") or "{}")
         except (ValueError, TypeError):
             _ctx = {}
+        # 迭代 2（P4-UI）：规划已完成（有 _agent_actions）但未确认 → 这里设确认态
+        # （与 POST /plan/confirm 同语义：_plan_confirmed=True + lifecycle 推进到
+        # 「开发」），再触发编排启动。此前 /advance 不设确认态 → 编排线程
+        # _needs_spawn 因 _plan_confirmed=False 拒绝 spawn，UI「开始执行」点了
+        # 永不启动 agent（round 3 Bug #4）。
+        if _ctx.get("_agent_actions") and not _ctx.get("_plan_confirmed"):
+            _ctx["_plan_confirmed"] = True
+            _ctx.pop("_stage_gate", None)
+            sm_activate(story_key, ctx_updates=_ctx, lifecycle_state="开发")
+            _ctx = _json.loads(db.get_story(story_key).get("context_json") or "{}")
         if not _ctx.get("_active_execution"):
             start_story_async(story_key)
             return {"ok": True, "status": "started"}

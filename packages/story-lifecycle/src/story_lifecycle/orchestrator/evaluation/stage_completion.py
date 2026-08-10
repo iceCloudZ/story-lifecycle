@@ -151,6 +151,29 @@ def judge_stage_completion(req: JudgeRequest) -> dict:
     )
     cref = context_ref(judge_ctx)
 
+    # 迭代 2（P6-JUDGE）守卫：产物「找不到」≠「写得差」。
+    # round 3 Bug #6：story/*/spec.md（glob）落地判定命中但内容读取失败 → judge
+    # 误判「产出为空」→ reject→escalate 循环。此处前置拦截：文件类 artifacts
+    # 声明了但内容一个都没解析到 → 直接 escalate（reason 明确为路径/落点问题，
+    # 不进 reject 重试循环），等修复/人工介入。
+    if artifacts:
+        file_arts = [
+            a for a in artifacts
+            if isinstance(a, str) and a and a != "git"
+        ]
+        resolved_count = len(judge_ctx.get("artifacts") or [])
+        # glob 形态(可能被 resolver glob 命中)与文件形态一起看:只要声明过产物
+        # 且一个都没读到,就是取件问题(落地判定在 submit judge 前已通过)。
+        if file_arts and resolved_count == 0:
+            log.warning(
+                "[%s/%s] P6 guard: artifacts declared=%s but none resolvable "
+                "(workspace=%s evidence=%s) → escalate",
+                story_key, stage, file_arts, workspace, bool(evidence_candidates),
+            )
+            return _build_p6_path_escalate(
+                story_key, stage, cref, db_module, file_arts, workspace,
+            )
+
     # F2：verify stage 跑 conformance 质检（spec vs 实现 diff），结果注入判定上下文。
     # 配置：ctx 的 conformance_check（默认 true）；失败时 fail-closed（转 escalate）。
     conformance_ev, fallback = _run_conformance_check(
@@ -489,6 +512,40 @@ def _action_taken_for(quality: str) -> str:
         "reject": "planner 插 retry action 回 code CLI",
         "escalate": "planner paused 等人",
     }.get(quality, "")
+
+
+def _build_p6_path_escalate(
+    story_key: str, stage: str, cref: str, db_module, artifacts: list, workspace: str
+) -> dict:
+    """P6 守卫：产物声明了但内容解析全空 → escalate（reason 指明落点问题）。
+
+    与 _fallback_decision 同构（不调 LLM、不推进、落决策记录）——但 reason 明确
+    是「路径/落点」问题而非 LLM 基础设施问题，UI 可据此区分展示。
+    """
+    try:
+        rid = db_module.log_decision(
+            story_key,
+            stage,
+            "stage_completion",
+            "escalate",
+            reason=f"[PATH-MISS] 产物声明 {artifacts} 在 workspace={workspace} 未解析到内容（落地判定已过但内容读取为空）",
+            context_ref=cref,
+            action_taken="p6_path_escalate",
+            llm_model="",
+        )
+    except Exception:  # noqa: BLE001
+        rid = 0
+    return {
+        "quality": "escalate",
+        "lifecycle_target": None,
+        "summary": "",
+        "reason": f"[PATH-MISS] 产物 {artifacts} 未解析到内容: workspace={workspace}",
+        "findings": [],
+        "repair_action": None,
+        "logged_decision_id": rid,
+        "context_ref": cref,
+        "fallback": True,
+    }
 
 
 # ---- 累积产出收集 ----

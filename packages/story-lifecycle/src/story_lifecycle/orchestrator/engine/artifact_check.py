@@ -117,8 +117,22 @@ def resolve_artifact_paths(
     for artifact in artifacts:
         if not isinstance(artifact, str) or not artifact:
             continue
-        if artifact == "git" or _is_glob(artifact):
-            continue  # 无单一落地路径概念,交给 check_artifacts_landed 的 git/glob 分支
+        if artifact == "git":
+            continue  # 无单一落地路径概念,交给 check_artifacts_landed 的 git 分支
+        if _is_glob(artifact):
+            # 迭代 2（P6-JUDGE）：glob 形态 artifact（如 story/*/spec.md）参与解析。
+            # round 3 Bug #6 根因：落地判定（_glob_landed）命中 glob，但 judge 内容
+            # 读取（本函数旧版跳过 glob）读不到 → 误判「产出为空」。此处 glob 解析
+            # 与 _glob_landed 同口径（workspace.glob 首个非空命中），judge_context
+            # 经 read_artifact_content 即可读到内容。
+            try:
+                for match in ws.glob(artifact):
+                    if _file_landed(match):
+                        resolved[artifact] = str(match)
+                        break
+            except (OSError, ValueError):
+                pass
+            continue
         # 1. workspace 相对路径
         primary = ws / artifact
         if _file_landed(primary):

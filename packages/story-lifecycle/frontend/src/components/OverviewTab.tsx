@@ -116,9 +116,9 @@ export default function OverviewTab({
           操作按钮(继续/重试/紧急停止)留这里。 */}
 
       {/* 操作按钮 */}
-      {((detail.status === 'active' && neverStarted) || rowActions.length > 0) && (
+      {((detail.status === 'active' && neverStarted && !!detail.hasPlan) || rowActions.length > 0) && (
         <div className="ot-actions">
-          {detail.status === 'active' && neverStarted && (
+          {detail.status === 'active' && neverStarted && !!detail.hasPlan && (
             <button className="btn btn-primary" onClick={onStart}>开始执行</button>
           )}
           {rowActions.map((a) => (
@@ -144,7 +144,7 @@ export default function OverviewTab({
           stages={planData?.stages}
           currentStage={detail.currentStage}
           isConfirmed={isConfirmed}
-          editable={detail.status === 'planning' && !isConfirmed}
+          editable={!!detail.hasPlan && !isConfirmed}
           onAdapterChange={onActionAdapterChange}
           onConfirmPlan={onConfirmPlan}
           onRegeneratePlan={onRegeneratePlan}

@@ -89,6 +89,19 @@ def get_story(story_key: str):
     if not s:
         raise HTTPException(404, "Story not found")
 
+    # 迭代 2（P4-UI）：显式暴露 plan 确认态（数据源唯一：context_json._plan_confirmed），
+    # 前端不再从 status 字符串推断（status 无 'planning' 值——'planning' 从不在
+    # status 语义里，前端三处 status==='planning' 条件恒 false 是「确认规划」按钮
+    # 永不显示的根因）。
+    try:
+        import json as _json
+
+        _ctx = _json.loads(s.get("context_json") or "{}")
+    except (ValueError, TypeError):
+        _ctx = {}
+    plan_confirmed = bool(_ctx.get("_plan_confirmed"))
+    has_plan = bool(_ctx.get("_agent_actions"))
+
     subs = db.get_sub_stories(story_key)
     sub_list = (
         [
@@ -134,6 +147,9 @@ def get_story(story_key: str):
             # BUG #9:暴露 headless 让前端 ClarifyDialog 据此决定显隐
             # (headless 路径走 MCP clarify→卡片;交互式路径走"终端问人"→不显示卡片)。
             "headless": _story_headless(s),
+            # 迭代 2（P4-UI）：plan 确认态显式字段（前端三条件点唯一数据源）。
+            "planConfirmed": plan_confirmed,
+            "hasPlan": has_plan,
         }
     )
 

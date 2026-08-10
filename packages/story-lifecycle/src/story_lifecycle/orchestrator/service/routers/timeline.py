@@ -179,18 +179,49 @@ def get_gate_history(story_key: str):
         if ev.get("event_type") != "gate_decision":
             continue
         payload = db.parse_event_payload(ev)
+        # 迭代 2（P2-UI）：透传 verdict/findings/repair_action/fallback（_log_gate_event
+        # 已补全 payload；旧数据缺字段时 get 兜底）。
         decisions.append(
             {
                 "decision_id": payload.get("decision_id", ""),
                 "stage": ev.get("stage", ""),
                 "decision": payload.get("decision", ""),
+                "verdict": payload.get("verdict", ""),
                 "reason_code": payload.get("reason_code", ""),
-                "human_message": payload.get("human_message", ""),
+                "human_message": payload.get("reason", payload.get("human_message", "")),
+                "findings": payload.get("findings", []),
+                "repair_action": payload.get("repair_action", None),
+                "fallback": bool(payload.get("fallback")),
                 "evidence": payload.get("evidence", {}),
                 "allowed_actions": payload.get("allowed_actions", []),
                 "created_at": ev.get("created_at", ""),
             }
         )
+
+    # 迭代 2（P2-UI）：stage_completion 的编排决策（approve/reject/escalate，
+    # 含 [FALLBACK]/[PATH-MISS] 标记）并入时间线——设计阶段的质量判定此前
+    # 只落 orchestrator_decision 表、UI 无展示（round 3 Bug #2）。
+    try:
+        decisions_d = db.get_decisions(story_key, limit=100)
+        for d in decisions_d:
+            decisions.append(
+                {
+                    "decision_id": d.get("id", ""),
+                    "stage": d.get("stage", ""),
+                    "decision": d.get("decision", ""),
+                    "verdict": d.get("decision", ""),
+                    "reason_code": d.get("trigger", ""),
+                    "human_message": d.get("reason", ""),
+                    "findings": [],
+                    "repair_action": None,
+                    "fallback": "fallback" in (d.get("action_taken") or "") or str(d.get("reason", "")).startswith("[FALLBACK]"),
+                    "evidence": {"action_taken": d.get("action_taken", ""), "llm_model": d.get("llm_model", "")},
+                    "allowed_actions": [],
+                    "created_at": d.get("decided_at", ""),
+                }
+            )
+    except Exception:  # noqa: BLE001 — 编排决策合并 best-effort
+        pass
 
     # Also include gate_result table entries
     gate_results = db.get_gate_results(story_key, limit=100)
@@ -210,14 +241,19 @@ def get_gate_history(story_key: str):
                 "decision_id": detail_data.get("decision_id", ""),
                 "stage": gr.get("stage", ""),
                 "decision": gr.get("result", ""),
+                "verdict": detail_data.get("verdict", gr.get("result", "")),
                 "reason_code": detail_data.get("reason_code", gr.get("gate_name", "")),
-                "human_message": detail_data.get("summary", ""),
+                "human_message": detail_data.get("summary", detail_data.get("reason", "")),
+                "findings": detail_data.get("findings", []),
+                "repair_action": detail_data.get("repair_action", None),
+                "fallback": bool(detail_data.get("fallback")) or str(detail_data.get("reason", "")).startswith("[FALLBACK]"),
                 "evidence": evidence,
                 "allowed_actions": [],
                 "created_at": gr.get("created_at", ""),
             }
         )
 
+    decisions.sort(key=lambda d: d.get("created_at", ""))
     return {"decisions": decisions}
 
 

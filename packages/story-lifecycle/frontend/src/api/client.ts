@@ -38,6 +38,11 @@ export interface Story {
   // BUG #9:是否 headless 执行(从 profile execution_mode 推导)。
   // headless→MCP clarify+前端卡片;交互式→终端直接问人(卡片不显示)。
   headless?: boolean
+  // 迭代 2（P4-UI）：plan 确认态显式字段（数据源唯一，前端不再从 status 推断——
+  // status 无 'planning' 值，旧 status==='planning' 条件恒 false）。
+  planConfirmed?: boolean
+  // 规划是否已完成（有 _agent_actions）。
+  hasPlan?: boolean
   // context_json 原文(JSON 字符串)。前端 parse 后读 _active_execution 判断
   // story 是否曾启动过(active 但无 _active_execution = single-pass 创建后从未跑)。
   contextJson?: string | null
@@ -163,12 +168,29 @@ export interface FindingsResponse {
   findings: Finding[]
 }
 
+export interface GateFinding {
+  severity?: string
+  category?: string
+  description?: string
+  location?: string
+}
+
 export interface GateDecision {
   decision: string
+  verdict?: string
   stage?: string
   reason_code?: string
   human_message?: string
+  findings?: GateFinding[]
+  repair_action?: {
+    kind?: string
+    reason?: string
+    new_adapter?: string
+    rescue_stage?: string
+  } | null
+  fallback?: boolean
   evidence?: Record<string, unknown>
+  created_at?: string
 }
 
 export interface GateHistoryResponse {

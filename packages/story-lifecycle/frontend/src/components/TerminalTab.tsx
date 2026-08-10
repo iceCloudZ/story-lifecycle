@@ -207,7 +207,9 @@ export default function TerminalTab({
       stageSessions.find((s) => s.status === 'running' && s.attach_id)?.attach_id ||
       null
 
-    const showConfirm = status === 'planning' && !isConfirmed
+    // 迭代 2（P4-UI）：确认按钮条件从 status==='planning'（story status 无此值，
+    // 恒 false → 按钮永不显示）改为「有规划且未确认」——actions 是规划产物。
+    const showConfirm = actions.length > 0 && !isConfirmed
 
     return (
       <div className="tab-content terminal-tab">
