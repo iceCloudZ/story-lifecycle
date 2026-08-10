@@ -1,0 +1,4 @@
+# eval 包本地数据（不入库）
+sandbox-ui/
+dataset/.env
+*.bak
