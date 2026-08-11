@@ -654,6 +654,11 @@ class AutomaticStageExecutor(BaseStageExecutor):
                 stdout=_sp.PIPE,
                 stderr=_sp.PIPE,
                 env=story_env,
+                # 隔离进程组:opencode 进自己的 session/pgid,这样 kill_tree 的
+                # killpg(getpgid(child)) 只杀 opencode+子,不连杀 serve 的进程组
+                # (2026-08-12 真实事故:delete story → kill_headless → kill_tree →
+                # killpg 打到 serve 的组 → serve 被杀;Restart 兜底但每删一 story 就重起)。
+                start_new_session=True,
             )
             proc.stdin.write(prompt.encode("utf-8"))
             proc.stdin.close()

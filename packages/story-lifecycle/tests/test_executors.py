@@ -331,3 +331,42 @@ def test_headless_watchdog_noop_if_proc_done(monkeypatch):
     ex._arm_headless_watchdog("s1", "design", proc, timeout=0.2)
     _time.sleep(0.6)
     assert killed == []
+
+
+def test_kill_headless_does_not_kill_parent():
+    """回归 2026-08-12:kill_headless 真 _kill_headless→kill_tree→killpg 路径,必须只杀
+    opencode 子进程组,不能连杀父进程(serve)。
+
+    事故:e769c3ae 部署后第一次 delete story → kill_headless → killpg 打到 serve 的进程组
+    → serve 被杀(Restart 兜底但每删一 story 就重起)。根因:_spawn_headless 的 Popen 没
+    start_new_session,opencode 继承 serve 进程组。前提(本测试):子必须隔离进程组。
+    POSIX only(Windows 进程组语义不同)。
+    """
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    import pytest
+
+    if sys.platform == "win32":
+        pytest.skip("POSIX process-group semantics only")
+
+    from story_lifecycle.orchestrator import executors as ex
+
+    # 起一个独立进程组的子(模拟 _spawn_headless 的 start_new_session=True)
+    proc = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    ex._headless_procs[("s_iso", "design")] = proc
+    try:
+        child_pgid = os.getpgid(proc.pid)
+        parent_pgid = os.getpgid(os.getpid())
+        assert child_pgid != parent_pgid, "子必须在独立进程组(否则 killpg 连杀父)"
+        ex.kill_headless("s_iso", "design")  # 真 _kill_headless → kill_tree → killpg
+        time.sleep(0.5)
+        assert ("s_iso", "design") not in ex._headless_procs  # 注册表已清
+        assert proc.poll() is not None  # 子被杀
+        # 父(本测试进程)能执行到这里 = kill_headless 没连杀 serve
+    finally:
+        if proc.poll() is None:
+            proc.kill()
