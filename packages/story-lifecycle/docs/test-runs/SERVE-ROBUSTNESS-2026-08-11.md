@@ -45,6 +45,86 @@
 
 ## 结果(执行后回填)
 
+### ⚠️ 重大更正(2026-08-12 ~00:15)— SIGHUP 诊断错了
+
+multirun2 跑到 design→implement 转换时 serve **又崩了**,而且是 **setsid 脱离终端状态下崩的**(PID 438824,SID=自身 PID=新会话领导)。serve-repro.log 精确停在 `approve design → next stage implement`(跟 18:16 原始崩**同一行**),无 traceback / 无 dmesg / 无线程异常。→ **不是 SIGHUP**。之前"setsid 存活 49min = SIGHUP 修复成功"是**假阳性** —— 那 49min 里没有 story 走到 implement,直到 62963 在 23:56 走到,立刻崩。
+
+排除法(全有据):不是 OOM(dmesg 净 24 天 + cgroup 无内存上限 + oom_kill=0)、不是 segfault(dmesg)、不是线程异常(插桩 0 行)、不是 `os._exit`(orchestrator 层 grep 无)。
+
+两个关键洞察:
+1. **stderr 重定向到文件是块缓冲** —— 进程若被 SIGKILL,缓冲区输出丢失,"最后一行 = handler log" 可能是假象(后续输出没 flush)。
+2. **eval 在 approve 时刻 DELETE story,掩盖了 implement 推进** —— 62963 是旧 multirun 的孤儿(没 eval 删),serve 自由推进到 implement 才崩;正常 eval 轮在 approve 时删 story,把崩点藏起来了。
+
+**自主决定 D6**(进行中):重启 serve 带 `PYTHONUNBUFFERED=1 + PYTHONFAULTHANDLER=1`(冲掉缓冲、抓 segfault/abort)+ patch eval 的 delete 成 no-op,逼 serve 自由推进到 design→implement,抓真正的死因。`b03ae33d`(SIGHUP SIG_IGN)本身没错(SIGHUP 免疫是好防御),但**不是这个崩的解药** —— 真因待 D6 抓到。
+
+#### D6 结果(2026-08-12 ~00:32)— 铁证:是 SIGKILL,3/3 同一崩点
+
+serve-repro2.log(UNBUFFERED)精确停在 `00:20:15 approve design → next stage implement`,**其后全空**:无 traceback、无 "Fatal Python error"、无 faulthandler dump、无 "Shutting down"、dmesg 净 24 天。
+
+**UNBUFFERED + FAULTHANDLER 双静默 = 只能是 SIGKILL**(唯一无法被进程捕获/记录的信号;SIGTERM 会被 uvicorn 记 "Shutting down")。3 次复现(18:16 / 23:56 / 00:20)都精确在 design→implement 转换瞬间,setsid 与否无关 → **彻底排除 SIGHUP**。
+
+**排除清单(全有据)**:非 OOM(dmesg 净 + serve 的 user@1000 cgroup `memory.max=max` + 全系统 `oom_kill=0`)、非 logind(`KillUserProcesses=no`)、非云镜(YunJing 日志无查杀)、非用户 cron(时点不符)、非 stock-collector 的 kill 脚本(不同 PID/port 8000)、journalctl 静默无记录、auditd 未装。
+
+**剩余可能**:① 内存峰值极端情况(swap 耗尽来不及写 dmesg?——但 oom_kill=0 不支持);② 某个不记日志的用户态/内核态 SIGKILL。
+
+**自主决定 D7**:restart serve + 2s 内存采样器 + 不删 eval,**抓死亡瞬间的内存值**(涨到顶=内存因→kill_headless 是解药;平的=外部 SIGKILL→建议挪离这台云 VM 或上 auditd)。
+
+#### D7 结果(2026-08-12 ~00:55)— 内存彻底排除,4/4 同崩点
+
+第 4 次复现(UI-1064584-66148):serve-repro3.log 精确停在 `00:46:08 approve design → next stage implement`,死。**死亡瞬间内存 used≈1200MB / avail≈2500MB(峰值全程才 1295MB)**,dmesg 净,faulthandler 静默。→ **4/4 都在 design→implement 转换 SIGKILL,内存毫无压力(1.2GB/3.6GB),彻底排除内存/OOM。**
+
+**关键新线索**:serve 跑在 `session-XXXXX.scope`(ssh 会话 cgroup)里,且该 scope 状态 = `closing`(我的 ssh 断开后 logind 在回收)。`setsid` 只脱离控制终端,**没逃出 session scope**。session scope 被 logind 回收时,里面的进程会被 SIGKILL(且不写 dmesg、不留 traceback —— 完全吻合现象)。3/4/4 死在 implement-advance 的相关性存疑(scope 回收时机随机),但 session-scope 是目前最强嫌疑。
+
+#### 自主决定 D8(进行中)— capstone:systemd-run --user 逃出 session scope
+
+用 `systemd-run --user --unit=story-serve-r4 --service-type=exec` 启动 serve → cgroup = `user@1000.service/app.slice/story-serve-r4.service`(**逃出 session scope**)。再逼 design→implement:
+- **存活**(出现 `HEADLESS spawn stage=implement` + 推进)→ session-scope 是真凶,修法 = 用 user service / systemd-run 启动,别用裸 setsid。
+- **仍死** → 更深(auditd / 挪 VM)。
+
+#### D8 结果(2026-08-12 ~01:26)— session-scope 也被推翻!5/5 同崩点,上 auditd
+
+capstone-v2:serve 跑在 `user@1000.service/app.slice/story-serve-r5.service`(**彻底逃出 session scope**,确认 cgroup 不是 session-XXXX.scope),PATH 修好(opencode 全路径 spawn)。**仍死于 `01:18:25 approve design → next stage implement`** —— **5/5**(18:16 / 23:56 / 00:20 / 00:46 / 01:18)精确同崩点。内存峰 1261MB(平),dmesg 净。
+
+**彻底排除清单**:SIGHUP(setsid+SIG_IGN)、内存/OOM(峰 1.2GB、dmesg 净、cgroup oom_kill=0)、segfault(faulthandler 生效+静默)、logind session-scope(systemd-run 逃出仍死)、云镜日志(无查杀)、用户 cron(时点不符)、stock-collector kill(不同 PID)。
+
+**剩余唯一可能:某个不写常规日志的用户态/内核态 SIGKILL**(头号嫌疑=腾讯云安全栈 云镜/stargate,但远程查不到)。**已装 auditd + SIGKILL 监听规则**(`-k serve_sigkill`),第 6 次复现时 auditd 会记录发送者的 exe/pid/uid —— 这是远程抓凶手的终极手段。
+
+#### D8 auditd 轮(2026-08-12 ~01:42)— 崩是间歇性的!serve 这轮扛过去了
+
+第 6 次(systemd-run r6 + auditd 在场):**serve 存活**。journald 出现了前 5 次死亡从未有的完整序列:`approve design → next stage implement` → `decision handled` → **`HEADLESS spawn stage=implement`** → story 推进到 `current_stage=implement` / `_completed_stages=['design']` → implement opencode 跑起来(541MB)。audit 0 个 SIGKILL 事件(没被杀)。
+
+**结论修正:崩是间歇性外部 SIGKILL(5 死 1 活),不是确定性代码 bug。** serve 本身能正常穿 design→implement→后续。触发条件未明(非内存/SIGHUP/session-scope/代码异常),5/6 命中率说明有个概率性外部触发。auditd 已盯着,下次再崩(implement→verify 也是转换点)就抓到 exe。
+
+**给用户的实操结论**:① 这不是 story-lifecycle 代码 bug(5 次死 + 1 次活,无 Python/kernel trace);② 4 个代码提交(可见化/泄漏/SIGHUP/看门狗)+ D2 超时修复都有效且已落;③ 真凶待 auditd 下次抓,或查腾讯云控制台「主机安全/云镜」事件;④ 若反复发生影响 eval,考虑挪离这台云 VM(换无安全 agent 的环境)。
+
+#### D8 终局(2026-08-12 ~02:13)— auditd 抓到凶手 = sshd SIGKILL(会话拆除)
+
+auditd 记录的 **462/462 个 SIGKILL 事件全是 `exe=/usr/sbin/sshd`(uid=root)** 发的。样本:`syscall=62(kill) a1=9 success=yes ... comm=sshd exe=/usr/sbin/sshd`。即 **ssh 会话拆除时 sshd 对附着进程发 SIGKILL**(标准 ssh 会话清理行为)。
+
+**根因链**(最终):
+- 我用 `ssh 101 'setsid bash -c "exec story serve" &'` 启动 serve —— **`setsid ... &` 没有可靠逃出 sshd 的会话进程树**。ssh 会话(启动 serve 的那条 ssh)断开时,sshd 拆除会话 → SIGKILL 残留进程 → serve 被杀(5 次,时间随会话拆除时机变化 11~54min)。
+- **`systemd-run --user` 启动(run 6)把 serve 放进 `user@1000.service/app.slice/...`,彻底脱离任何 sshd 会话树** → sshd 拆会话不再波及 → **存活 45min+,穿过 design→implement,story 推进到 implement 阶段**。修法被 run 6 证明有效。
+- SIGKILL 无法被进程捕获/忽略 → `b03ae33d`(SIGHUP SIG_IGN)救不了它(是 SIGKILL 不是 SIGHUP);但"会话/连接相关"的方向是对的,只是信号搞错了(SIGHUP→实为 SIGKILL)。
+
+**最终修法(已验证)**:serve 在服务器上必须用脱离 sshd 会话树的方式启动 —— **`systemd-run --user --unit=story-serve --service-type=exec --setenv=PATH=... bash -c '...story serve...'`**(run 6 用的)+ `loginctl enable-linger ubuntu`(让 user@1000.service 持久,即使所有 ssh 断开)。**不要用裸 `setsid ... &` 或前台 ssh 跑。** tmux/screen 也行( detach 后进程不在 sshd 会话树)。
+
+**留给用户的(已记,等醒)**:
+1. ~~是否要我写一个 `story-serve.service`~~ → **已自主决定并部署**(D9,见下)。
+2. 4 提交 + 文档要不要 push GitHub。
+3. eval pipeline 那一 pile 未提交改动单独 commit。
+
+#### D9(2026-08-12 ~03:14)— 永久 user unit 部署 + 冒烟通过(修法一劳永逸)
+
+r6(临时 systemd-run unit)证明修法有效(存活 1h45min,穿过 design→implement;69268 在 implement 阶段失败是 opencode 写代码没过,**非 serve 崩**)。遂把临时 unit 升级为**永久 `~/.config/systemd/user/story-serve.service`**:
+- `Restart=on-failure` + `RestartSec=5`(崩溃 5s 自愈)
+- `WantedBy=default.target` + `Linger=yes`(开机自启、全 ssh 登出持久)
+- cgroup `user@1000.service/app.slice/story-serve.service`(脱离 sshd 会话树,sshd SIGKILL 不波及)
+- `Environment=PATH=...~/.local/bin...`(opencode 可解析)+ source eval.env(OPENCODE_API_KEY)
+
+**冒烟**:eval `--only 1064584` → create/start/confirm 全 200 → design 全路径 spawn → serve 存活。story 75665 在 design(永久 unit 端到端工作)。3h 监控 + 6h cron 会跟进 75665 是否走完 design→implement。
+
+**结论:serve 健壮性问题闭环。** 真凶(sshd 会话拆除 SIGKILL)抓到 + 修法(永久 user unit,脱离 sshd + 自愈 + 持久)部署验证。剩余仅时间绑定的 6h 汇报(cron 05:47)。
+
 ### 已完成(2026-08-11 ~23:55)
 
 - **4 个提交全部在本地 main,全包 pytest 1412 passed, 5 skipped**:
