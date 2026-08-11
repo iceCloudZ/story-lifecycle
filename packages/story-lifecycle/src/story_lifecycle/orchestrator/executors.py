@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +26,11 @@ log = logging.getLogger("story-lifecycle.executors")
 # 字典会丢注册,导致 get_pty 永远 None、每轮重复 spawn。编排线程单线程访问,无锁。
 _headless_procs: dict[tuple[str, str], object] = {}
 _headless_attempts: dict[tuple[str, str], int] = {}
+
+# 进程级看门狗超时:supervise_headless_stdout 阻塞在 readline 无超时,上游 API 真挂时
+# proc 会无限挂。到点强杀,让编排线程 STAGE_TIMEOUT 走 mark_failed + retry。对齐
+# scheduler.STAGE_TIMEOUT=2700s;env STORY_HEADLESS_PROC_TIMEOUT 可覆盖(测试用)。
+HEADLESS_PROC_TIMEOUT = float(os.environ.get("STORY_HEADLESS_PROC_TIMEOUT", "2700"))
 
 
 def kill_headless(story_key: str, stage: str = "") -> None:
@@ -65,6 +71,37 @@ def cleanup_headless_all() -> None:
             _kill_headless(proc)
         except Exception:
             log.warning("cleanup_headless_all %s failed", k, exc_info=True)
+
+
+def _arm_headless_watchdog(story_key: str, stage: str, proc, timeout: float | None = None) -> None:
+    """起 daemon 看门狗:timeout 后 proc 仍活则强杀。
+
+    防 supervise_headless_stdout 阻塞在 readline(无超时)—— 上游 LLM API 真挂时
+    opencode proc 会无限挂、零产出(本轮 61970 是慢不是卡,但未来真挂需要兜底)。
+    幂等无害:proc 已退出(poll() 非 None)则不杀。daemon 线程,关停自动清理。
+    """
+    import threading as _th
+
+    if timeout is None:
+        timeout = HEADLESS_PROC_TIMEOUT
+
+    def _watch():
+        _th.Event().wait(timeout)
+        try:
+            if proc.poll() is None:
+                log.warning(
+                    "[%s] headless proc %s exceeded %ss, force-killing",
+                    story_key,
+                    stage,
+                    int(timeout),
+                )
+                from .engine.planner import _kill_headless
+
+                _kill_headless(proc)
+        except Exception:
+            log.warning("[%s] watchdog kill failed", story_key, exc_info=True)
+
+    _th.Thread(target=_watch, daemon=True, name=f"watchdog-h-{story_key}").start()
 
 
 def load_ctx(story: dict) -> dict:
@@ -657,6 +694,11 @@ class AutomaticStageExecutor(BaseStageExecutor):
             log.warning(
                 "[%s] headless drain thread spawn failed", story_key, exc_info=True
             )
+        # 进程级看门狗:超时强杀(防 supervise readline 无超时,上游 API 真挂)
+        try:
+            _arm_headless_watchdog(story_key, stage, proc)
+        except Exception:
+            log.warning("[%s] arm watchdog failed", story_key, exc_info=True)
         return str(getattr(proc, "pid", "headless"))
 
     def _adapter_name_for(self, story_key: str, stage: str) -> str:

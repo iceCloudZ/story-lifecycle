@@ -283,3 +283,51 @@ def test_cleanup_headless_all_clears_registry(monkeypatch):
     ex.cleanup_headless_all()
     assert ex._headless_procs == {}
     assert len(killed) == 2
+
+
+def test_headless_watchdog_kills_on_timeout(monkeypatch):
+    """看门狗:超时后 proc 仍活 → 强杀(防 supervise readline 无超时,上游 API 真挂)。"""
+    import time as _time
+
+    from story_lifecycle.orchestrator import executors as ex
+    from story_lifecycle.orchestrator.engine import planner
+
+    killed: list = []
+    monkeypatch.setattr(planner, "_kill_headless", lambda p: killed.append(p))
+
+    class _FakeProc:
+        def poll(self):
+            return None  # 一直活着
+
+        @property
+        def pid(self):
+            return 999
+
+    proc = _FakeProc()
+    ex._arm_headless_watchdog("s1", "design", proc, timeout=0.2)
+    _time.sleep(0.6)
+    assert proc in killed
+
+
+def test_headless_watchdog_noop_if_proc_done(monkeypatch):
+    """看门狗:proc 已退出 → 不杀(幂等无害)。"""
+    import time as _time
+
+    from story_lifecycle.orchestrator import executors as ex
+    from story_lifecycle.orchestrator.engine import planner
+
+    killed: list = []
+    monkeypatch.setattr(planner, "_kill_headless", lambda p: killed.append(p))
+
+    class _FakeProc:
+        def poll(self):
+            return 0  # 已退出
+
+        @property
+        def pid(self):
+            return 999
+
+    proc = _FakeProc()
+    ex._arm_headless_watchdog("s1", "design", proc, timeout=0.2)
+    _time.sleep(0.6)
+    assert killed == []
