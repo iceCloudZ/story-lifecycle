@@ -136,7 +136,7 @@ def _ai_cli_available(adapter: str) -> tuple[bool, str]:
     """
     import shutil
 
-    from story_lifecycle.adapters import get_adapter
+    from story_lifecycle.knowledge.adapters import get_adapter
 
     try:
         ad = get_adapter(adapter)
@@ -153,7 +153,7 @@ def _ai_cli_available(adapter: str) -> tuple[bool, str]:
     # Resolve through story-lifecycle's own executable resolver when present,
     # else fall back to PATH lookup.
     try:
-        from story_lifecycle.terminal.platform_ops import resolve_executable
+        from story_lifecycle.infra.terminal.platform_ops import resolve_executable
 
         resolved = resolve_executable(binary)
         if resolved and shutil.which(resolved):
@@ -224,9 +224,9 @@ def run_real_story(
     """
     # Local imports: keeps the module importable even if a dependency is not
     # yet on sys.path, and surfaces real-AI requirement lazily.
-    from story_lifecycle.db import models as db
-    from story_lifecycle.orchestrator.service import create_and_start_story
-    from story_lifecycle.orchestrator import planner
+    from story_lifecycle.infra.db import models as db
+    from story_lifecycle.orchestrator.service.story_service import create_and_start_story
+    from story_lifecycle.orchestrator.engine import planner
 
     workspace = str(Path(workspace).resolve())
     stages = list(stages or ["design", "implement", "verify"])
@@ -338,7 +338,7 @@ def wait_for_story_terminal(
     Only needed if the harness ever switches to ``graph.start_story_async``.
     The default synchronous path does not require this.
     """
-    from story_lifecycle.db import models as db
+    from story_lifecycle.infra.db import models as db
 
     terminal = {"completed", "failed", "blocked", "aborted"}
     deadline = time.time() + timeout

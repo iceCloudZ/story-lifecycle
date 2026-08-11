@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +47,7 @@ def _score_replay_story(ds_dir: Path, mf: dict, texts: dict[str, str]) -> dict[s
     spec = texts.get("story/spec.md", "")
     plan = texts.get("story/plan.md", "")
     template = ""
-    tmpl = Path("D:/hc-all/docs/spec-template.md")
+    tmpl = Path(os.environ.get("EVAL_SPEC_TEMPLATE") or "D:/hc-all/docs/spec-template.md")
     if tmpl.exists():
         template = dataset._read_text_robust(tmpl)
     build_artifacts = {k: v for k, v in texts.items() if k.startswith(("git_", "story/test"))}

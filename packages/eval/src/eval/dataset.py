@@ -24,8 +24,8 @@ from typing import Any
 log = logging.getLogger("eval.dataset")
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_DATASET_DIR = PACKAGE_ROOT / "dataset"
-DATASET_DIR = DEFAULT_DATASET_DIR
+DEFAULT_DATASET_DIR = Path(os.environ.get("EVAL_DATASET_DIR") or (PACKAGE_ROOT / "dataset"))
+DATASET_DIR = Path(os.environ.get("EVAL_DATASET_DIR") or DEFAULT_DATASET_DIR)
 
 DEFAULT_DB = r"C:/Users/zzh58/.story-lifecycle/story.db"
 HC_EVIDENCE_ROOT = Path("D:/hc-all/story")

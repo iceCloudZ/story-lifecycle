@@ -271,6 +271,30 @@ def report(dataset_dir, results_dir):
     click.echo(f"回归报告: {res['md']}")
 
 
+@main.command(name="ui-replay")
+@click.option("--serve-url", default="http://localhost:8180", help="serve 地址")
+@click.option("--results-dir", default=None)
+@click.option("--only", default=None, help="只跑单个 story_key")
+def ui_replay(serve_url, results_dir, only):
+    """UI-driven eval(差分 path B)— 走 serve API 跑 gold story(测调度层)。"""
+    from .ui_replay import run_ui_replay
+
+    res = run_ui_replay(serve_url, results_dir, only=only)
+    click.echo(f"UI 回放完成: 共 {res['count']},产出 spec {res['ok']},失败 {len(res['failed'])}")
+    for f in res["failed"]:
+        click.echo(f"  ! {f['story_key']}: spawn={f.get('spawn_triggered')} paused={f.get('paused')} {str(f.get('error',''))[:60]}")
+
+
+@main.command(name="diff")
+@click.option("--results-dir", default=None)
+def diff(results_dir):
+    """差分 path A (in-process replay) vs path B (ui_replay)— 量化 serve 调度影响。"""
+    from .ui_replay import run_diff
+
+    res = run_diff(results_dir)
+    click.echo(f"差分报告: {res['md']}")
+
+
 @main.command(name="ref-fetch")
 @click.option("--priority", is_flag=True, help="只抓优先批(link-only ∩ stories_matched)")
 @click.option("--tapd-id", multiple=True, help="只抓指定 tapd_id（可多次）")

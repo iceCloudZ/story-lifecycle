@@ -129,7 +129,7 @@ def score_manifest(ds_dir: Path, manifest: dict, with_diffs: bool = True) -> dic
     spec = _read_artifact(ds_dir, manifest, "spec")
     plan = _read_artifact(ds_dir, manifest, "plan")
     template = ""
-    tmpl = Path("D:/hc-all/docs/spec-template.md")
+    tmpl = Path(os.environ.get("EVAL_SPEC_TEMPLATE") or "D:/hc-all/docs/spec-template.md")
     if tmpl.exists():
         template = dataset._read_text_robust(tmpl)
 

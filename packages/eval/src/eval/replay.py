@@ -153,12 +153,17 @@ def _collect_artifacts(
     out_dir.mkdir(parents=True, exist_ok=True)
     texts: dict[str, str] = {}
     ws = Path(workspace)
-    for rel in ("story/spec.md", "story/plan.md", "story/test-report.md", "story/research.md"):
-        p = ws / rel
-        if p.exists() and p.stat().st_size:
+    for fname in ("spec.md", "plan.md", "test-report.md", "research.md"):
+        # opencode 落地到 story/<story_key>-EVALREPLAY10/<fname>（子目录），用 glob 匹配 + 兜底 story/<fname>
+        hits = list(ws.glob(f"story/*/{fname}"))
+        fallback = ws / "story" / fname
+        if fallback.exists() and fallback.stat().st_size:
+            hits.append(fallback)
+        p = next((h for h in hits if h.exists() and h.stat().st_size), None)
+        if p:
             dst = out_dir / p.name
             shutil.copy2(p, dst)
-            texts[rel] = dataset._read_text_robust(p)
+            texts[f"story/{fname}"] = dataset._read_text_robust(p)
     git = _git_state(workspace)
     for label, text in git.items():
         if text:
@@ -214,6 +219,10 @@ def run_replay(
             os.environ["STORY_HOME"] = str(tmp_home)
             log.info("STORY_HOME=%s", tmp_home)
 
+            # 1.5 初始化隔离 DB 的表结构（临时 STORY_HOME 是空库，必须建表）
+            from story_lifecycle.infra.db.schema import init_db
+            init_db()
+
             # 2. 复位工作区
             from testing.workspace import reset_workspace
 
@@ -224,7 +233,7 @@ def run_replay(
             entry_out["profile"] = profile_path
 
             # 4. gold PRD（来自 dataset）
-            ds_dir = PACKAGE_ROOT / "dataset"
+            ds_dir = dataset.DATASET_DIR
             manifests = {m["story_key"]: m for m in dataset.load_manifests(ds_dir)}
             mf = manifests.get(key)
             prd_path = dataset.artifact_path(ds_dir, mf, "prd") if mf else None
