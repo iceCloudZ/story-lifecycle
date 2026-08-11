@@ -167,37 +167,127 @@ def _archive_refs(samples: list[tuple[str, dict]], refs_dir: Path) -> None:
 
 
 def _run_gate_one(row: dict, delivery: dict, tmp_home: Path) -> dict:
-    """调用 unified gate 一次，返回结构化结果。"""
+    """生产裁判口径（迭代 3 G1）：调 judge_stage_completion，conformance 现场算。
+
+    注入映射（iteration-3 设计 §3.1，杜绝文本锚定）：
+    - done_data.summary ← merge_summary（中性）或 commits 拼接，禁止塞 findings 文本
+    - done_data.files_changed ← diffstat
+    - done_data.spec_path ← 参照物临时文件（evidence spec > prd > story_refs > tapd）
+    - done_data.delivery_diff_path ← diff 落临时文件（conformance 正式输入通道）
+    - ctx.conformance_check=true；workspace/DB = 沙箱临时目录（reject budget 满血）
+
+    Returns（与旧孤儿口径同 schema，便于双口径对比）:
+        gate_verdict: pass / rework
+        gate_decision: advance / retry / escalate
+        gate_findings / gate_repair / gate_reason / elapsed_s
+    """
     sys.path.insert(0, str(SL_SRC))
     os.environ["STORY_HOME"] = str(tmp_home)
-    # LLM 端点：opencode-go（https://opencode.ai/zen/go/v1，deepseek-v4-flash）
+    from story_lifecycle.infra.db import models as _db
+
+    _db.init_db()  # 沙箱新库建表——reject budget / log_decision 满血（不降级为 best-effort）
     from eval.judges import configure_llm_env
 
     configure_llm_env()
-    from story_lifecycle.orchestrator.evaluation.unified_gate import (
-        run_unified_verify_gate,
+    from story_lifecycle.orchestrator.evaluation.stage_completion import (
+        JudgeRequest,
+        judge_stage_completion,
     )
 
-    done = _build_done_data(row, delivery)
     story_key = f"replay-gate-{row['repo']}-{row['merge_hash'][:8]}"
     t0 = time.monotonic()
     try:
-        result = run_unified_verify_gate(
+        # 1. 参照物临时文件（有关联样本才有）+ PRD/成果物注入
+        #    judge 上下文读 DB story_doc（PRD）+ workspace 成果物文件——沙箱必须注入，
+        #    否则 judge 看到「产出为空」全拦（G3 首轮暴露的隐含前置，迭代3 §6 风险 1）。
+        spec_path = ""
+        prd_text = ""
+        artifacts: list[str] = []
+        tid = (row.get("tapd_id") or "").strip()
+        linked = None
+        if tid:
+            from eval import v2_rebase
+
+            idx, tapd = v2_rebase.load_match_index()
+            linked = idx.get((row["repo"], row["merge_hash"]))
+            ent = (linked or {}).get("entity") or {}
+            if linked:
+                ref_text, ref_type = v2_rebase.reference_for(ent, tapd)
+                prd_text = ref_text
+                if ref_text:
+                    ref_dir = tmp_home / "refs"
+                    ref_dir.mkdir(parents=True, exist_ok=True)
+                    spec_path = str(ref_dir / f"{tid}.md")
+                    Path(spec_path).write_text(ref_text, encoding="utf-8")
+            # 成果物注入：evidence 快照文档复制到沙箱 workspace/story/
+            from eval.evidence_snapshot import evidence_dir_for
+
+            ev_dir = evidence_dir_for(ent.get("evidence_dir") or "")
+            if ev_dir and ev_dir.is_dir():
+                ws_story = tmp_home / "story"
+                ws_story.mkdir(parents=True, exist_ok=True)
+                for f in ev_dir.iterdir():
+                    if f.is_file() and f.suffix.lower() == ".md":
+                        (ws_story / f.name).write_text(
+                            f.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+                for cand in ("story/spec.md", "story/test-report.md", "story/PRD.md"):
+                    if (ws_story / Path(cand).name).exists():
+                        artifacts.append(cand)
+        # PRD 注入 DB（judge ctx 的 ctx["prd"] 从 story_doc 读）——先建 story 行（FK）
+        if prd_text:
+            try:
+                _db.create_story(story_key, title=f"replay-{row['repo']}-{row['merge_hash'][:8]}",
+                                 workspace=str(tmp_home), profile="minimal", current_stage="verify")
+            except Exception:  # noqa: BLE001 — 已存在则跳过
+                pass
+            _db.upsert_story_doc(story_key, "prd", prd_text[:100_000], change_reason="replay", author="eval")
+        # 2. diff 落临时文件（conformance 正式输入通道）
+        from eval import scanall
+
+        diff_text, _trunc = scanall._diff_text(row["repo"], row["merge_hash"])
+        diff_path = ""
+        if diff_text:
+            diff_path = str(tmp_home / "delivery.diff")
+            Path(diff_path).write_text(diff_text, encoding="utf-8")
+        # 3. done_data（中性摘要：merge_summary 优先，否则 commits 拼接——不塞 findings）
+        ms = row.get("merge_summary") or {}
+        summary = (ms.get("summary") or "").strip()
+        if not summary:
+            commits = delivery.get("commits") or []
+            summary = "；".join(
+                (c.get("message") or c.get("subject") or "")[:80] for c in commits[:10]
+            )
+        diffstat = delivery.get("diffstat") or {}
+        files = diffstat.get("files", []) if isinstance(diffstat, dict) else []
+        done_data = {
+            "summary": summary[:500],
+            "files_changed": files[:20] if isinstance(files, list) else [],
+            "spec_path": spec_path,
+            "delivery_diff_path": diff_path,
+        }
+        req = JudgeRequest(
             story_key=story_key,
             stage="verify",
             workspace=str(tmp_home),
-            context={"task_type": ""},
-            done_data=done,
-            adapter_name="opencode",
+            ctx={"conformance_check": True, "task_type": ""},
+            lifecycle_state="验证",
+            done_data=done_data,
+            adapter="opencode",
             retry_count=1,
+            artifacts=artifacts or None,
         )
+        result = judge_stage_completion(req)
         elapsed = time.monotonic() - t0
+        quality = result.get("quality")
+        decision_map = {"approve": "advance", "reject": "retry", "escalate": "escalate"}
         return {
-            "gate_verdict": result.get("verdict"),
-            "gate_decision": result.get("decision"),
+            "gate_verdict": "pass" if quality == "approve" else "rework",
+            "gate_decision": decision_map.get(quality, quality or "ERR"),
             "gate_reason": (result.get("reason") or "")[:200],
             "gate_findings": result.get("findings") or [],
             "gate_repair": (result.get("repair_action") or {}),
+            "fallback": bool(result.get("fallback")),
+            "conformance_ev": (result.get("context_ref") or "")[:120],
             "elapsed_s": round(elapsed, 1),
         }
     except Exception as e:  # noqa: BLE001

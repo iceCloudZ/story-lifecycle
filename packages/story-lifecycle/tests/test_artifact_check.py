@@ -307,8 +307,13 @@ def test_resolve_artifact_paths_evidence_fallback(tmp_path):
     assert resolved == {"story/spec.md": str(ev_path)}
 
 
-def test_resolve_artifact_paths_skips_git_and_glob(tmp_path):
-    """git / glob 类无单一落地路径概念,不在结果里(交给 check_artifacts_landed 处理)。"""
+def test_resolve_artifact_paths_glob_resolves_and_git_skipped(tmp_path):
+    """迭代 2 P6 后 glob 形态 artifact 参与解析（首个非空命中），git 仍跳过。
+
+    旧行为（round 3 Bug #6 根因）：glob 被跳过 → judge 内容读取读不到
+    story/*/spec.md 类产物 → 误判「产出为空」。P6 后 glob 与 _glob_landed
+    同口径（workspace.glob 首个非空命中），键为 glob 模式本身。
+    """
     from story_lifecycle.orchestrator.engine.artifact_check import (
         resolve_artifact_paths,
     )
@@ -316,7 +321,9 @@ def test_resolve_artifact_paths_skips_git_and_glob(tmp_path):
     (tmp_path / "story").mkdir()
     (tmp_path / "story" / "spec.md").write_text("x\n", encoding="utf-8")
     resolved = resolve_artifact_paths(["story/spec.md", "git", "story/*.md"], str(tmp_path))
-    assert set(resolved.keys()) == {"story/spec.md"}
+    assert set(resolved.keys()) == {"story/spec.md", "story/*.md"}
+    assert resolved["story/spec.md"] == str(tmp_path / "story" / "spec.md")
+    assert resolved["story/*.md"] == str(tmp_path / "story" / "spec.md")
 
 
 def test_resolve_artifact_paths_not_landed_excluded(tmp_path):

@@ -201,9 +201,20 @@ def get_gate_history(story_key: str):
     # 迭代 2（P2-UI）：stage_completion 的编排决策（approve/reject/escalate，
     # 含 [FALLBACK]/[PATH-MISS] 标记）并入时间线——设计阶段的质量判定此前
     # 只落 orchestrator_decision 表、UI 无展示（round 3 Bug #2）。
+    # 迭代 3 G4：action_payload 已带 findings（severity 化）+ repair_action——透传，
+    # QualityPanel 生产可见明细（旧数据缺字段时 get 兜底）。
     try:
         decisions_d = db.get_decisions(story_key, limit=100)
         for d in decisions_d:
+            ap = d.get("action_payload")
+            if isinstance(ap, str):
+                try:
+                    import json as _json
+
+                    ap = _json.loads(ap)
+                except (ValueError, TypeError):
+                    ap = {}
+            ap = ap if isinstance(ap, dict) else {}
             decisions.append(
                 {
                     "decision_id": d.get("id", ""),
@@ -212,8 +223,8 @@ def get_gate_history(story_key: str):
                     "verdict": d.get("decision", ""),
                     "reason_code": d.get("trigger", ""),
                     "human_message": d.get("reason", ""),
-                    "findings": [],
-                    "repair_action": None,
+                    "findings": ap.get("findings") or [],
+                    "repair_action": ap.get("repair_action"),
                     "fallback": "fallback" in (d.get("action_taken") or "") or str(d.get("reason", "")).startswith("[FALLBACK]"),
                     "evidence": {"action_taken": d.get("action_taken", ""), "llm_model": d.get("llm_model", "")},
                     "allowed_actions": [],

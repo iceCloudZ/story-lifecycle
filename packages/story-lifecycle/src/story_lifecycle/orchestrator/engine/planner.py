@@ -695,7 +695,8 @@ _STAGE_DOC_KIND = {
 def _repair_spec_to_action(
     *, repair_spec: dict, story_key: str, adapter_name: str, round_n: int, reason: str
 ) -> dict | None:
-    """REFACTOR §5.3.4:把 unified_gate 的 repair_action spec 转 planner 可 insert 的 action dict。
+    """REFACTOR §5.3.4:把 stage_completion 的 repair_action spec 转 planner 可 insert 的 action dict
+    （迭代 3 G5：原引用 unified_gate 的 RepairAction，收敛后以 stage_completion.RepairAction 为准）。
 
     字段映射:kind(action→kind) / reason / new_adapter / rescue_stage。
     """

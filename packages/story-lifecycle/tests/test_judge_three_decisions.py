@@ -265,10 +265,11 @@ class TestExternalVerifyEvidence:
     回归(2026-08-06 real-run 1068018):design 12 收敛后 run_unified_verify_gate
     无调用方,provider 成孤儿 —— journey 执行证据永远进不了 judge 上下文,
     judge 只能看 agent 自述(静态核对→连续 reject/escalate)。
+    迭代 3 G5:_run_external_verify 从 unified_gate 迁入 stage_completion(孤儿模块删除)。
     """
 
     def _run_judge_verify(self, monkeypatch, judge_story, ext, llm):
-        from story_lifecycle.orchestrator.evaluation import unified_gate as ug
+        from story_lifecycle.orchestrator.evaluation import stage_completion as sc
         from story_lifecycle.orchestrator.verify_providers.base import VerifyResult
 
         monkeypatch.setattr(
@@ -277,11 +278,11 @@ class TestExternalVerifyEvidence:
         )
         if ext is not None:
             monkeypatch.setattr(
-                ug, "_run_external_verify", lambda *a, **k: ext
+                sc, "_run_external_verify", lambda *a, **k: ext
             )
         else:
             monkeypatch.setattr(
-                ug, "_run_external_verify", lambda *a, **k: None
+                sc, "_run_external_verify", lambda *a, **k: None
             )
         return _judge(
             stage="verify",
@@ -319,7 +320,7 @@ class TestExternalVerifyEvidence:
 
     def test_verify_provider_fail_records_finding(self, judge_story, monkeypatch):
         """provider FAIL → 记 finding(source=test_failure)进 open_findings。"""
-        from story_lifecycle.orchestrator.evaluation import unified_gate as ug
+        from story_lifecycle.orchestrator.evaluation import stage_completion as sc
         from story_lifecycle.orchestrator.verify_providers.base import VerifyResult
 
         recorded = {}

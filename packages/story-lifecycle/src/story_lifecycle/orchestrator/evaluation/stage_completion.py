@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Optional
 
 from pydantic import BaseModel
@@ -231,6 +232,8 @@ def judge_stage_completion(req: JudgeRequest) -> dict:
     )
 
     # 4. 落 orchestrator_decision(审计,无状态编排前提)
+    # 迭代 3 G4：action_payload 带 findings（severity 化 conf_findings + judge 自产合并）
+    # 与 repair_action——timeline.py gate-history 合并段透传，QualityPanel 生产可见明细。
     try:
         rid = db_module.log_decision(
             story_key,
@@ -243,7 +246,8 @@ def judge_stage_completion(req: JudgeRequest) -> dict:
             action_payload={
                 "lifecycle_target": target,
                 "summary": summary[:200],
-                "findings_count": len(findings),
+                "findings": (judge_ctx.get("conformance_findings") or []) + (findings or []),
+                "repair_action": repair,
             },
             llm_model=llm_model,
         )
@@ -307,6 +311,14 @@ def _run_conformance_check(
                     if conf_findings and conf_findings[0]["severity"] == "HIGH"
                     else "OK"
                 )
+                log.info(
+                    "[%s/%s] conformance 检查: alignment=%s coverage=%s scope_drift=%s "
+                    "(ref=%s) → %s",
+                    story_key, stage,
+                    conformance_result.alignment, conformance_result.coverage,
+                    conformance_result.scope_drift, conformance_result.reference_type,
+                    sev,
+                )
                 conformance_ev = (
                     f"conformance 检查: alignment={conformance_result.alignment} "
                     f"coverage={conformance_result.coverage} scope_drift={conformance_result.scope_drift} "
@@ -350,8 +362,6 @@ def _run_external_verify_evidence(
     Returns: 格式化证据文本（空串 = 无外部测试参与）。
     """
     try:
-        from .unified_gate import _run_external_verify
-
         ext = _run_external_verify(story_key, workspace, done_data, ctx)
     except Exception as exc:  # noqa: BLE001 — provider 容错，不阻断 judge
         log.warning("[%s/%s] external verify 失败(忽略): %s", story_key, stage, exc)
@@ -394,6 +404,60 @@ def _run_external_verify_evidence(
             log.warning("[%s/%s] record_finding failed (non-fatal): %s", story_key, stage, exc)
 
     return "\n".join(lines)
+
+
+def _run_external_verify(
+    story_key: str, workspace: str, done_data: dict, context: dict
+):
+    """如果配了 verify_provider，执行（或起跑）外部测试。
+
+    迭代 3 G5：从 unified_gate 迁入（唯一消费者 stage_completion），孤儿模块删除。
+
+    修订点 R8 接线：把规划产物 _agent_actions 合入 done_data，provider 据此读
+    selected_scenarios（selected_scenarios 存在 ctx["_agent_actions"]，不在
+    done.json 里——不合入 provider 将永远拿不到）。
+    """
+    try:
+        from ...infra.config import get_config
+        from ..verify_providers import load_verify_provider
+
+        config = get_config()
+        provider = load_verify_provider(config)
+        if provider is None:
+            return None
+        done_data = {
+            **done_data,
+            "_agent_actions": context.get("_agent_actions", []),
+        }
+        return provider.verify(story_key, workspace, "verify", done_data)
+    except Exception as exc:
+        log.warning("[%s] external verify 执行失败，忽略: %s", story_key, exc)
+        return None
+
+
+def _load_playbook_for_verify(workspace: str, task_type: str) -> str:
+    """读当前 task_type 的历史 playbook(阶段1 产出),喂给 verify-gate 作 context。
+
+    迭代 3 G5：从 unified_gate 迁入（唯一消费者 stage_completion），孤儿模块删除。
+
+    路径: <workspace>/.story/knowledge/playbooks/<task_type>/*.md
+    冷启动期(task_type 子目录不存在/为空)→ 返回空,不崩。
+    """
+    if not task_type:
+        return ""
+    try:
+        playbooks_dir = (
+            Path(workspace) / ".story" / "knowledge" / "playbooks" / task_type
+        )
+        if not playbooks_dir.exists():
+            return ""
+        parts = []
+        for f in sorted(playbooks_dir.glob("*.md")):
+            content = f.read_text(encoding="utf-8")[:600]  # 截断防爆
+            parts.append(f"### {f.stem}\n{content}")
+        return "\n\n".join(parts) if parts else ""
+    except Exception:
+        return ""
 
 
 def _call_judge_llm(llm, prompt, story_key, stage, cref, db_module):
@@ -737,8 +801,6 @@ def _build_prompt_req(req: JudgePromptRequest) -> str:
 
     # 历史经验(playbook)
     try:
-        from .unified_gate import _load_playbook_for_verify
-
         playbook = _load_playbook_for_verify(workspace, task_type)
     except Exception:  # noqa: BLE001
         playbook = ""

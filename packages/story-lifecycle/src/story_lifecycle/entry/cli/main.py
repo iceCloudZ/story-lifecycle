@@ -336,7 +336,11 @@ def prompts(story_key):
 
 @cli.command()
 def demo():
-    """Run a simulated lifecycle — no LLM, no AI CLI needed."""
+    """[DEPRECATED] Run a simulated lifecycle — no LLM, no AI CLI needed.
+
+    迭代 3 G5：实测已坏（patch 目标 nodes.graph_nodes.planner / graph.checkpoint_db
+    均已不存在），不修复——随下次 CLI 清理移除。
+    """
     from .demo import run_demo
 
     run_demo()

@@ -168,8 +168,16 @@ def _write_ref_text(tid: str, ref_type: str, text: str) -> str:
 def score_linked(
     v1row: dict, linked: dict, tapd: dict[str, dict], diff_text: str
 ) -> dict:
-    """有关联: conformance（Go + 当前 prompt）。"""
-    from story_lifecycle.orchestrator.evaluation.conformance import check_conformance
+    """有关联: conformance（Go + 当前 prompt）+ severity_findings（迭代 3 G2）。
+
+    severity_findings 复用核心包 inject_conformance_findings（双阈值：alignment<=2
+    或 coverage<=2 → HIGH），不另写规则（单一事实源）。
+    """
+    from story_lifecycle.orchestrator.evaluation.conformance import (
+        ConformanceResult,
+        check_conformance,
+        inject_conformance_findings,
+    )
 
     ent = linked["entity"]
     tid = ent.get("tapd_id") or ""
@@ -184,6 +192,16 @@ def score_linked(
         spec_path=spec_path,
         diff_text=diff_text[:120_000],
     )
+    severity_findings = inject_conformance_findings(
+        ConformanceResult(
+            alignment=res.alignment,
+            coverage=res.coverage,
+            scope_drift=res.scope_drift,
+            findings=res.findings,
+            reference_type=res.reference_type,
+            summary=res.summary,
+        )
+    )
     return {
         "conformance_score": {
             "alignment": res.alignment,
@@ -193,6 +211,7 @@ def score_linked(
             "reference_type_prompt": res.reference_type,
             "findings": res.findings,
             "summary": res.summary,
+            "severity_findings": severity_findings,
         }
     }
 
