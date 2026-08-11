@@ -507,6 +507,21 @@ def _run_web_board(host, port):
     )
 
 
+def _ignore_sighup() -> None:
+    """让 serve 进程忽略 SIGHUP,避免 ssh 断开 / 终端关闭时被杀。
+
+    根因(2026-08-11 服务器实测):``story serve`` 在前台 ssh 里跑,断开 → shell 发
+    SIGHUP → uvicorn 单进程无 SIGHUP-reload 处理器 → 默认 terminate → serve 无
+    traceback 突死(日志戛然而止,无 "Shutting down")。装 SIG_IGN 后,**无论怎么
+    启动**(前台/后台/nohup/setsid)都不会被 SIGHUP 杀掉;SIGTERM / Ctrl+C 仍可
+    优雅关停(uvicorn 处理 SIGTERM)。Windows 无 SIGHUP,跳过。
+    """
+    import signal as _sig
+
+    if hasattr(_sig, "SIGHUP"):
+        _sig.signal(_sig.SIGHUP, _sig.SIG_IGN)
+
+
 def _run_server(host, port):
     """Start the API server."""
     import uvicorn
@@ -536,6 +551,8 @@ def _run_server(host, port):
         )
         _sl.addHandler(_h)
     _sl.setLevel(logging.INFO)
+
+    _ignore_sighup()  # 防 ssh 断开 SIGHUP 杀进程(见 _ignore_sighup docstring)
 
     uvicorn.run(
         "story_lifecycle.orchestrator.service.api:app",
