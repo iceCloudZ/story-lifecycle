@@ -39,6 +39,21 @@ def test_serve_ignores_sighup_to_survive_ssh_disconnect():
         _sig.signal(_sig.SIGHUP, prior)
 
 
+def test_in_session_scope_detects_sshd_kill_risk():
+    """启动自检:serve 在 ssh session scope → True(会被 sshd SIGKILL,需警告)。"""
+    from story_lifecycle.entry.cli.main import _in_session_scope
+
+    # ssh 会话 scope —— 危险(sshd 拆会话会 SIGKILL)
+    assert _in_session_scope("0::/user.slice/user-1000.slice/session-209508.scope") is True
+    # systemd user service —— 安全(脱离 session scope)
+    assert _in_session_scope(
+        "0::/user.slice/user-1000.slice/user@1000.service/app.slice/story-serve.service"
+    ) is False
+    # 无关字符串 —— False
+    assert _in_session_scope("something else") is False
+    assert _in_session_scope("") is False
+
+
 def test_doctor_command_is_registered():
     result = CliRunner().invoke(cli, ["doctor", "--help"])
 

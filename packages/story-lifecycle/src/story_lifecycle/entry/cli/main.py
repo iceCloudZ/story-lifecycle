@@ -526,6 +526,22 @@ def _ignore_sighup() -> None:
         _sig.signal(_sig.SIGHUP, _sig.SIG_IGN)
 
 
+def _in_session_scope(cgroup_text: str | None = None) -> bool:
+    """serve 是否跑在 ssh login session 的 cgroup scope 里(session-XXXX.scope)。
+
+    根因(2026-08-12 服务器实测 + auditd):裸 ``ssh 'setsid serve &'`` 启动时,serve 留在
+    session-XXXX.scope;ssh 断开 → sshd 拆会话 → SIGKILL serve(无 traceback、dmesg 净)。
+    SIG_IGN 救不了 SIGKILL,所以正确启动 = systemd user service / tmux / linger(脱离
+    session scope)。本函数供启动时自检预警。cgroup_text 可注入,用于测试。
+    """
+    if cgroup_text is None:
+        try:
+            cgroup_text = open("/proc/self/cgroup").read()
+        except Exception:
+            return False
+    return "session-" in cgroup_text and ".scope" in cgroup_text
+
+
 def _run_server(host, port):
     """Start the API server."""
     import uvicorn
@@ -557,6 +573,11 @@ def _run_server(host, port):
     _sl.setLevel(logging.INFO)
 
     _ignore_sighup()  # 防 ssh 断开 SIGHUP 杀进程(见 _ignore_sighup docstring)
+    if _in_session_scope():
+        _sl.warning(
+            "serve 运行在 ssh session scope —— ssh 断开会被 sshd SIGKILL(无法忽略)! "
+            "请改用 systemd user service / tmux / linger 启动,别用裸 ssh+setsid。"
+        )
 
     uvicorn.run(
         "story_lifecycle.orchestrator.service.api:app",
