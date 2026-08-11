@@ -110,8 +110,8 @@ def _start_sid_capture_tap(pty, on_output) -> None:
                 if not pty.alive and not got:
                     break
                 time.sleep(0.2)
-        except Exception:  # noqa: BLE001 — 捕获失败不拖垮 PTY
-            pass
+        except Exception:  # noqa: BLE001 — 捕获失败不拖垮 PTY(记日志便于诊断)
+            log.warning("sid capture tap drain died", exc_info=True)
         finally:
             try:
                 pty.remove_tap(tap)
@@ -145,8 +145,8 @@ def _start_live_scan_capture(
                     db.set_session_id(story_key, stage, adapter_name, sid)
                     return
                 time.sleep(2)
-        except Exception:  # noqa: BLE001 — best-effort
-            pass
+        except Exception:  # noqa: BLE001 — best-effort(记日志便于诊断)
+            log.warning("sid live-scan thread died", exc_info=True)
 
     threading.Thread(
         target=_poll, daemon=True, name=f"sid-live-scan-{pty.session_id}"

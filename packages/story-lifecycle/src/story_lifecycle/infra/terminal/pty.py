@@ -7,6 +7,7 @@ Fallback: subprocess.Popen (no PTY, but output captured via pipe)
 
 import asyncio
 import atexit
+import logging
 import os
 import re
 import signal
@@ -278,6 +279,9 @@ class ManagedPty:
                 self._distribute(data)
         except Exception:
             self._alive = False
+            logging.getLogger("story-lifecycle.pty").warning(
+                "[%s] pty read loop died", self.session_id, exc_info=True
+            )
 
     def _distribute(self, data: bytes) -> None:
         """Put data to scrollback + main queue + all taps.

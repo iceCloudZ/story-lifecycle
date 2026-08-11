@@ -606,13 +606,17 @@ class AutomaticStageExecutor(BaseStageExecutor):
                         stderr_tail=[],
                     )
                 except Exception:
-                    pass
+                    log.exception(
+                        "[%s] headless stdout drain thread died", story_key
+                    )
 
             _th.Thread(
                 target=_drain, daemon=True, name=f"supervise-h-{story_key}"
             ).start()
         except Exception:
-            pass
+            log.warning(
+                "[%s] headless drain thread spawn failed", story_key, exc_info=True
+            )
         return str(getattr(proc, "pid", "headless"))
 
     def _adapter_name_for(self, story_key: str, stage: str) -> str:
@@ -673,13 +677,15 @@ class AutomaticStageExecutor(BaseStageExecutor):
                         )
                     )
                 except Exception:
-                    pass
+                    log.exception("[%s] PTY supervisor thread died", story_key)
 
             _th.Thread(
                 target=_supervise, daemon=True, name=f"supervise-p-{story_key}"
             ).start()
         except Exception:
-            pass
+            log.warning(
+                "[%s] PTY supervisor thread spawn failed", story_key, exc_info=True
+            )
 
 
 def resolve_profile_safe(profile_name: str):

@@ -84,6 +84,11 @@ async def lifespan(app: FastAPI):
     # 设计13:全局编排线程替代 _watch_interactive_done_files（watcher）+
     # consume_orphan_artifacts（GET /story 副作用）—— 一个线程管所有 story 的 PTY。
     from ..scheduler import get_orchestrator, stop_orchestrator
+    from ...infra.logging.thread_excepthook import install as _install_thread_excepthook
+
+    # 让逃逸到线程顶层的未处理异常可见(serve worker 线程死亡诊断兜底;详见
+    # infra/logging/thread_excepthook.py)。在编排线程起之前装好。
+    _install_thread_excepthook()
 
     get_orchestrator()
     try:

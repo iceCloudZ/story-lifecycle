@@ -18,7 +18,10 @@ Claude **不走 PTY**(§2.3)——走 ``claude -p --output-format stream-json`` 
 from __future__ import annotations
 
 import json
+import logging
 from typing import Callable
+
+log = logging.getLogger("story-lifecycle.claude_stream")
 
 ALLOW = "allow"
 DENY = "deny"
@@ -324,7 +327,7 @@ def supervise_headless_stdout(
                     ):
                         stderr_tail.pop(0)
             except Exception:
-                pass
+                log.warning("headless stderr drain thread died", exc_info=True)
 
         _th.Thread(
             target=_drain_stderr, daemon=True, name="drain-headless-stderr"
