@@ -105,6 +105,13 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(cleanup_all)
         except Exception:
             pass
+        # headless 进程也要在关停时回收(对齐 PTY cleanup_all,防泄漏)
+        try:
+            from ..executors import cleanup_headless_all
+
+            cleanup_headless_all()
+        except Exception:
+            pass
 
 
 app = FastAPI(title="Story Lifecycle Manager", version="0.1.0", lifespan=lifespan)

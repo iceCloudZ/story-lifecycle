@@ -27,6 +27,46 @@ _headless_procs: dict[tuple[str, str], object] = {}
 _headless_attempts: dict[tuple[str, str], int] = {}
 
 
+def kill_headless(story_key: str, stage: str = "") -> None:
+    """杀掉并清理 story 的 headless 进程(幂等);stage 省略则杀该 story 全部 stage。
+
+    对齐 ``pty.kill_pty``:stage 完成 / story 删除 / serve 关停时必须连带清
+    ``_headless_procs`` 注册表项 + 杀进程树,否则 headless CLI 子进程会在 story
+    已删除后继续跑(真实泄漏:design 批准 + DELETE 后 opencode 仍占 ~591MB)。
+    """
+    keys = [
+        k
+        for k in list(_headless_procs)
+        if k[0] == story_key and (not stage or k[1] == stage)
+    ]
+    for k in keys:
+        proc = _headless_procs.pop(k, None)
+        if proc is None:
+            continue
+        try:
+            from .engine.planner import _kill_headless
+
+            _kill_headless(proc)
+        except Exception:
+            log.warning(
+                "[%s] kill_headless %s failed", story_key, k[1], exc_info=True
+            )
+
+
+def cleanup_headless_all() -> None:
+    """serve 关停时杀掉所有残留 headless 进程(对齐 ``pty.cleanup_all``)。"""
+    for k in list(_headless_procs):
+        proc = _headless_procs.pop(k, None)
+        if proc is None:
+            continue
+        try:
+            from .engine.planner import _kill_headless
+
+            _kill_headless(proc)
+        except Exception:
+            log.warning("cleanup_headless_all %s failed", k, exc_info=True)
+
+
 def load_ctx(story: dict) -> dict:
     """解析 story.context_json → dict（坏 JSON 兜底空 dict）。"""
     try:

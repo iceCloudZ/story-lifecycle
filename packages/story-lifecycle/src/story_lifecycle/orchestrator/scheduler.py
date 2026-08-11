@@ -718,6 +718,13 @@ class OrchestratorThread(threading.Thread):
                 kill_pty(story_key, getattr(pty, "session_id", ""))
             except Exception:
                 pass
+            # headless:pty.kill() 已杀进程,这里补 pop 注册表项(防泄漏)
+            try:
+                from .executors import kill_headless
+
+                kill_headless(story_key, stage)
+            except Exception:
+                pass
         except Exception:
             log.debug("[%s] release stage %s failed (non-fatal)", story_key, stage)
 

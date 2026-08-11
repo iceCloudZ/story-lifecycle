@@ -216,3 +216,70 @@ class TestAutomaticStageExecutor:
         db.update_story(tmp_story, context_json=json.dumps(ctx, ensure_ascii=False))
         executor.maybe_spawn(tmp_story, "design", ctx)
         assert executor.get_pty(tmp_story, "design") is None
+
+
+# ---- kill_headless / cleanup_headless_all 回归(2026-08-11 headless 泄漏修复) ----
+
+
+def test_kill_headless_pops_registry_and_kills(monkeypatch):
+    """kill_headless 必须从 _headless_procs pop 注册表项 + 调 _kill_headless。
+
+    回归:story 删除后 headless opencode 子进程仍占 ~591MB 的泄漏(服务器实测)。
+    """
+
+    class _FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def poll(self):
+            return None
+
+    from story_lifecycle.orchestrator import executors as ex
+    from story_lifecycle.orchestrator.engine import planner
+
+    killed: list = []
+    monkeypatch.setattr(planner, "_kill_headless", lambda proc: killed.append(proc))
+
+    p_design = _FakeProc(111)
+    p_impl = _FakeProc(222)
+    ex._headless_procs[("s1", "design")] = p_design
+    ex._headless_procs[("s1", "implement")] = p_impl
+    ex._headless_procs[("s2", "design")] = _FakeProc(333)
+
+    # story s1 全 stage → 杀 s1 的两个,保留 s2
+    ex.kill_headless("s1")
+    assert ("s1", "design") not in ex._headless_procs
+    assert ("s1", "implement") not in ex._headless_procs
+    assert ("s2", "design") in ex._headless_procs
+    assert set(killed) == {p_design, p_impl}
+
+    # 指定 stage → 只杀该 stage
+    ex.kill_headless("s2", "design")
+    assert ("s2", "design") not in ex._headless_procs
+
+    # 幂等:再调不抛
+    ex.kill_headless("s1")
+
+
+def test_cleanup_headless_all_clears_registry(monkeypatch):
+    """serve 关停时 cleanup_headless_all 杀掉所有残留 headless 进程。"""
+
+    class _FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def poll(self):
+            return None
+
+    from story_lifecycle.orchestrator import executors as ex
+    from story_lifecycle.orchestrator.engine import planner
+
+    killed: list = []
+    monkeypatch.setattr(planner, "_kill_headless", lambda proc: killed.append(proc))
+
+    ex._headless_procs[("s", "design")] = _FakeProc(1)
+    ex._headless_procs[("s2", "build")] = _FakeProc(2)
+
+    ex.cleanup_headless_all()
+    assert ex._headless_procs == {}
+    assert len(killed) == 2

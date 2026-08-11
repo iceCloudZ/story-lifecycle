@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from ....infra.db import models as db
 from ....infra.terminal.pty import kill_pty
+from ...executors import kill_headless
 from ....sourcing.lifecycle_state import LifecycleState
 from ....sourcing.state_machine import (
     activate as sm_activate,
@@ -305,6 +306,7 @@ def delete_story(story_key: str):
     if not db.soft_delete_story(story_key):
         raise HTTPException(404, "Story not found or already deleted")
     kill_pty(story_key)
+    kill_headless(story_key)  # story 删除时回收 headless 子进程(防泄漏)
     return {"ok": True}
 
 
