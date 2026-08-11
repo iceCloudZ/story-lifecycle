@@ -125,6 +125,18 @@ r6(临时 systemd-run unit)证明修法有效(存活 1h45min,穿过 design→imp
 
 **结论:serve 健壮性问题闭环。** 真凶(sshd 会话拆除 SIGKILL)抓到 + 修法(永久 user unit,脱离 sshd + 自愈 + 持久)部署验证。剩余仅时间绑定的 6h 汇报(cron 05:47)。
 
+#### D10(2026-08-12 ~04:20)— item 1-5 收尾(用户醒后追加要求全做)
+
+1. **kill_headless 服务器实测 → 抓出 + 修了真回归**(commit fbe54b47):editable 部署 e769c3ae 后第一次 DELETE story → kill_headless → kill_tree 的 `killpg(getpgid(child))` 打到 serve 进程组(opencode 继承了 serve 的组)→ **serve 被杀**(每删一 story 就重起,Restart 兜底)。e769c3ae 单测 mock 了 `_kill_headless`,漏了真 kill_tree 的 killpg 行为。**修:`_spawn_headless` 的 Popen 加 `start_new_session=True`**(opencode 进独立进程组,killpg 只杀 opencode+子)。+ POSIX 回归测试(起 start_new_session 子,走真 kill_headless,断言父存活)。部署后实测:`DELETE 200` + opencode 被杀 + **serve 存活 ✓**。
+2. **eval 正式跑一轮(eval ui-replay 全 replay_set)**:2/2 story 产 spec、零停滞零异常、零崩溃。judge 数据:hc-order=`{4,2,3}`、hc-limit=`{5,5,4}`(hc-limit spec 质量更高;方差=flash 随机性,非 bug)。POLL_TIMEOUT=1500 + kill_headless 双修后,eval 第一次干净跑通。
+3. **启动自检**(commit ac4f37fe):`_run_server` 调 `_in_session_scope()`,命中 `session-*.scope` 就 `log.warning`(会被 sshd SIGKILL,改用 systemd/tmux/linger)。防再踩启动姿势坑。+ 回归测试。
+4. **清理服务器残留**:删 auditd SIGKILL 监听规则 + `serve-repro*.log` + `manual_repro.py`。
+5. **全流程 design→implement→verify(FULLTEST 不删)**:serve 穿过 design→implement 转换(kill_headless 在 stage-done 触发,**serve 存活 ✓**),但 implement 阶段 story **paused**(opencode/flash 写不出能过 implement 的代码 → gate/escalate → paused),**未到 verify**。这是 serve 逻辑/模型能力,非 serve 崩。**robustness 目标达成(serve 扛住所有 stage 转换 + 多轮 delete)**,但无 story 完成 design→implement→verify→done(implement 能力是 flash 的瓶颈,非 serve 问题)。
+
+**总验证**:serve uptime ~38min+,经历 ~7 个 story(create/delete/design→implement 转换),**零崩溃**,内存健康(774Mi)。三个修复(系统服务脱 sshd + start_new_session/kill_headless + 看门狗)+ POLL_TIMEOUT 全部服务器实测验证。**item 1 抓出的 kill_headless 回归是最有价值发现**(单测漏网,服务器实测才暴露)。
+
+**服务器最终态**:永久 `story-serve.service`(脱 sshd + Restart + linger)+ editable 装 clone(以后 `git pull` 更新)+ kill_headless/看门狗/启动自检 全 live。
+
 ### 已完成(2026-08-11 ~23:55)
 
 - **4 个提交全部在本地 main,全包 pytest 1412 passed, 5 skipped**:
