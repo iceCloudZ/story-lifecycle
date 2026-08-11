@@ -295,6 +295,36 @@ def diff(results_dir):
     click.echo(f"差分报告: {res['md']}")
 
 
+@main.command(name="human-matrix")
+@click.option("--story-home", default=None, help="story-lifecycle STORY_HOME（默认读环境变量）")
+def human_matrix(story_home):
+    """C 线:人判 vs 机判混淆矩阵（judge_feedback ⋈ orchestrator_decision）。
+
+    口径:机判 approve + 人判 disagree = 漏拦;机判 reject/escalate + 人判 disagree = 误拦。
+    迭代 4 设计 §5。空表不崩（输出 0 行）。
+    """
+    import os as _os
+
+    if story_home:
+        _os.environ["STORY_HOME"] = story_home
+    from story_lifecycle.infra.db import models as _db
+    from story_lifecycle.infra.db import feedback
+
+    _db.init_db()
+    m = feedback.confusion_matrix()
+    click.echo(f"反馈总数: {m['total']}（agree {m['agree']} / disagree {m['disagree']}）")
+    click.echo(f"漏拦(机判 approve + 人判 disagree): {m['missed_block']}")
+    click.echo(f"误拦(机判 reject/escalate + 人判 disagree): {m['false_block']}")
+    if m["rows"]:
+        click.echo("明细:")
+        for r in m["rows"]:
+            click.echo(
+                f"  #{r['id']} {r['story_key']} dec={r['decision_id']} "
+                f"机判={r['machine_decision']} 人判={r['human_decision']} "
+                f"note={r['note'] or '-'} @{r['created_at']}"
+            )
+
+
 @main.command(name="ref-fetch")
 @click.option("--priority", is_flag=True, help="只抓优先批(link-only ∩ stories_matched)")
 @click.option("--tapd-id", multiple=True, help="只抓指定 tapd_id（可多次）")

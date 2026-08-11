@@ -300,6 +300,70 @@ def serve(host, port):
 
 @cli.command()
 @click.argument("story_key")
+@click.argument("decision_id", type=int)
+@click.argument("human_decision", type=click.Choice(["agree", "disagree"]))
+@click.option("--note", default="", help="Optional free-text note")
+def judge_feedback(story_key, decision_id, human_decision, note):
+    """记录人判反馈（agree/disagree）—— 迭代 4 C 线人判校准。
+
+    机判在 orchestrator_decision 表；本命令写 judge_feedback 表（人判侧，
+    零 LLM 成本）。混淆矩阵：机判 approve+人判 disagree=漏拦；
+    机判 reject/escalate+人判 disagree=误拦（eval human-matrix 出矩阵）。
+
+    \b
+    Examples:
+      story judge-feedback tapd-1144381896001065570 42 disagree --note "spec 实际足够"
+    """
+    init_db()
+    from ...infra.db import feedback
+
+    try:
+        rec = feedback.record_feedback(
+            story_key, decision_id, human_decision, note=note
+        )
+    except ValueError as exc:
+        click.echo(f"✗ {exc}", err=True)
+        raise SystemExit(1)
+    click.echo(
+        f"✓ 已记录 {rec['story_key']} #{rec['decision_id']} "
+        f"机判={rec['machine_decision']} 人判={rec['human_decision']}"
+    )
+
+
+@cli.command()
+@click.option("--story-key", default=None, help="Filter by story key")
+@click.option("--matrix", is_flag=True, help="输出混淆矩阵摘要")
+def judge_feedbacks(story_key, matrix):
+    """查看人判反馈记录（或混淆矩阵）。迭代 4 C 线。
+
+    \b
+    Examples:
+      story judge-feedbacks --matrix
+      story judge-feedbacks --story-key tapd-1144381896001065570
+    """
+    init_db()
+    from ...infra.db import feedback
+
+    if matrix:
+        m = feedback.confusion_matrix()
+        click.echo(f"反馈总数: {m['total']}（agree {m['agree']} / disagree {m['disagree']}）")
+        click.echo(f"漏拦(机判approve+人判disagree): {m['missed_block']}")
+        click.echo(f"误拦(机判reject/escalate+人判disagree): {m['false_block']}")
+        return
+    rows = feedback.get_feedbacks(story_key)
+    if not rows:
+        click.echo("（无反馈记录）")
+        return
+    for r in rows:
+        click.echo(
+            f"#{r['id']} {r['story_key']} dec={r['decision_id']} "
+            f"机判={r['machine_decision']} 人判={r['human_decision']} "
+            f"note={r['note'] or '-'} @{r['created_at']}"
+        )
+
+
+@cli.command()
+@click.argument("story_key")
 def prompts(story_key):
     """查看某 story 所有 stage 的提示词(复盘用)。
 

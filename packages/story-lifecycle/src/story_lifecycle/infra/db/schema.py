@@ -24,6 +24,37 @@ def init_db():
         _create_delivery_tables(conn)
         _create_trace_tables(conn)
         _create_decision_tables(conn)
+        _create_feedback_tables(conn)
+
+
+def _create_feedback_tables(conn):
+    """feedback 族：judge_feedback（迭代 4 C 线，人判 vs 机判校准）。
+
+    机判数据在 orchestrator_decision；本表只记人判侧（零 LLM 成本）。
+    DDL 证据：packages/eval/dataset/ddl_judge_feedback.sql
+    """
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS judge_feedback (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            story_key       TEXT NOT NULL,
+            decision_id     INTEGER NOT NULL,
+            machine_decision TEXT NOT NULL DEFAULT '',
+            human_decision  TEXT NOT NULL CHECK (human_decision IN ('agree', 'disagree')),
+            note            TEXT NOT NULL DEFAULT '',
+            decided_at      TEXT NOT NULL DEFAULT '',
+            created_at      TEXT NOT NULL,
+            UNIQUE(story_key, decision_id)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jf_story ON judge_feedback(story_key)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jf_decision ON judge_feedback(decision_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jf_created ON judge_feedback(created_at)"
+    )
 
 
 def _create_story_tables(conn):
