@@ -150,6 +150,29 @@ r6(临时 systemd-run unit)证明修法有效(存活 1h45min,穿过 design→imp
 
 **结论**:implement 阶段从不失败(你判断对 —— flash 够用);卡的是 lifecycle confirm-gate,auto-advance 续推后全流程闭环。**全流程 eval(path B / serve)现在可全自动跑通**,与 path A(in-process)凑 A vs B 差分(见与 eval-journey 合并方向)。
 
+#### D12(2026-08-12 ~15:00)— prompt 迭代闭环 + 并行轨对齐 + 整体收口
+
+**eval 驱动 prompt 迭代闭环(eval 第一次兑现"改 prompt → 提分")**:
+- 5-story path-B eval 测出 `template_compliance` 均值仅 **2.4**(两次得 1)。诊断:design prompt 的
+  `build_design_dimensions_section` checklist 给的是 13 个**技术设计维度**,跟 spec-template/judge 要的
+  **Release 部署章节**(SQL变更/Nacos/验收测试/验收计划/大表)错位 → opencode 忠实写 13 维度但缺 Release 章节。
+- 改 prompt(`0a0d8481`):checklist 末尾补「spec.md 必须包含 Release 章节」段。
+- 复测(5 story,path B):`template_compliance` 均值 **2.4 → 3.8(+58%)**、最低 1→3(不再有 1);completeness
+  4.2→4.8、acceptability 2.8→3.8 同涨。**直接证据**:改后 spec 真带了 `### SQL 变更/Nacos/验收测试/验收计划/大表`
+  全齐(opencode 照新 prompt 写出来了,非 judge 噪音)。注:n=1 前后对比,幅度远超 flash 方差且 spec 结构变化是
+  直接证据;要更严谨可多轮平均。
+
+**并行轨(kimi/opencode)对齐情况**(他们在我干活时也提了 commit):
+- `c4c2d706` pipeline_replay(path A)也加了 auto-advance —— 跟我 path B 的 ui-full(`f6358c0b`)对齐,**两轨都过 confirm-gate 了**(我在同步提示词提醒过"path A 也得加",他们加了)。
+- `0c4f6741` 迭代4 附录:A 线结论(格1放行率 3/15=20%、格2拦截 19/19=100% → 系统性保守,议题2 升级待修);B 线 no_artifacts 根因(短 id `[-7:]` bug + story_refs 钉钉 UI 噪音)+ nightly 验证。
+- ⚠️ eval-journey 文档有**非 utf-8 字节(0xa3 @ pos 15951,在并行轨正文里)** —— 我之前 utf-8 追加变乱码已撤回(revert),编码问题在他们那边,建议修。
+
+**整体收口(本会话 path B / serve 轨)**:
+- serve 健壮性:崩(sshd SIGKILL)/泄漏(kill_headless+start_new_session)/看门狗/自检/超时 —— 全修,9h+ 零崩。
+- path-B harness:ui-replay(design)/ ui-full(全流程 auto-advance)/ diff(A vs B)。
+- eval 产出:A vs B 差分(第一份,serve≈in-process)/ 5-story 方差 / **prompt 迭代闭环(template +58%)**。
+- 合并:eval-journey ↔ SERVE-ROBUSTNESS 交叉引用 + 101 统一 env(path A+B 同机)+ 同步提示词。
+
 ### 已完成(2026-08-11 ~23:55)
 
 - **4 个提交全部在本地 main,全包 pytest 1412 passed, 5 skipped**:
