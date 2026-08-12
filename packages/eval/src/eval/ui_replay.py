@@ -32,6 +32,7 @@ log = logging.getLogger("eval.ui_replay")
 PROFILE = "eval-replay"  # 原生 AUTO_PROFILES → serve 编排线程自动 spawn
 POLL_INTERVAL = 8
 POLL_TIMEOUT = 1500  # flash 设计阶段真实耗时 8~15min 方差(2026-08-11 服务器实测),600s 会把慢轮误判"停滞"
+FULL_TIMEOUT = 5400  # 全流程(design+implement+verify+lifecycle gates)~30-45min,留足 90min
 
 
 def _evt(proc: dict, step: str, **kw: Any) -> None:
@@ -70,6 +71,18 @@ class _ServeClient:
 
     def get_sessions(self, key):
         r = self.client.get(f"/api/story/{key}/sessions")
+        r.raise_for_status()
+        return r.json()
+
+    def advance_lifecycle(self, key):
+        """POST /lifecycle/advance —— 续推 lifecycle confirm-gate(开发→测试 等 ui_button 状态)。
+
+        全自动 eval 用:story 在状态闸 paused 等人确认时,驱动层自动续推,让
+        design→implement→verify→done 全自动跑通(编排器的 gate 是给真人 story 的安全网,
+        eval 测试 story 自动绕过合理)。2026-08-12:FULLTEST 实测 implement approve 后卡在
+        开发→测试 闸,POST advance 即续推到 verify。
+        """
+        r = self.client.post(f"/api/story/{key}/lifecycle/advance")
         r.raise_for_status()
         return r.json()
 
@@ -273,6 +286,117 @@ def run_ui_replay(serve_url: str = "http://localhost:8180",
         "ok": sum(1 for o in outcomes if o.get("spec_produced")),
         "failed": [o for o in outcomes if not o.get("spec_produced")],
         "total_anomalies": sum(len(o.get("anomalies", [])) for o in outcomes),
+        "stories": outcomes,
+    }
+    (run_dir / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary
+
+
+def run_ui_full_lifecycle(serve_url: str = "http://localhost:8180",
+                           results_dir: str | Path | None = None,
+                           only: str | None = None) -> dict[str, Any]:
+    """全自动全流程 eval:path B(serve)跑 design→implement→verify→done,遇 lifecycle
+    confirm-gate(开发→测试、测试→done 等 ui_button 状态)自动 POST /lifecycle/advance 续推。
+
+    区别于 run_ui_replay(design-only,出 spec 就 judge+删):本函数跑到终态(completed/failed),
+    记录各 stage 推进 + auto-advance 次数 + 最终结果,用于验证全流程能跑通(各 stage 质量由
+    serve 侧 judge 判,本函数只观测 + 续推 gate)。诊断来源(2026-08-12):implement approve 后
+    卡在 开发→测试 闸,非 stage 失败、非模型能力,纯 lifecycle gate。
+    """
+    judges.configure_llm_env()
+    replay_set = load_replay_set()
+    res_dir = Path(results_dir) if results_dir else RESULTS_DIR
+    date = _dt.date.today().strftime("%Y%m%d")
+    run_dir = res_dir / f"ui_full_{date}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    client = _ServeClient(serve_url)
+    outcomes: list[dict[str, Any]] = []
+
+    for i, entry in enumerate(replay_set, 1):
+        key = entry["story_key"]
+        if only and key != only:
+            continue
+        workspace = entry["workspace"]
+        log.info("=" * 60)
+        log.info("[%d/%d] UI 全流程 %s (workspace=%s)", i, len(replay_set), key, workspace)
+        story_out = run_dir / dataset._safe_segment(key)
+        if story_out.exists():
+            shutil.rmtree(story_out, ignore_errors=True)
+        story_out.mkdir(parents=True, exist_ok=True)
+
+        ui_key = f"UI-{key}-{int(time.time()) % 100000}"
+        proc: dict[str, Any] = {
+            "story_key": key, "ui_key": ui_key, "workspace": workspace,
+            "final_status": None, "final_stage": None, "completed_stages": [],
+            "advances": 0, "stage_trace": [], "error": None,
+            "elapsed_s": 0, "anomalies": [],
+        }
+        t0 = time.time()
+        try:
+            gold_prd = _gold_prd(key)
+            client.create_story(ui_key, title=key, profile=PROFILE, workspace=workspace, autostart=False)
+            client.start(ui_key, content=gold_prd)
+            client.confirm_plan(ui_key)
+            log.info("[%s] created+started+confirmed → 全流程开始", key)
+
+            poll_count = 0
+            last_pause_stage = None  # guard:同 stage 反复 paused 不无限 advance
+            status, stage, done = None, None, []
+            while time.time() - t0 < FULL_TIMEOUT:
+                poll_count += 1
+                try:
+                    st = client.get_story(ui_key)
+                except Exception as e:
+                    proc["anomalies"].append(f"poll#{poll_count} GET failed: {e}")
+                    time.sleep(POLL_INTERVAL)
+                    continue
+                raw_ctx = st.get("contextJson")
+                ctx = json.loads(raw_ctx) if isinstance(raw_ctx, str) else (raw_ctx or {})
+                done = ctx.get("_completed_stages") or []
+                status, stage = st.get("status"), st.get("currentStage")
+                proc["final_status"], proc["final_stage"], proc["completed_stages"] = status, stage, done
+                if not proc["stage_trace"] or proc["stage_trace"][-1].get("stage") != stage or proc["stage_trace"][-1].get("status") != status:
+                    proc["stage_trace"].append({"poll": poll_count, "stage": stage, "status": status, "done": list(done)})
+                if poll_count <= 3 or poll_count % 6 == 0:
+                    log.info("[%s] poll#%d status=%s stage=%s done=%s", key, poll_count, status, stage, done)
+                # auto-advance:paused 在 confirm-gate → 续推。guard 防同 stage 连续 advance
+                if status == "paused":
+                    if stage != last_pause_stage:
+                        last_pause_stage = stage
+                        try:
+                            client.advance_lifecycle(ui_key)
+                            proc["advances"] += 1
+                            log.info("[%s] auto-advance #%d (paused @ %s)", key, proc["advances"], stage)
+                        except Exception as e:
+                            proc["anomalies"].append(f"advance failed @ {stage}: {e}")
+                if status in ("completed", "failed"):
+                    log.info("[%s] 终态 status=%s stage=%s done=%s (advances=%d)", key, status, stage, done, proc["advances"])
+                    break
+                time.sleep(POLL_INTERVAL)
+            else:
+                proc["anomalies"].append(f"全流程超时({FULL_TIMEOUT}s): final {status}@{stage} done={done}")
+                log.warning("[%s] 全流程超时", key)
+        except Exception as e:  # noqa: BLE001
+            proc["error"] = f"{e.__class__.__name__}: {e}"
+            proc["anomalies"].append(f"异常: {e}\n{traceback.format_exc()[-400:]}")
+            log.exception("[%s] 全流程异常", key)
+        finally:
+            proc["elapsed_s"] = round(time.time() - t0, 1)
+            client.delete_story(ui_key)
+
+        (story_out / "result.json").write_text(
+            json.dumps(proc, ensure_ascii=False, indent=2), encoding="utf-8")
+        outcomes.append(proc)
+        log.info("[%s] 全流程汇总: final=%s@%s done=%s advances=%d anomalies=%d (%.1fs)",
+                 key, proc["final_status"], proc["final_stage"], proc["completed_stages"],
+                 proc["advances"], len(proc["anomalies"]), proc["elapsed_s"])
+
+    summary = {
+        "generated_at": _dt.datetime.now().isoformat(timespec="seconds"),
+        "path": "B-full (serve full lifecycle)", "count": len(outcomes),
+        "completed": sum(1 for o in outcomes if o.get("final_status") == "completed"),
         "stories": outcomes,
     }
     (run_dir / "summary.json").write_text(

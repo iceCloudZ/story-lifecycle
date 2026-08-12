@@ -285,6 +285,20 @@ def ui_replay(serve_url, results_dir, only):
         click.echo(f"  ! {f['story_key']}: spawn={f.get('spawn_triggered')} paused={f.get('paused')} {str(f.get('error',''))[:60]}")
 
 
+@main.command(name="ui-full")
+@click.option("--serve-url", default="http://localhost:8180", help="serve 地址")
+@click.option("--results-dir", default=None)
+@click.option("--only", default=None, help="只跑单个 story_key")
+def ui_full(serve_url, results_dir, only):
+    """UI 全流程 eval —— design→implement→verify→done,自动续推 lifecycle confirm-gate。"""
+    from .ui_replay import run_ui_full_lifecycle
+
+    res = run_ui_full_lifecycle(serve_url, results_dir, only=only)
+    click.echo(f"全流程完成: 共 {res['count']},终态 completed {res['completed']}")
+    for s in res["stories"]:
+        click.echo(f"  - {s['story_key']}: final={s.get('final_status')}@{s.get('final_stage')} done={s.get('completed_stages')} advances={s.get('advances')} ({s.get('elapsed_s')}s)")
+
+
 @main.command(name="diff")
 @click.option("--results-dir", default=None)
 def diff(results_dir):
