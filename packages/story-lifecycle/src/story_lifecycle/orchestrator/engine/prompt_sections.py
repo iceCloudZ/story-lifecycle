@@ -448,6 +448,14 @@ def build_design_dimensions_section(
         " 11. 权限 12. 风险回滚 13. 非目标\n"
         "**纪律**：只问真正卡住你的岔路（最多 3 轮）；能从代码/PRD/既有约定推断的，自己决断进 "
         "decision_points，不要问。\n"
+        "\n"
+        "**spec.md 必须包含 Release 章节**（无变更写「无变更」，不可省略——否则模板评审不过）：\n"
+        "- **SQL 变更**：服务/表名/变更类型/SQL/风险评估（表）\n"
+        "- **Nacos 配置变更**：Data ID/Group/旧值/新值/说明（表）\n"
+        "- **验收测试**：Smoke Tests（API 冒烟，YAML，必填）；Integration Tests（DB+MQ 编排，"
+        "有 MQ/异步场景时必填）；无 API 测试写明原因\n"
+        "- **验收计划**：指标/数据源/查询方式/预期值/检查时机（表）\n"
+        "- **大表名单**：涉及大表写明\n"
     )
 
     # BUG #15: 高价值维度 playbook 改触发式引导(不全量塞框架,避免 prompt 膨胀 +
