@@ -141,6 +141,15 @@ r6(临时 systemd-run unit)证明修法有效(存活 1h45min,穿过 design→imp
 
 **服务器最终态**:永久 `story-serve.service`(脱 sshd + Restart + linger)+ editable 装 clone(以后 `git pull` 更新)+ kill_headless/看门狗/启动自检 全 live。
 
+#### D11(2026-08-12 ~10:10)— 全流程 eval 闭环(ui-full auto-advance 验证成功)
+
+`eval ui-full --only 1064584` 跑通**完整 design→implement→verify→done**(commit f6358c0b 的 auto-advance):
+- design → implement(~10min)→ **auto-advance #1**(检测 `paused @ implement` = 开发→测试 confirm-gate → 自动 POST /lifecycle/advance)→ verify → **终态 `completed`,done=['design','implement','verify']**,advances=1,anomalies=0,1496s。
+- 并行的 FULLTEST-77488(手动 advance 的)也 completed(verify judge approve → All stages completed)。
+- **两个 story 都跑完全流程**,serve 6.5h 零崩,内存 719Mi。
+
+**结论**:implement 阶段从不失败(你判断对 —— flash 够用);卡的是 lifecycle confirm-gate,auto-advance 续推后全流程闭环。**全流程 eval(path B / serve)现在可全自动跑通**,与 path A(in-process)凑 A vs B 差分(见与 eval-journey 合并方向)。
+
 ### 已完成(2026-08-11 ~23:55)
 
 - **4 个提交全部在本地 main,全包 pytest 1412 passed, 5 skipped**:
