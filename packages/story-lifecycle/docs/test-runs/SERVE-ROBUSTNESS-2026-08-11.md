@@ -195,7 +195,39 @@ r6(临时 systemd-run unit)证明修法有效(存活 1h45min,穿过 design→imp
 
 ### 需用户拍板的下一步(已记,等醒)
 
-1. **git push 4 提交 + 服务器重装**(让 kill_headless/SIGHUP/看门狗在服务器生效)—— 需明确授权。
+1. **git push 未推送提交 + 服务器重装**(让 kill_headless/SIGHUP/看门狗/slug-dir 清理在服务器生效)—— 需明确授权(AGENTS.md:git push 须用户要求)。
 2. eval pipeline 那一 pile 未提交改动(ui_replay.py / cli.py / dataset.py 等)是否单独 commit(我没动它们,除 POLL_TIMEOUT 一行)。
 3. hc-limit(tapd-7447)judge 低分(4/1/1)—— spec 落地但质量差,是另一个问题(opencode 设计质量 / judge 标准),不在本轮 serve 健壮性范围,记录待查。
+
+### D13 worktree 清理治本 —— slug dir 才是真凶(db855c99,本地已验证,待 push 部署)
+
+**背景**:用户要求"连治本的 delete_story 清 worktree 一起做"。2a42c3e7 加了
+`force_cleanup_story_worktrees`(清 git worktree)+ eval-replay `cleanup_worktree_on_delete`
+flag + delete_story 接线 + run_dir 时间戳化 + eval cleanup 保留 results。
+
+**exec_73aee449 实测(101 服务器,2a42c3e7 部署后)**:
+
+| 项 | 结果 |
+|---|---|
+| 部署(git pull + serve 重启) | ✅ serve UP pid=790175 |
+| eval cleanup(清 active,留 results) | ✅ "cleared 0 active → failed" + "results/ 成果物保留" |
+| run_dir 时间戳化 | ✅ `ui_replay_20260812-154050/`(date-HHMMSS,不覆写) |
+| **delete 清 worktree** | ❌ **worktree 目录 0→1(没清干净!)** |
+
+**根因**(Explore agent 定位):agent cwd 的 **workspace slug dir**(`<worktrees_root>/<slug>/`,
+`_prepare_story_workspace` 建、存 `context_json.workspace_path`)从来没人回收。
+`force_cleanup_story_worktrees` 只清 git worktree(注册在 `story_projects` 的),漏了 slug dir
+—— 这才是"eval 跑一轮留一片"的真凶(2a42c3e7 只治了表层的 git worktree)。
+
+**db855c99 修**:force_cleanup 加第二层 —— 读 `context_json.workspace_path` → resolve 后确认
+位于 `get_worktrees_root()` 之内(**安全闸**:绝不碰任意路径/主 workspace/repo)→ rmtree。
+real-user profile 不开 flag,仍保留 worktree 给 /restore。
+
+**本地验证**(131 passed 0 failed):
+- `test_force_cleanup_story_worktrees` 扩展:建真 git worktree + 真 slug dir → force_cleanup →
+  `removed>=2` + 两个目录都没了(覆盖两层)。
+- 新增 `test_force_cleanup_refuses_paths_outside_worktrees_root`:workspace_path 指 root 外的
+  "precious_repo" → 安全闸挡住,不删。
+
+**待办**:push db855c99 → 服务器重装 → 重跑 exec_73aee449 同样验证 → 期望 worktree 目录 0→0。
 
