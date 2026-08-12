@@ -12,10 +12,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import time
 from pathlib import Path
+
+log = logging.getLogger("eval.pipeline_replay")
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent.parent
 SANDBOX = PACKAGE_ROOT / "sandbox"
@@ -45,7 +48,7 @@ def _bootstrap_env() -> None:
         dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
 
-def run_one(tapd_id: str, gold_dir: Path, out: dict) -> dict:
+def run_one(tapd_id: str, gold_dir: Path, out: dict, auto_advance: bool = False) -> dict:
     tag = os.environ.get("COV_TAG", "")
     story_key = f"tapd-{tapd_id}" + (f"-{tag}" if tag else "")
     ws = SANDBOX / "ws" / story_key
@@ -114,9 +117,17 @@ def run_one(tapd_id: str, gold_dir: Path, out: dict) -> dict:
         return out
 
     # 3. 驱动执行（design→verify，30min 熔断）
+    #    auto_advance（迭代 4 B 线，eval 沙箱专用）：drive_story_sync 一轮
+    #    max_rounds=600（~2min 空转）不够真实 agent 执行时长——循环驱动直到
+    #    终态；paused（lifecycle confirm-gate 等人确认）→ 自动推进（等价
+    #    POST /lifecycle/advance paused 分支：清 _stage_gate + sm_activate）。
+    #    生产 story 的 confirm 安全网不动——仅 eval 回放路径传 auto_advance=True。
     t0 = time.monotonic()
     try:
-        planner.continue_orchestrator_agent(story_key, headless=True)
+        if not auto_advance:
+            planner.continue_orchestrator_agent(story_key, headless=True)
+        else:
+            _drive_auto_advance(story_key)
         out["run_ok"] = True
         out["run_s"] = round(time.monotonic() - t0, 1)
     except Exception as e:
@@ -141,12 +152,62 @@ def run_one(tapd_id: str, gold_dir: Path, out: dict) -> dict:
     return out
 
 
+def _drive_auto_advance(story_key: str, max_cycles: int = 12) -> int:
+    """eval 沙箱专用：循环驱动 + confirm-gate 自动推进（迭代 4 B 线）。
+
+    - 每轮 continue_orchestrator_agent（内部 drive_story_sync 600 rounds ≈2min）
+    - paused（lifecycle confirm-gate 等人确认）→ 清 _stage_gate + sm_activate
+      续推（等价 ZCode ui-full 的 POST /lifecycle/advance paused 分支）
+    - 同 stage 连续 advance 防护：连续 3 次同 stage 无进展 → 停（防死循环）
+    - completed/failed → 结束
+
+    Returns: auto-advance 次数。
+    """
+    import json as _json
+
+    from story_lifecycle.infra.db import models as db
+    from story_lifecycle.orchestrator.engine import planner
+    from story_lifecycle.sourcing.state_machine import activate as sm_activate
+
+    gates = 0
+    last_stage = None
+    same_stage_streak = 0
+    for _ in range(max_cycles):
+        planner.continue_orchestrator_agent(story_key, headless=True)
+        story = db.get_story(story_key)
+        if not story or story.get("status") in ("completed", "failed"):
+            break
+        if story.get("status") != "paused":
+            last_stage = story.get("current_stage")
+            continue  # active：可能仍在执行，下一轮 drive 继续
+        # confirm-gate：auto-advance
+        stage = story.get("current_stage")
+        if stage == last_stage:
+            same_stage_streak += 1
+            if same_stage_streak >= 3:
+                log.warning("[%s] 同 stage 连续 3 次 advance 无进展 → 停止", story_key)
+                break
+        else:
+            same_stage_streak = 0
+        last_stage = stage
+        ctx = _json.loads(story.get("context_json") or "{}")
+        ctx.pop("_stage_gate", None)
+        try:
+            db.update_story(story_key, context_json=_json.dumps(ctx, ensure_ascii=False))
+        except Exception:  # noqa: BLE001
+            pass
+        sm_activate(story_key)
+        gates += 1
+    return gates
+
+
 def main() -> None:
     import argparse
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default=None, help="只跑单个 tapd_id")
     ap.add_argument("--samples", default=str(SANDBOX / "gold" / "samples20.json"), help="样本清单")
+    ap.add_argument("--auto-advance", action="store_true", help="eval 沙箱专用:confirm-gate 自动推进")
     args = ap.parse_args()
 
     _bootstrap_env()
@@ -158,7 +219,8 @@ def main() -> None:
     results = []
     for s in samples:
         out = {"cls": s.get("cls", "?")}
-        r = run_one(s["tapd_id"], SANDBOX / "gold" / s["story_key"], out)
+        r = run_one(s["tapd_id"], SANDBOX / "gold" / s["story_key"], out,
+                    auto_advance=args.auto_advance)
         results.append(r)
         print(json.dumps(
             {k: r.get(k) for k in ("story_key", "cls", "status", "create_ok", "run_ok", "run_s", "error", "spec_exists")},
