@@ -186,8 +186,8 @@ def run_replay(
     """执行回放集;返回汇总 dict。only=story_key 只跑单个。"""
     replay_set = load_replay_set()
     res_dir = Path(results_dir) if results_dir else RESULTS_DIR
-    date = _dt.date.today().strftime("%Y%m%d")
-    run_dir = res_dir / f"replay_{date}"
+    stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = res_dir / f"replay_{stamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     from .judges import configure_llm_env

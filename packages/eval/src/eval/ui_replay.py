@@ -130,8 +130,8 @@ def run_ui_replay(serve_url: str = "http://localhost:8180",
     judges.configure_llm_env()
     replay_set = load_replay_set()
     res_dir = Path(results_dir) if results_dir else RESULTS_DIR
-    date = _dt.date.today().strftime("%Y%m%d")
-    run_dir = res_dir / f"ui_replay_{date}"
+    stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = res_dir / f"ui_replay_{stamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     client = _ServeClient(serve_url)
@@ -307,8 +307,8 @@ def run_ui_full_lifecycle(serve_url: str = "http://localhost:8180",
     judges.configure_llm_env()
     replay_set = load_replay_set()
     res_dir = Path(results_dir) if results_dir else RESULTS_DIR
-    date = _dt.date.today().strftime("%Y%m%d")
-    run_dir = res_dir / f"ui_full_{date}"
+    stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = res_dir / f"ui_full_{stamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     client = _ServeClient(serve_url)

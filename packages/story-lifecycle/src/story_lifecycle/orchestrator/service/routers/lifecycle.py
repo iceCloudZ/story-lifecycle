@@ -307,6 +307,20 @@ def delete_story(story_key: str):
         raise HTTPException(404, "Story not found or already deleted")
     kill_pty(story_key)
     kill_headless(story_key)  # story 删除时回收 headless 子进程(防泄漏)
+    # eval 等"不需 restore"的 profile:删 story 时连 worktree 一起清(防积累)。
+    # real-user profile 不开此 flag → 保留 worktree 给 /restore。
+    try:
+        s = db.get_story(story_key) or {}
+        from ...engine.profile_loader import resolve_profile
+
+        if resolve_profile(s.get("profile") or "minimal").raw.get(
+            "cleanup_worktree_on_delete"
+        ):
+            from ...workspace.worktree.handler import force_cleanup_story_worktrees
+
+            force_cleanup_story_worktrees(story_key)
+    except Exception:
+        pass
     return {"ok": True}
 
 

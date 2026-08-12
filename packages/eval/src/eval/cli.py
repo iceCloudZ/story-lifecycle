@@ -247,6 +247,33 @@ def scan_all(dataset_dir, results_dir, limit, authors, branch_patterns, mine):
         click.echo(f"  ! {e}", err=True)
 
 
+@main.command(name="cleanup")
+@click.option("--story-home", default=None, help="serve 的 STORY_HOME(默认 ~/.story-lifecycle 或 $STORY_HOME)")
+def cleanup(story_home):
+    """清上轮 eval 残留 —— 每次跑 eval 前调一次(流程第 0 步)。
+
+    清:serve DB 里 active 的测试 story(防编排线程 tick 残留 / 卡住下轮)。
+    保留:results/ 成果物(spec/judge/报告,run_dir 已时间戳化不覆写);
+    worktree 由 delete_story 的 cleanup_worktree_on_delete(eval-replay profile 已开)自动清。
+    """
+    import os
+    import sqlite3
+
+    sh = story_home or os.environ.get("STORY_HOME") or os.path.expanduser("~/.story-lifecycle")
+    db_path = os.path.join(sh, "story.db")
+    if not os.path.exists(db_path):
+        click.echo(f"(无 DB at {db_path},跳过)")
+        return
+    con = sqlite3.connect(db_path)
+    try:
+        n = con.execute("UPDATE story SET status='failed' WHERE status='active'").rowcount
+        con.commit()
+    finally:
+        con.close()
+    click.echo(f"cleared {n} active → failed(DB: {db_path})")
+    click.echo("results/ 成果物保留(eval run_dir 时间戳化,不覆写)。")
+
+
 @main.command()
 @click.option("--results-dir", default=None)
 @click.option("--only", default=None, help="只回放单个 story_key")

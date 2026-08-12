@@ -459,3 +459,29 @@ class TestWorktreeCleanupIntegration:
         result = cleanup_worktree("S-NOFIN", proj["id"], delivery_state="review_pending")
         assert result["action"] == "reject"
         assert Path(wt_path).exists()
+
+    def test_force_cleanup_story_worktrees(self, tmp_path, isolated_story_home):
+        """force_cleanup_story_worktrees:不查 delivery_state,强制移除(eval/delete 用)。
+
+        回归 2026-08-12:eval story 删除时 worktree 不回收(实测 42 个堆积)。加 force 版,
+        区别于 cleanup_worktree(要 merged/abandoned 才删)—— eval story 没 deliver,旧函数会 reject。
+        """
+        from story_lifecycle.infra.db import models as db
+        from story_lifecycle.orchestrator.workspace.worktree.handler import (
+            force_cleanup_story_worktrees,
+        )
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+        branch = _default_branch(repo)
+        proj = db.create_project(name="svc", repo_path=str(repo), default_branch=branch)
+        db.create_story("S-FORCE", "S-FORCE", str(repo))
+        db.update_story("S-FORCE", intake_state="ready")
+        db.bind_story_project("S-FORCE", proj["id"], branch="feat/force", base_branch=branch)
+        results = prepare_worktrees("S-FORCE", worktree_root=str(tmp_path / "wts"))
+        wt_path = results[0]["worktree_path"]
+        assert Path(wt_path).exists()
+
+        removed = force_cleanup_story_worktrees("S-FORCE")
+        assert removed >= 1
+        assert not Path(wt_path).exists()  # worktree 被强制移除

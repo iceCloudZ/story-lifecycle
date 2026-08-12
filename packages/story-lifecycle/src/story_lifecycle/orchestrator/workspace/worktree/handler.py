@@ -179,6 +179,41 @@ def prepare_worktrees(story_key: str, worktree_root: str = "") -> list[dict]:
     return results
 
 
+def force_cleanup_story_worktrees(story_key: str) -> int:
+    """Force-remove ALL worktrees for a story(eval/delete 用,不查 delivery_state)。
+
+    对齐 prepare_worktrees:遍历 ``db.get_story_projects``,对每个 worktree_path 跑
+    ``git worktree remove --force``。eval story 不需要 restore,删除时连 worktree 一起清,
+    防积累(2026-08-12 实测:42 个 worktree 堆积,delete 只软删 story 不清 worktree)。
+    real-user story 不调本函数(保留 worktree 给 /restore)。Returns: 移除数。
+    """
+    import shutil as _sh
+    import subprocess as _sp
+
+    from ....infra.db import models as db
+
+    removed = 0
+    for sp in db.get_story_projects(story_key):
+        wt = sp.get("worktree_path") or ""
+        if not wt or not Path(wt).exists():
+            continue
+        project = db.get_project(sp["project_id"]) if sp.get("project_id") else None
+        repo_path = (project or {}).get("repo_path") or ""
+        try:
+            if repo_path and Path(repo_path).exists():
+                _sp.run(
+                    ["git", "-C", repo_path, "worktree", "remove", "--force", wt],
+                    capture_output=True,
+                    timeout=30,
+                )
+            else:
+                _sh.rmtree(wt, ignore_errors=True)  # 兜底:注册残留由 git prune 清
+            removed += 1
+        except Exception:
+            pass
+    return removed
+
+
 def cleanup_worktree(
     story_key: str,
     project_id: int,

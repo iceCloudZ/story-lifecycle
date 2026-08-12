@@ -4,6 +4,7 @@ version: 2
 cli: opencode
 execution_mode: headless
 hidden: true
+cleanup_worktree_on_delete: true  # eval story 不需 restore,删时连 worktree 清(防积累)
 
 stages:
   design:
