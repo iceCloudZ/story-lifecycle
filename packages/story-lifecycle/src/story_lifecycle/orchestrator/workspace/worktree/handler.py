@@ -180,19 +180,29 @@ def prepare_worktrees(story_key: str, worktree_root: str = "") -> list[dict]:
 
 
 def force_cleanup_story_worktrees(story_key: str) -> int:
-    """Force-remove ALL worktrees for a story(eval/delete 用,不查 delivery_state)。
+    """Force-remove ALL worktrees + workspace slug dir(eval/delete 用,不查 delivery_state)。
 
-    对齐 prepare_worktrees:遍历 ``db.get_story_projects``,对每个 worktree_path 跑
-    ``git worktree remove --force``。eval story 不需要 restore,删除时连 worktree 一起清,
-    防积累(2026-08-12 实测:42 个 worktree 堆积,delete 只软删 story 不清 worktree)。
-    real-user story 不调本函数(保留 worktree 给 /restore)。Returns: 移除数。
+    两层清理(对齐 prepare 链路的两层创建):
+
+    1. **git worktree** — 遍历 ``db.get_story_projects``,对每个 worktree_path 跑
+       ``git worktree remove --force``(对齐 ``prepare_worktrees``)。
+    2. **workspace slug dir** — 读 ``context_json.workspace_path``(``<worktrees_root>/<slug>/`，
+       即 agent 的 cwd,由 ``_prepare_story_workspace`` mkdir)。**这是 eval 积累的真凶**:
+       2026-08-12 实测 delete 后该目录 0→1 堆积(原版只清 git worktree,漏了 slug dir)。
+
+    安全闸:slug dir 解析后必须确认位于 ``get_worktrees_root()`` 之内才 rmtree —— 绝不碰
+    任意路径 / 主 workspace / repo。real-user story 不调本函数(profile 未开
+    ``cleanup_worktree_on_delete``,保留 worktree 给 /restore)。Returns: 移除数。
     """
+    import json as _json
     import shutil as _sh
     import subprocess as _sp
 
+    from ....infra.config import get_worktrees_root
     from ....infra.db import models as db
 
     removed = 0
+    # 1) git worktrees(注册在 story_projects 的)
     for sp in db.get_story_projects(story_key):
         wt = sp.get("worktree_path") or ""
         if not wt or not Path(wt).exists():
@@ -211,6 +221,27 @@ def force_cleanup_story_worktrees(story_key: str) -> int:
             removed += 1
         except Exception:
             pass
+
+    # 2) workspace slug dir(agent cwd,_prepare_story_workspace 建的——eval 积累真凶)
+    try:
+        story = db.get_story(story_key) or {}
+        ctx_raw = story.get("context_json", "{}") or "{}"
+        ctx = _json.loads(ctx_raw) if isinstance(ctx_raw, str) else (ctx_raw or {})
+        ws_path = (ctx.get("workspace_path") or "").strip()
+        if ws_path:
+            ws = Path(ws_path).resolve()
+            root = get_worktrees_root().resolve()
+            # 安全闸:只删 worktrees_root 直接子目录,绝不碰任意路径/主 workspace/repo
+            try:
+                ws.relative_to(root)
+            except ValueError:
+                pass  # 不在 worktrees_root 下 → 保守跳过
+            else:
+                if ws.is_dir() and ws != root:
+                    _sh.rmtree(ws, ignore_errors=True)
+                    removed += 1
+    except Exception:
+        pass
     return removed
 
 

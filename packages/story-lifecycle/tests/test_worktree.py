@@ -460,16 +460,19 @@ class TestWorktreeCleanupIntegration:
         assert result["action"] == "reject"
         assert Path(wt_path).exists()
 
-    def test_force_cleanup_story_worktrees(self, tmp_path, isolated_story_home):
+    def test_force_cleanup_story_worktrees(self, tmp_path, isolated_story_home, monkeypatch):
         """force_cleanup_story_worktrees:不查 delivery_state,强制移除(eval/delete 用)。
 
-        回归 2026-08-12:eval story 删除时 worktree 不回收(实测 42 个堆积)。加 force 版,
-        区别于 cleanup_worktree(要 merged/abandoned 才删)—— eval story 没 deliver,旧函数会 reject。
+        回归 2026-08-12:eval story 删除时两层产物都不回收 ——
+        (a) git worktree 实测 42 个堆积;(b) workspace slug dir(agent cwd,
+            _prepare_story_workspace 建)实测 delete 后 0→1 堆积(原版只清 git worktree 漏了它)。
+        区别于 cleanup_worktree(要 merged/abandoned 才删)—— eval story 没 deliver,旧函数 reject。
         """
         from story_lifecycle.infra.db import models as db
         from story_lifecycle.orchestrator.workspace.worktree.handler import (
             force_cleanup_story_worktrees,
         )
+        from story_lifecycle.infra import config as cfg
 
         repo = tmp_path / "repo"
         _init_git_repo(repo)
@@ -482,6 +485,52 @@ class TestWorktreeCleanupIntegration:
         wt_path = results[0]["worktree_path"]
         assert Path(wt_path).exists()
 
+        # 模拟 _prepare_story_workspace:在 worktrees_root 下建 slug dir(agent cwd)
+        wts_root = tmp_path / "worktrees_root"
+        wts_root.mkdir()
+        slug_dir = wts_root / "mgm-app-version-limit"
+        slug_dir.mkdir()
+        db.update_story(
+            "S-FORCE",
+            context_json='{"workspace_path": "%s"}' % str(slug_dir).replace("\\", "/"),
+        )
+        monkeypatch.setattr(cfg, "get_worktrees_root", lambda: wts_root)
+        assert slug_dir.exists()
+
         removed = force_cleanup_story_worktrees("S-FORCE")
-        assert removed >= 1
-        assert not Path(wt_path).exists()  # worktree 被强制移除
+        assert removed >= 2  # git worktree + slug dir
+        assert not Path(wt_path).exists()  # (a) git worktree 被强制移除
+        assert not slug_dir.exists()  # (b) workspace slug dir 被移除(积累真凶)
+
+    def test_force_cleanup_refuses_paths_outside_worktrees_root(
+        self, tmp_path, isolated_story_home, monkeypatch
+    ):
+        """安全闸:workspace_path 不在 worktrees_root 下时绝不删(防误伤主 workspace/repo)。"""
+        import json as _json
+
+        from story_lifecycle.infra.db import models as db
+        from story_lifecycle.orchestrator.workspace.worktree.handler import (
+            force_cleanup_story_worktrees,
+        )
+        from story_lifecycle.infra import config as cfg
+
+        wts_root = tmp_path / "worktrees_root"
+        wts_root.mkdir()
+        # 一个"看起来像 workspace 但其实在 root 外"的目录(repo 本体)
+        outside = tmp_path / "precious_repo"
+        outside.mkdir()
+        (outside / "IMPORTANT.txt").write_text("do not delete", encoding="utf-8")
+
+        repo = tmp_path / "repo"
+        _init_git_repo(repo)
+        db.create_story("S-SAFE", "S-SAFE", str(repo))
+        # workspace_path 指向 root 外的目录(模拟脏数据 / 路径漂移)
+        db.update_story(
+            "S-SAFE",
+            context_json=_json.dumps({"workspace_path": str(outside)}),
+        )
+        monkeypatch.setattr(cfg, "get_worktrees_root", lambda: wts_root)
+
+        force_cleanup_story_worktrees("S-SAFE")
+        assert outside.exists()  # 安全闸挡住,没删
+        assert (outside / "IMPORTANT.txt").read_text(encoding="utf-8") == "do not delete"
