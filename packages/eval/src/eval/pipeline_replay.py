@@ -2,11 +2,12 @@
 
 - create_and_start_story（建 story + PRD 证据）
 - continue_orchestrator_agent（真实驱动 design→verify，spawn opencode headless）
-- run_unified_verify_gate（verify 交付判定）
 - STORY_HOME 沙箱隔离；workspace 必须先建 + 写 AGENTS.md（截断证据爬升，
   防止泄漏到 repo 根 story/）；profile 放 cwd/.story/profiles/。
 
 用法: python -m eval.pipeline_replay --only <tapd_id>
+（迭代 3 G5：verify 判定已收敛到 stage_completion；run_unified_verify_gate 已删，
+ 本模块的 gate 段删除——判决采集走 continue_orchestrator_agent 落库的 orchestrator_decision）
 """
 from __future__ import annotations
 
@@ -70,7 +71,6 @@ def run_one(tapd_id: str, gold_dir: Path, out: dict) -> dict:
     from story_lifecycle.infra.db import models as db
     from story_lifecycle.orchestrator.service.story_service import create_and_start_story
     from story_lifecycle.orchestrator.engine import planner
-    from story_lifecycle.orchestrator.evaluation.unified_gate import run_unified_verify_gate
 
     db.init_db()
 
