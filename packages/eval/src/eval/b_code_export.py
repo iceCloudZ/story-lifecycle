@@ -79,26 +79,41 @@ def main() -> None:
         else:
             run(["git", "fetch", "--all"], cwd=scrub)
 
-        # 剥密：只在 scrub clone 首次建仓时跑（sentinel 在外层，不污染工作树）。
-        # 规则变更需删 SCRUB_ROOT/<name> + sentinel 重建。
+        # 剥密 + 1y 截断：只在 scrub clone 首次建仓时跑（sentinel 在外层，
+        # 不污染工作树）。规则变更需删 SCRUB_ROOT/<name> + sentinel 重建。
         sentinel = SCRUB_ROOT / f"{name}.scrubbed"
-        if (args.scrub or args.replace_text) and not sentinel.exists():
-            cmd = ["git", "filter-repo"]
-            if args.replace_text:
-                # 规则文件规范化：utf-8-sig 去 BOM + 全量剥 \r。注意 Windows
-                # 上 text-mode 写文件会把 \n 翻回 \r\n（write_text 亦然），
-                # 必须显式 newline="\n"（2026-08-13 hc-third-party 实测教训×3）。
-                raw = Path(args.replace_text).read_text(encoding="utf-8-sig")
-                tmp = SCRUB_ROOT / ".replace-text-normalized.txt"
-                with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-                    f.write(raw.replace("\r", ""))
-                cmd += ["--replace-text", str(tmp)]
-            if args.scrub:
-                cmd += ["--invert-paths"] + sum((["--path-glob", s] for s in args.scrub), [])
-            r = run(cmd, cwd=scrub)
-            if r.returncode != 0:
-                items.append({"repo": name, "error": f"filter-repo fail: {r.stderr[-300:]}"})
-                continue
+        if not sentinel.exists():
+            # 1y 截断：摘掉 1y 边界 commit 的父指针（graft）→ filter-repo 烙进 →
+            # 历史变 ~1y 深且 bundle 自包含。2026-08-13 教训：`bundle create
+            # --since=1y --all` 会把边界父记成 prerequisite，101 空仓 clone
+            # 直接失败（10/13 仓中招）；graft 后无 prerequisite。
+            oldest = run(["git", "rev-list", f"--since={SINCE}", "--all"],
+                         cwd=scrub).stdout.strip().splitlines()
+            grafted = False
+            if oldest:
+                run(["git", "replace", "--graft", oldest[-1]], cwd=scrub)
+                grafted = True
+            if args.scrub or args.replace_text or grafted:
+                cmd = ["git", "filter-repo"]
+                if args.replace_text:
+                    # 规则文件规范化：utf-8-sig 去 BOM + 全量剥 \r。注意 Windows
+                    # 上 text-mode 写文件会把 \n 翻回 \r\n（write_text 亦然），
+                    # 必须显式 newline="\n"（2026-08-13 hc-third-party 实测教训）。
+                    raw = Path(args.replace_text).read_text(encoding="utf-8-sig")
+                    tmp = SCRUB_ROOT / ".replace-text-normalized.txt"
+                    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+                        f.write(raw.replace("\r", ""))
+                    cmd += ["--replace-text", str(tmp)]
+                if args.scrub:
+                    cmd += ["--invert-paths"] + sum((["--path-glob", s] for s in args.scrub), [])
+                r = run(cmd, cwd=scrub)
+                if r.returncode != 0:
+                    items.append({"repo": name, "error": f"filter-repo fail: {r.stderr[-300:]}"})
+                    continue
+            # 删全部 tag：防旧 tag 把 1y 前历史拖回 bundle（graft 只截断分支）
+            tags = run(["git", "tag", "-l"], cwd=scrub).stdout.splitlines()
+            if tags:
+                run(["git", "tag", "-d"] + tags, cwd=scrub)
             sentinel.write_text("ok", encoding="utf-8")
 
         head = run(["git", "rev-parse", "HEAD"], cwd=scrub).stdout.strip()
@@ -108,7 +123,8 @@ def main() -> None:
         if marker:
             cmd = ["git", "bundle", "create", str(bundle), f"{marker}..{head}", "--all"]
         else:
-            cmd = ["git", "bundle", "create", str(bundle), f"--since={SINCE}", "--all"]
+            # 历史已被 graft 截断，bundle --all 即自包含（勿加 --since）
+            cmd = ["git", "bundle", "create", str(bundle), "--all"]
         r = run(cmd, cwd=scrub)
         if r.returncode != 0:
             items.append({"repo": name, "error": f"bundle fail: {r.stderr[-300:]}"})
