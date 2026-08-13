@@ -28,7 +28,7 @@
 
 - **持续清洗导出管线**：本地（有内网）= 源，101 = 目的地，单向。批式文件包（manifest + tar/bundle + sha256），非流式。
 - **纪律升级**：原「101 绝不碰内网」强化为「**101 只收管线洗过的数据，绝不自己拉**」——bundle clone 出来无 origin，天然满足。
-- **101 落点**：`~/story-lifecycle/packages/eval/`（与本地同构，清单走 git，数据 gitignored）。偏差说明：交接文档原建议 `~/story-eval/`，但 101 已有 repo clone + editable 安装，同构落点零配置；`EVAL_PACKAGE_ROOT` 环境变量留作迁移后路。
+- **101 落点**：`~/story-lifecycle/packages/eval/`（与本地同构，代码/脚本走 git，dataset/results/sandbox 整体 gitignored、随数据包 scp）。偏差说明：交接文档原建议 `~/story-eval/`，且误记「b_batch50 清单 git main 已有」（实际 `packages/eval/dataset/` 被根 .gitignore 忽略，清单随包走）；101 已有 repo clone + editable 安装，同构落点零配置；`EVAL_PACKAGE_ROOT` 环境变量留作迁移后路。
 
 ### 3.2 story 管线（判定源 / 增量 / 清洗 / 形态）
 
@@ -83,8 +83,8 @@
 - [x] 本地 runner + b_watch 停，进程清零（单 runner 纪律满足）
 - [x] runner 脚本入库（c5c609a4，101 走 git 不需另传）
 - [ ] runner 路径可移植 patch（`__file__` 推导 + env 覆盖，101 为 Linux）
-- [ ] `b_batch50` 写 `pushed_to_101` 审计字段
-- [ ] scp：断点 jsonl + gold ×52 → 101
+- [x] `b_batch50` 写 `pushed_to_101` 审计字段（已写入；dataset/ gitignored 不入库，随包 scp）
+- [ ] scp：b_batch50 清单 + 断点 jsonl + gold ×52 → 101
 - [ ] 101：git pull → pre-flight（打印 Go 端点）→ `--only` 首条 → 断点确认（5 ok 跳过）→ systemd user unit 放量
 - [ ] 管线 v1：gitleaks 摸底 → 剥密 → 近一年 bundle → 101 ingest（替换旧镜像）
 - [ ] export-batch / ingest 脚本落位 + 手动跑通 → 跑稳挂定时
