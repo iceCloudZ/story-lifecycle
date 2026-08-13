@@ -88,7 +88,7 @@
 - [x] `b_batch50` 写 `pushed_to_101` 审计字段（已写入；dataset/ gitignored 不入库，随包 scp）
 - [ ] scp：b_batch50 清单 + 断点 jsonl + gold ×52 → 101
 - [x] 101：git pull → pre-flight（打印 Go 端点）→ `--only` 首条 → 断点确认（5 ok 跳过）→ systemd user unit 放量（`b-line-runner.service` 已起，45 条进行中）
-- [ ] 管线 v1：gitleaks 摸底 → 剥密 → 近一年 bundle → 101 ingest（替换旧镜像）
+- [x] 管线 v1：gitleaks 摸底（7 仓干净 6 仓 62 处）→ 剥密（删 6 类路径 + regex 替换 GOCSPX/developerToken）→ graft 1y 截断 → 13/13 bundle 落 101 ingest 回执（旧镜像 .pre-scrub.bak 保留；hc-admin 源仓缺失待查）
 - [ ] export-batch / ingest 脚本落位 + 手动跑通 → 跑稳挂定时
 - [ ] B 线跑完：b_final_stats 口径 append `results/iteration4_20260812.md` §5 + `results/nightly/b_line_final_2026081X.md` 回流
 
@@ -99,10 +99,12 @@
 - [x] 本地 runner + b_watch 已停（单 runner）
 - [x] `pushed_to_101` 审计字段已写（随数据包 scp，dataset/ gitignored）
 - [x] systemd 托管生效（`b-line-runner.service` active+enabled，Restart=on-failure，心跳=`results/b_line_20260812.out`）
-- [ ] 首个业务仓清洗 bundle 落 101 + ingest 回执（管线链路闭环）
+- [x] 首个业务仓清洗 bundle 落 101 + ingest 回执（管线链路闭环：13/13，receipts 见 101 `results/b_code_receipts.jsonl`）
 
 ## 6. 开放项
 
 - **上线 git 约定**（tag/分支模式）待用户提供 → 代码链升为主判定
-- gitleaks 报告 → 剥密规则定稿
+- **hc-admin 仓缺失**：match index 有 35 条 (hc-admin, commit) 映射但 D:/hc-all 下无此仓——待用户确认去向（改名/合并/独立仓）
+- gitleaks 报告 → 剥密规则定稿（v1 已按报告执行；后续新仓先扫后传）
+- 管线 v1 两个实操坑已修并留痕：replace-text 必须 `regex:` 前缀；`bundle --since=1y` 会产生 prerequisite（空仓 clone 失败）→ 改 graft+filter-repo 烙进截断
 - 迭代 5 议题池：A 线保守偏向（conformance 措辞与分数分离）/ 薄 PRD agent 行为定义 / 看门狗分档 / declare 契约归因 / nightly 常驻化
