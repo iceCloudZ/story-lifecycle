@@ -49,6 +49,8 @@ def main() -> None:
     ap.add_argument("--repos", required=True, help="逗号分隔仓名（D:/hc-all 下）")
     ap.add_argument("--scrub", action="append", default=[],
                     help="filter-repo --invert-paths --path-glob 参数（可多次）")
+    ap.add_argument("--replace-text", default=None,
+                    help="filter-repo --replace-text 规则文件（regex==>replacement 行）")
     ap.add_argument("--out", required=True, help="产物目录（bundle + manifest）")
     args = ap.parse_args()
 
@@ -78,9 +80,13 @@ def main() -> None:
         # 剥密：只在 scrub clone 首次建仓时跑（sentinel 在外层，不污染工作树）。
         # 规则变更需删 SCRUB_ROOT/<name> + sentinel 重建。
         sentinel = SCRUB_ROOT / f"{name}.scrubbed"
-        if args.scrub and not sentinel.exists():
-            r = run(["git", "filter-repo", "--invert-paths"]
-                    + sum((["--path-glob", s] for s in args.scrub), []), cwd=scrub)
+        if (args.scrub or args.replace_text) and not sentinel.exists():
+            cmd = ["git", "filter-repo"]
+            if args.replace_text:
+                cmd += ["--replace-text", str(Path(args.replace_text).resolve())]
+            if args.scrub:
+                cmd += ["--invert-paths"] + sum((["--path-glob", s] for s in args.scrub), [])
+            r = run(cmd, cwd=scrub)
             if r.returncode != 0:
                 items.append({"repo": name, "error": f"filter-repo fail: {r.stderr[-300:]}"})
                 continue
