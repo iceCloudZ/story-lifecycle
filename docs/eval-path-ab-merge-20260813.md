@@ -87,18 +87,18 @@
 - [ ] runner 路径可移植 patch（`__file__` 推导 + env 覆盖，101 为 Linux）
 - [x] `b_batch50` 写 `pushed_to_101` 审计字段（已写入；dataset/ gitignored 不入库，随包 scp）
 - [ ] scp：b_batch50 清单 + 断点 jsonl + gold ×52 → 101
-- [ ] 101：git pull → pre-flight（打印 Go 端点）→ `--only` 首条 → 断点确认（5 ok 跳过）→ systemd user unit 放量
+- [x] 101：git pull → pre-flight（打印 Go 端点）→ `--only` 首条 → 断点确认（5 ok 跳过）→ systemd user unit 放量（`b-line-runner.service` 已起，45 条进行中）
 - [ ] 管线 v1：gitleaks 摸底 → 剥密 → 近一年 bundle → 101 ingest（替换旧镜像）
 - [ ] export-batch / ingest 脚本落位 + 手动跑通 → 跑稳挂定时
 - [ ] B 线跑完：b_final_stats 口径 append `results/iteration4_20260812.md` §5 + `results/nightly/b_line_final_2026081X.md` 回流
 
 ## 5. 验收清单
 
-- [ ] 101 上首条（`--only`）跑通，pre-flight 确认 Go 端点
-- [ ] 断点确认：已完成 5 条被跳过，从第 6 条续跑
+- [x] 101 上首条（`--only`）跑通，pre-flight 确认 Go 端点（1034681：design+verify 全链跑通、行落盘、零进程泄漏；瑕疵=verify judge LLM 11:12-11:14 瞬态失败 3 次→active_stall，同配置 11:50 实测 9.4s 通过，判端点抖动，放量后留意频率）
+- [x] 断点确认：已完成 5 条被跳过，剩余 45 续跑（`[B] 断点: 已完成 5，剩余 45`）
 - [x] 本地 runner + b_watch 已停（单 runner）
-- [ ] `pushed_to_101` 审计字段已写
-- [ ] systemd/nohup 托管生效，runner 存活可观测（心跳日志）
+- [x] `pushed_to_101` 审计字段已写（随数据包 scp，dataset/ gitignored）
+- [x] systemd 托管生效（`b-line-runner.service` active+enabled，Restart=on-failure，心跳=`results/b_line_20260812.out`）
 - [ ] 首个业务仓清洗 bundle 落 101 + ingest 回执（管线链路闭环）
 
 ## 6. 开放项
