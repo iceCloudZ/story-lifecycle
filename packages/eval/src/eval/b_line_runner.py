@@ -94,11 +94,19 @@ def main() -> None:
         tapd = s["tapd_id"]
         t0 = time.monotonic()
         try:
-            proc = subprocess.Popen(
-                [PY, "-X", "utf8", "-u", ONE, "--tapd", tapd],
+            # POSIX 用 start_new_session 让 b_line_one 自成进程组，
+            # 看门狗超时时 killpg 连 agent(opencode) 孙进程一起杀；
+            # Windows 无此参数，靠 taskkill /T 杀树。
+            popen_kwargs = dict(
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 encoding="utf-8", errors="replace",
                 cwd=str(PACKAGE_ROOT),
+            )
+            if os.name == "posix":
+                popen_kwargs["start_new_session"] = True
+            proc = subprocess.Popen(
+                [PY, "-X", "utf8", "-u", ONE, "--tapd", tapd],
+                **popen_kwargs,
             )
             try:
                 out, err = proc.communicate(timeout=WATCHDOG_S)
@@ -108,16 +116,24 @@ def main() -> None:
                     rec = {"tapd_id": tapd, "status": "no_output",
                            "error": (err or out or "")[-300:]}
             except subprocess.TimeoutExpired:
-                # Windows 进程树强杀：Popen/communicate 只杀直接子进程，
-                # agent(opencode) 是孙进程——taskkill /T 杀整棵树，否则
-                # 孙进程持有的管道会让 communicate 无限等待（实测 9608s 卡死）。
-                try:
-                    subprocess.run(
-                        ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                        capture_output=True, timeout=15,
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+                # 进程树强杀：Popen/communicate 只杀直接子进程，
+                # agent(opencode) 是孙进程——不杀树则孙进程持有的管道
+                # 会让 communicate 无限等待（实测 9608s 卡死）。
+                # Windows: taskkill /T；POSIX: 子进程自成进程组，killpg 整组。
+                if os.name == "nt":
+                    try:
+                        subprocess.run(
+                            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                            capture_output=True, timeout=15,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                else:
+                    import signal
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    except Exception:  # noqa: BLE001
+                        proc.kill()
                 try:
                     proc.communicate(timeout=30)
                 except Exception:  # noqa: BLE001
