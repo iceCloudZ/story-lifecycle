@@ -95,6 +95,11 @@ def main() -> None:
                 grafted = True
             if args.scrub or args.replace_text or grafted:
                 cmd = ["git", "filter-repo"]
+                if not (args.scrub or args.replace_text):
+                    # 纯 graft 烙进：filter-repo 无任何参数会拒绝执行
+                    # ("No arguments specified")——给个语义无副作用的参数
+                    # （graft 只摘父指针，不产生空提交）。
+                    cmd += ["--prune-empty=auto"]
                 if args.replace_text:
                     # 规则文件规范化：utf-8-sig 去 BOM + 全量剥 \r。注意 Windows
                     # 上 text-mode 写文件会把 \n 翻回 \r\n（write_text 亦然），

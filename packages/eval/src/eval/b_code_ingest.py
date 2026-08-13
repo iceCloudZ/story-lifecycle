@@ -60,7 +60,14 @@ def main() -> None:
             subprocess.run(["mv", str(target), str(backup)])
         r = subprocess.run(["git", "clone", str(b), str(target)],
                            capture_output=True, text=True)
-        rec["result"] = "ok" if r.returncode == 0 else f"clone_fail: {r.stderr[-200:]}"
+        if r.returncode == 0:
+            # clone-from-bundle 会把 bundle 文件路径记成 origin——删掉，
+            # 保持「101 无 origin、绝不自己拉」洁癖（fetch 也不会去摸内网）
+            subprocess.run(["git", "-C", str(target), "remote", "remove", "origin"],
+                           capture_output=True)
+            rec["result"] = "ok"
+        else:
+            rec["result"] = f"clone_fail: {r.stderr[-200:]}"
         receipts.append(rec)
 
     with open(RECEIPTS, "a", encoding="utf-8") as f:
