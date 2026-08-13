@@ -44,6 +44,8 @@
 
 **形态**：批式导出 = manifest（条目/来源/sha256/清洗规则版本）+ tar + 本地 ledger；`pushed_to_101` 单字段升级为 ledger 条目（见 3.6）。
 
+**gold 在源头构造（迁移首日实测教训）**：101 无参照物链（evidence 快照/match index/story_refs），`ensure_gold_prd` 懒构造必退化薄 PRD → 批量 stall。管线纪律：**gold PRD 一律在本地（源头）构造完成后随包出**，101 只收成品。
+
 ### 3.3 代码管线（bundle 机制，已拍板）
 
 - **范围**：14 个业务仓（hc-config/hc-limit/hc-admin/hc-user/hc-order/hc-message/hc-audit/hc-callback/hc-third-party/ys-marketing/hc-marketing/ys-crowd/hc-aiops/hc-job），**近一年历史**（已拍板）。
