@@ -1,10 +1,16 @@
 # -*- coding: utf-8 -*-
 """B 线最终统计（用户口径）：按 tapd_id 去重保留最新行；修复前旧数据单列不计入完成率。"""
 import json
+import os
 from collections import Counter
 from pathlib import Path
 
-rows = [json.loads(l) for l in open(r"D:\github\story-lifecycle\packages\eval\results\b_line_20260812.jsonl", encoding="utf-8") if l.strip()]
+# 路径可移植（101 接管）：默认从本文件位置推导，可用环境变量覆盖
+_JSONL = Path(os.environ.get(
+    "EVAL_RESULTS_JSONL",
+    str(Path(__file__).resolve().parent.parent.parent / "results" / "b_line_20260812.jsonl"),
+))
+rows = [json.loads(l) for l in open(_JSONL, encoding="utf-8") if l.strip()]
 latest = {}
 for r in rows:
     latest[r["tapd_id"]] = r

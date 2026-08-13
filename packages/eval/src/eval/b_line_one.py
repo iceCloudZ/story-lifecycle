@@ -10,10 +10,15 @@ import os
 import sys
 from pathlib import Path
 
-PACKAGE_ROOT = Path(r"D:\github\story-lifecycle\packages\eval")
+# 路径可移植（101 接管）：默认从本文件位置推导，可用环境变量覆盖
+PACKAGE_ROOT = Path(os.environ.get("EVAL_PACKAGE_ROOT", str(Path(__file__).resolve().parent.parent.parent)))
 SANDBOX = PACKAGE_ROOT / "sandbox"
 sys.path.insert(0, str(PACKAGE_ROOT / "src"))
-sys.path.insert(0, r"D:\github\story-lifecycle\packages\story-lifecycle\src")
+_sl_src = Path(os.environ.get(
+    "EVAL_STORY_LIFECYCLE_SRC",
+    str(PACKAGE_ROOT.parent.parent / "packages" / "story-lifecycle" / "src"),
+))
+sys.path.insert(0, str(_sl_src))
 
 
 def ensure_gold_prd(tapd_id: str) -> Path:

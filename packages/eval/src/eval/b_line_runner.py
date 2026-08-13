@@ -17,16 +17,18 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
-PACKAGE_ROOT = Path(r"D:\github\story-lifecycle\packages\eval")
+# 路径可移植（101 接管）：默认从本文件位置推导，可用环境变量覆盖
+PACKAGE_ROOT = Path(os.environ.get("EVAL_PACKAGE_ROOT", str(Path(__file__).resolve().parent.parent.parent)))
 BASE = PACKAGE_ROOT / "dataset"
 RESULTS = PACKAGE_ROOT / "results"
 BATCH = BASE / "b_batch50_20260812.json"
 OUT_JSONL = RESULTS / "b_line_20260812.jsonl"
-PY = r"D:\github\story-lifecycle\.venv-monorepo-test\Scripts\python.exe"
-ONE = str(Path(__file__).resolve().parent / "b_line_one.py")
+PY = os.environ.get("EVAL_PYTHON", sys.executable)
+ONE = os.environ.get("EVAL_B_LINE_ONE", str(Path(__file__).resolve().parent / "b_line_one.py"))
 WATCHDOG_S = 3600  # 单条看门狗 60min（数据驱动：最近 15 条 6 条 900s 被强杀、真干活样本普遍 600-900s+；
                    #  900s 对全流程（design→verify→judge）偏紧——提到长尾上限，保留护栏防真卡死）
 INFRA_PAUSE = 3  # 连续 3 条 infra 失败暂停
