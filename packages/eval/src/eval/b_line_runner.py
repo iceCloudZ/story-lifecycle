@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -93,6 +94,7 @@ def main() -> None:
     for i, s in enumerate(pending):
         tapd = s["tapd_id"]
         t0 = time.monotonic()
+        proc = None
         try:
             # POSIX 用 start_new_session 让 b_line_one 自成进程组，
             # 看门狗超时时 killpg 连 agent(opencode) 孙进程一起杀；
@@ -142,6 +144,22 @@ def main() -> None:
                        "error": f"> {WATCHDOG_S}s 看门狗强杀(进程树)"}
         except Exception as exc:  # noqa: BLE001 — 子进程启动异常
             rec = {"tapd_id": tapd, "status": "infra_error", "error": f"{exc.__class__.__name__}: {exc}"}
+        finally:
+            # 兜底清理：ok/stall 正常退出也会漏 agent 孙进程（active_stall
+            # 驱动循环耗尽时 stage-done 不触发 kill_headless——101 实测每条
+            # 漏一个 ~520MB opencode，3.7GB 机器几小时就 OOM）。
+            # POSIX 子进程自成进程组 → killpg 整组强杀（leader 已死时只杀成员）。
+            if proc is not None:
+                try:
+                    if os.name == "nt":
+                        subprocess.run(
+                            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                            capture_output=True, timeout=15,
+                        )
+                    else:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except Exception:  # noqa: BLE001 — 进程组已空/已退出属正常
+                    pass
         rec["tapd_id"] = tapd
         rec["elapsed_s"] = round(time.monotonic() - t0, 1)
         rec["cls"] = classify(rec)
