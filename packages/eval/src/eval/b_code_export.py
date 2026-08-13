@@ -85,7 +85,14 @@ def main() -> None:
         if (args.scrub or args.replace_text) and not sentinel.exists():
             cmd = ["git", "filter-repo"]
             if args.replace_text:
-                cmd += ["--replace-text", str(Path(args.replace_text).resolve())]
+                # 规则文件规范化：utf-8-sig 去 BOM + 全量剥 \r。注意 Windows
+                # 上 text-mode 写文件会把 \n 翻回 \r\n（write_text 亦然），
+                # 必须显式 newline="\n"（2026-08-13 hc-third-party 实测教训×3）。
+                raw = Path(args.replace_text).read_text(encoding="utf-8-sig")
+                tmp = SCRUB_ROOT / ".replace-text-normalized.txt"
+                with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(raw.replace("\r", ""))
+                cmd += ["--replace-text", str(tmp)]
             if args.scrub:
                 cmd += ["--invert-paths"] + sum((["--path-glob", s] for s in args.scrub), [])
             r = run(cmd, cwd=scrub)
