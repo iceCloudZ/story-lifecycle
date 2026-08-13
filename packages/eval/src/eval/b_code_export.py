@@ -70,7 +70,9 @@ def main() -> None:
             continue
         scrub = SCRUB_ROOT / name
         if not scrub.exists():
-            r = run(["git", "clone", str(src), str(scrub)])
+            # --no-local：本地 clone 默认走硬链接，filter-repo 会拒
+            # ("expected freshly packed repo")——必须真拷贝。
+            r = run(["git", "clone", "--no-local", str(src), str(scrub)])
             if r.returncode != 0:
                 items.append({"repo": name, "error": f"clone fail: {r.stderr[-200:]}"})
                 continue
