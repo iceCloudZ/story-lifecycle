@@ -48,7 +48,7 @@
 
 ### 3.3 代码管线（bundle 机制，已拍板）
 
-- **范围**：14 个业务仓（hc-config/hc-limit/hc-admin/hc-user/hc-order/hc-message/hc-audit/hc-callback/hc-third-party/ys-marketing/hc-marketing/ys-crowd/hc-aiops/hc-job），**近一年历史**（已拍板）。
+- **范围**：14 个业务仓（hc-config/hc-limit/hc-admin/hc-user/hc-order/hc-message/hc-audit/hc-callback/hc-third-party/ys-marketing/hc-marketing/ys-crowd/hc-aiops/hc-job；注意 **hc-admin 在 `D:/hc-all/frontends/hc-admin/`**，不在顶层），**近一年历史**（已拍板）。
 - **机制 = bundle（邮包式）**：
 
   ```bash
@@ -104,7 +104,7 @@
 ## 6. 开放项
 
 - **上线 git 约定**（tag/分支模式）待用户提供 → 代码链升为主判定
-- **hc-admin 仓缺失**：match index 有 35 条 (hc-admin, commit) 映射但 D:/hc-all 下无此仓——待用户确认去向（改名/合并/独立仓）
+- **hc-admin 仓**：✅ 已定位 `D:/hc-all/frontends/hc-admin/`（顶层扫描漏了 frontends/），零泄漏，已随管线落 101。export 脚本已支持嵌套仓名（frontends/hc-admin → 文件名压平）
 - gitleaks 报告 → 剥密规则定稿（v1 已按报告执行；后续新仓先扫后传）
 - 管线 v1 两个实操坑已修并留痕：replace-text 必须 `regex:` 前缀；`bundle --since=1y` 会产生 prerequisite（空仓 clone 失败）→ 改 graft+filter-repo 烙进截断
 - 迭代 5 议题池：A 线保守偏向（conformance 措辞与分数分离）/ 薄 PRD agent 行为定义 / 看门狗分档 / declare 契约归因 / nightly 常驻化

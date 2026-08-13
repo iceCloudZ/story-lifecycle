@@ -63,12 +63,15 @@ def main() -> None:
     batch_id = f"code-{datetime.now():%Y%m%d-%H%M%S}"
     items = []
     for name in [s.strip() for s in args.repos.split(",") if s.strip()]:
+        # 嵌套仓名（如 frontends/hc-admin）：manifest 保留原名，
+        # 文件系统路径压平（-- 分隔），防 bundle 文件名带斜杠。
+        flat = name.replace("/", "--")
         src = REPO_ROOT / name
         if not (src / ".git").exists():
             print(f"[skip] {name}: 源仓缺失")
             items.append({"repo": name, "error": "missing source repo"})
             continue
-        scrub = SCRUB_ROOT / name
+        scrub = SCRUB_ROOT / flat
         if not scrub.exists():
             # --no-local：本地 clone 默认走硬链接，filter-repo 会拒
             # ("expected freshly packed repo")——必须真拷贝。
@@ -81,7 +84,7 @@ def main() -> None:
 
         # 剥密 + 1y 截断：只在 scrub clone 首次建仓时跑（sentinel 在外层，
         # 不污染工作树）。规则变更需删 SCRUB_ROOT/<name> + sentinel 重建。
-        sentinel = SCRUB_ROOT / f"{name}.scrubbed"
+        sentinel = SCRUB_ROOT / f"{flat}.scrubbed"
         if not sentinel.exists():
             # 1y 截断：摘掉 1y 边界 commit 的父指针（graft）→ filter-repo 烙进 →
             # 历史变 ~1y 深且 bundle 自包含。2026-08-13 教训：`bundle create
@@ -124,7 +127,7 @@ def main() -> None:
         head = run(["git", "rev-parse", "HEAD"], cwd=scrub).stdout.strip()
         marker = run(["git", "rev-parse", "--verify", "refs/b101-marker"],
                      cwd=scrub).stdout.strip()
-        bundle = out / f"{name}-1y.bundle"
+        bundle = out / f"{flat}-1y.bundle"
         if marker:
             cmd = ["git", "bundle", "create", str(bundle), f"{marker}..{head}", "--all"]
         else:
