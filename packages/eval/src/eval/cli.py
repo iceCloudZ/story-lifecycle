@@ -249,29 +249,63 @@ def scan_all(dataset_dir, results_dir, limit, authors, branch_patterns, mine):
 
 @main.command(name="cleanup")
 @click.option("--story-home", default=None, help="serve 的 STORY_HOME(默认 ~/.story-lifecycle 或 $STORY_HOME)")
-def cleanup(story_home):
+@click.option("--repos-dir", default=None, help="eval repos 根(默认 $EVAL_REPOS_DIR 或 ~/story-eval/repos)")
+@click.option("--no-prune", is_flag=True, help="跳过 git worktree prune(默认会 prune)")
+def cleanup(story_home, repos_dir, no_prune):
     """清上轮 eval 残留 —— 每次跑 eval 前调一次(流程第 0 步)。
 
-    清:serve DB 里 active 的测试 story(防编排线程 tick 残留 / 卡住下轮)。
+    清:serve DB 里 active 的测试 story(防编排线程 tick 残留 / 卡住下轮)+
+    eval repos 的 stale git worktree 注册(delete rmtree 了 slug dir → 其内 worktree
+    变 prunable,prune 回收;防 ``git worktree list`` 堆 stale 项)。
     保留:results/ 成果物(spec/judge/报告,run_dir 已时间戳化不覆写);
-    worktree 由 delete_story 的 cleanup_worktree_on_delete(eval-replay profile 已开)自动清。
+    worktree 文件由 delete_story 的 cleanup_worktree_on_delete(eval-replay profile
+    已开)+ force_cleanup slug-dir 层(db855c99)自动清。
     """
     import os
     import sqlite3
+    import subprocess
 
     sh = story_home or os.environ.get("STORY_HOME") or os.path.expanduser("~/.story-lifecycle")
     db_path = os.path.join(sh, "story.db")
-    if not os.path.exists(db_path):
+    if os.path.exists(db_path):
+        con = sqlite3.connect(db_path)
+        try:
+            n = con.execute("UPDATE story SET status='failed' WHERE status='active'").rowcount
+            con.commit()
+        finally:
+            con.close()
+        click.echo(f"cleared {n} active → failed(DB: {db_path})")
+    else:
         click.echo(f"(无 DB at {db_path},跳过)")
-        return
-    con = sqlite3.connect(db_path)
-    try:
-        n = con.execute("UPDATE story SET status='failed' WHERE status='active'").rowcount
-        con.commit()
-    finally:
-        con.close()
-    click.echo(f"cleared {n} active → failed(DB: {db_path})")
     click.echo("results/ 成果物保留(eval run_dir 时间戳化,不覆写)。")
+
+    if no_prune:
+        return
+    # prune stale git worktree 注册:delete rmtree 了 slug dir → 其内 agent 建的 worktree
+    # gitdir 消失 → ``git worktree prune`` 回收。每轮 eval delete 都会留一个,prune 防堆积。
+    rdir = repos_dir or os.environ.get("EVAL_REPOS_DIR") or os.path.expanduser("~/story-eval/repos")
+    pruned = 0
+    if os.path.isdir(rdir):
+        for child in sorted(os.listdir(rdir)):
+            rp = os.path.join(rdir, child)
+            if not os.path.isdir(os.path.join(rp, ".git")):
+                continue
+            before = subprocess.run(
+                ["git", "-C", rp, "worktree", "list"],
+                capture_output=True, text=True, timeout=15,
+            ).stdout.count("\n")
+            r = subprocess.run(
+                ["git", "-C", rp, "worktree", "prune", "-v"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if r.stdout.strip() or r.stderr.strip():
+                after = subprocess.run(
+                    ["git", "-C", rp, "worktree", "list"],
+                    capture_output=True, text=True, timeout=15,
+                ).stdout.count("\n")
+                pruned += max(0, before - after)
+                click.echo(f"  prune {child}: {before}→{after} (-{max(0, before-after)})")
+    click.echo(f"worktree prune: 回收 {pruned} 个 stale 注册(repos: {rdir})")
 
 
 @main.command()
