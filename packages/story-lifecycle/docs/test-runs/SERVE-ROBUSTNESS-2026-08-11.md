@@ -229,5 +229,23 @@ real-user profile 不开 flag,仍保留 worktree 给 /restore。
 - 新增 `test_force_cleanup_refuses_paths_outside_worktrees_root`:workspace_path 指 root 外的
   "precious_repo" → 安全闸挡住,不删。
 
-**待办**:push db855c99 → 服务器重装 → 重跑 exec_73aee449 同样验证 → 期望 worktree 目录 0→0。
+**待办**:~~push db855c99 → 服务器重装 → 重跑验证~~ ✅ 完成(见下"服务器实测闭环")。
+
+### 服务器实测闭环(2026-08-13,push + 部署后)
+
+db855c99 + 9d193b1d(eval cleanup 加 `git worktree prune`)均已 push + 部署到 101。两层清理模型:
+
+| 层 | 谁清 | 清什么 | commit |
+|---|---|---|---|
+| **磁盘** | `force_cleanup_story_worktrees`(delete_story 调) | slug dir(agent cwd,含其内 agent 建的 worktree 文件)+ 注册在 story_projects 的 git worktree | db855c99 |
+| **注册** | `eval cleanup` → `git worktree prune` | delete rmtree slug dir 后,源仓残留的 stale worktree 注册(gitdir 指向已删路径) | 9d193b1d |
+
+**实测两轮覆盖两种 case**:
+
+1. **exec_1d4aa1ef**(agent 建了 in-slug worktree):create→spawn→delete → 目录 **1→0**✓(slug dir 清了),但 git-worktree list 4→5(#5 prunable)。后手动 `git worktree prune -v` → 输出 "Removing worktrees/hc-order: gitdir file points to non-existent location" → **5→4**✓(prune 回收 stale 注册)。
+2. **exec_630f82d3**(agent 没建 in-slug worktree):create→spawn→delete → 目录 0、list 1(delete 干净)→ eval cleanup prune 回收 0(正确,无 stale)。
+
+**legacy 清理**:更早轮次(db855c99 前的旧流程,agent cwd 是 repo dir)在 `repos/hc-order/` 下留了 3 个带文件的 worktree(#hc-order/hc-order-66148 等,共 ~13M)→ `git worktree remove --force` 逐个清掉 → list 回到 1(只剩 main)。
+
+**最终态**:目录=0、git-worktree list=1(main)。eval 跑一轮 = 磁盘 0 积累 + 注册 0 积累 + 成果物时间戳保留。**用户原诉求"每次 eval 跑完什么都没留下"+"42 个 worktree 堆积"彻底解决。**
 
