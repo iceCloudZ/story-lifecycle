@@ -23,6 +23,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from typing import Callable
 
 log = logging.getLogger(__name__)
@@ -30,6 +31,11 @@ log = logging.getLogger(__name__)
 # pty.alive 轮询周期。真实 ManagedPty 进程死时 _read_loop 退出但**不往 tap 推 sentinel**,
 # 故 supervise_pty_session 用 wait_for 超时后检查 pty.alive 退出,避免 task 永久阻塞。
 _POLL_SECONDS = 1.0
+
+# 健康信号发射周期(秒)。dsh guard/ 概念吸收(PLAN-dsh-absorption NOW-1):
+# healthy ↔ stuck 之间给梯度,而非只有 detect_stuck 的二值翻转。观察≠判定 ——
+# 这里只落事实事件 agent_health,不判卡住/完成(那归调度线程 detect_stuck / judge)。
+_HEALTH_EMIT_INTERVAL = 30.0
 
 # STEP 1.7c:规则卡住检测阈值(DESIGN §4.3,纯确定性零 LLM)。
 # 超时无新输出(秒):code agent 在 N 秒内没产新输出 → 视为卡住。可被环境变量
@@ -188,6 +194,99 @@ def handle_pty_output(
     return True
 
 
+class HealthTracker:
+    """PTY 输出的活动/健康梯度累积器(纯累积,零 I/O)。
+
+    dsh ``guard/`` 的「行进中信号」概念吸收(PLAN-dsh-absorption NOW-1):在
+    healthy ↔ stuck 之间给**连续梯度**,而非只有 ``detect_stuck`` 的事后二值翻转。
+    红线不变:supervisor **不判完成/不判卡住**(DESIGN §3.2)——本类只累积事实
+    (时间戳/输出量/连续错误 chunk),任何决策仍归调度线程的 detect_stuck / judge。
+    """
+
+    __slots__ = (
+        "started_ts",
+        "first_output_ts",
+        "last_output_ts",
+        "output_chars",
+        "chunks",
+        "error_streak",
+        "max_error_streak",
+        "_last_emit_ts",
+    )
+
+    def __init__(self, started_ts: float):
+        self.started_ts = started_ts
+        self.first_output_ts: float | None = None
+        self.last_output_ts: float | None = None
+        self.output_chars = 0
+        self.chunks = 0
+        self.error_streak = 0
+        self.max_error_streak = 0
+        self._last_emit_ts = started_ts
+
+    def observe(self, text: str, ts: float) -> None:
+        """累积一条 PTY 输出。error 启发式与 detect_stuck 规则 3 同源(error/traceback)。"""
+        self.chunks += 1
+        self.output_chars += len(text)
+        if self.first_output_ts is None:
+            self.first_output_ts = ts
+        self.last_output_ts = ts
+        lowered = text.lower()
+        if "error" in lowered or "traceback" in lowered:
+            self.error_streak += 1
+            self.max_error_streak = max(self.max_error_streak, self.error_streak)
+        else:
+            self.error_streak = 0
+
+    def snapshot(self, now_ts: float) -> dict:
+        """当前健康梯度快照(纯事实,无判定)。"""
+        return {
+            "session_age_s": int(now_ts - self.started_ts),
+            "startup_latency_s": (
+                int(self.first_output_ts - self.started_ts)
+                if self.first_output_ts is not None
+                else None
+            ),
+            "last_output_age_s": (
+                int(now_ts - self.last_output_ts)
+                if self.last_output_ts is not None
+                else None
+            ),
+            "output_chars": self.output_chars,
+            "chunks": self.chunks,
+            "error_streak": self.error_streak,
+            "max_error_streak": self.max_error_streak,
+        }
+
+    def emit_due(self, now_ts: float, interval: float) -> bool:
+        """距上次发射 ≥ interval → True 并记本次时刻(带副作用,调用即消费)。"""
+        if now_ts - self._last_emit_ts >= interval:
+            self._last_emit_ts = now_ts
+            return True
+        return False
+
+
+def _emit_agent_health(
+    *,
+    story_key,
+    stage: str,
+    adapter: str,
+    tracker: HealthTracker,
+    now_ts: float,
+    log_event_fn: Callable,
+) -> None:
+    """Handler:把健康梯度快照落 ``agent_health`` 事件(best-effort,绝不炸监督循环)。"""
+    try:
+        log_event_fn(
+            story_key,
+            stage=stage,
+            event_type="agent_health",
+            payload={"adapter": adapter, **tracker.snapshot(now_ts)},
+        )
+    except Exception:  # noqa: BLE001 — 观察性事件,失败不影响监督
+        log.debug("agent_health emit failed (non-fatal)", exc_info=True)
+
+
 async def supervise_pty_session(
     *,
     pty,
@@ -197,6 +296,7 @@ async def supervise_pty_session(
     llm_invoke: Callable[[str], str],
     log_event_fn: Callable,
     buffer_bytes: int = 2000,
+    health_interval: float = _HEALTH_EMIT_INTERVAL,
 ) -> None:
     """持续监督一个 PTY session(消费 ``add_tap`` 旁路 queue)。
 
@@ -204,6 +304,11 @@ async def supervise_pty_session(
 
         add_tap → 每条输出解码追加到滑窗 buffer → handle_pty_output
         (命中"AI 在等人"则决策 + pty.write 应答 + log)→ 命中后清 buffer。
+
+    同时持续累积健康梯度(PLAN-dsh-absorption NOW-1):每条输出喂
+    ``HealthTracker``,每 ``health_interval`` 秒落一条 ``agent_health`` 事件。
+    **idle 也发**(空转时 last_output_age_s 增长正是信号)。观察≠判定——
+    卡住判定仍在调度线程的 detect_stuck,本函数不因健康信号做任何决策。
 
     退出条件:tap 收到 ``None`` sentinel,或 ``pty.alive`` 变 False。
     ``finally`` 必 ``remove_tap`` 防泄漏。
@@ -214,8 +319,21 @@ async def supervise_pty_session(
     """
     tap = pty.add_tap()
     buffer = ""
+    story_key = story_facts.get("story_key")
+    stage = story_facts.get("stage", "")
+    tracker = HealthTracker(started_ts=time.time())
     try:
         while getattr(pty, "alive", True):
+            now = time.time()
+            if tracker.emit_due(now, health_interval):
+                _emit_agent_health(
+                    story_key=story_key,
+                    stage=stage,
+                    adapter=adapter,
+                    tracker=tracker,
+                    now_ts=now,
+                    log_event_fn=log_event_fn,
+                )
             try:
                 data = await asyncio.wait_for(tap.get(), timeout=_POLL_SECONDS)
             except asyncio.TimeoutError:
@@ -227,6 +345,7 @@ async def supervise_pty_session(
                 if isinstance(data, (bytes, bytearray))
                 else str(data)
             )
+            tracker.observe(text, time.time())
             buffer = buffer + text
             if len(buffer) > buffer_bytes:
                 buffer = buffer[-buffer_bytes:]

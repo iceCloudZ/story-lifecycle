@@ -282,6 +282,7 @@ Prompt quality is **not** judged by an LLM at spawn time. Real-time judges waste
 
 - **Commit when done（改完就提交）**: 每完成一轮改动就立即 `git commit`，不要攒着。这个仓库常有多个 agent 会话并行工作，未提交的改动随时可能被另一个会话的 `git checkout -- .` 之类操作冲掉（真实发生过）。提交时注意：只暂存本次任务相关的文件，别把其他会话进行中的改动（如他人未提交的 `api.py`）卷进来；`git push` 仍需用户明确要求才执行。
 - **Chinese content**: story-lifecycle's stage templates and prompts are in Chinese — maintain this when editing.
+- **新能力先立 seam（Definition / Provider / Consumer 三分）**: 新增一类可替换能力（适配器、LLM 源、知识 provider、需求源、通知通道…）时，先立中立的接口声明（Service Definition），实现（Provider）可多个并存，消费方只 import Definition、绝不 import 具体实现或按实现名/isinstance 分支——这是 adapter 契约（SessionSpec 两次事故）的泛化（dsh capability-seams 吸收，见 `packages/story-lifecycle/docs/PLAN-dsh-absorption.md`）。范例：`knowledge/adapters/base.py`（BaseAdapter）、`sourcing/sources/base.py`（StorySource）。
 - **No ORM**: DB access uses raw SQL (`db/models.py`), zero ORM.
 - **Editable installs**: packages are always editable-installed from `packages/`; never build wheels for local dev.
 - **Do not commit runtime artifacts**: `ws/`, `*.db`, `dist/`, `.venv*/`, `.story*/`, `.claude/` (zcode workspace) are gitignored — leave them ignored.

@@ -10,6 +10,7 @@ import asyncio
 import pytest
 
 from story_lifecycle.orchestrator.engine.supervisor import (
+    HealthTracker,
     decide_response,
     handle_pty_output,
     log_decision,
@@ -329,3 +330,109 @@ class TestSupervisePtySession:
             timeout=5,
         )
         # 到这里就是通过(dead pty 没卡死,没调 LLM)
+
+
+class TestHealthTracker:
+    """PLAN-dsh-absorption NOW-1:健康梯度累积器(纯函数,观察≠判定)。"""
+
+    def test_observe_accumulates_activity(self):
+        t = HealthTracker(started_ts=100.0)
+        t.observe("分析代码中\n", 105.0)
+        t.observe("编辑文件\n", 110.0)
+        snap = t.snapshot(now_ts=120.0)
+        assert snap["chunks"] == 2
+        assert snap["output_chars"] == len("分析代码中\n") + len("编辑文件\n")
+        assert snap["startup_latency_s"] == 5
+        assert snap["last_output_age_s"] == 10
+        assert snap["session_age_s"] == 20
+
+    def test_error_streak_counts_consecutive_and_resets(self):
+        t = HealthTracker(started_ts=0.0)
+        t.observe("Traceback (most recent call last)", 1.0)
+        t.observe("ValueError: boom", 2.0)
+        t.observe("ValueError: boom again", 3.0)
+        assert t.error_streak == 3
+        t.observe("正常输出 ok", 4.0)
+        assert t.error_streak == 0
+        assert t.max_error_streak == 3  # 峰值保留(梯度事实)
+
+    def test_snapshot_before_any_output(self):
+        """从未输出 → startup/last_output_age 为 None(启动期也是信号)。"""
+        t = HealthTracker(started_ts=100.0)
+        snap = t.snapshot(now_ts=130.0)
+        assert snap["startup_latency_s"] is None
+        assert snap["last_output_age_s"] is None
+        assert snap["chunks"] == 0
+
+    def test_emit_due_throttles(self):
+        t = HealthTracker(started_ts=100.0)
+        assert t.emit_due(now_ts=110.0, interval=30.0) is False  # 10s < 30s
+        assert t.emit_due(now_ts=130.0, interval=30.0) is True   # 到点
+        assert t.emit_due(now_ts=131.0, interval=30.0) is False  # 刚发过
+        assert t.emit_due(now_ts=161.0, interval=30.0) is True   # 下一周期
+
+
+class TestAgentHealthEmission:
+    @pytest.mark.asyncio
+    async def test_supervise_emits_agent_health_periodically(self):
+        """health_interval=0 → 每轮循环都 due;监督循环落 agent_health 事件
+        (payload 带 adapter + 梯度快照),且不影响原 awaiting 决策链路。"""
+        from types import SimpleNamespace
+
+        tap = asyncio.Queue()
+        tap.put_nowait("正在分析代码...\n".encode("utf-8"))
+        tap.put_nowait("请选择方案: A) foo B) bar\n".encode("utf-8"))
+        tap.put_nowait(None)  # sentinel
+
+        writes: list[bytes] = []
+        logs: list[dict] = []
+
+        fake_pty = SimpleNamespace(
+            add_tap=lambda maxsize=512: tap,
+            remove_tap=lambda t: None,
+            write=lambda d: writes.append(d),
+            alive=True,
+        )
+
+        def fake_log(story_key, *, stage, event_type, payload):
+            logs.append(
+                {
+                    "story_key": story_key,
+                    "stage": stage,
+                    "event_type": event_type,
+                    "payload": payload,
+                }
+            )
+
+        def fake_awaiting(buffer):
+            if "请选择方案" in buffer:
+                return ("请选择方案: A) foo B) bar", ["A", "B"])
+            return None
+
+        def fake_llm(prompt):
+            return '{"choice": "A", "reason": "foo"}'
+
+        await supervise_pty_session(
+            pty=fake_pty,
+            adapter="codex",
+            story_facts={
+                "story_key": "S-HEALTH",
+                "stage": "implement",
+                "auto_confirm": True,
+            },
+            is_awaiting_fn=fake_awaiting,
+            llm_invoke=fake_llm,
+            log_event_fn=fake_log,
+            health_interval=0.0,  # 强制每轮发射(测试)
+        )
+
+        health = [e for e in logs if e["event_type"] == "agent_health"]
+        decisions = [e for e in logs if e["event_type"] == "supervisor_decision"]
+        assert health, "agent_health 必须有发射"
+        assert decisions and decisions[0]["payload"]["choice"] == "A"  # 原链路不受影响
+        last = health[-1]
+        assert last["story_key"] == "S-HEALTH"
+        assert last["payload"]["adapter"] == "codex"
+        assert last["payload"]["chunks"] >= 1
+        assert "last_output_age_s" in last["payload"]
+        assert "error_streak" in last["payload"]
