@@ -4,7 +4,7 @@
 > - `D:\github\story-lifecycle\AGENTS.md`(story-lifecycle 总规则)
 > - `C:\Users\zzh58\OneDrive\LifeOS\工作\个人项目\定时任务系统\AGENTS.md`(定时任务系统操作规则,冲突时以它为准)
 >
-> **状态**:待执行 · **日期**:2026-08-14
+> **状态**:已执行(2026-08-14,见 §12 执行记录) · **日期**:2026-08-14
 
 ---
 
@@ -196,9 +196,19 @@ print(f"产出: {brief_path}")
 
 ## 11. 验收清单
 
-- [ ] `story daily --md` / `--json` 手测通过,五类聚合正确,空数据不崩。
-- [ ] `story_daily.py` 本地直跑产出 `output/story-daily-sync-briefing-<date>.md`。
-- [ ] `python runner.py --now story-daily-sync` 退出码 0、产出落地、日志无异常、last_run 回写。
-- [ ] 看板首页出现 `story-daily-sync` 卡片 + 可点产出链接。
-- [ ] 定时任务系统 `README.md`「已注册任务」表已更新。
-- [ ] (故意制造 TAPD 配置缺失/断网)wrapper 仍产出带「⚠️ 同步失败」的简报,不崩。
+- [x] `story daily --md` / `--json` 手测通过,五类聚合正确,空数据不崩。
+- [x] `story_daily.py` 本地直跑产出 `output/story-daily-sync-briefing-<date>.md`。
+- [x] `python runner.py --now story-daily-sync` 退出码 0、产出落地、日志无异常、last_run 回写。
+- [x] 看板首页出现 `story-daily-sync` 卡片 + 可点产出链接。
+- [x] 定时任务系统 `README.md`「已注册任务」表已更新。
+- [x] (故意制造 TAPD 配置缺失/断网)wrapper 仍产出带「⚠️ 同步失败」的简报,不崩(STORY_HOME 指空目录注入验证,exit 0)。
+
+## 12. 执行记录(2026-08-14,与计划的偏差)
+
+1. **`owner` 配置缺失(计划前提不成立)**:config.yaml tapd 段只有 `workspace_id`。`tapd_source.py:90` 的 owner 过滤在 owner 为空时恒通过(`"" not in cf25` 永远 False)→ sync 会拉**全公司**待办。经用户确认补 `owner: "赵子豪"`(证据:DB 219 条中 167 条 owner=赵子豪)。dry-run 验证过滤生效:只拉到本人 3 条待处理缺陷。**遗留**:story-lifecycle 侧可考虑在 `TapdSource`/`sync_cmd` 对 owner 缺失给显式告警(本次未做,属 story-lifecycle 改动)。
+2. **简报池滤终态(计划没写,真实数据倒逼)**:candidate 池里有 19 条 TAPD 远端已关闭、同步时映射 `lifecycle_state='结项'` 的 story(deadline 早过),不过滤会灌爆「已过期未完成」。`_load_pool` 滤掉 `结项` + `tapd_status ∈ COMPLETED_STATES`(与 list 视图默认一致)。
+3. **受阻判定落地**:`escalate` 在编排侧落 `status='paused'`(`handlers.py:262`),无独立 escalate 状态;stuck 是运行时检测不落库。故 ⛔ 段 = `status ∈ {paused, failed}`。
+4. **`--md` flag**:计划骨架只有 `--json`,但 wrapper/验收清单都用 `--md` 显式传参——补了 flag(md 本就是默认行为)。
+5. **编码双保险**:daily_cmd 里 `sys.stdout.reconfigure(errors="replace")`(GBK 控制台不炸);wrapper 里给子进程设 `PYTHONIOENCODING=utf-8`(管道下 Python 默认跟 locale 走 GBK,不设会乱码)。
+6. **单测**:新增 `tests/test_daily_cmd.py` 3 例(五类视图/candidate 新落/结项噪音过滤/空库不崩),仓库「回归测试」惯例。
+7. **wrapper 细节**:子进程超时(sync 900s / daily 120s,防挂死占 runner 1h 上限);剥掉 daily 输出首行 H1 避免与产出标题重复;同步失败仍 exit 0(降级说明在产出与日志,保持每日节律不断更)。
