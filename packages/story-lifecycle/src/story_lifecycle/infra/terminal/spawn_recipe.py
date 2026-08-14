@@ -53,7 +53,10 @@ def spawn_agent_pty(
     workspace: str,
     spawn_cwd: str | None = None,
     seed: str | None = None,
-    resume_seed: str = "继续上次的任务,完成后按完成协议写入 done 文件。",
+    resume_seed: str = (
+        "继续上次的任务。先跑 `story tool context` 回顾任务简报,"
+        "完成后用 `story tool declare` 落地成果物。"
+    ),
     env: dict | None = None,
     startup_delay: float | None = None,
 ) -> SpawnResult:

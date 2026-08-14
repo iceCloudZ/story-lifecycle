@@ -539,7 +539,10 @@ class AutomaticStageExecutor(BaseStageExecutor):
 
         _prior = _sd.get_session(story_key, stage, adapter_name)
         if _prior and _prior.get("session_id"):
-            resume_seed = "继续上次的任务,完成后用 `story tool declare` 落地成果物。"
+            resume_seed = (
+                "继续上次的任务。先跑 `story tool context` 回顾任务简报,"
+                "完成后用 `story tool declare` 落地成果物。"
+            )
             spec = adapter.start_session(
                 model=model,
                 prompt=resume_seed,

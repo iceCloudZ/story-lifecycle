@@ -14,6 +14,7 @@ import pytest
 
 from story_lifecycle.orchestrator.engine import artifact_declare
 from story_lifecycle.orchestrator.engine.artifact_declare import declare_artifact
+from story_lifecycle.entry.cli.story_tool import _build_context_brief
 
 
 # ---- helpers ----
@@ -265,3 +266,79 @@ def test_declare_reads_context_from_env(tmp_path, monkeypatch):
     )
     assert result["story_key"] == "ENV-STORY"
     assert result["stage"] == "build"
+
+
+# ---- story tool context:任务简报(纯函数 _build_context_brief)----
+
+
+def _story_row(
+    tmp_path,
+    *,
+    story_key="S1",
+    title="测试 story",
+    profile="minimal",
+    current_stage="design",
+    context_json=None,
+):
+    """构造 db.get_story() 风格的 story 行。context_json 传 str 原样,否则 json.dumps。"""
+    cj = context_json if isinstance(context_json, str) else json.dumps(context_json or {})
+    return {
+        "story_key": story_key,
+        "title": title,
+        "profile": profile,
+        "workspace": str(tmp_path),
+        "current_stage": current_stage,
+        "context_json": cj,
+    }
+
+
+def test_context_brief_has_all_sections(tmp_path):
+    """PRD/接手说明/本阶段任务俱全时,简报含各段 + 末尾 todo/declare 指针。"""
+    prd = tmp_path / "prd.md"
+    prd.write_text("# 需求\n实现版本限制功能", encoding="utf-8")
+    ctx = {
+        "prd_path": str(prd),
+        "seed_context": "已做到 spec,还差测试",
+        "_agent_actions": [
+            {
+                "action": "launch",
+                "stage": "design",
+                "focus": "写设计文档",
+                "task_actions": [
+                    {"key": "write_design_doc", "description": "产出 spec.md"}
+                ],
+            }
+        ],
+    }
+    out = _build_context_brief(_story_row(tmp_path, context_json=ctx), "design")
+    assert "任务简报" in out
+    assert "S1" in out and "测试 story" in out
+    assert "design" in out
+    assert "实现版本限制功能" in out  # PRD 摘要
+    assert "已有工作(接手)" in out and "已做到 spec" in out
+    assert "写设计文档" in out  # focus
+    assert "write_design_doc" in out  # task_actions
+    assert "story tool todo" in out and "story tool declare" in out  # 末尾指针
+
+
+def test_context_brief_omits_handoff_when_empty(tmp_path):
+    """seed_context 为空 → 不出「已有工作(接手)」段;无匹配 action → 降级提示。"""
+    ctx = {"prd_path": "", "seed_context": "", "_agent_actions": []}
+    out = _build_context_brief(_story_row(tmp_path, context_json=ctx), "design")
+    assert "已有工作(接手)" not in out
+    assert "本阶段无结构化任务清单" in out
+
+
+def test_context_brief_prd_unreadable_does_not_crash(tmp_path):
+    """PRD 路径读不到 → 降级提示,不抛(镜像 todo 健壮性)。"""
+    ctx = {"prd_path": str(tmp_path / "nope.md"), "_agent_actions": []}
+    out = _build_context_brief(_story_row(tmp_path, context_json=ctx), "design")
+    assert "读不到" in out
+
+
+def test_context_brief_bad_context_json_degrades(tmp_path):
+    """context_json 非法 → 当空 ctx,不抛,仍产出简报骨架。"""
+    story = _story_row(tmp_path, context_json="{not valid json")
+    out = _build_context_brief(story, "design")
+    assert "任务简报" in out
+    assert "本阶段无结构化任务清单" in out

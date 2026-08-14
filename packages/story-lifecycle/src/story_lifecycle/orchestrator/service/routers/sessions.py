@@ -153,7 +153,10 @@ def _spawn_story_agent_pty(
                 pass
             retry_spec = adapter.start_session(
                 model,
-                prompt="继续上次的任务,完成后按完成协议写入 done 文件。",
+                prompt=(
+                    "继续上次的任务。先跑 `story tool context` 回顾任务简报,"
+                    "完成后用 `story tool declare` 落地成果物。"
+                ),
                 session_id=_use_sid,
                 session_name=f"{story_key}-{stage}",
                 resume=True,
