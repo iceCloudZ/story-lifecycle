@@ -12,7 +12,7 @@
 | A1 | `guard/` 行进中 inline 信号(健康梯度) | supervisor 的持续 tap 只做 awaiting 检测,`detect_stuck` 是事后二值 | ✅ **本轮已做**(NOW-1) |
 | A2 | seam 三分法(Definition/Provider/Consumer) | `BaseAdapter`/`StorySource` 已是雏形,但没成文 | ✅ **本轮已做**(NOW-2,AGENTS.md 立规) |
 | A3 | 语义 token 纪律(`--dsw-alias-*`,禁字面色值) | frontend `.ui-*` + tokens | ✅ **已有覆盖,无需改**(frontend/AGENTS.md §1/§4 已是同款规矩) |
-| A4 | 完整 turn 事件序全 waterfall(事件驱动感知) | `OrchestratorThread` 固定 5s 轮询 | ⬜ NEXT-1(见下,有设计草图) |
+| A4 | 完整 turn 事件序全 waterfall(事件驱动感知) | `OrchestratorThread` 固定 5s 轮询 | ✅ **已做**(NEXT-1 最小形态:`engine/wake.py` + 三个 wake 点) |
 | A5 | `hooks/` = Claude Code / Codex 线协议共享库 | headless 优先(claude `-p` stream-json + 退出码)时的参考实现 | ⬜ NEXT-2(headless 线启动时去读) |
 | A6 | durable replay(`session/event`)vs live status(`agent/*`)分离 | events.jsonl + `orchestrator_decision` 审计表 | ✅ 只读验证:与「无状态编排」(DESIGN §4.6)同一哲学,无需改代码 |
 
@@ -33,16 +33,18 @@
 
 根 `AGENTS.md` Conventions 新增:**新能力先立 seam**——Definition(中立接口)/ Provider(可多实现并存)/ Consumer(只 import Definition,禁按实现名/isinstance 分支)。是 adapter 契约(SessionSpec 两次事故)的泛化。范例:`BaseAdapter`、`StorySource`。
 
-## NEXT-1:事件驱动感知最小形态(scheduler.wake)— 设计草图
+## NEXT-1:事件驱动感知最小形态(scheduler.wake)— 已完成 ✅(2026-08-14 第二轮)
 
-**目标**:重要进程内信号(PTY 死亡 / awaiting 命中 / spawn 完成)把编排线程的 `wait(poll_interval)` 提前唤醒(≤5s → ~0s),**不新增第二条调度路径**(硬规则:编排线程是唯一调度入口——wake 只是让同一次 tick 提前发生)。
-
-**已知坑(做之前先解决)**:
-1. **循环导入**:`scheduler.py` imports `executors.py`;supervisor 若 import scheduler 会成环。解法:中立小模块(如 `orchestrator/engine/wake.py`)持模块级注册表,`OrchestratorThread.run` 启动时注册自己,信号方调 `wake()`;或 executors 经 DI 回调注入。
-2. **跨进程信号唤不醒**:`story tool declare` 是独立 CLI 进程写 DB,in-process wake 够不着——declare→judge 的时延仍靠 5s DB 轮询(或改文件信号,过度设计,不建议)。
-3. `run()` 主循环从 `_stop_event.wait(interval)` 改为 `_wake_event.wait(interval)` + `stop()` 同时 set 两者(保停机响应)。
-
-**收益评估**:PTY 死亡→judge 时延 5s→~0s。锦上添花,排后。
+**落地**(按原设计草图实施):
+- 新中立模块 `orchestrator/engine/wake.py`(注册表模式,不 import 任何编排层模块,解 scheduler↔engine 循环导入):`register(event)` / `wake()`(无注册时 no-op)。
+- `OrchestratorThread`:`run()` 启动注册/停止注销;主循环 `_wake_event.wait(poll_interval)` + clear;**`stop()` 双 set**(保停机响应——run 等在 wake_event 上,只 set stop 会拖满一个 poll)。
+- 三个 wake 点(语义一致「会话/判定结束,调度线程现在就该看一眼」):
+  1. `_judge_task` 尾部 —— judge 完成 → 决策处理 ≤5s → ~0s
+  2. `supervise_pty_session` finally —— PTY 死亡/会话结束 → tick 接管 ~0s
+  3. `supervise_headless_stdout` 返回前 —— headless proc EOF → tick 接管 ~0s
+- **硬规则未破**:wake 只让同一次 tick 提前发生,不新增第二条调度路径。
+- **接受的边界**(不变):`story tool declare` 是跨进程 CLI 写 DB,唤不醒——declare→judge 仍靠 5s DB 轮询。
+- 测试:`tests/test_orchestrator_wake.py` 8 个(注册表 3 + 线程级 2 + wiring 3),含「stop 秒停不被 30s poll 拖住」的停机响应回归守护。
 
 ## NEXT-2:hooks/ 参考阅读(headless 线启动时)
 
@@ -54,5 +56,5 @@
 - [x] A2 seam 三分法立规进 AGENTS.md(2026-08-14)
 - [x] A3 核对 frontend token 纪律——已有,无改动(2026-08-14)
 - [x] A6 只读验证 replay/status 分离哲学一致(2026-08-14)
-- [ ] A4 scheduler.wake()(NEXT-1,含循环导入解法)
+- [x] A4 scheduler.wake():`engine/wake.py` + 三 wake 点(2026-08-14 第二轮)
 - [ ] A5 hooks/ 阅读(headless 线启动时)

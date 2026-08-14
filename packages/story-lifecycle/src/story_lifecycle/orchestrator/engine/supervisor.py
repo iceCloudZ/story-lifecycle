@@ -26,6 +26,8 @@ import os
 import time
 from typing import Callable
 
+from .wake import wake
+
 log = logging.getLogger(__name__)
 
 # pty.alive 轮询周期。真实 ManagedPty 进程死时 _read_loop 退出但**不往 tap 推 sentinel**,
@@ -362,6 +364,9 @@ async def supervise_pty_session(
                 buffer = ""  # 应答后清窗,避免同问题重复触发
     finally:
         pty.remove_tap(tap)
+        # 会话结束(PTY 死/sentinel)→ 唤醒编排线程立即接管(PLAN-dsh-absorption A4;
+        # 无注册时 no-op)。PTY 死亡→tick 发现的时延从 ≤poll_interval 降到 ~0。
+        wake()
 
 
 def _build_decision_prompt(question: str, options: list[str], story_facts: dict) -> str:

@@ -21,6 +21,8 @@ import json
 import logging
 from typing import Callable
 
+from .wake import wake
+
 log = logging.getLogger("story-lifecycle.claude_stream")
 
 ALLOW = "allow"
@@ -383,4 +385,7 @@ def supervise_headless_stdout(
             )
     except Exception:
         pass
+    # headless proc stdout EOF(进程将退/已退)→ 唤醒编排线程立即接管
+    # (PLAN-dsh-absorption A4;无注册时 no-op)。
+    wake()
     return decisions

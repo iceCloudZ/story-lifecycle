@@ -137,6 +137,9 @@ class OrchestratorThread(threading.Thread):
         # 取不到 → _finalize_stage_pass 用空 done_data 兜底（非阻塞）。
         self._stage_done_data: dict[str, dict] = {}
         self._stop_event = threading.Event()
+        # 事件驱动唤醒(PLAN-dsh-absorption A4):run() 等在此 event 上,
+        # engine.wake.wake() 提前打断等待 → 同一次 tick 提前发生(唯一调度入口不变)。
+        self._wake_event = threading.Event()
         self._lock = threading.Lock()
         # 每个 story 当前 stage 的运行时状态（spawn 时刻 / 卡住去重 / headless 重试）
         self._stage_state: dict[str, dict] = {}
@@ -150,17 +153,30 @@ class OrchestratorThread(threading.Thread):
     # ---- 生命周期 ----
 
     def stop(self):
-        """通知线程停止（serve 停时调）。"""
+        """通知线程停止（serve 停时调）。
+
+        必须同时 set _wake_event —— run() 等在它上面,只 set stop 的话
+        停机要等满一个 poll_interval 才响应。
+        """
         self._stop_event.set()
+        self._wake_event.set()
 
     def run(self):
+        from .engine.wake import register as wake_register
+
+        wake_register(self._wake_event)
         log.info("orchestrator thread started (poll=%ss)", self._poll_interval)
-        while not self._stop_event.is_set():
-            try:
-                self._tick()
-            except Exception:
-                log.exception("orchestrator tick failed (non-fatal, continuing)")
-            self._stop_event.wait(self._poll_interval)
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    self._tick()
+                except Exception:
+                    log.exception("orchestrator tick failed (non-fatal, continuing)")
+                # 醒后 clear:无论唤醒源是 wake() 还是 stop(),调度入口仍是本 tick。
+                self._wake_event.wait(self._poll_interval)
+                self._wake_event.clear()
+        finally:
+            wake_register(None)  # 线程死了不再接收唤醒
         log.info("orchestrator thread stopped")
 
     # ---- 一轮轮询 ----
@@ -783,6 +799,10 @@ class OrchestratorThread(threading.Thread):
         with self._lock:
             self._judge_results[judge_key] = decision
             self._judging.discard(judge_key)
+        # judge 完成 → 唤醒编排线程立即处理决策(不等满 poll_interval)。
+        from .engine.wake import wake
+
+        wake()
         log.info(
             "[%s] judge done stage=%s quality=%s",
             story_key,
