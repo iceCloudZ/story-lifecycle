@@ -145,6 +145,7 @@ def cli(ctx, serve, host, port, fix_deps):
             "advance",
             "done",
             "calendar",
+            "daily",
             "tool",
         ):
             # STORY_SKIP_FIRST_RUN: 测试 / CI 用 —— 跳过 setup wizard 拦截。
@@ -500,6 +501,10 @@ cli.add_command(done_cmd)
 from .calendar_cmd import calendar_cmd  # noqa: E402
 
 cli.add_command(calendar_cmd)
+
+from .daily_cmd import daily_cmd  # noqa: E402
+
+cli.add_command(daily_cmd)
 
 from .consult_cmd import consult_cmd  # noqa: E402
 
