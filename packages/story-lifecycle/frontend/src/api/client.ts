@@ -391,7 +391,19 @@ export interface Pattern {
 
 export async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${BASE}${path}`, init)
-  if (!r.ok) throw new Error(`API ${r.status}: ${path}`)
+  if (!r.ok) {
+    // FastAPI HTTPException 的 body 是 {"detail": "..."}。丢掉它的话，
+    // "PRD 生成失败: <原因>" 这类关键信息永远到不了 UI（真实事故
+    // 2026-08-20：读取需求 502 只显示 "API 502"，定位全靠翻 serve 控制台）。
+    let detail = ''
+    try {
+      const body = await r.json()
+      if (body && typeof body.detail === 'string') detail = body.detail
+    } catch {
+      /* 非 JSON body（如代理层 502 的 HTML）保持仅状态码 */
+    }
+    throw new Error(detail ? `API ${r.status}: ${detail}` : `API ${r.status}: ${path}`)
+  }
   return r.json()
 }
 

@@ -117,6 +117,9 @@ def generate_prd_from_source(source: StorySourceSnapshot) -> PrdGenerationResult
             temperature=0,
             timeout=120,
             max_tokens=3000,
+            # Intake 读取需求要一次性产出含大段 markdown 的 JSON，模型纪律
+            # 要求最高（2026-08-20 两次 502 都栽在这）；比默认多一次纠正重试。
+            max_parse_retries=2,
         )
     return result
 

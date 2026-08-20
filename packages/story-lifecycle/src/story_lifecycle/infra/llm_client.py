@@ -335,16 +335,27 @@ class LLMClient:
             )
             last_content = content
             data = self._parse_json(content)
-            if data is not None:
+            # 结构化调用要求 JSON 对象。LLM 偶尔返回合法 JSON 但不是对象
+            # （真实事故 2026-08-20：deepseek 返回 `[]`，model_validate(list)
+            # 在 _construct_recursive 兜底里再抛 ValidationError，把可重试的
+            # 解析失败变成了 500 级异常）。非 dict 一律按解析失败走纠正重试。
+            if isinstance(data, dict):
                 break
+            reason = (
+                "JSON parse failed"
+                if data is None
+                else f"expected a JSON object, got {type(data).__name__}"
+            )
             log.warning(
-                "invoke_structured: JSON parse failed (attempt %d/%d), will retry",
+                "invoke_structured: %s (attempt %d/%d), will retry",
+                reason,
                 attempt + 1,
                 max_parse_retries + 1,
             )
         else:
             raise ValueError(
-                f"Cannot parse LLM response as JSON after {max_parse_retries + 1} attempts. "
+                f"Cannot parse LLM response as a JSON object after "
+                f"{max_parse_retries + 1} attempts. "
                 f"First 500 chars: {last_content[:500]!r}"
             )
         try:
