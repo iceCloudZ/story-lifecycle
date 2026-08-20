@@ -116,7 +116,12 @@ def generate_prd_from_source(source: StorySourceSnapshot) -> PrdGenerationResult
             PrdGenerationResult,
             temperature=0,
             timeout=120,
-            max_tokens=3000,
+            # deepseek-v4-pro 是推理模型：CoT 先烧 ~3000 token，之后才输出
+            # 正式 JSON（800-1500 中文字符 ≈ 2000+ token）。真实事故
+            # 2026-08-20：max_tokens=3000 时 completion_tokens 恒卡 3000，
+            # content 为空或 JSON 被腰斩，读取需求连续 502。预算必须
+            # 覆盖「思考 + 正文」两段。
+            max_tokens=8000,
             # Intake 读取需求要一次性产出含大段 markdown 的 JSON，模型纪律
             # 要求最高（2026-08-20 两次 502 都栽在这）；比默认多一次纠正重试。
             max_parse_retries=2,

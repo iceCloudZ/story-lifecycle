@@ -5,9 +5,11 @@ class FakeLLM:
     def __init__(self, payload):
         self.payload = payload
         self.prompt = ""
+        self.kwargs = {}
 
     def invoke_structured(self, prompt, schema, **kwargs):
         self.prompt = prompt
+        self.kwargs = kwargs
         return schema.model_validate(self.payload)
 
 
@@ -38,6 +40,10 @@ def test_prd_generator_prompt_is_self_contained_and_source_agnostic(monkeypatch)
     assert "不要依赖外部 hc-all skill" in llm.prompt
     assert "source_type: tapd" in llm.prompt
     assert "TAPD 正文" in llm.prompt
+    # 真实事故 2026-08-20：deepseek-v4-pro（推理模型）CoT 先烧 ~3000 token，
+    # max_tokens=3000 时 completion_tokens 恒卡上限，content 为空或 JSON 被
+    # 腰斩，读取需求连续 502。预算必须覆盖「思考 + 正文」两段。
+    assert llm.kwargs.get("max_tokens", 0) >= 8000
 
 
 def test_prd_generator_prompt_prefers_lightweight_intake_prd():
