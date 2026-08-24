@@ -159,7 +159,10 @@ def write_playbook_file(
 ) -> str | None:
     """把 reflect 的 playbook 按 task_type 分层落盘(REFACTOR §5.1.2)。
 
-    路径: ``<workspace>/.story/knowledge/playbooks/<task_type>/<dimension>.md``
+    路径: ``<知识根>/playbooks/<task_type>/<dimension>.md``,知识根经
+    ``resolve_knowledge_root(workspace)`` 解析(B4 写读同根 —— provider 召回
+    与本函数沉淀共用同一根,多 workspace 不再分家)。落盘后重建统一 INDEX
+    (B3),新经验立即可召回。
     去重: 按结构化 key 合并,support 累加(不是文本匹配)。
     best-effort: 写失败只 warning,不影响 story 完成。
 
@@ -173,11 +176,13 @@ def write_playbook_file(
     if not fname:
         return None
 
-    from ...infra.story_paths import safe_story_path
+    # 写读同根(B4):provider 与 reflection 共用 resolve_knowledge_root,
+    # 不再各自拼 <workspace>/.story/knowledge(多 workspace 时写读分家)。
+    # task_type/dimension/fname 都是内部受控词汇,无用户输入注入路径。
+    from ...knowledge.knowledge_store.paths import resolve_knowledge_root
 
-    path = safe_story_path(
-        workspace, ".story", "knowledge", "playbooks", task_type, fname
-    )
+    kroot = resolve_knowledge_root(workspace)
+    path = kroot / "playbooks" / task_type / fname
 
     try:
         # 读现有 playbook(如果文件已存在)
@@ -214,7 +219,21 @@ def write_playbook_file(
 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(lines), encoding="utf-8")
-        return str(path.relative_to(workspace))
+
+        # 落盘后重建统一 INDEX(B3):新沉淀的经验立即可召回,不等外部重建。
+        # 软 seam:knowledge 包未装/重建失败不影响回写本身。
+        try:
+            from knowledge.generator import write_index
+
+            write_index(str(kroot))
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            return str(path.relative_to(workspace))
+        except ValueError:
+            # 知识根在 workspace 之外(全局默认/显式配置)是合法形态
+            return str(path)
     except Exception as exc:
         import logging
 

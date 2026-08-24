@@ -56,7 +56,7 @@ def _sync_related_bugs_from_stories(source, item_type_filter: str = "") -> dict:
 
     for bug_id, (flat, parent_key) in bug_map.items():
         try:
-            db.upsert_story_from_source(
+            bug_story, _ = db.upsert_story_from_source(
                 source_type="tapd",
                 source_id=f"bug_{bug_id}",
                 title=flat.get("title", ""),
@@ -65,6 +65,12 @@ def _sync_related_bugs_from_stories(source, item_type_filter: str = "") -> dict:
                 owner=flat.get("current_owner", ""),
                 tapd_url=f"https://www.tapd.cn/{source._api.workspace_id}/bugtrace/bugs/view?bug_id={bug_id}",
                 parent_key=parent_key,
+            )
+            # 批量路径关键词打标即可(use_llm=False,不为每 item 阻塞几秒)
+            from ..story_service import ensure_task_type
+
+            ensure_task_type(
+                bug_story["story_key"], title=flat.get("title", ""), use_llm=False
             )
             result["synced"] += 1
         except Exception:

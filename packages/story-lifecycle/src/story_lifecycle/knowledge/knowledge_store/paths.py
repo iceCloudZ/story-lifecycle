@@ -19,9 +19,48 @@ All runtime code must use these helpers instead of hand-building paths.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from ...infra.story_paths import safe_story_path
+
+# 全局默认知识根(未配置、workspace 无本地知识库时的最终回退)。
+# 保持与历史 STORY_KNOWLEDGE_ROOT 默认值一致。
+_GLOBAL_DEFAULT_KNOWLEDGE_ROOT = Path(
+    "D:/hc-all/.story/knowledge" if os.name == "nt" else "~/hc-all/.story/knowledge"
+).expanduser()
+
+
+def resolve_knowledge_root(workspace: str | Path | None) -> Path:
+    """知识库根的唯一解析入口 —— 读侧(provider)与写侧(reflection)必须共用。
+
+    飞轮断点 B4 的修复不变量:任何新增知识写入/读取点都经此函数,
+    禁止再出现模块级硬编码路径常量。解析顺序:
+
+    1. ``config.yaml`` 的 ``knowledge_root``(显式配置,最高优先)
+    2. env ``STORY_KNOWLEDGE_ROOT``
+    3. ``<workspace>/.story/knowledge`` 且已初始化(含 manifest.yaml 或 INDEX.json)
+    4. 全局默认(单机单知识库语义;workspace 未建知识库时沉淀/召回都落到它)
+    """
+    try:
+        from ...infra.config import get_config
+
+        configured = (get_config() or {}).get("knowledge_root")
+        if configured:
+            return Path(configured).expanduser()
+    except Exception:  # noqa: BLE001 — 配置读取失败不阻塞解析
+        pass
+
+    env = os.environ.get("STORY_KNOWLEDGE_ROOT")
+    if env:
+        return Path(env).expanduser()
+
+    if workspace:
+        local = knowledge_dir(workspace)
+        if (local / "manifest.yaml").exists() or (local / "INDEX.json").exists():
+            return local
+
+    return _GLOBAL_DEFAULT_KNOWLEDGE_ROOT
 
 
 def knowledge_dir(workspace: str | Path) -> Path:

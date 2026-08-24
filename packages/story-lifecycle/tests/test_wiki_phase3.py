@@ -406,7 +406,7 @@ class TestWikiInjection:
     def _provider(self, tmp_path, monkeypatch, kroot):
         from story_lifecycle.knowledge.context_providers import knowledge_provider as kp
 
-        monkeypatch.setattr(kp, "_KNOWLEDGE_ROOT", Path(kroot))
+        monkeypatch.setattr(kp, "resolve_knowledge_root", lambda workspace: Path(kroot))
         return kp.KnowledgeContextProvider(), kp
 
     def test_injection_only_summary_and_related_merged_only(
@@ -432,7 +432,7 @@ class TestWikiInjection:
             slug="unconfirmed",
         )
         provider, _ = self._provider(tmp_path, monkeypatch, kroot)
-        section = provider._build_wiki_summary_section("credit-limit")
+        section = provider._build_wiki_summary_section(Path(kroot))
         assert "授信域覆盖申请到动支" in section
         assert "scenario:borrow-flow" in section
         # draft 不注入;正文全文不注入
@@ -487,7 +487,7 @@ class TestWikiInjection:
         entry["verified_at"] = "2000-01-01T00:00:00+00:00"
         wiki._write_entry_file(kroot, entry)
         provider, _ = self._provider(tmp_path, monkeypatch, kroot)
-        section = provider._build_wiki_summary_section("credit-limit")
+        section = provider._build_wiki_summary_section(Path(kroot))
         assert "可能过期" in section
         assert "以代码为准" in section
 
@@ -495,7 +495,7 @@ class TestWikiInjection:
         kroot = tmp_path / ".story" / "knowledge"
         (kroot / "wiki").mkdir(parents=True)
         provider, _ = self._provider(tmp_path, monkeypatch, kroot)
-        assert provider._build_wiki_summary_section("credit-limit") == ""
+        assert provider._build_wiki_summary_section(Path(kroot)) == ""
 
 
 # -------- API --------

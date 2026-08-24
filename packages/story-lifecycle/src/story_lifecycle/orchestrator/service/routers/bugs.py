@@ -52,7 +52,7 @@ def api_sync_related_bugs(story_key: str):
         if not bug_id:
             continue
         flat = (api.get_bug_detail(bug_id) or {}).get("Bug", {})
-        db.upsert_story_from_source(
+        bug_story, _ = db.upsert_story_from_source(
             source_type="tapd",
             source_id=f"bug_{bug_id}",
             title=flat.get("title", ""),
@@ -62,6 +62,10 @@ def api_sync_related_bugs(story_key: str):
             tapd_url=f"https://www.tapd.cn/{config['workspace_id']}/bugtrace/bugs/view?bug_id={bug_id}",
             parent_key=story_key,
         )
+        # sourced 路径统一打 task_type(飞轮注入门槛);用户触发的单 story 动作,LLM 可接受
+        from ..story_service import ensure_task_type
+
+        ensure_task_type(bug_story["story_key"], title=flat.get("title", ""))
         synced += 1
     return {"synced": synced, "story_key": story_key}
 

@@ -20,7 +20,7 @@ def _write_scenario(knowledge_dir, rel_path, content):
 
 @pytest.fixture
 def knowledge_root(tmp_path, monkeypatch):
-    """造一个带 scenario 的 knowledge 目录,并把 _KNOWLEDGE_ROOT 指过去。"""
+    """造一个带 scenario 的 knowledge 目录,并把知识根解析指过去。"""
     root = tmp_path / "knowledge"
     _write_scenario(
         root,
@@ -49,8 +49,8 @@ def knowledge_root(tmp_path, monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "story_lifecycle.knowledge.context_providers.knowledge_provider._KNOWLEDGE_ROOT",
-        root,
+        "story_lifecycle.knowledge.knowledge_store.paths.resolve_knowledge_root",
+        lambda workspace: root,
     )
     return root
 
@@ -68,16 +68,20 @@ def test_catalog_lists_scenarios_with_details(knowledge_root):
 def test_catalog_empty_when_no_scenarios(tmp_path, monkeypatch):
     empty_root = tmp_path / "empty-knowledge"
     monkeypatch.setattr(
-        "story_lifecycle.knowledge.context_providers.knowledge_provider._KNOWLEDGE_ROOT",
-        empty_root,
+        "story_lifecycle.knowledge.knowledge_store.paths.resolve_knowledge_root",
+        lambda workspace: empty_root,
     )
     assert build_scenario_catalog_section("S-1", "/tmp", "planning") == ""
 
 
 def test_catalog_never_raises(monkeypatch):
-    """knowledge 包不可用/目录不存在 → 空串,不阻断规划。"""
+    """knowledge 包不可用/根解析失败 → 空串,不阻断规划。"""
+
+    def _boom(workspace):
+        raise RuntimeError("no knowledge root")
+
     monkeypatch.setattr(
-        "story_lifecycle.knowledge.context_providers.knowledge_provider._KNOWLEDGE_ROOT",
-        None,  # 导致 KnowledgeIndex(None) 抛异常 → 走容错分支
+        "story_lifecycle.knowledge.knowledge_store.paths.resolve_knowledge_root",
+        _boom,
     )
     assert build_scenario_catalog_section("S-1", "/tmp", "planning") == ""

@@ -224,12 +224,10 @@ def api_get_test_suites(slug: str):
         # knowledge scenario → journey 映射(反查 test_ref)
         scenario_map: dict[str, str] = {}
         try:
-            from ....knowledge.context_providers.knowledge_provider import (
-                _KNOWLEDGE_ROOT,
-            )
+            from ....knowledge.knowledge_store.paths import resolve_knowledge_root
             from knowledge import KnowledgeIndex
 
-            idx = KnowledgeIndex(str(_KNOWLEDGE_ROOT))
+            idx = KnowledgeIndex(str(resolve_knowledge_root(ws_root)))
             for e in idx.all():
                 if e.type == "scenario" and getattr(e, "test_ref", ""):
                     scenario_map[e.test_ref] = e.id

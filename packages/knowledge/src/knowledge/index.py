@@ -30,10 +30,40 @@ class KnowledgeIndex:
         index_path = os.path.join(self.knowledge_dir, "INDEX.json")
         if not os.path.exists(index_path):
             write_index(self.knowledge_dir)
+        elif self._is_stale(index_path):
+            # 索引新鲜度是类的内部不变量(B3):任何知识文件新于 INDEX.json
+            # 即重建 —— 不依赖写入方"记得"调 refresh(写入方写后重建是主路径,
+            # 这里是外部脚本/手工改动绕路时的自愈兜底)。重建幂等,误判无害。
+            write_index(self.knowledge_dir)
         with open(index_path, "r", encoding="utf-8") as fh:
             payload = json.load(fh)
         self._entries = [_entry_from_dict(e) for e in payload.get("entries", [])]
         self._by_id = {e.id: e for e in self._entries}
+
+    # 新鲜度扫描覆盖 write_index 实际读取的所有来源(_collect_entries 的扫描清单)。
+    # 新增知识文件类型时必须同步这里,否则该类改动不会触发自愈。
+    _STALENESS_SCAN_DIRS = ("scenarios", "playbooks", "wiki", "failures")
+
+    def _is_stale(self, index_path: str) -> bool:
+        try:
+            index_mtime = os.path.getmtime(index_path)
+        except OSError:
+            return True
+        try:
+            for sub in self._STALENESS_SCAN_DIRS:
+                scan_root = os.path.join(self.knowledge_dir, sub)
+                if not os.path.isdir(scan_root):
+                    continue
+                for dirpath, _, files in os.walk(scan_root):
+                    for fname in files:
+                        if not fname.endswith((".md", ".json")):
+                            continue
+                        fpath = os.path.join(dirpath, fname)
+                        if os.path.getmtime(fpath) > index_mtime:
+                            return True
+        except OSError:
+            return False
+        return False
 
     def refresh(self) -> str:
         """Regenerate INDEX.json and reload."""

@@ -8,7 +8,34 @@
 沉淀成规则,供层2 transition 的 history_facts / context_providers 回注(新 story 受益)。
 """
 
+import sys
+from pathlib import Path
+
+import pytest
+
 from story_lifecycle.orchestrator.learning.reflection import reflect
+
+
+@pytest.fixture(autouse=True)
+def _isolated_kroot(tmp_path, monkeypatch):
+    """B4 后写盘走 resolve_knowledge_root —— 测试必须把根钉到 tmp,
+    否则 resolution 落到真实全局知识库(D:/hc-all),既污染真库又断言失败。"""
+    import story_lifecycle.infra.config as _cfg_mod
+
+    monkeypatch.setattr(_cfg_mod, "get_config", lambda: {})
+    monkeypatch.setenv(
+        "STORY_KNOWLEDGE_ROOT", str(tmp_path / ".story" / "knowledge")
+    )
+
+
+def _ensure_knowledge_importable():
+    """与 test_knowledge_wiring 同款:把 packages/knowledge/src 挂上 sys.path。"""
+    ksrc = Path(__file__).resolve().parents[2] / "knowledge" / "src"
+    if ksrc.is_dir() and str(ksrc) not in sys.path:
+        sys.path.insert(0, str(ksrc))
+    import knowledge  # noqa: F401
+
+    return knowledge
 
 
 def ev(event_type, story_key, **payload):
@@ -327,5 +354,99 @@ class TestPersistPlaybook:
             events=events, task_type="credit-limit",
         )
         assert not (tmp_path / ".story").exists()
+
+
+class TestWriteThenIndexB3:
+    """B3 回归:playbook 落盘后统一 INDEX 立即重建(新经验可召回)。"""
+
+    def test_write_rebuilds_index(self, tmp_path):
+        """write_playbook_file 成功 → 同根 INDEX.json 出现该 playbook 条目。"""
+        try:
+            _ensure_knowledge_importable()
+        except ImportError:
+            pytest.skip("knowledge package not available in this monorepo checkout")
+
+        playbook = [
+            {"dimension": "adapter-routing", "rule": "adapter codex 失败 → 换 claude 成功",
+             "support": 2, "evidence": "r"},
+        ]
+        p = write_playbook_file(
+            workspace=str(tmp_path), task_type="credit-limit",
+            dimension="adapter-routing", playbook=playbook,
+        )
+        assert p is not None
+
+        import json
+
+        kroot = tmp_path / ".story" / "knowledge"
+        index_path = kroot / "INDEX.json"
+        assert index_path.exists(), "落盘后必须重建 INDEX(B3)"
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        rel = "playbooks/credit-limit/adapter-routing.md"
+        assert any(
+            (e.get("path") or "").replace("\\", "/") == rel
+            for e in payload.get("entries", [])
+        ), f"新 playbook 未进 INDEX: {rel}"
+
+    def test_knowledge_pkg_absent_still_writes(self, tmp_path, monkeypatch):
+        """knowledge 包不可用 → write_index 软跳过,playbook 文件照常落盘。"""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _block(name, *args, **kwargs):
+            if name == "knowledge.generator":
+                raise ImportError("blocked for test")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _block)
+        p = write_playbook_file(
+            workspace=str(tmp_path), task_type="order",
+            dimension="failure-pattern",
+            playbook=[{"dimension": "failure-pattern", "rule": "stage build 反复失败(2 次)",
+                       "support": 2, "evidence": ""}],
+        )
+        assert p is not None
+        assert (tmp_path / ".story" / "knowledge" / "playbooks" / "order"
+                / "failure-patterns.md").exists()
+
+
+class TestWriteReadSameRootB4:
+    """B4 回归:reflection 写盘与 provider 召回共用 resolve_knowledge_root。"""
+
+    def test_write_and_read_resolve_same_root(self, tmp_path):
+        from story_lifecycle.knowledge.context_providers.knowledge_provider import (
+            KnowledgeContextProvider,
+        )
+        from story_lifecycle.knowledge.knowledge_store.paths import (
+            resolve_knowledge_root,
+        )
+
+        kroot = tmp_path / ".story" / "knowledge"
+        p = write_playbook_file(
+            workspace=str(tmp_path), task_type="credit-limit",
+            dimension="adapter-routing",
+            playbook=[{"dimension": "adapter-routing", "rule": "r", "support": 1}],
+        )
+        assert p is not None
+        provider = KnowledgeContextProvider(
+            config={"base_path": str(tmp_path / "no-out")}
+        )
+        # 写读同根不变量:provider 召回的根 == 写盘落到的根
+        assert provider._knowledge_root(str(tmp_path)) == resolve_knowledge_root(
+            str(tmp_path)
+        )
+        assert (kroot / "playbooks" / "credit-limit" / "adapter-routing.md").exists()
+
+    def test_workspace_local_kroot_preferred_when_initialized(self, tmp_path):
+        """workspace 已初始化知识库(有 INDEX.json)→ 本地根优先于全局默认。"""
+        from story_lifecycle.knowledge.knowledge_store.paths import (
+            resolve_knowledge_root,
+        )
+
+        local = tmp_path / ".story" / "knowledge"
+        local.mkdir(parents=True)
+        (local / "INDEX.json").write_text("{}", encoding="utf-8")
+        assert resolve_knowledge_root(str(tmp_path)) == local
 
 

@@ -117,6 +117,48 @@ def _classify_task_type_llm(title: str, description: str = "") -> str | None:
         return None
 
 
+def ensure_task_type(
+    story_key: str,
+    title: str = "",
+    description: str = "",
+    use_llm: bool = True,
+) -> str | None:
+    """Classify and persist ``context_json.task_type`` for a story (idempotent).
+
+    飞轮知识的注入/回写全部以 task_type 为门槛,而它此前只在
+    ``create_and_start_story`` 打标 —— bugs/sync 等 sourced 创建路径
+    (``upsert_story_from_source``)整批漏标(实测覆盖 4/30)。
+    本函数是唯一打标入口,所有创建路径都必须经过它。
+
+    - 已有 task_type → 直接返回(幂等,重同步不重复烧 LLM)
+    - ``use_llm=False`` 用于批量 sync 路径(关键词即可,不为每 item 阻塞几秒)
+    - 任何失败静默返回 None —— tagging 永不阻塞 story 创建
+    """
+    try:
+        story = db.get_story(story_key) or {}
+        ctx_str = story.get("context_json") or "{}"
+        ctx = _json.loads(ctx_str) if isinstance(ctx_str, str) else (ctx_str or {})
+        existing = ctx.get("task_type")
+        if existing:
+            return existing
+        title = title or story.get("title", "")
+        if not title and not description:
+            return None
+
+        from ..engine.prompt_sections import classify_task_type
+
+        task_type = (
+            _classify_task_type_llm(title, description) if use_llm else None
+        )
+        if not task_type:
+            task_type = classify_task_type(title, description)
+        if task_type:
+            db.update_context(story_key, "task_type", task_type)
+        return task_type
+    except Exception:  # noqa: BLE001 — tagging must never block story creation
+        return None
+
+
 def create_and_start_story(
     story_key: str,
     title: str = "",
@@ -172,19 +214,8 @@ def create_and_start_story(
     )
 
     # BUG #16: task_type 分类——LLM 同步分类(准确),失败回退关键词(兜底)。
-    # 关键词首命中即返回会误分("Loan Disclosure 展示"→fund-flow 而非 frontend)。
-    # LLM 纯同步阻塞几秒,前端"读取TAPD"可接受;失败绝不阻塞 story 创建。
-    try:
-        from ..engine.prompt_sections import classify_task_type
-
-        task_type = _classify_task_type_llm(title, description)
-        if not task_type:
-            # LLM 失败/超时 → 回退关键词分类
-            task_type = classify_task_type(title, description)
-        if task_type:
-            db.update_context(story_key, "task_type", task_type)
-    except Exception:  # noqa: BLE001 — tagging must never block story creation
-        pass
+    # 统一走 ensure_task_type(所有创建路径的唯一打标入口,飞轮注入/回写的门槛)。
+    ensure_task_type(story_key, title, description, use_llm=True)
 
     if prd_path:
         db.update_context(story_key, "prd_path", prd_path)

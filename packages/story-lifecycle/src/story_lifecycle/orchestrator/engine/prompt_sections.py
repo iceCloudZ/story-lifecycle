@@ -203,9 +203,9 @@ def build_scenario_catalog_section(story_key: str, workspace: str, stage: str) -
     try:
         from knowledge import KnowledgeIndex
 
-        from ...knowledge.context_providers.knowledge_provider import _KNOWLEDGE_ROOT
+        from ...knowledge.knowledge_store.paths import resolve_knowledge_root
 
-        idx = KnowledgeIndex(str(_KNOWLEDGE_ROOT))
+        idx = KnowledgeIndex(str(resolve_knowledge_root(workspace)))
         entries = idx.all()
         scenarios = sorted(
             (e for e in entries if e.type == "scenario"),

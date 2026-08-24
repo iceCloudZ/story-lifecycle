@@ -1,6 +1,7 @@
 # 知识飞轮闭环 —— 设计文档
 
-> 状态：**待实现（v1）**。创建：2026-08-21。
+> 状态：**M1 已实现（2026-08-21，B1+B3+B4）；M2/M3 待实现**。创建：2026-08-21。
+> M1 实测：story-lifecycle + knowledge 包 1459 tests 全绿；sourced 创建路径已打标，无 task_type story 降级注入，reflection 落盘即重建 INDEX，写读共用 `resolve_knowledge_root`。
 > 范围：`packages/story-lifecycle`（context_providers / reflection / handlers / scheduler / 创建路径）；连带 `packages/knowledge`（index 自刷新）、`packages/story-miner`（增量挖掘触发）。
 > **本文自包含**：起因、实测数据、代码现状（带文件:行号）、断点清单、方案、分阶段实现、风险全部内联。
 

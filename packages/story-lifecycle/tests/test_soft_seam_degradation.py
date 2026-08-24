@@ -51,6 +51,15 @@ class TestTranscriptContextSoftSeam:
 class TestKnowledgeContextSoftSeam:
     """knowledge 包不可 import 时 get_knowledge_context 不崩。"""
 
+    @pytest.fixture(autouse=True)
+    def _empty_kroot(self, tmp_path, monkeypatch):
+        """钉死知识根到空 tmp:降级注入(B1③)后无 task_type 也会读根,
+        不钉住会碰到真实全局知识库(D:/hc-all)。"""
+        import story_lifecycle.infra.config as _cfg_mod
+
+        monkeypatch.setattr(_cfg_mod, "get_config", lambda: {})
+        monkeypatch.setenv("STORY_KNOWLEDGE_ROOT", str(tmp_path / "empty-kroot"))
+
     def test_returns_something_without_knowledge_package(self, isolated_story_home, monkeypatch):
         """knowledge 包缺失时,knowledge_provider 跳过知识库段落,其余内容仍返回。"""
         monkeypatch.setitem(sys.modules, "knowledge", None)
@@ -71,8 +80,15 @@ class TestKnowledgeContextSoftSeam:
         # Should not crash; may be None if no artifacts, or a string without knowledge index section.
         assert result is None or "知识库" not in result
 
-    def test_returns_none_on_unknown_task_type(self, isolated_story_home, monkeypatch):
-        """没有 task_type 时直接返回 None,不触发 knowledge import。"""
+    def test_unknown_task_type_degrades_to_none_when_no_global_knowledge(
+        self, isolated_story_home, monkeypatch
+    ):
+        """B1③ 新契约:无 task_type 走降级注入(全局层);降级层也无内容 → None。
+
+        旧契约(无 task_type 直接 None)已于飞轮闭环 M1 废除 —— 它让 87% story
+        零注入。knowledge import 被阻断 + 空知识根 → 降级层无内容 → None,
+        soft-seam 语义(不崩、不阻塞)保持不变。
+        """
         monkeypatch.setitem(sys.modules, "knowledge", None)
 
         from story_lifecycle.infra.db import models as db

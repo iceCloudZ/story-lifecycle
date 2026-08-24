@@ -59,7 +59,7 @@ def test_get_context_surfaces_knowledge_index_playbook(monkeypatch, tmp_path):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(kp, "_KNOWLEDGE_ROOT", kdir)
+    monkeypatch.setattr(kp, "resolve_knowledge_root", lambda workspace: kdir)
     # No raw miner artifacts under base_path -> output relies on bootstrap + knowledge
     provider = kp.KnowledgeContextProvider(
         config={"base_path": str(tmp_path / "no-artifacts")}
@@ -97,3 +97,73 @@ def test_get_context_degrades_gracefully_without_knowledge_pkg(monkeypatch, tmp_
     # No crash; returns the bootstrap/structure output (knowledge section silently absent)
     assert out is not None
     assert "飞轮知识上下文" in out
+
+
+def test_degraded_injection_when_task_type_missing(monkeypatch, tmp_path):
+    """B1 ③ 回归:task_type 缺失不再 return None —— 降级注入全局层。
+
+    历史 bug:get_context 第一步 task_type 为空即早退,实测 87% story 零注入。
+    降级层 = 全局高频失败 + 知识库检索(标题 query)+ wiki 摘要。
+    """
+    try:
+        _ensure_knowledge_importable()
+    except ImportError:
+        pytest.skip("knowledge package not available in this monorepo checkout")
+
+    from story_lifecycle.infra.db import models as db
+    from story_lifecycle.knowledge.context_providers import knowledge_provider as kp
+
+    kdir = tmp_path / "knowledge"
+    (kdir / "failures").mkdir(parents=True)
+    (kdir / "failures" / "failure-knowledge.json").write_text(
+        json.dumps(
+            {
+                "failures": [
+                    {
+                        "id": "failure:compile",
+                        "title": "编译错误",
+                        "display_category": "编译错误",
+                        "frequency": {"hc-all": 12},
+                        "detail": "cannot find symbol",
+                        "mitigations": ["检查依赖版本", "重新编译"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(kp, "resolve_knowledge_root", lambda workspace: kdir)
+
+    # 无 task_type 的存量 story(三级解析全部落空)
+    db.create_story("BUG-1", "某个完全无法分类的标题", "D:/ws", current_stage="design")
+    provider = kp.KnowledgeContextProvider(
+        config={"base_path": str(tmp_path / "no-artifacts")}
+    )
+    monkeypatch.setattr(provider, "_task_type_from_artifact", lambda key: None)
+    monkeypatch.setattr(provider, "_lazy_keyword_backfill", lambda key: None)
+
+    out = provider.get_context("BUG-1", str(tmp_path), "design")
+
+    assert out is not None
+    assert "降级为全局知识" in out
+    assert "编译错误" in out
+    assert "12" in out  # frequency 渲染
+
+
+def test_lazy_keyword_backfill_heals_db(monkeypatch, tmp_path):
+    """存量 story 懒自愈:DB/artifact 都无 task_type 时关键词命中即回写 DB。"""
+    from story_lifecycle.infra.db import models as db
+    from story_lifecycle.knowledge.context_providers import knowledge_provider as kp
+
+    db.create_story("OLD-1", "还款页面无法提交", "D:/ws", current_stage="design")
+    provider = kp.KnowledgeContextProvider(
+        config={"base_path": str(tmp_path / "no-artifacts")}
+    )
+    monkeypatch.setattr(provider, "_task_type_from_artifact", lambda key: None)
+
+    tt = provider._task_type_for("OLD-1")
+    assert tt == "fund-flow"
+    # 自愈:下次直接命中 DB 层
+    story = db.get_story("OLD-1")
+    assert json.loads(story["context_json"]).get("task_type") == "fund-flow"

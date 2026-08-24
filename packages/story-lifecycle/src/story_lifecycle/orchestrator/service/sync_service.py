@@ -148,6 +148,15 @@ def sync_tapd(
             # 故新建后二次 update_story。
             if mapped_state:
                 db.update_story(story["story_key"], lifecycle_state=mapped_state)
+            # sourced 创建统一打 task_type(飞轮注入门槛);批量 sync 用关键词档
+            from .story_service import ensure_task_type
+
+            ensure_task_type(
+                story["story_key"],
+                title=item.title,
+                description=getattr(item, "description", "") or "",
+                use_llm=False,
+            )
             result["created"] += 1
             log.info(f"Created story {story['story_key']} for {item.source}:{item.id}")
 
