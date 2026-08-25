@@ -19,6 +19,8 @@ by a provider or DB error.
 
 from __future__ import annotations
 
+import json as _json
+
 from ...knowledge import context_providers
 
 # Pure keyword classifier for task_type — mirrors the controlled vocabulary in
@@ -180,12 +182,43 @@ def build_knowledge_section(story_key: str, workspace: str, stage: str) -> str:
     Wraps ``context_providers.get_knowledge_context`` with a failsafe so prompt
     rendering is never blocked. The returned text is the provider's raw markdown
     (already includes its own ``##`` header); ``""`` means nothing to inject.
+
+    注入成功（非空）时落 ``knowledge_injected`` 事件（M3/B5 度量环——只落事实，
+    离线分析走 prompt_export，不做实时看板；task_type 缺失即降级层注入，
+    degraded=true）。事件失败不影响渲染（lenient 语义）。
     """
     try:
         ctx = context_providers.get_knowledge_context(story_key, workspace, stage)
     except Exception:  # noqa: BLE001 — never block prompt rendering
         return ""
+    if ctx:
+        _log_knowledge_injected(story_key, stage, ctx)
     return ctx or ""
+
+
+def _log_knowledge_injected(story_key: str, stage: str, ctx: str) -> None:
+    """B5 度量环：注入事实落 event_log。best-effort——失败静默。"""
+    try:
+        from ...infra.db import models as db
+        from ...infra.db.events import log_event
+
+        task_type = "none"
+        story = db.get_story(story_key) or {}
+        ctx_json = story.get("context_json") or "{}"
+        parsed = _json.loads(ctx_json) if isinstance(ctx_json, str) else (ctx_json or {})
+        task_type = parsed.get("task_type") or "none"
+        log_event(
+            story_key,
+            stage,
+            "knowledge_injected",
+            {
+                "task_type": task_type,
+                "chars": len(ctx),
+                "degraded": task_type == "none",  # B1③ 降级层注入标记
+            },
+        )
+    except Exception:  # noqa: BLE001 — 度量绝不阻塞注入/渲染
+        pass
 
 
 def build_scenario_catalog_section(story_key: str, workspace: str, stage: str) -> str:

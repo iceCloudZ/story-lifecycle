@@ -1,8 +1,9 @@
 # 知识飞轮闭环 —— 设计文档
 
-> 状态：**M1 已实现（2026-08-21，B1+B3+B4）；M2 已实现（2026-08-24，B2）；M3 待实现**。创建：2026-08-21。
+> 状态：**M1 已实现（2026-08-21，B1+B3+B4）；M2 已实现（2026-08-24，B2）；M3 已实现（2026-08-24，B5）**。创建：2026-08-21。
 > M1 实测：story-lifecycle + knowledge 包 1459 tests 全绿；sourced 创建路径已打标，无 task_type story 降级注入，reflection 落盘即重建 INDEX，写读共用 `resolve_knowledge_root`。
 > M2 实测：`learning/mining_trigger.py` 单测 7 绿 + handlers/scheduler/reflection/flywheel-e2e 回归 64 绿；防抖(30min/3 story 任一满足)、单飞、miner 缺失 no-op 均覆盖。**遗留：真实 story 完成走查（§5 M2 第 2 条）待下次 test-run。**
+> M3 实测：`knowledge_injected` 事件单测 4 绿 + prompt/knowledge 回归 9 绿；事件随 prompt_export 导出（零新代码验证）；离线 SQL 见 §4.5。设计稿的 entry_ids 未做（provider 只返回 markdown，条目归因归 hc-all 引用制）。
 > 范围：`packages/story-lifecycle`（context_providers / reflection / handlers / scheduler / 创建路径）；连带 `packages/knowledge`（index 自刷新）、`packages/story-miner`（增量挖掘触发）。
 > **本文自包含**：起因、实测数据、代码现状（带文件:行号）、断点清单、方案、分阶段实现、风险全部内联。
 
@@ -173,6 +174,26 @@ def resolve_knowledge_root(workspace: str | Path) -> Path:
   `degraded=true` 标记降级层注入（B1③），供区分全量/降级的效果。
 - 分析侧零新代码：`prompt_export.py` 已按 (story, stage) 导出 events，`knowledge_injected` 自然随出。离线关联维度：注入 vs 未注入 story 的 judge approve 率 / reject 次数 / stage 时长。
 - **遵守现有约定**：不做实时 prompt 质量裁判（AGENTS.md「Offline prompt analysis」节），度量环只落事实、离线分析。
+
+**离线算注入效果（M3 落地，2026-08-24）**——`knowledge_injected` 事件已实现（`prompt_sections.build_knowledge_section` 非空即落，payload `{task_type, chars, degraded}`，DB 失败静默）。事件随 `GET /api/analysis/prompts` 的 events 自然导出（prompt_export 按 (story, stage) 聚合 event_log，零新代码）。手工 SQL（story.db）：
+
+```sql
+-- 注入 vs 未注入 story 的 judge 决策分布
+SELECT CASE WHEN e.story_key IS NULL THEN 'no_inject' ELSE 'inject' END AS bucket,
+       d.decision, COUNT(*) AS n
+FROM orchestrator_decision d
+LEFT JOIN event_log e
+  ON e.story_key = d.story_key AND e.event_type = 'knowledge_injected'
+GROUP BY bucket, d.decision;
+
+-- 降级层（B1③）单独看效果
+SELECT json_extract(e.payload, '$.degraded') AS degraded, COUNT(*) FROM event_log e
+WHERE e.event_type = 'knowledge_injected' GROUP BY degraded;
+```
+
+维度：注入 vs 未注入的 judge approve 率 / reject 次数 / stage 时长（时长从 events 时间戳推）。**不建实时看板**（§4.5 约定：只落事实）。
+
+> 已知取舍：payload 未含设计稿里的 `entry_ids`——provider 接口只返回 markdown，条目级使用归因由 hc-all 侧引用制（test-impact 方案 §2.4）承担，不在本表强凑。
 
 ### 4.6 不变量与 Anti-pattern
 
