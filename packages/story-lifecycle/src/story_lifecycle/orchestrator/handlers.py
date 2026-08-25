@@ -211,6 +211,12 @@ class BaseDecisionHandler(DecisionHandler):
             _persist_playbook_for_story(workspace, story_key, db)
         except Exception:
             log.exception("[%s] playbook persist failed", story_key)
+        try:
+            from .learning.mining_trigger import maybe_trigger_incremental
+
+            maybe_trigger_incremental(story_key)
+        except Exception:
+            log.exception("[%s] mining trigger failed", story_key)
 
 
 class InteractiveDecisionHandler(BaseDecisionHandler):

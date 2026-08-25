@@ -1,7 +1,8 @@
 # 知识飞轮闭环 —— 设计文档
 
-> 状态：**M1 已实现（2026-08-21，B1+B3+B4）；M2/M3 待实现**。创建：2026-08-21。
+> 状态：**M1 已实现（2026-08-21，B1+B3+B4）；M2 已实现（2026-08-24，B2）；M3 待实现**。创建：2026-08-21。
 > M1 实测：story-lifecycle + knowledge 包 1459 tests 全绿；sourced 创建路径已打标，无 task_type story 降级注入，reflection 落盘即重建 INDEX，写读共用 `resolve_knowledge_root`。
+> M2 实测：`learning/mining_trigger.py` 单测 7 绿 + handlers/scheduler/reflection/flywheel-e2e 回归 64 绿；防抖(30min/3 story 任一满足)、单飞、miner 缺失 no-op 均覆盖。**遗留：真实 story 完成走查（§5 M2 第 2 条）待下次 test-run。**
 > 范围：`packages/story-lifecycle`（context_providers / reflection / handlers / scheduler / 创建路径）；连带 `packages/knowledge`（index 自刷新）、`packages/story-miner`（增量挖掘触发）。
 > **本文自包含**：起因、实测数据、代码现状（带文件:行号）、断点清单、方案、分阶段实现、风险全部内联。
 
