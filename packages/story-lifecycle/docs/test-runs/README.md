@@ -17,9 +17,10 @@
 |---|---|---|---|---|---|---|
 | 2026-07-28 | `tapd-1144381896001066735`(策略包拆包) | minimal | 新建需求 | 进行中 | kill_pty 不清 story_session → resume 死 sid 崩(已修) | [RUN-tapd-1066735-20260728](RUN-tapd-1066735-20260728.md) |
 | 2026-08-06 | `tapd-1144381896001068018`(HC提现门槛判断规则更新) | minimal | 新建需求 | 进行中 | 交互式 spawn 无 PtyLogger → events.jsonl 缺失 + 卡住检测失效(问题#1,未修) | [RUN-1068018-20260806](RUN-1068018-20260806.md) |
-| 2026-08-17 | `tapd-1144381896001068063`(HC支付回调延迟还款处理) | minimal | 新建需求 | 进行中 | intake/preview 偶发 500:PRD LLM 输出非 JSON(llm_client.py:346,未修);UI 全程驱动 | [RUN-tapd-1068063-20260817](RUN-tapd-1068063-20260817.md) |
+| 2026-08-17 | `tapd-1144381896001068063`(HC支付回调延迟还款处理) | minimal | 新建需求 | 已结项(08-26收口) | intake/preview 偶发 500:PRD LLM 输出非 JSON(llm_client.py:346,未修);UI 全程驱动 | [RUN-tapd-1068063-20260817](RUN-tapd-1068063-20260817.md) |
 | 2026-08-25 | `tapd-1144381896001067448`(离线提额审批后执行) | minimal | 新建需求 | 已完成(dev闭环,待上线) | 4步联调全通:task_type打标✅/credit-limit知识注入1853字命中提额表/M3事件落库/基线2绿改后0新增;发现#4改后锚点=test部署后,#5 B端无journey网关 | [RUN-tapd-1067448-20260825](RUN-tapd-1067448-20260825.md) |
 | 2026-08-26 | `tapd-1144381896001068513`(OWNBANK协议更新) | minimal | 新建需求 | 已完成(结项) | 全链闭环:红锚点=行为契约+内容标记(CONFIDENTIALITY);fillTable容错契约同锁;journey custom断言能力补齐;admin版getUserPersonal无记录返null坑 | [RUN-tapd-1068513-20260826](RUN-tapd-1068513-20260826.md) |
+| 2026-08-26 | `tapd-1144381896001068063`(HC支付回调延迟还款处理) | minimal | 接手中途需求(08-17 paused 整合) | 已完成(结项) | 红基线远程实测抓到 mock 单测抓不到的 expire_time 无默认缺陷(已修5cbfd021);serve HTTP advance 稳定500→in-process 兜底;双基线三条件(红转绿/绿保持/回归净)全成立 | [RUN-tapd-1068063-20260826](RUN-tapd-1068063-20260826.md) |
 
 **状态取值**:进行中 / 已完成 / 已中止 / 失败
 **模式取值**:新建需求 / 接手中途需求
