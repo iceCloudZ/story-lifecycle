@@ -122,6 +122,38 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
     return {"ok": True}
 
 
+def _run_advance_precheck(story_key: str) -> None:
+    """结项通道的前置规范钩子——强制层（2026-08-26）。
+
+    config.yaml ``advance_precheck_cmd``（含 ``{story_key}`` 占位）配置了外部
+    校验命令时执行之；非零退出码/超时/命令跑不起来 → 409 拒绝推进（fail-closed，
+    坏检查器不许静默放行）。未配置 → no-op（通用引擎不绑定部署方规范）。
+    """
+    import subprocess as _sp
+
+    from ....infra.config import get_config
+
+    tmpl = (get_config() or {}).get("advance_precheck_cmd")
+    if not tmpl:
+        return
+    cmd = str(tmpl).format(story_key=story_key)
+    try:
+        proc = _sp.run(
+            cmd, shell=True, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120,
+        )
+    except _sp.TimeoutExpired:
+        raise HTTPException(409, f"advance precheck 超时(120s): {cmd}")
+    except Exception as e:  # noqa: BLE001 — fail-closed:检查器本身坏了也不放行
+        raise HTTPException(409, f"advance precheck 无法执行: {cmd} — {e}")
+    if proc.returncode != 0:
+        tail = (proc.stdout or "")[-800:]
+        raise HTTPException(
+            409,
+            f"规范校验未通过(退出码 {proc.returncode})，修完再推进。输出尾部:\n{tail}",
+        )
+
+
 @router.post("/api/story/{story_key}/lifecycle/advance")
 def advance_lifecycle_state(story_key: str):
     """推进 Story 业务状态到下一态(待启动→开发→测试→上线→结项)。
@@ -130,6 +162,9 @@ def advance_lifecycle_state(story_key: str):
     或 skipped)。不满足则 409 返回缺失列表(前端显示「还差:测试报告」)。
     gate 满足 → 推进 lifecycle_state → 若下一状态有 stages 则 start_story_async,
     无(终态)则标 completed。
+
+    强制层:``advance_precheck_cmd``(config.yaml)配置时,推进前先跑外部规范校验,
+    非零退出码 409——AGENTS.md/skill 清单是提示层,服务端钩子是执行层。
     """
     import json as _json
 
@@ -138,6 +173,7 @@ def advance_lifecycle_state(story_key: str):
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")
+    _run_advance_precheck(story_key)
     try:
         ctx = _json.loads(s.get("context_json") or "{}")
     except (ValueError, TypeError):
