@@ -122,12 +122,13 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
     return {"ok": True}
 
 
-def _run_advance_precheck(story_key: str) -> None:
+def _run_advance_precheck(story_key: str, target_state: str | None = None) -> None:
     """结项通道的前置规范钩子——强制层（2026-08-26）。
 
-    config.yaml ``advance_precheck_cmd``（含 ``{story_key}`` 占位）配置了外部
-    校验命令时执行之；非零退出码/超时/命令跑不起来 → 409 拒绝推进（fail-closed，
-    坏检查器不许静默放行）。未配置 → no-op（通用引擎不绑定部署方规范）。
+    config.yaml ``advance_precheck_cmd``（含 ``{story_key}``/可选 ``{target}``
+    占位）配置了外部校验命令时执行之；非零退出码/超时/命令跑不起来 → 409 拒绝
+    推进（fail-closed，坏检查器不许静默放行）。未配置 → no-op（通用引擎不绑定
+    部署方规范）。``target_state`` 供"目标态敏感"规则用（如未上生产不得进结项）。
     """
     import subprocess as _sp
 
@@ -136,7 +137,7 @@ def _run_advance_precheck(story_key: str) -> None:
     tmpl = (get_config() or {}).get("advance_precheck_cmd")
     if not tmpl:
         return
-    cmd = str(tmpl).format(story_key=story_key)
+    cmd = str(tmpl).format(story_key=story_key, target=target_state or "")
     try:
         proc = _sp.run(
             cmd, shell=True, capture_output=True, text=True,
@@ -173,7 +174,11 @@ def advance_lifecycle_state(story_key: str):
     s = db.get_story(story_key)
     if not s:
         raise HTTPException(404, "Story not found")
-    _run_advance_precheck(story_key)
+    from ....sourcing.deliverables import next_state as _next_state
+
+    _run_advance_precheck(
+        story_key, _next_state(s.get("lifecycle_state") or "待启动")
+    )
     try:
         ctx = _json.loads(s.get("context_json") or "{}")
     except (ValueError, TypeError):
@@ -383,6 +388,16 @@ def set_lifecycle_state(story_key: str, req: SetLifecycleRequest):
     if req.state not in valid:
         raise HTTPException(400, f"Invalid lifecycle state: {req.state}")
     prev = s.get("lifecycle_state")
+    # 前进方向(向结项)才走规范钩子——后退/纠错(如"结项→测试"的审计修正)放行,
+    # 否则历史违例会把纠错本身也锁死。直跳 上线/结项 同样被拦(未上生产不得结项)。
+    from ....sourcing.deliverables import LIFECYCLE_ORDER
+
+    try:
+        forward = LIFECYCLE_ORDER.index(req.state) > LIFECYCLE_ORDER.index(prev or "待启动")
+    except ValueError:
+        forward = False
+    if forward:
+        _run_advance_precheck(story_key, req.state)
     db.update_story(story_key, lifecycle_state=req.state)
     db.log_event(
         story_key,

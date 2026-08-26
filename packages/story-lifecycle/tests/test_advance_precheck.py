@@ -59,3 +59,29 @@ def test_endpoint_409_before_any_transition(client, monkeypatch):
     r = client.post("/api/story/tapd-x/lifecycle/advance")
     assert r.status_code == 409
     assert "naming violation" in r.text
+
+
+def test_put_lifecycle_forward_blocked(client, monkeypatch):
+    """PUT /lifecycle 直跳前进态同样过钩子——直跳结项不能绕过强制层。"""
+    _cfg(monkeypatch, 'python -c "import sys; print(\'no prod evidence\'); sys.exit(1)"')
+    monkeypatch.setattr(
+        lc.db, "get_story",
+        lambda sk: {"story_key": sk, "lifecycle_state": "测试", "context_json": "{}"},
+    )
+    monkeypatch.setattr(lc.db, "update_story", lambda *a, **k: None)
+    r = client.put("/api/story/tapd-x/lifecycle", json={"state": "结项"})
+    assert r.status_code == 409
+    assert "no prod evidence" in r.text
+
+
+def test_put_lifecycle_backward_allowed(client, monkeypatch):
+    """后退(纠错,如 结项→测试)不走钩子——历史违例不得锁死审计修正。"""
+    _cfg(monkeypatch, 'python -c "import sys; sys.exit(1)"')  # 即使检查器必红也放行
+    monkeypatch.setattr(
+        lc.db, "get_story",
+        lambda sk: {"story_key": sk, "lifecycle_state": "结项", "context_json": "{}"},
+    )
+    monkeypatch.setattr(lc.db, "update_story", lambda *a, **k: None)
+    monkeypatch.setattr(lc.db, "log_event", lambda *a, **k: None)
+    r = client.put("/api/story/tapd-x/lifecycle", json={"state": "测试"})
+    assert r.status_code == 200
