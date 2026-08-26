@@ -6,6 +6,7 @@ import type { AgentAction, ActionButton } from '../api/client'
 import StorySidebar from '../components/StorySidebar'
 import OverviewTab from '../components/OverviewTab'
 import CodeChangesTab from '../components/CodeChangesTab'
+import { UiUpgradeCard } from '../components/UiUpgradeCard'
 import DocsTab from '../components/DocsTab'
 import QualityPanel from '../components/QualityPanel'
 import ClarifyDialog from '../components/ClarifyDialog'
@@ -240,7 +241,8 @@ export default function StoryDetailPage() {
       qc.invalidateQueries({ queryKey: ['sessions', storyKey] })
       scrollToTerminal()
     } else {
-      alert(`推进失败: ${(await r.json()).detail || '未知错误'}`)
+      const d = (await r.json()).detail
+      alert(`推进失败: ${typeof d === 'object' ? d?.detail || '需 UI 确认' : d || '未知错误'}`)
     }
   }
 
@@ -302,6 +304,7 @@ export default function StoryDetailPage() {
 
   return (
     <div className="story-detail-page-v2">
+      <UiUpgradeCard storyKey={storyKey} />
       <div className="sdpv2-body">
         <StorySidebar
           storyKey={storyKey}

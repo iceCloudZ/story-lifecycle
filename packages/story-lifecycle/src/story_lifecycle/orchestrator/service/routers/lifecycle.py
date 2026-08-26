@@ -155,6 +155,107 @@ def _run_advance_precheck(story_key: str, target_state: str | None = None) -> No
         )
 
 
+UPGRADE_STATES = ("上线", "结项")
+
+
+class UiUpgradeRequest(BaseModel):
+    """UI 升级门操作:confirm(按挂起目标落地)/ reject(清除挂起)。"""
+    action: str
+
+
+def _save_ctx(story_key: str, ctx: dict) -> None:
+    import json as _json
+    db.update_story(
+        story_key, context_json=_json.dumps(ctx, ensure_ascii=False)
+    )
+
+
+def _read_pending(story_key: str) -> dict | None:
+    import json as _json
+    try:
+        ctx = _json.loads((db.get_story(story_key) or {}).get("context_json") or "{}")
+    except Exception:  # noqa: BLE001
+        return None
+    return ctx.get("_upgrade_gate") or None
+
+
+def _raise_upgrade_pending(
+    story_key: str, cur: str, target: str, origin: str
+):
+    """Q2 UI 门:进入 上线/结项 的最后一步不由任何 API 直接完成。
+
+    统一写挂起态 ``_upgrade_gate`` 并抛 428,只在 UI 点「确认」后经
+    ``/lifecycle/ui-upgrade`` 重放落位(CLI/agent 到此断路)。诚实边界:本机无认证域,
+    恶意拼包仍可能——此闸防的是顺手/钻空子,蓄意绕过由 L3 平台层(master No-one)兜底。
+    """
+    import time as _time
+    import json as _json
+    ctx = {}
+    raw = (db.get_story(story_key) or {}).get("context_json") or "{}"
+    try:
+        ctx = _json.loads(raw)
+    except Exception:  # noqa: BLE001
+        ctx = {}
+    ctx["_upgrade_gate"] = {
+        "prev": cur,
+        "target": target,
+        "origin": origin,
+        "requested_at": int(_time.time()),
+    }
+    _save_ctx(story_key, ctx)
+    raise HTTPException(
+        428,
+        {
+            "action": "ui_confirm",
+            "detail": f"{cur}→{target} 为关键跃迁,请在 Story 详情页(UI)点击确认;"
+                      f"CLI/agent 无法完成该步。",
+            "gate": ctx["_upgrade_gate"],
+        },
+    )
+
+
+def _apply_set_transition(story_key: str, prev: str, target: str) -> dict:
+    """PUT /lifecycle 原尾段(ui-confirm 重放用):直改状态+审计。"""
+    db.update_story(story_key, lifecycle_state=target)
+    db.log_event(
+        story_key,
+        "",
+        "story_state_transition",
+        {"from": prev, "to": target, "source": "ui_confirm"},
+    )
+    return {"ok": True, "lifecycleState": target}
+
+
+def _apply_advance_transition(
+    story_key: str, cur: str, target: str,
+) -> dict:
+    """POST /advance 原尾段(ui-confirm 重放用):激活/完成判定。"""
+    from ....sourcing.source_loader import resolve_source_profile
+
+    ctx_raw = (db.get_story(story_key) or {}).get("context_json") or "{}"
+    try:
+        import json as _json
+        ctx = _json.loads(ctx_raw)
+    except Exception:  # noqa: BLE001
+        ctx = {}
+    ctx.pop("_upgrade_gate", None)
+    ctx["_lifecycle_state"] = target
+    sm_activate(story_key, lifecycle_state=target, ctx_updates=ctx)
+    db.log_event(
+        story_key,
+        "",
+        "story_state_transition",
+        {"from": cur, "to": target, "auto": False, "source": "ui_confirm"},
+    )
+    states = resolve_source_profile(db.get_story(story_key).get("source_type")).story_states or {}
+    stages = list((states.get(target) or {}).get("stages") or [])
+    if not stages:
+        sm_mark_completed(story_key)
+        return {"ok": True, "lifecycleState": target, "status": "completed"}
+    start_story_async(story_key)
+    return {"ok": True, "lifecycleState": target, "status": "active"}
+
+
 @router.post("/api/story/{story_key}/lifecycle/advance")
 def advance_lifecycle_state(story_key: str):
     """推进 Story 业务状态到下一态(待启动→开发→测试→上线→结项)。
@@ -257,6 +358,9 @@ def advance_lifecycle_state(story_key: str):
         )
 
     # gate 满足 → 推进。清旧的 _story_state_gate(向后兼容老数据)。
+    # Q2 UI 门:终态腿挂起,428 断路 CLI;确认走 /lifecycle/ui-upgrade
+    if next_state in UPGRADE_STATES:
+        _raise_upgrade_pending(story_key, cur_state, next_state, "advance")
     ctx.pop("_story_state_gate", None)
     ctx["_lifecycle_state"] = next_state
     sm_activate(story_key, lifecycle_state=next_state, ctx_updates=ctx)
@@ -284,6 +388,72 @@ def advance_lifecycle_state(story_key: str):
 
     start_story_async(story_key)
     return {"ok": True, "lifecycle_state": next_state, "status": "active"}
+
+
+@router.get("/api/story/{story_key}/lifecycle/pending")
+def get_pending_upgrade(story_key: str):
+    """UI 升级门挂起态查询(前端卡片渲染源)。无挂起 → null。"""
+    if not db.get_story(story_key):
+        raise HTTPException(404, "Story not found")
+    return {"pending": _read_pending(story_key)}
+
+
+@router.post("/api/story/{story_key}/lifecycle/ui-upgrade")
+def ui_upgrade_transition(story_key: str, req: UiUpgradeRequest):
+    """Q2 终端门执行器:重放被 428 挂起的终态转换。
+
+    confirm 按 pending.origin 重放(set→直改 / advance→激活+终态判定);
+    reject 仅清挂起。两向均记审计事件。要求请求方持有有效 _upgrade_gate。
+    """
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+    gate = _read_pending(story_key)
+    if not gate:
+        raise HTTPException(409, "无待确认的升级门")
+    import json as _json
+
+    try:
+        ctx = _json.loads(s.get("context_json") or "{}")
+    except Exception:  # noqa: BLE001
+        ctx = {}
+
+    target = gate.get("target")
+    prev = gate.get("prev")
+    origin = gate.get("origin") or "set"
+
+    if req.action == "reject":
+        ctx.pop("_upgrade_gate", None)
+        _save_ctx(story_key, ctx)
+        db.log_event(
+            story_key, "", "ui_upgrade_rejected",
+            {"target": target, "from": prev},
+        )
+        return {"ok": True, "cleared": True}
+
+    if req.action != "confirm":
+        raise HTTPException(400, f"未知 action: {req.action}")
+
+    if origin == "advance":
+        result = _apply_advance_transition(story_key, prev or "待启动", target)
+    else:
+        result = _apply_set_transition(story_key, prev or "待启动", target)
+
+    # gate 已由 apply 内部 pop(advance 分支);set 分支需显式清
+    raw = (db.get_story(story_key) or {}).get("context_json") or "{}"
+    try:
+        ctx2 = _json.loads(raw)
+    except Exception:  # noqa: BLE001
+        ctx2 = {}
+    if "_upgrade_gate" in ctx2:
+        ctx2.pop("_upgrade_gate", None)
+        _save_ctx(story_key, ctx2)
+
+    db.log_event(
+        story_key, "", "ui_upgrade_confirmed",
+        {"target": target, "origin": origin, "actor": "user_ui"},
+    )
+    return result
 
 
 @router.put("/api/story/{story_key}/release-train")
@@ -398,6 +568,8 @@ def set_lifecycle_state(story_key: str, req: SetLifecycleRequest):
         forward = False
     if forward:
         _run_advance_precheck(story_key, req.state)
+        if req.state in UPGRADE_STATES:
+            _raise_upgrade_pending(story_key, prev or "待启动", req.state, "set")
     db.update_story(story_key, lifecycle_state=req.state)
     db.log_event(
         story_key,
