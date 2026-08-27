@@ -21,6 +21,8 @@
 | 2026-08-25 | `tapd-1144381896001067448`(离线提额审批后执行) | minimal | 新建需求 | 已完成(dev闭环,待上线) | 4步联调全通:task_type打标✅/credit-limit知识注入1853字命中提额表/M3事件落库/基线2绿改后0新增;发现#4改后锚点=test部署后,#5 B端无journey网关 | [RUN-tapd-1067448-20260825](RUN-tapd-1067448-20260825.md) |
 | 2026-08-26 | `tapd-1144381896001068513`(OWNBANK协议更新) | minimal | 新建需求 | 已完成(结项) | 全链闭环:红锚点=行为契约+内容标记(CONFIDENTIALITY);fillTable容错契约同锁;journey custom断言能力补齐;admin版getUserPersonal无记录返null坑 | [RUN-tapd-1068513-20260826](RUN-tapd-1068513-20260826.md) |
 | 2026-08-26 | `tapd-1144381896001068063`(HC支付回调延迟还款处理) | minimal | 接手中途需求(08-17 paused 整合) | 已完成(结项) | 红基线远程实测抓到 mock 单测抓不到的 expire_time 无默认缺陷(已修5cbfd021);serve HTTP advance 稳定500→in-process 兜底;双基线三条件(红转绿/绿保持/回归净)全成立 | [RUN-tapd-1068063-20260826](RUN-tapd-1068063-20260826.md) |
+| 2026-08-27 | `tapd-1144381896001068343`(HC提现页展示逻辑改造) | minimal | 新建需求 | 已完成(dev闭环=测试态,待上线) | skill迭代后首个全新样本全通:覆盖检查真实触发中断补双基线;范围收敛(TAPD已拆子story,快捷金额/AB=零代码纯配置);红锚点=表契约+读接口+置已读翻转三件套零决策引擎依赖;worktree+base_commit立即登记零违例,checker首跑即绿 | [RUN-tapd-1068343-20260827](RUN-tapd-1068343-20260827.md) |
+| 2026-08-28 | `tapd-1144381896001068479`(安卓和IOS支持配置强更最低系统版本) | minimal | 新建需求 | 已完成(dev闭环=测试态,待上线) | **SOP V1.7 适配首跑全通**:状态映射status_N落地+双模板注入(design=技术设计文档/verify=系统测试报告)实测生效;test-report按公司模板五段+冒烟门100%≥80%;LLM双钱包欠费下judge escalate死循环→人工代行approve×3+nudge等介入路径走通;build adapter opencode→claude切换 | [RUN-tapd-1068479-20260828](RUN-tapd-1068479-20260828.md) |
 
 **状态取值**:进行中 / 已完成 / 已中止 / 失败
 **模式取值**:新建需求 / 接手中途需求
