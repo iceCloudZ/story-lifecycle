@@ -505,6 +505,7 @@ def upsert_story_from_source(
     priority: str = "",
     owner: str = "",
     tapd_status: str = "",
+    tapd_status_name: str = "",
     tapd_url: str = "",
     tapd_type: str = "story",
     parent_key: str = "",
@@ -539,6 +540,8 @@ def upsert_story_from_source(
             updates["owner"] = owner
         if tapd_status:
             updates["tapd_status"] = tapd_status
+        if tapd_status_name:
+            updates["tapd_status_name"] = tapd_status_name
         if tapd_url:
             updates["tapd_url"] = tapd_url
         if tapd_type:
@@ -569,6 +572,7 @@ def upsert_story_from_source(
             priority=priority,
             owner=owner,
             tapd_status=tapd_status,
+            tapd_status_name=tapd_status_name,
             tapd_url=tapd_url,
             tapd_type=tapd_type,
             parent_key=parent_key,

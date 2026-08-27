@@ -69,6 +69,7 @@ VALID_COLUMNS = frozenset(
         "owner",
         "branches_json",
         "tapd_status",
+        "tapd_status_name",
         "tapd_url",
         "tapd_type",
         "intake_state",

@@ -137,6 +137,7 @@ def get_story(story_key: str):
             "owner": s.get("owner"),
             "branchesJson": s.get("branches_json", "[]"),
             "tapdStatus": s.get("tapd_status"),
+            "tapdStatusName": s.get("tapd_status_name"),
             "tapdUrl": s.get("tapd_url"),
             "sourceType": s.get("source_type"),
             "sourceId": s.get("source_id"),

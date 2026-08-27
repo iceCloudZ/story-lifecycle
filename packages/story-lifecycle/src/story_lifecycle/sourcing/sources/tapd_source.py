@@ -42,11 +42,16 @@ class TapdSource(StorySource):
         self.owner = config.get("owner", "")
         if self.owner and not self.owner.endswith(";"):
             self.owner += ";"
+        # 2026-08-28:默认过滤对齐 workspace 44381896 自定义工作流(印闪 SOP V1.7)。
+        # 旧默认 open/progressing/reopened 是系统枚举,自定义工作流下逐状态请求全 0 行
+        # (实测)。开发段自定义态:status_2 待开发/status_3 开发中/status_35 开发完成。
+        # 多值逗号过滤 TAPD 不支持 —— _fetch_stories 逐状态请求再 union,此处只需列状态集。
         self.story_status_filter = config.get(
-            "story_status", "open,progressing,reopened"
+            "story_status", "status_2,status_3,status_35"
         )
+        # bug 是系统枚举工作流(无自定义态):new/in_progress/reopened 是修复中。
         self.bug_status_filter = config.get(
-            "bug_status", "new,reopened,assigned,resolving"
+            "bug_status", "new,reopened,in_progress"
         )
 
     def fetch_pending(
@@ -163,6 +168,17 @@ class TapdSource(StorySource):
             self._api.update_bug(item_id.removeprefix("bug_"), {"status": tapd_status})
         else:
             self._api.update_story(item_id, {"status": tapd_status})
+
+    def get_status_names(self) -> dict[str, str]:
+        """status → 中文状态名(需求+缺陷并集)。sync 时取一次,sync_tapd 写进
+        story.tapd_status_name 供展示。best-effort:任一 system 拉取失败就跳过。"""
+        names: dict[str, str] = {}
+        for system in ("story", "bug"):
+            try:
+                names.update(self._api.get_status_map(system=system))
+            except Exception as e:
+                log.warning(f"tapd: status_map({system}) fetch failed: {e}")
+        return names
 
     def test_connection(self) -> bool:
         try:

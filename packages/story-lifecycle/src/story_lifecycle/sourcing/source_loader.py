@@ -50,6 +50,9 @@ class SourceProfile:
     # 泛化自 tapd_state_map,key = item subtype(story/bug/subtask/issue/pr...),
     # value = {external_status: lifecycle_state}。
     state_map: dict = field(default_factory=dict)
+    # 外部暂缓态(sync 命中时 pause 本地 story,reason=tapd_suspended;
+    # 离开暂缓态自动 resume)。key = item subtype,value = [external_status]。
+    pause_states: dict = field(default_factory=dict)
     raw: dict = field(default_factory=dict)
 
 
@@ -81,6 +84,7 @@ def resolve_source_profile(source_type: str | None) -> SourceProfile:
         source_type=name,
         story_states=raw.get("story_states", {}) or {},
         state_map=raw.get("state_map", raw.get("tapd_state_map", {})) or {},
+        pause_states=raw.get("pause_states", {}) or {},
         raw=raw,
     )
 

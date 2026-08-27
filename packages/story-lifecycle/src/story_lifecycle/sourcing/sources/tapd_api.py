@@ -103,3 +103,16 @@ class TapdApi:
             data = result.get("data", [])
             return data if isinstance(data, list) else []
         return result if isinstance(result, list) else []
+
+    def get_status_map(self, system: str = "story") -> dict:
+        """工作流状态字典(status_N → 中文名)。自定义工作流的 status 字段返回
+        不透明 status_N ID,展示层需要此字典译名(2026-08-28 实测)。
+
+        不带 workitem_type_id 返回全类型并集(需求自定义态 + 任务三态),
+        一份字典同时覆盖 story 和 subtask 展示。system=bug 单独取缺陷枚举。
+        """
+        result = self._call("get-workflows-status-map", {"system": system})
+        if isinstance(result, dict):
+            data = result.get("data", {})
+            return data if isinstance(data, dict) else {}
+        return {}

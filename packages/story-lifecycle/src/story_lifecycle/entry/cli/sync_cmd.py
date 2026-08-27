@@ -81,11 +81,18 @@ def sync_cmd(dry_run, status_only, workspace, fetch_all, story_id):
         console.print(f"[red]workspace 必须是绝对路径，得到: {workspace!r}[/]")
         raise SystemExit(1)
 
+    # 自定义工作流 status 是不透明 status_N → 拉状态字典译中文名(展示用,best-effort)。
+    try:
+        status_names = source.get_status_names()
+    except Exception:
+        status_names = None
+
     result = sync_tapd(
         items,
         workspace=workspace,
         dry_run=dry_run,
         status_only=status_only,
+        status_names=status_names,
     )
 
     console.print(

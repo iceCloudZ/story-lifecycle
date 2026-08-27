@@ -46,6 +46,7 @@ def sync_tapd(
     profile: str = "minimal",
     dry_run: bool = False,
     status_only: bool = False,
+    status_names: dict[str, str] | None = None,
 ) -> dict:
     """Sync TAPD SourceItems into local stories.
 
@@ -55,19 +56,28 @@ def sync_tapd(
     source_type("tapd")从 source profile 加载,不再从 profile 读。增量同步始终启用
     映射(更新分支前进才写,新建分支从无到有)。存量回填 = ``story sync --status-only``。
     ``profile`` 参数保留仅为给新建 story 写入 profile 名(它仍是 story 的执行配置)。
-    """
+
+    status_names: status → 中文状态名(自定义工作流的 status_N 不透明,展示需要译名)。
+    调用方一次 sync 取一份传进来(routers/sync.py、cli/sync_cmd.py),best-effort。
+    """  # noqa: D301
     # 状态治理:加载 tapd source profile 的 state_map + story_states(用于 _is_forward
-    # 防回退)。try/except 让无配置的环境(如测试)不崩 —— 无映射就退化为原行为。
+    # 防回退)+ pause_states(已暂缓 → 本地 pause)。try/except 让无配置的环境(如测试)
+    # 不崩 —— 无映射就退化为原行为。
     tapd_map: dict = {}
     story_states: dict = {}
+    pause_states: dict = {}
     try:
         from ...sourcing.source_loader import resolve_source_profile
 
         sp = resolve_source_profile("tapd")
         tapd_map = sp.state_map
         story_states = sp.story_states
+        pause_states = sp.pause_states
     except Exception:  # noqa: BLE001 — source profile 加载失败不应阻断同步
         log.debug("tapd state_map unavailable, sync runs unmapped")
+
+    def _pause_hit(tapd_type: str, status: str) -> bool:
+        return status in set(pause_states.get(tapd_type, []) or [])
 
     result = {"created": 0, "updated": 0, "skipped": 0, "would_create": 0}
     # Workspace is validated upstream (API rejects empty/relative; CLI requires
@@ -84,6 +94,8 @@ def sync_tapd(
             if (tapd_map and item.status)
             else None
         )
+        status_name = (status_names or {}).get(item.status or "", "")
+        is_paused_external = _pause_hit(tapd_type, item.status or "")
 
         if dry_run:
             if existing:
@@ -110,18 +122,37 @@ def sync_tapd(
                 updates["owner"] = item.owner
             if item.status:
                 updates["tapd_status"] = item.status
+            if status_name:
+                updates["tapd_status_name"] = status_name
             url = item.extra.get("url", "")
             if url:
                 updates["tapd_url"] = url
             if parent_key and not existing.get("parent_key"):
                 updates["parent_key"] = parent_key
             # 状态治理:映射 lifecycle_state(仅前进才写,防回退)。
-            if mapped_state:
+            # 暂缓态不映射 lifecycle_state —— pause 语义走 story.status(下方)。
+            if mapped_state and not is_paused_external:
                 cur = existing.get("lifecycle_state") or "开发"
                 if _is_forward(cur, mapped_state, story_states):
                     updates["lifecycle_state"] = mapped_state
             if updates:
                 db.update_story(existing["story_key"], **updates)
+            # 已暂缓旁路(SOP 全局旁路):TAPD 暂缓 → 本地 pause;离开暂缓态 →
+            # 只 resume 由 TAPD 暂缓的(reason=tapd_suspended),手动 pause 不动。
+            if is_paused_external and existing.get("status") == "active":
+                from ...sourcing.state_machine import pause as sm_pause
+
+                sm_pause(existing["story_key"], reason="tapd_suspended")
+                log.info(f"Paused story {existing['story_key']} (TAPD 已暂缓)")
+            elif (
+                not is_paused_external
+                and existing.get("status") == "paused"
+                and _ctx_pause_reason(existing) == "tapd_suspended"
+            ):
+                from ...sourcing.state_machine import activate as sm_activate
+
+                sm_activate(existing["story_key"], clear_pause_reason=True)
+                log.info(f"Resumed story {existing['story_key']} (TAPD 离开暂缓态)")
             result["updated"] += 1
             log.info(f"Updated story for {item.source}:{item.id}")
         elif status_only:
@@ -137,6 +168,7 @@ def sync_tapd(
                 priority=item.priority,
                 owner=item.owner,
                 tapd_status=item.status,
+                tapd_status_name=status_name,
                 tapd_url=item.extra.get("url", ""),
                 tapd_type=tapd_type,
                 intake_state="candidate",
@@ -146,8 +178,13 @@ def sync_tapd(
             # 状态治理:新建 story 按映射写初始 lifecycle_state(无防回退问题,从无到有)。
             # upsert_story_from_source 不带 lifecycle_state 参数(跟 release_train 同范式),
             # 故新建后二次 update_story。
-            if mapped_state:
+            if mapped_state and not is_paused_external:
                 db.update_story(story["story_key"], lifecycle_state=mapped_state)
+            # 新同步进来就已是暂缓态 → 直接 pause(编排线程 no-op,等人重启)。
+            if is_paused_external:
+                from ...sourcing.state_machine import pause as sm_pause
+
+                sm_pause(story["story_key"], reason="tapd_suspended")
             # sourced 创建统一打 task_type(飞轮注入门槛);批量 sync 用关键词档
             from .story_service import ensure_task_type
 
@@ -161,3 +198,14 @@ def sync_tapd(
             log.info(f"Created story {story['story_key']} for {item.source}:{item.id}")
 
     return result
+
+
+def _ctx_pause_reason(story: dict) -> str:
+    """读 story.context_json._pause_reason(坏 JSON/无值 → "")。"""
+    import json
+
+    try:
+        ctx = json.loads(story.get("context_json") or "{}")
+    except (ValueError, TypeError):
+        return ""
+    return ctx.get("_pause_reason", "") if isinstance(ctx, dict) else ""

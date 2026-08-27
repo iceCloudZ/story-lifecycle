@@ -35,21 +35,51 @@ story_states:
 # TAPD 状态 → 本地 lifecycle_state 映射(同步 sync_service 按此自动写 lifecycle_state)。
 # 仅当映射结果相对当前 lifecycle_state 是「前进」才写(防回退,见 _is_forward)。
 # 未命中的 tapd_status 不动 lifecycle_state。map key = tapd_type(story/bug/subtask)。
-#   story 需求态: open/progressing/reopened
-#   bug 缺陷态:   new/reopened/assigned/resolving
-#   终态(共用):   resolved/rejected/closed
+#
+# 2026-08-28 对齐印闪 SOP V1.7 自定义工作流(实测 workspace 44381896,
+# workflows/status_map system=story workitem_type_id=1144381896001000028「需求」):
+# 自定义状态返回不透明 status_N ID(不是中文名),老状态保留系统枚举(planning/resolved/rejected)。
+# 前段产品/设计/项管态(待规划~待排期)不映射 —— story 未到开发段,不进编排器。
+#   开发段:      status_2 待开发 / status_3 开发中 / status_35 开发完成
+#   测试段:      status_40 冒烟测试通过(SOP V1.7 新增:AI 测试通过率≥80%+报告附TAPD)
+#                / status_4 待测试 / status_5 测试中 / status_6 待UAT测试
+#   上线段:      status_7 待发布 / status_8/14/15 产品验收 / status_37/38/39 业务验收
+#   终态:        resolved 已实现 / rejected 已拒绝
+#   bug 缺陷态(系统枚举): new/in_progress/reopened/resolved/rejected/closed
+#   subtask(任务三态):   status_19 未开始 / status_20 进行中 / status_21 已完成
 state_map:
   story:
-    progressing: 开发             # 进行中 → 开发
-    resolved: 上线                # 已解决 → 上线(等车/待发布)
-    closed: 结项                  # 关闭 → 结项(真终态)
-    rejected: 结项                # 被拒也算完结
+    status_2: 开发                # 待开发
+    status_3: 开发                # 开发中
+    status_35: 开发               # 开发完成
+    status_40: 测试               # 冒烟测试通过(AI 系统测试通过率≥80% 后流转)
+    status_4: 测试                # 待测试
+    status_5: 测试                # 测试中
+    status_6: 测试                # 待UAT测试
+    status_7: 上线                # 待发布(发布窗口:周二/周四下午)
+    status_8: 上线                # 待产品验收
+    status_14: 上线               # 产品验收中
+    status_15: 上线               # 产品验收完成
+    status_37: 上线               # 待业务验收
+    status_38: 上线               # 业务验收中
+    status_39: 上线               # 业务验收完成
+    resolved: 结项                # 已实现(真终态)
+    rejected: 结项                # 已拒绝也算完结
   bug:
-    assigned: 开发
-    resolving: 开发               # 修复中 → 开发
+    new: 开发
+    in_progress: 开发             # 处理中 → 开发
+    reopened: 开发
     resolved: 上线
     closed: 结项
-  subtask:                        # 子任务按 story 规则
-    progressing: 开发
-    resolved: 上线
-    closed: 结项
+    rejected: 结项
+  subtask:                        # 子任务(任务类型,三态工作流)
+    status_19: 开发               # 未开始
+    status_20: 开发               # 进行中
+    status_21: 测试               # 已完成
+
+# TAPD 暂缓态 → 本地 pause(story.status=paused, reason=tapd_suspended)。
+# SOP 全局旁路:任意非结束态可流转已暂缓;重启(流转回开发段)自动恢复 active。
+# 只 resume 由 TAPD 暂缓 pause 的(reason=tapd_suspended),手动 pause 的不动。
+# map key = tapd_type,值 = 命中即 pause 的 tapd_status 列表。
+pause_states:
+  story: [status_10]              # 已暂缓

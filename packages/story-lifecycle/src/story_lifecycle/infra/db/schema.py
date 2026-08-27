@@ -149,6 +149,9 @@ def _create_story_tables(conn):
         ("owner", "TEXT"),
         ("branches_json", "TEXT DEFAULT '[]'"),
         ("tapd_status", "TEXT"),
+        # 自定义工作流的 status 返回不透明 status_N;此列存同步时经
+        # workflows/status_map 译好的中文名(开发中/冒烟测试通过/...),展示层直读。
+        ("tapd_status_name", "TEXT"),
         ("tapd_url", "TEXT"),
         ("tapd_type", "TEXT DEFAULT 'story'"),
     ]:

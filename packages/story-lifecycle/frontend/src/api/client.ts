@@ -19,6 +19,7 @@ export interface Story {
   priority?: string
   owner?: string
   tapdStatus?: string
+  tapdStatusName?: string
   tapdUrl?: string
   tapdType?: string
   intakeState?: string | null

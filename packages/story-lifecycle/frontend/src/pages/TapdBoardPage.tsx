@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useStories } from '../hooks/useStories'
 import type { StorySummary } from '../store/storyStore'
 import { IntakeStartModal, useIntakeStart } from '../components/IntakeStartModal'
-import { TAPD_STATUS, TYPE_LABELS, DONE_STATUSES, LOCAL_DONE_STATUSES } from './tapdMeta'
+import { tapdStatusLabel, TYPE_LABELS, DONE_STATUSES, LOCAL_DONE_STATUSES } from './tapdMeta'
 import './lifecycle/LifecyclePage.css'
 import './TapdBoardPage.css'
 
@@ -189,7 +189,7 @@ async function linkBugToStory(storyKey: string, bugKey: string) {
 function MiniCard({ story, onStartDev, draggable, onDragStart, onDropBug }: { story: StorySummary; onStartDev: () => void; draggable?: boolean; onDragStart?: (e: React.DragEvent) => void; onDropBug?: (bugKey: string) => void }) {
   const navigate = useNavigate()
   const typeInfo = TYPE_LABELS[story.tapdType || '']
-  const statusCn = TAPD_STATUS[story.tapdStatus || ''] || story.tapdStatus || ''
+  const statusCn = tapdStatusLabel(story)
   const dlStr = (story.deadline || '').slice(0, 10)
   const today = new Date().toISOString().slice(0, 10)
   const isOverdue = dlStr && dlStr < today

@@ -93,6 +93,10 @@ def activate(
     - lifecycle_state:同时推进业务状态(/plan/confirm / /lifecycle/advance 用)。
     """
     updates: dict[str, Any] = {}
+    # 清理分支是否执行过 — 即使清理后 ctx 为空也必须回写(否则旧 context_json
+    # 残留:ctx 只含 _pause_reason 的场景,清掉后 updates 为空不覆盖,恢复后
+    # reason 仍在,被"只 resume TAPD 暂缓"的判断误读)。
+    cleared = False
     if clear_gates or clear_pause_reason:
         s = db.get_story(story_key)
         try:
@@ -105,10 +109,11 @@ def activate(
         if clear_pause_reason:
             ctx.pop("_pause_reason", None)
         updates.update(ctx)
+        cleared = True
     if ctx_updates:
         updates.update(ctx_updates)
     kwargs: dict[str, Any] = {"status": ExecutionStatus.ACTIVE.value}
-    if updates:
+    if updates or cleared:
         kwargs["context_json"] = json.dumps(updates, ensure_ascii=False)
     if lifecycle_state:
         kwargs["lifecycle_state"] = lifecycle_state

@@ -115,11 +115,19 @@ def api_sync_tapd(req: SyncRequest):
             status_code=400, detail="workspace must be an absolute path"
         )
 
+    # 自定义工作流 status 是不透明 status_N → 拉一份状态字典译中文名(展示用)。
+    # best-effort:拉失败传 None,sync 不写 tapd_status_name,不阻断同步。
+    try:
+        status_names = source.get_status_names()
+    except Exception:
+        status_names = None
+
     result = sync_tapd(
         items,
         workspace=workspace,
         dry_run=req.dry_run,
         status_only=req.status_only,
+        status_names=status_names,
     )
 
     # Also pull bugs linked to stories via TAPD get_related_bugs, which catches
