@@ -297,7 +297,9 @@ def _render_cli_prompt_req(req: CliPromptRequest) -> str:
         build_grill_protocol_section,
         build_kb_tool_section,
         build_quality_section,
+        build_spec_skeleton_section,
         build_test_env_section,
+        build_test_report_template_section,
     )
 
     stage_desc = ""
@@ -339,6 +341,13 @@ def _render_cli_prompt_req(req: CliPromptRequest) -> str:
         env_text = build_test_env_section(story_key, stage)
         if env_text.strip():
             test_env_section = f"\n{env_text}\n"
+
+    # 公司 SOP 文档模板段(2026-08-28 对齐印闪 SOP V1.7):
+    # verify → 系统测试报告模板(冒烟门 ≥80%,报告附 TAPD);
+    # design → 技术设计文档骨架(研发设计评审输出物)。静态内容,无 failsafe 必要。
+    sop_template_section = build_test_report_template_section(stage) or (
+        build_spec_skeleton_section(stage)
+    )
 
     # Knowledge context injection（冷启动 outcome/process 知识，按 task_type）。
     # 镜像 quality_section：经共享 helper 取、failsafe（任何异常不阻塞 prompt 渲染）。
@@ -472,6 +481,7 @@ cd ./hc-config
 {dimensions_section}
 {quality_section}
 {test_env_section}
+{sop_template_section}
 {grill_section}
 {consult_section}
 {task_list_section}

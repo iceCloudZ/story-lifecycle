@@ -345,6 +345,18 @@ Story: {state["story_key"]}
     if repair_section and not _had_repair_placeholder:
         template = f"{template}\n\n{repair_section}"
 
+    # 公司 SOP 文档模板段(2026-08-28,印闪 SOP V1.7):verify=系统测试报告模板,
+    # design=技术设计文档骨架。统一尾部追加(不占 {quality_checklist} 槽,槽留给
+    # quality checklist 本体) — 与交互路径 prompts.py 的注入同一份内容。
+    from .prompt_sections import (
+        build_spec_skeleton_section,
+        build_test_report_template_section,
+    )
+
+    sop_section = build_test_report_template_section(stage) + build_spec_skeleton_section(stage)
+    if sop_section:
+        template = f"{template}\n\n{sop_section}"
+
     metadata = {
         "transcript_context": transcript_context or "",
         "knowledge_context": knowledge_context or "",
