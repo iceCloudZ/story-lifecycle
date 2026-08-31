@@ -59,7 +59,10 @@ def list_stories(
         show_test=show_test,
     )
 
-    return JSONResponse([_serialize_story_summary(s) for s in stories])
+    patrol_map = db.get_patrol_summaries()
+    return JSONResponse([
+        _serialize_story_summary(s, patrol_map.get(s["story_key"])) for s in stories
+    ])
 
 
 @router.get("/api/bugs")
@@ -77,7 +80,10 @@ def list_bugs(status: str = "", show_all: bool = False):
         stories = [
             s for s in stories if (s.get("tapd_status") or "").lower() not in done_tapd
         ]
-    return JSONResponse([_serialize_story_summary(s) for s in stories])
+    patrol_map = db.get_patrol_summaries()
+    return JSONResponse([
+        _serialize_story_summary(s, patrol_map.get(s["story_key"])) for s in stories
+    ])
 
 
 @router.get("/api/story/{story_key}")

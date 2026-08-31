@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { PatrolSummary } from '../api/client'
 
 export interface StorySummary {
   storyKey: string
@@ -22,6 +23,8 @@ export interface StorySummary {
   releaseTrain?: string | null
   lifecycleState?: string | null
   isTest?: boolean | null
+  // 生产巡检摘要(卡片徽标;itemsCount=0 或无数据时 null → 不显示徽标)
+  patrolSummary?: PatrolSummary | null
 }
 
 interface StoryStore {

@@ -31,11 +31,15 @@ def _load_tapd_config() -> dict:
     return data.get("tapd", {})
 
 
-def _serialize_story_summary(s: dict) -> dict:
+def _serialize_story_summary(s: dict, patrol: dict | None = None) -> dict:
     """camelCase summary of a story for list views — REST /api/story and the
     /ws/stories push share this so the two payloads can't drift. (The WS version
     previously omitted tapdType/intakeState, leaving the Dashboard's filters
-    matching nothing — see the dashboard-zero-stories bug.)"""
+    matching nothing — see the dashboard-zero-stories bug.)
+
+    patrol: 该 story 的巡检摘要（itemsCount/latestRunAt/latestResult，来自
+    db.get_patrol_summaries() 的批量聚合），无巡检数据时为 None。调用方一次
+    拉全量 map 传入，避免这里逐 story 查库（列表 243 story 会 N+1）。"""
     return {
         "storyKey": s["story_key"],
         "title": s["title"],
@@ -60,13 +64,18 @@ def _serialize_story_summary(s: dict) -> dict:
         "lifecycleState": s.get("lifecycle_state"),
         "releaseTrain": s.get("release_train"),
         "isTest": bool(s.get("is_test")),
+        "patrolSummary": patrol,
     }
 
 
 def _story_list_json() -> list[dict]:
     # Same gathering + serialization as the REST /api/story endpoint, so the
     # WS-pushed list and the REST list are identical (incl. candidate stories).
-    return [_serialize_story_summary(s) for s in db.list_visible_stories()]
+    patrol_map = db.get_patrol_summaries()
+    return [
+        _serialize_story_summary(s, patrol_map.get(s["story_key"]))
+        for s in db.list_visible_stories()
+    ]
 
 
 def _resolve_workspace_or_404(ident: str | int) -> dict:

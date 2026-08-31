@@ -9,6 +9,7 @@ import CodeChangesTab from '../components/CodeChangesTab'
 import { UiUpgradeCard } from '../components/UiUpgradeCard'
 import DocsTab from '../components/DocsTab'
 import QualityPanel from '../components/QualityPanel'
+import PatrolTab from '../components/PatrolTab'
 import ClarifyDialog from '../components/ClarifyDialog'
 import './StoryDetailPage.css'
 
@@ -20,6 +21,8 @@ const MODULES = [
   { id: 'code', icon: 'code', label: '代码变更' },
   { id: 'docs', icon: 'docs', label: '文档' },
   { id: 'scenarios', icon: 'scenarios', label: '测试场景' },
+  // 生产巡检:上线后观察期的 patrol items + 轮次历史(prod-patrol skill 回写)
+  { id: 'patrol', icon: 'patrol', label: '生产巡检' },
 ]
 
 // 概览操作按钮:只放「推进执行类」操作(继续/重试/紧急停止)。
@@ -341,6 +344,8 @@ export default function StoryDetailPage() {
           {validTab === 'docs' && <DocsTab storyKey={storyKey} />}
           {/* 测试场景 tab:复用 DocsTab(doc_type 开放,scenario_report 自动可见) */}
           {validTab === 'scenarios' && <DocsTab storyKey={storyKey} />}
+          {/* 生产巡检 tab:只读展示 patrol items + 轮次历史(prod-patrol skill 回写) */}
+          {validTab === 'patrol' && <PatrolTab storyKey={storyKey} />}
         </div>
       </div>
     </div>

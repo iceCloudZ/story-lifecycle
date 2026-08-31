@@ -76,6 +76,23 @@ export default function Swimlane({
   )
 }
 
+// 生产巡检徽标(prod-patrol Phase 2):最新轮 PASS/FAIL + 时间;登记了 items
+// 但还没跑过 → 灰色"未巡检";没登记 items(null)→ 不显示,避免噪音。
+function PatrolBadge({ summary }: { summary?: Story['patrolSummary'] }) {
+  if (!summary || summary.itemsCount === 0) return null
+  const result = summary.latestResult
+  const time = summary.latestRunAt && summary.latestRunAt.length >= 16 ? summary.latestRunAt.slice(5, 16) : ''
+  const cls = result === 'FAIL' ? 'board-patrol-fail' : result === 'PASS' ? 'board-patrol-pass' : 'board-patrol-none'
+  const label = result === 'FAIL' ? '巡检FAIL' : result === 'PASS' ? '巡检PASS' : '未巡检'
+  return (
+    <span className={`board-patrol-badge ${cls}`} title={`生产巡检 · ${result ?? '未巡检'}${time ? ` · ${time}` : ''}`}>
+      <span className="board-patrol-dot" />
+      {label}
+      {time && <span className="board-patrol-time">{time}</span>}
+    </span>
+  )
+}
+
 function BoardCard({
   story,
   draggable,
@@ -100,7 +117,10 @@ function BoardCard({
     >
       <div className="board-card-key">{story.storyKey}</div>
       <div className="board-card-title">{story.title || '(未命名)'}</div>
-      <span className="board-card-state">{story.lifecycleState || '开发'}</span>
+      <div className="board-card-foot">
+        <span className="board-card-state">{story.lifecycleState || '开发'}</span>
+        <PatrolBadge summary={story.patrolSummary} />
+      </div>
     </div>
   )
 }

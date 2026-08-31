@@ -25,6 +25,59 @@ def init_db():
         _create_trace_tables(conn)
         _create_decision_tables(conn)
         _create_feedback_tables(conn)
+        _create_patrol_tables(conn)
+
+
+def _create_patrol_tables(conn):
+    """patrol 族：生产巡检（docs/design-prod-patrol-integration.md Phase 2）。
+
+    巡检发生在 story 上线之后的观察期，不参与 lifecycle stage：
+    - patrol_item      story 维度登记"上线后要查什么"（skill 用 PUT 全量替换）
+    - patrol_run       一轮巡检（按包 train:xxx 或单 story 执行）
+    - patrol_run_item  轮次内逐项结果，按 item_seq 引用 patrol_item（软引用，
+                      items 全量替换后旧轮次的 seq 可能漂移，接受——历史观测
+                      值本身就带 observed/evidence，不依赖 join 也能读）
+    """
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS patrol_item (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            story_key       TEXT NOT NULL,
+            seq             INTEGER NOT NULL,
+            name            TEXT NOT NULL,
+            type            TEXT NOT NULL DEFAULT 'manual',
+            params_json     TEXT NOT NULL DEFAULT '{}',
+            baseline        TEXT,
+            pass_criteria   TEXT NOT NULL DEFAULT '',
+            rollback_ref    TEXT,
+            enabled         INTEGER NOT NULL DEFAULT 1,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(story_key, seq)
+        );
+
+        CREATE TABLE IF NOT EXISTS patrol_run (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            story_key       TEXT NOT NULL,
+            run_scope       TEXT NOT NULL DEFAULT '',
+            started_at      TEXT NOT NULL,
+            executor        TEXT NOT NULL DEFAULT '',
+            summary         TEXT NOT NULL DEFAULT '',
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS patrol_run_item (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id          INTEGER NOT NULL REFERENCES patrol_run(id) ON DELETE CASCADE,
+            item_seq        INTEGER NOT NULL,
+            result          TEXT NOT NULL,
+            observed        TEXT NOT NULL DEFAULT '',
+            evidence_ref    TEXT NOT NULL DEFAULT '',
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pi_story ON patrol_item(story_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pr_story ON patrol_run(story_key, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pri_run ON patrol_run_item(run_id)")
 
 
 def _create_feedback_tables(conn):

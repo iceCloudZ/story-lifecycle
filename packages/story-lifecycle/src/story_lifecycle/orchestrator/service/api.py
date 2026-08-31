@@ -412,6 +412,14 @@ from .routers import intake, lifecycle, plan, stories, sync  # noqa: E402
 for _mod in (stories, lifecycle, plan, sync, intake):
     app.include_router(_mod.router)
 
+
+# -------- domain routers C3d（生产巡检，docs/design-prod-patrol-integration.md Phase 2） --------
+
+from .routers import patrol  # noqa: E402
+
+for _mod in (patrol,):
+    app.include_router(_mod.router)
+
 # -------- static frontend (must be last) --------
 
 _WEB_DIR = Path(__file__).parent.parent.parent / "entry" / "web"

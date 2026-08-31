@@ -213,3 +213,14 @@ from .story_docs import (
     list_story_doc_versions,
 )
 from .story_docs import list_story_docs, rollback_story_doc, search_docs
+
+# ---- patrol（生产巡检，docs/design-prod-patrol-integration.md Phase 2） ----
+from .patrol import (
+    rollup_run_result,
+    replace_patrol_items,
+    list_patrol_items,
+    create_patrol_run,
+    list_patrol_runs,
+    get_patrol_summaries,
+    get_train_patrol_overview,
+)

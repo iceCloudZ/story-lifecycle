@@ -54,6 +54,13 @@ const MODULE_ICONS: Record<string, ReactNode> = {
       <path d="M4.4 9.5h7.2" />
     </svg>
   ),
+  // 生产巡检:盾牌+对勾 —— 上线后观察期的守护核查语义
+  patrol: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 1.75 13 3.5v3.6c0 3.3-2.1 5.7-5 7.15-2.9-1.45-5-3.85-5-7.15V3.5z" />
+      <path d="M5.6 7.9 7.3 9.6l3.1-3.2" />
+    </svg>
+  ),
 }
 
 const ICON_EXTERNAL = (

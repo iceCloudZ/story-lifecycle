@@ -1,0 +1,198 @@
+/* 生产巡检 tab（prod-patrol Phase 2）—— 遵循 AGENTS.md UI 规范:仅 design tokens。 */
+
+.pt-panel {
+  margin-top: 12px;
+}
+
+.pt-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pt-section {
+  margin-top: 10px;
+}
+
+.pt-sub {
+  margin-bottom: 6px;
+}
+
+/* ---- 巡检项 ---- */
+
+.pt-items {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.pt-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+}
+
+.pt-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+}
+
+.pt-item-seq {
+  flex: none;
+  min-width: 18px;
+  text-align: right;
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.pt-item-name {
+  font-weight: 500;
+  color: var(--color-text-strong);
+}
+
+.pt-item-type {
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--gray-100);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 18px;
+}
+
+.pt-item-disabled .pt-item-name {
+  color: var(--color-text-faint);
+}
+
+.pt-item-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding-left: 26px;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.pt-item-baseline,
+.pt-item-rollback {
+  font-family: var(--font-mono);
+}
+
+.pt-item-params {
+  padding-left: 26px;
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 巡检轮次 ---- */
+
+.pt-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.pt-run {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.pt-run-failed {
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+.pt-run-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: var(--text-sm);
+}
+
+.pt-res-badge {
+  flex: none;
+}
+
+.pt-run-time {
+  flex: none;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.pt-run-executor {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.pt-run-scope {
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 18px;
+}
+
+.pt-run-summary {
+  margin-top: 4px;
+  color: var(--color-text);
+  font-size: var(--text-sm);
+}
+
+.pt-run-items {
+  margin-top: 6px;
+}
+
+.pt-run-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--text-sm);
+}
+
+.pt-run-item-seq {
+  flex: none;
+  min-width: 18px;
+  text-align: right;
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.pt-run-item-name {
+  flex: none;
+  color: var(--gray-700);
+}
+
+.pt-run-item-observed {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+
+.pt-run-item-evidence {
+  flex: none;
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}

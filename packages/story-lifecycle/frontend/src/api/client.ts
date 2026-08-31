@@ -34,6 +34,8 @@ export interface Story {
   lifecycleState?: string | null
   // 班车看板:story 归属班车(v3.2/v3.3/后台快线/...),NULL=待分配
   releaseTrain?: string | null
+  // 班车看板卡片巡检徽标摘要(itemsCount=0 或无数据时 null,不显示徽标)
+  patrolSummary?: PatrolSummary | null
   // 状态治理:测试/demo story 标记,看板默认过滤掉
   isTest?: boolean | null
   // BUG #9:是否 headless 执行(从 profile execution_mode 推导)。
@@ -196,6 +198,99 @@ export interface GateDecision {
 
 export interface GateHistoryResponse {
   decisions: GateDecision[]
+}
+
+// ---- 生产巡检（prod-patrol，docs/design-prod-patrol-integration.md Phase 2） ----
+
+// 巡检项:story 维度登记"上线后要查什么",PUT 全量替换,seq 稳序
+export interface PatrolItem {
+  seq: number
+  name: string
+  type: string // es_error_scan | es_behavior | sql_count | nacos_read | api_probe | manual
+  params: Record<string, unknown>
+  baseline?: string | null
+  passCriteria: string
+  rollbackRef?: string | null
+  enabled: boolean
+}
+
+export interface PatrolItemInput {
+  name: string
+  type?: string
+  params?: Record<string, unknown>
+  baseline?: string | null
+  pass_criteria?: string
+  rollback_ref?: string | null
+  enabled?: boolean
+}
+
+export interface PatrolItemsResponse {
+  storyKey: string
+  items: PatrolItem[]
+}
+
+// 轮次内逐项结果:name 是按 seq 软引用补的当前项名,items 替换后可能为 null
+export interface PatrolRunItemResult {
+  seq: number
+  name?: string | null
+  result: string // PASS | FAIL | SKIP | WAIVED
+  observed: string
+  evidenceRef: string
+}
+
+export interface PatrolRun {
+  id: number
+  runScope: string
+  startedAt: string
+  executor: string
+  summary: string
+  result: string // rollup:任一 FAIL 则 FAIL,否则 PASS
+  items: PatrolRunItemResult[]
+}
+
+export interface PatrolRunsResponse {
+  storyKey: string
+  runs: PatrolRun[]
+}
+
+export interface TrainPatrolFailItem {
+  seq: number
+  name?: string | null
+  observed: string
+  evidenceRef: string
+}
+
+export interface TrainPatrolStory {
+  storyKey: string
+  title?: string | null
+  lifecycleState?: string | null
+  status?: string | null
+  itemsCount: number
+  latestRun: {
+    id: number
+    runScope: string
+    startedAt: string
+    executor: string
+    summary: string
+    result: string
+    failItems: TrainPatrolFailItem[]
+  } | null
+}
+
+export interface TrainPatrolOverview {
+  train: string
+  total: number
+  patrolled: number
+  failed: number
+  neverPatrolled: string[]
+  stories: TrainPatrolStory[]
+}
+
+// story 列表(GET /api/story)的巡检摘要,班车看板卡片徽标数据源
+export interface PatrolSummary {
+  itemsCount: number
+  latestRunAt: string | null
+  latestResult: 'PASS' | 'FAIL' | null
 }
 
 export interface TimelineStage {
@@ -465,6 +560,35 @@ export const storyApi = {
     fetchJSON<FindingsResponse>(`/api/story/${key}/findings${status || minSeverity ? '?' : ''}${status ? `status=${status}` : ''}${status && minSeverity ? '&' : ''}${minSeverity ? `min_severity=${minSeverity}` : ''}`),
   dependencyGraph: (key: string) => fetchJSON<Record<string, unknown>>(`/api/story/${key}/dependency-graph`),
   debug: (key: string, limit = 50) => fetchJSON<DebugPacket>(`/api/story/${key}/debug?limit=${limit}`),
+}
+
+// 生产巡检 APIs（prod-patrol Phase 2;巡检 tab 只读展示,写入方是 prod-patrol skill）
+export const patrolApi = {
+  items: (key: string) => fetchJSON<PatrolItemsResponse>(`/api/story/${key}/patrol/items`),
+  putItems: (key: string, items: PatrolItemInput[]) =>
+    fetchJSON<{ ok: boolean; storyKey: string; items: PatrolItem[] }>(`/api/story/${key}/patrol/items`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    }),
+  runs: (key: string, limit = 20) =>
+    fetchJSON<PatrolRunsResponse>(`/api/story/${key}/patrol/runs?limit=${limit}`),
+  postRun: (
+    key: string,
+    run: {
+      run_scope?: string
+      executor?: string
+      summary?: string
+      items: Array<{ item_seq: number; result: string; observed?: string; evidence_ref?: string }>
+    },
+  ) =>
+    fetchJSON<{ ok: boolean; runId: number; result: string; run: PatrolRun }>(`/api/story/${key}/patrol/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(run),
+    }),
+  trainOverview: (train: string) =>
+    fetchJSON<TrainPatrolOverview>(`/api/trains/${encodeURIComponent(train)}/patrol/overview`),
 }
 
 // Pattern APIs
