@@ -147,6 +147,7 @@ def cli(ctx, serve, host, port, fix_deps):
             "calendar",
             "daily",
             "tool",
+            "butler-proxy",
         ):
             # STORY_SKIP_FIRST_RUN: 测试 / CI 用 —— 跳过 setup wizard 拦截。
             # consult 等命令在 fake 模式(STORY_CONSULT_FAKE)下不需要真 LLM,
@@ -297,6 +298,26 @@ def setup():
 def serve(host, port):
     """Start the API server."""
     _run_server(host, port)
+
+
+@cli.command()
+@click.option(
+    "--port",
+    default=None,
+    type=int,
+    help="代理监听端口(默认 18181,env BUTLER_PROXY_PORT 可覆盖)",
+)
+def butler_proxy(port):
+    """桌面令牌代理(管家 WP3,DESIGN-story-butler §3.3)。
+
+    微信回方向链路的桌面收口:101 反向隧道 → 本代理(X-Internal-Token 执法
+    + 白名单路由 + 请求日志)→ story serve。部署形态与 env 清单
+    (BUTLER_PROXY_TOKEN / STORY_SERVE_URL / STORY_LOG_DIR)见
+    infra/butler_proxy.py 的模块 docstring。
+    """
+    from ...infra.butler_proxy import main as proxy_main
+
+    raise SystemExit(proxy_main(port=port))
 
 
 @cli.command()
