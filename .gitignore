@@ -78,3 +78,6 @@ packages/eval/sandbox/selfcheck_report.json
 # 本地 token 用量报告（每次跑生成，不入库）
 docs/local-token-usage-chart.html
 docs/local-token-usage-report.md
+
+# 管家本地密钥配置（scripts/butler/，勿入库）
+scripts/butler/butler.env
