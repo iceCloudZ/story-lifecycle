@@ -14,6 +14,7 @@ from ....sourcing.workspace_diff import get_story_workspace_diff
 from ...engine.graph import start_story_async
 from .sessions import _story_headless
 from .._shared import (
+    _pending_confirm_gates,
     _serialize_story_summary,
 )
 
@@ -157,6 +158,10 @@ def get_story(story_key: str):
             # 迭代 2（P4-UI）：plan 确认态显式字段（前端三条件点唯一数据源）。
             "planConfirmed": plan_confirmed,
             "hasPlan": has_plan,
+            # 管家 WP2（DESIGN-story-butler §3.2）：确认门结构化视图，每项带
+            # targetState（confirm_token 拼接材料）+ targetIsTerminal（服务端执法判
+            # 终态，集合来自 UPGRADE_STATES）。无挂起门 → 空列表。
+            "confirmGates": _pending_confirm_gates(s),
         }
     )
 

@@ -31,6 +31,82 @@ def _load_tapd_config() -> dict:
     return data.get("tapd", {})
 
 
+def _pending_confirm_gates(s: dict) -> list[dict]:
+    """story 当前挂着的确认门列表（管家 MCP 工具面数据源，DESIGN-story-butler §3.2）。
+
+    把 context_json 里四种确认闸归一成结构化列表，每项带：
+    - ``kind``: plan_confirm / story_state / upgrade / stage
+    - ``targetState``: confirm_token 的拼接材料（token = f"{story_key}:{targetState}"）
+    - ``targetIsTerminal``: 终态/发布类判定。集合来源是 routers/lifecycle.UPGRADE_STATES
+      （("上线","结项")，428 升级门同一集合）—— 服务端判，butler 不本地硬编码。
+
+    只读解析，无副作用。ctx 解析失败 → 空列表（宁可少报不可误报）。
+    """
+    import json as _json
+
+    try:
+        ctx = _json.loads((s or {}).get("context_json") or "{}")
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(ctx, dict):
+        return []
+    gates: list[dict] = []
+
+    # 1) plan 确认门：有规划未确认 → 确认后 lifecycle 推进到「开发」（/plan/confirm 语义）
+    if ctx.get("_agent_actions") and not ctx.get("_plan_confirmed"):
+        from ...sourcing.lifecycle_state import LifecycleState
+
+        gates.append(
+            {
+                "kind": "plan_confirm",
+                "targetState": LifecycleState.DEV.value,
+                "targetIsTerminal": False,
+            }
+        )
+
+    # 2) lifecycle ui_button 确认门（judge 判 target 后停门等确认）
+    g = ctx.get("_story_state_gate")
+    if isinstance(g, dict) and g.get("awaiting_confirm"):
+        from .routers.lifecycle import UPGRADE_STATES
+
+        to = str(g.get("to") or "")
+        gates.append(
+            {
+                "kind": "story_state",
+                "fromState": str(g.get("from") or ""),
+                "targetState": to,
+                "finalTarget": str(g.get("final_target") or ""),
+                "label": str(g.get("label") or ""),
+                "targetIsTerminal": to in UPGRADE_STATES,
+            }
+        )
+
+    # 3) 428 挂起的升级门（上线/结项，只能 UI 点确认）—— 恒为终态类
+    up = ctx.get("_upgrade_gate")
+    if isinstance(up, dict) and up.get("target"):
+        gates.append(
+            {
+                "kind": "upgrade",
+                "fromState": str(up.get("prev") or ""),
+                "targetState": str(up.get("target")),
+                "targetIsTerminal": True,
+            }
+        )
+
+    # 4) stage 间确认闸（profile stage confirm=True，确认后进 next_stage）
+    sg = ctx.get("_stage_gate")
+    if isinstance(sg, dict) and sg.get("awaiting_confirm"):
+        gates.append(
+            {
+                "kind": "stage",
+                "completedStage": str(sg.get("completed_stage") or ""),
+                "targetState": str(sg.get("next_stage") or ""),
+                "targetIsTerminal": False,
+            }
+        )
+    return gates
+
+
 def _serialize_story_summary(s: dict, patrol: dict | None = None) -> dict:
     """camelCase summary of a story for list views — REST /api/story and the
     /ws/stories push share this so the two payloads can't drift. (The WS version
@@ -65,6 +141,9 @@ def _serialize_story_summary(s: dict, patrol: dict | None = None) -> dict:
         "releaseTrain": s.get("release_train"),
         "isTest": bool(s.get("is_test")),
         "patrolSummary": patrol,
+        # 管家 story_list 的「是否停确认门」列（DESIGN-story-butler §3.2）。
+        # 布尔来自 _pending_confirm_gates 的轻量 ctx 解析，列表页免 N+1 拉详情。
+        "awaitingConfirm": bool(_pending_confirm_gates(s)),
     }
 
 
@@ -173,6 +252,7 @@ __all__ = [
     "_load_tapd_config",
     "_serialize_story_summary",
     "_story_list_json",
+    "_pending_confirm_gates",
     "_resolve_workspace_or_404",
     "_wiki_knowledge_root",
     "_get_story_documents",

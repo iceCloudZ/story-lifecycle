@@ -31,6 +31,16 @@ class AdvanceRequest(BaseModel):
     confirmed_via: str = "ui"
 
 
+class LifecycleAdvanceRequest(BaseModel):
+    """管家账本(DESIGN-story-butler §3.1/§4):ui_button 确认门续推的确认来源。
+
+    MCP butler 的 story_advance 走 POST /lifecycle/advance 续推确认门时透传;
+    缺省 ui(UI「确认推进」按钮直调,不带 body)。老调用方无 body 不受影响。
+    """
+
+    confirmed_via: str = "ui"
+
+
 # confirmed_via 合法值(超出 → 400,防脏账本)
 _VALID_CONFIRMED_VIA = ("desktop", "wechat", "ui", "api")
 
@@ -284,7 +294,9 @@ def _apply_advance_transition(
 
 
 @router.post("/api/story/{story_key}/lifecycle/advance")
-def advance_lifecycle_state(story_key: str):
+def advance_lifecycle_state(
+    story_key: str, req: LifecycleAdvanceRequest = None
+):
     """推进 Story 业务状态到下一态(待启动→开发→测试→上线→结项)。
 
     成果物 gate 驱动:推进前检查该转换的成果物是否全部满足(exists+confirmed
@@ -294,10 +306,18 @@ def advance_lifecycle_state(story_key: str):
 
     强制层:``advance_precheck_cmd``(config.yaml)配置时,推进前先跑外部规范校验,
     非零退出码 409——AGENTS.md/skill 清单是提示层,服务端钩子是执行层。
+
+    管家账本:可选 body {confirmed_via}(desktop|wechat|ui|api)进这次确认推进的
+    story_state_transition 事件 payload(§4,不改表结构);无 body → 默认 ui。
     """
     import json as _json
 
     from ....sourcing.deliverables import gate_for_current_state, gate_satisfied
+
+    # 管家账本:confirmed_via 校验(与 PUT /advance 同一合法值集合,防脏账本)
+    confirmed_via = (req.confirmed_via if req else "") or "ui"
+    if confirmed_via not in _VALID_CONFIRMED_VIA:
+        raise HTTPException(400, f"Invalid confirmed_via: {confirmed_via}")
 
     s = db.get_story(story_key)
     if not s:
@@ -350,6 +370,7 @@ def advance_lifecycle_state(story_key: str):
                     "to": _resume_from,
                     "auto": False,
                     "confirmed": True,
+                    "confirmed_via": confirmed_via,
                 },
             )
         result = advance_lifecycle_to_target(
@@ -395,7 +416,7 @@ def advance_lifecycle_state(story_key: str):
         story_key,
         s.get("current_stage") or "",
         "story_state_transition",
-        {"from": cur_state, "to": next_state, "auto": False},
+        {"from": cur_state, "to": next_state, "auto": False, "confirmed_via": confirmed_via},
     )
 
     # next 状态有无 stages 决定是继续跑还是终态完成
