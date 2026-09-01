@@ -1,0 +1,866 @@
+#!/usr/bin/env python3
+"""clawbot-inbox: 微信 ClawBot(iLink) 双向收件箱 bot
+
+指令约定（与台式机 LifeOS AGENTS.md 第 8 条一致）：
+  今天 / 今日      -> 读取 digest/today.md 回今日清单
+  打卡：...        -> 追加 inbox/YYYY-MM.jsonl (kind=checkin)
+  记一下：...      -> 追加 inbox/YYYY-MM.jsonl (kind=note)
+  状态             -> 连接/收件状态
+  帮助             -> 指令列表
+  其他             -> 提示（不接 LLM，故意钉死）
+
+设计：纯管道。条目写入 ~/lifeos-exchange 工作副本并 git commit+push 到本机 bare 仓；
+台式机经 SSH git pull 拉走条目、push 今日摘要。
+"""
+import asyncio
+import base64
+import json
+import random
+import subprocess
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import quote
+
+import aiohttp
+
+BASE_URL = "https://ilinkai.weixin.qq.com"
+CHANNEL_VERSION = "2.4.3"
+ILINK_APP_ID = "bot"
+ILINK_APP_CLIENT_VERSION = str((2 << 16) | (4 << 8) | 3)
+BOT_AGENT = "clawbot-inbox/1.0 (python)"
+
+WORK = Path.home() / "clawbot-inbox"
+REPO = Path.home() / "lifeos-exchange"
+STATE_FILE = WORK / "state.json"
+QR_PNG = WORK / "qrcode.png"
+INBOX_DIR = REPO / "inbox"
+DIGEST_FILE = REPO / "digest" / "today.md"
+STATUS_FILE = REPO / "status" / "bot-status.json"
+
+# TAPD（「完成」命令用）
+TAPD_PY = str(Path.home() / "tapd" / "venv" / "bin" / "python")
+TAPD_CLI = str(Path.home() / "tapd" / "cli_tapd.py")
+TAPD_WS = "44381896"
+TAPD_OWNER = "赵子豪"
+DONE_STATUS = "done"
+TERMINAL = {"done", "resolved", "closed", "status_21", "status_15", "status_39", "workflow_end"}
+MAKE_DIGEST = str(Path.home() / "tapd" / "make_digest.py")
+PENDING_TTL = 300   # 多选确认有效期（秒）
+
+# ─── 保策（43 baoxian-server /internal/bot，S72）───
+BAOXIAN_API = "https://icebao.top/internal/bot"
+BAOXIAN_TOKEN = "1cab525ee2ac9ced11e45caa9bf2ffe37ca7f401c621dcda"
+
+
+def baoxian_call(method, path, json_body=None, params=None):
+    import urllib.request
+    from urllib.parse import urlencode as _ue
+    url = BAOXIAN_API + path
+    if params:
+        url += "?" + _ue(params)
+    data = json.dumps(json_body).encode("utf-8") if json_body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("X-Internal-Token", BAOXIAN_TOKEN)
+    if data:
+        req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        text = r.read().decode("utf-8")
+    stripped = text.lstrip()
+    if stripped.startswith("<!doctype") or stripped.startswith("<html"):
+        return "⚠️ 保策服务暂不可用（网关返回了页面而非接口），稍后重试或发「状态」确认"
+    return text
+
+
+def cmd_brief():
+    try:
+        return baoxian_call("GET", "/brief")
+    except Exception as e:
+        return f"保策接口不通 😵 {e}"
+
+
+def cmd_customer(name):
+    try:
+        return baoxian_call("GET", "/customer", params={"name": name})
+    except Exception as e:
+        return f"保策接口不通 😵 {e}"
+
+
+def cmd_cookie(rest):
+    try:
+        return baoxian_call("POST", "/session", json_body={"cookie": rest})
+    except Exception as e:
+        return f"保策接口不通 😵 {e}"
+
+
+def cmd_drafts():
+    try:
+        return baoxian_call("GET", "/drafts")
+    except Exception as e:
+        return f"保策接口不通 😵 {e}"
+
+
+def cmd_draft_sent(idx):
+    if not idx.isdigit():
+        return "格式：已发 编号（如 已发 3）"
+    try:
+        return baoxian_call("POST", f"/draft/{int(idx)}/sent")
+    except Exception as e:
+        return f"保策接口不通 😵 {e}"
+
+# ─── 管家(story-butler,经桌面反向隧道 → 令牌代理 → story serve)───
+# 约定(DESIGN-story-butler §3.3/§3.4):token 与桌面 scripts/butler/butler.env 一致;
+# 终态/发布类确认一律不在微信做(桌面代理还有 403 兜底)。
+BUTLER_API = "http://127.0.0.1:18180"
+BUTLER_TOKEN = "5a463f6d19a0989e215a5d8c69b4da6c6c988eaf62758eef"
+ADVANCE_TTL = 300   # 「推进」确认有效期(秒),与「完成」一致
+
+
+def butler_call(method, path, json_body=None, timeout=15):
+    """调桌面管家代理。返回 (ok, text):ok=False = 链路不通(隧道/代理/桌面);
+    HTTP 4xx/5xx 返回响应原文(403 终态拒绝/409 门未满足/428 升级门,由调用方转述)。"""
+    import urllib.error
+    import urllib.request
+    data = json.dumps(json_body).encode("utf-8") if json_body is not None else None
+    req = urllib.request.Request(BUTLER_API + path, data=data, method=method)
+    req.add_header("X-Internal-Token", BUTLER_TOKEN)
+    if data:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return True, r.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        try:
+            return True, e.read().decode("utf-8")
+        except Exception:
+            return True, f"HTTP {e.code}"
+    except Exception:
+        return False, ""
+
+
+def butler_stories():
+    """管家视野的 story 列表(serve down → ConnectionError('serve:...'),
+    链路不通 → ConnectionError('tunnel'))。"""
+    ok, raw = butler_call("GET", "/patrol/summary")
+    if not ok:
+        raise ConnectionError("tunnel")
+    try:
+        data = json.loads(raw)
+    except Exception:
+        raise ConnectionError(f"serve:{raw[:80]}")
+    # 代理的拒绐体(ok:false, refused:...)不是数据 —— 识别为后端不可用
+    if isinstance(data, dict) and data.get("ok") is False:
+        raise ConnectionError("serve_down" if data.get("refused") == "serve_unreachable"
+                              else f"serve:{data.get('refused') or raw[:60]}")
+    if isinstance(data, dict):
+        data = data.get("stories") or data.get("data") or []
+    return [s for s in data if isinstance(s, dict)]
+
+
+def _adv_gate_of(story):
+    """story 详情里挑确认门:'LINK'=链路不稳 / 'TERMINAL:状态'=终态 /
+    dict=可推门 / None=无门。"""
+    key = story.get("storyKey") or ""
+    ok, raw = butler_call("GET", f"/story/{key}/brief")
+    if not ok:
+        return "LINK"
+    try:
+        detail = json.loads(raw)
+    except Exception:
+        return None
+    if isinstance(detail, dict) and detail.get("ok") is False:
+        return "SERVEDOWN" if detail.get("refused") == "serve_unreachable" else None
+    gates = [g for g in (detail.get("confirmGates") or []) if isinstance(g, dict)]
+    terminal = [g for g in gates if g.get("targetIsTerminal")]
+    if terminal:
+        return "TERMINAL:" + str(terminal[0].get("targetState") or "终态")
+    # 微信只续推 story_state 门(DESIGN-story-butler §3.4:它的续推端点是
+    # /lifecycle/advance);plan_confirm/stage 门各有专门端点、语义不同,不代做。
+    by_kind = {g.get("kind"): g for g in gates}
+    if by_kind.get("story_state"):
+        return by_kind["story_state"]
+    if by_kind.get("plan_confirm"):
+        return "PLAN"
+    if by_kind.get("stage"):
+        return "STAGE"
+    return None
+
+
+def cmd_progress():
+    """「进度」—— story 态势(经隧道拉桌面 serve)。"""
+    try:
+        stories = butler_stories()
+    except ConnectionError as e:
+        msg = str(e)
+        if msg == "tunnel":
+            return "管家链路不通(隧道/代理没起或桌面没开机)😵 桌面侧看 ws/butler-keepalive.log"
+        if msg == "serve_down":
+            return "管家后端(story serve)没启动,桌面先跑 story serve 😵"
+        return f"管家后端异常 😵 {msg}"
+    if not stories:
+        return "当前没有 story 在管家视野里"
+    lines = ["📋 story 态势:"]
+    gates = 0
+    for s in stories[:10]:
+        mark = ""
+        if s.get("awaitingConfirm"):
+            mark = " ⛔停门"
+            gates += 1
+        lines.append(f"・{s.get('storyKey', '?')} {(s.get('title') or '')[:24]}"
+                     f" [{s.get('lifecycleState') or '?'}]{mark}")
+    if len(stories) > 10:
+        lines.append(f"(共 {len(stories)} 个,只列前 10)")
+    if gates:
+        lines.append(f"⛔ {gates} 个停在确认门,发「推进 关键词」处理")
+    else:
+        lines.append("无停门事项,一切照常 ✅")
+    return "\n".join(lines)
+
+
+def do_advance(item):
+    ok, raw = butler_call("POST", f"/story/{item['key']}/advance", json_body={})
+    if not ok:
+        return "管家链路断了,这次没推成 😵 稍后再试"
+    try:
+        resp = json.loads(raw)
+    except Exception:
+        return f"推进已发出,管家返回:{raw[:100]}"
+    if isinstance(resp, dict) and resp.get("ok") is False:
+        return f"没推成:{resp.get('summary') or raw[:120]}"
+    state = (resp.get("lifecycle_state") or resp.get("lifecycleState")
+             or resp.get("state") or "")
+    if state:
+        return f"✅ 已推进:{item['title'] or item['key']} → {state}(confirmed_via=wechat)"
+    return f"管家返回:{raw[:150]}"
+
+
+def cmd_advance(kw):
+    """「推进 关键词」—— 查停门 story,回 T/编号 确认(微信不做终态)。"""
+    kw = kw.strip().lower()
+    if not kw:
+        return "格式:推进 关键词(标题或 key 里的几个字);先发「进度」看哪些停门"
+    try:
+        stories = butler_stories()
+    except ConnectionError as e:
+        msg = str(e)
+        if msg == "tunnel":
+            return "管家链路不通(隧道/代理没起或桌面没开机)😵"
+        if msg == "serve_down":
+            return "管家后端(story serve)没启动,桌面先跑 story serve 😵"
+        return f"管家后端异常 😵 {msg}"
+    matches = [s for s in stories if s.get("awaitingConfirm")
+               and kw in f"{s.get('storyKey', '')}{s.get('title') or ''}".lower()]
+    if not matches:
+        return f"没有停确认门且含「{kw}」的 story 🤔 发「进度」对一下"
+    items, skipped = [], []
+    for s in matches[:8]:
+        gate = _adv_gate_of(s)
+        if gate in ("LINK", "SERVEDOWN"):
+            return "管家链路不稳或后端没起,稍后再试 😵"
+        if isinstance(gate, str) and gate.startswith("TERMINAL:"):
+            skipped.append(f"{s.get('storyKey')}({gate.split(':', 1)[1]}是终态,请在桌面评审窗/UI 确认)")
+            continue
+        if gate == "PLAN":
+            skipped.append(f"{s.get('storyKey')}(停在规划确认,请在桌面评审窗/plan confirm 做,微信不代做)")
+            continue
+        if gate == "STAGE":
+            skipped.append(f"{s.get('storyKey')}(停在 stage 门,请在桌面会话推进)")
+            continue
+        if gate:
+            items.append({"key": s.get("storyKey"), "title": s.get("title") or "",
+                          "target": gate.get("targetState") or "?"})
+    if items and len(items) == 1:
+        it = items[0]
+        _pending_adv.clear()
+        _pending_adv.update({"ts": time.time(), "items": [it]})
+        return (f"{it['title'] or it['key']} 停在确认门,可推进到「{it['target']}」。\n"
+                f"回 T 确认推进 / 回其他取消(5 分钟内有效)")
+    if items:
+        _pending_adv.clear()
+        _pending_adv.update({"ts": time.time(), "items": items})
+        lines = [f"找到 {len(items)} 个,回编号(或 T=第一个)选择推进:"]
+        lines += [f"{i}. {it['title'] or it['key']} → {it['target']}"
+                  for i, it in enumerate(items, 1)]
+        lines.append("5 分钟内有效,回其他内容取消")
+        if skipped:
+            lines.append(";" + ";".join(skipped))
+        return "\n".join(lines)
+    if skipped:
+        return ";\n".join(["这些 story 的门不能在微信推:"] + skipped)
+    return "没找到可推的确认门,发「进度」看看"
+
+
+_pending = {}       # {"ts": float, "candidates": [...]}
+_pending_adv = {}   # 管家推进待确认 {"ts": float, "items": [{key,title,target}]}
+
+SESSION_DURATION = 24 * 3600   # 经验值：token 约 24h
+REFRESH_AFTER = 22 * 3600      # 提前 2h 尝试免扫码续期
+TZ8 = timezone(timedelta(hours=8))
+
+HELP_TEXT = (
+    "📮 收件箱指令：\n"
+    "・今天 / 今日 —— 查看今日清单（发时即时同步）\n"
+    "・打卡：内容 —— 记学习打卡\n"
+    "・记一下：内容 —— 记临时事项\n"
+    "・完成 关键词 —— 把 TAPD 子任务标为已完成\n"
+    "（冒号中英文都行，用空格也可以）\n"
+    "・状态 —— 连接与收件状态\n"
+    "・帮助 —— 本列表",
+    "――― 保策 ―――\n"
+    "・晨报 —— 保策每日简报\n"
+    "・客户 名字 —— 查客户保单卡\n"
+    "・话术 —— 看待发话术草稿\n"
+    "・已发 编号 —— 标记话术已发\n"
+    "・cookie IA_APP=… —— 更新保通登录态\n"
+    "――― 管家 ―――\n"
+    "・进度 —— story 态势(停门/异常)\n"
+    "・推进 关键词 —— 处理确认门(回 T 确认;终态只能在桌面做)"
+)
+
+
+def now():
+    return datetime.now(TZ8)
+
+
+def log(*args):
+    print(now().strftime("[%Y-%m-%d %H:%M:%S]"), *args, flush=True)
+
+
+# ---------------- 状态持久化 ----------------
+def load_state():
+    if STATE_FILE.exists():
+        try:
+            return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def save_state(state):
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(STATE_FILE)
+
+
+# ---------------- iLink API ----------------
+def make_headers(token=None):
+    uin = str(random.randint(0, 0xFFFFFFFF))
+    headers = {
+        "Content-Type": "application/json",
+        "AuthorizationType": "ilink_bot_token",
+        "X-WECHAT-UIN": base64.b64encode(uin.encode()).decode(),
+        "iLink-App-Id": ILINK_APP_ID,
+        "iLink-App-ClientVersion": ILINK_APP_CLIENT_VERSION,
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def base_info():
+    return {"channel_version": CHANNEL_VERSION, "bot_agent": BOT_AGENT}
+
+
+async def api_get(session, path, token=None, base_url=None):
+    url = f"{base_url or BASE_URL}/{path}"
+    async with session.get(url, headers=make_headers(token),
+                           timeout=aiohttp.ClientTimeout(total=30)) as res:
+        text = await res.text()
+        try:
+            return json.loads(text)
+        except Exception:
+            log(f"[GET {path}] HTTP {res.status} 非JSON: {text[:120]}")
+            return {}
+
+
+async def api_post(session, path, body, token=None, base_url=None, timeout=45):
+    url = f"{base_url or BASE_URL}/{path}"
+    async with session.post(url, json=body, headers=make_headers(token),
+                            timeout=aiohttp.ClientTimeout(total=timeout)) as res:
+        text = await res.text()
+        try:
+            return json.loads(text)
+        except Exception:
+            log(f"[POST {path}] HTTP {res.status} 非JSON: {text[:120]}")
+            return {}
+
+
+async def send_text(session, state, to_id, context_token, text):
+    client_id = f"clawbot-inbox-{random.randint(0, 0xFFFFFFFF):08x}"
+    return await api_post(session, "ilink/bot/sendmessage", {
+        "msg": {
+            "from_user_id": "",
+            "to_user_id": to_id,
+            "client_id": client_id,
+            "message_type": 2,
+            "message_state": 2,
+            "context_token": context_token,
+            "item_list": [{"type": 1, "text_item": {"text": text}}],
+        },
+        "base_info": base_info(),
+    }, state.get("bot_token"), state.get("baseurl") or None)
+
+
+# ---------------- 登录 / 续期 ----------------
+def write_qr_png(content):
+    try:
+        import qrcode
+        img = qrcode.make(content)
+        img.save(QR_PNG)
+        log(f"二维码已写入 {QR_PNG} ，请用微信扫码(ClawBot)")
+    except Exception as e:
+        log(f"生成二维码PNG失败: {e}; 原始内容: {content}")
+
+
+async def fetch_login_qrcode(session, base_url, local_tokens):
+    data = await api_post(session, "ilink/bot/get_bot_qrcode?bot_type=3",
+                          {"local_token_list": local_tokens}, None, base_url)
+    if data.get("qrcode"):
+        return data
+    return await api_get(session, "ilink/bot/get_bot_qrcode?bot_type=3", None, base_url)
+
+
+async def poll_login_status(session, qrcode_id, base_url):
+    data = await api_get(session,
+                         f"ilink/bot/get_qrcode_status?qrcode={quote(qrcode_id, safe='')}",
+                         None, base_url)
+    status = data.get("status", "")
+    if status == "confirmed" or data.get("bot_token"):
+        return {"bot_token": data.get("bot_token"),
+                "baseurl": data.get("baseurl") or data.get("base_url") or base_url}
+    if status == "binded_redirect" or data.get("binded_redirect"):
+        return {"already_connected": True}
+    if status == "scaned_but_redirect" and data.get("redirect_host"):
+        return {"redirect_base": f"https://{data['redirect_host']}"}
+    if status == "expired":
+        return {"expired": True}
+    return {}
+
+
+async def login(session, state, silent_only=False):
+    """silent_only=True：只在免扫码窗口试探 10 秒；否则完整扫码登录。"""
+    base = state.get("baseurl") or BASE_URL
+    local_tokens = [state["bot_token"]] if state.get("bot_token") else []
+    for _ in range(3):
+        try:
+            data = await fetch_login_qrcode(session, base, local_tokens)
+        except Exception as e:
+            log(f"获取二维码失败: {e}")
+            await asyncio.sleep(3)
+            continue
+        qrcode_id = data.get("qrcode")
+        qr_content = str(data.get("qrcode_img_content") or qrcode_id or "")
+        if not qrcode_id:
+            await asyncio.sleep(3)
+            continue
+
+        if silent_only:
+            for _ in range(5):
+                try:
+                    result = await poll_login_status(session, qrcode_id, base)
+                except Exception:
+                    result = {}
+                if result.get("bot_token") or result.get("already_connected"):
+                    return result
+                if result.get("redirect_base"):
+                    base = result["redirect_base"]
+                await asyncio.sleep(2)
+            return {"need_scan": True, "qr_content": qr_content}
+
+        write_qr_png(qr_content)
+        log("等待微信扫码(ClawBot)...")
+        deadline = time.time() + 600
+        while time.time() < deadline:
+            try:
+                result = await poll_login_status(session, qrcode_id, base)
+            except Exception as e:
+                log(f"扫码状态轮询失败: {e}")
+                await asyncio.sleep(2)
+                continue
+            if result.get("bot_token"):
+                return result
+            if result.get("already_connected"):
+                log("服务端提示已绑定过，将重新生成二维码")
+                break
+            if result.get("redirect_base"):
+                base = result["redirect_base"]
+            if result.get("expired"):
+                log("二维码过期，重新生成")
+                break
+            await asyncio.sleep(2)
+    return {}
+
+
+# ---------------- git 中转仓 ----------------
+def git(args, timeout=20):
+    try:
+        result = subprocess.run(["git", "-C", str(REPO)] + args,
+                                capture_output=True, text=True, timeout=timeout)
+        return result.returncode == 0, (result.stdout + result.stderr).strip()
+    except Exception as e:
+        return False, str(e)
+
+
+def repo_push():
+    ok, out = git(["push", "origin", "HEAD"])
+    if not ok:
+        log(f"git push 被拒，尝试 rebase 后重推: {out[:150]}")
+        git(["pull", "--rebase"])
+        ok, out = git(["push", "origin", "HEAD"])
+        if not ok:
+            log(f"git push 仍失败(攒在本地，下次再推): {out[:150]}")
+
+
+def commit_inbox(kind):
+    git(["add", "inbox/"])
+    ok, out = git(["commit", "-m", f"inbox: {kind} {now().strftime('%Y-%m-%d %H:%M:%S')}"])
+    if not ok and "nothing to commit" not in out:
+        log(f"git commit 失败: {out[:150]}")
+    repo_push()
+
+
+# ---------------- 指令处理 ----------------
+def cmd_record(kind, content):
+    INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    line = json.dumps({"ts": now().isoformat(timespec="seconds"),
+                       "kind": kind, "text": content}, ensure_ascii=False)
+    f = INBOX_DIR / f"{now():%Y-%m}.jsonl"
+    with f.open("a", encoding="utf-8") as fp:
+        fp.write(line + "\n")
+    commit_inbox(kind)
+
+
+DIGEST_REFRESH_MIN_AGE = 120   # 「今天」触发同步刷新的最小间隔（秒），防连发
+
+
+def refresh_digest():
+    """按需同步刷新今日摘要；失败返回 False（回退旧版）。"""
+    try:
+        r = subprocess.run([TAPD_PY, MAKE_DIGEST],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            log("digest 按需刷新成功")
+            return True
+        log("digest 按需刷新失败:", (r.stderr or r.stdout or "")[:150])
+    except Exception as e:
+        log("digest 按需刷新异常:", e)
+    return False
+
+
+def cmd_today():
+    git(["pull", "--ff-only"])
+    stale = True
+    if DIGEST_FILE.exists():
+        stale = (time.time() - DIGEST_FILE.stat().st_mtime) > DIGEST_REFRESH_MIN_AGE
+    if stale:
+        refresh_digest()   # 同步 ~3s，失败自动回退旧版
+    if not DIGEST_FILE.exists():
+        return "今日清单还没生成——台式机可能还没开机跑任务，晚点再试或发「状态」看看。"
+    text = DIGEST_FILE.read_text(encoding="utf-8").strip()
+    return text if text else "今日清单是空的，台式机可能还没生成内容。"
+
+
+def today_count():
+    f = INBOX_DIR / f"{now():%Y-%m}.jsonl"
+    if not f.exists():
+        return 0
+    prefix = '{"ts": "' + now().strftime("%Y-%m-%d")
+    return sum(1 for line in f.read_text(encoding="utf-8").splitlines()
+               if line.startswith(prefix))
+
+
+def cmd_status(state):
+    age = time.time() - state.get("login_time", 0)
+    remaining_h = max(0.0, (SESSION_DURATION - age) / 3600)
+    lines = ["📊 bot 状态："]
+    if state.get("need_scan"):
+        lines.append("🔴 连接需要重新扫码！二维码在服务器 clawbot-inbox/qrcode.png")
+    else:
+        lines.append(f"🟢 连接正常，预计剩余约 {remaining_h:.1f} 小时（到期自动续期）")
+    lines.append(f"📮 今日已收条目：{today_count()} 条")
+    if DIGEST_FILE.exists():
+        mtime = datetime.fromtimestamp(DIGEST_FILE.stat().st_mtime, TZ8)
+        lines.append(f"📋 今日清单更新时间：{mtime.strftime('%m-%d %H:%M')}")
+    else:
+        lines.append("📋 今日清单：尚未生成")
+    return "\n".join(lines)
+
+
+def extract_text(msg):
+    for item in msg.get("item_list") or []:
+        if item.get("type") == 1:
+            return item.get("text_item", {}).get("text", "")
+    return None  # 非纯文本（图片/语音/文件）
+
+
+# ---------------- TAPD「完成」命令 ----------------
+def tapd_call(command, params):
+    cmd = [TAPD_PY, TAPD_CLI, command, "--workspace-id", TAPD_WS,
+           "--params", json.dumps(params, ensure_ascii=False)]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout or "未知错误").strip()[:150])
+    return json.loads(r.stdout)
+
+
+def open_tasks():
+    data = tapd_call("get-stories", {"entity_type": "tasks", "owner": TAPD_OWNER,
+                                     "limit": 80}).get("data") or []
+    out = []
+    for it in data:
+        t = it.get("Task") or {}
+        if t and (t.get("status") or "") not in TERMINAL:
+            out.append({"id": t.get("id"), "name": t.get("name") or ""})
+    return out
+
+
+def do_complete(task):
+    tapd_call("update-story", {"id": task["id"], "entity_type": "tasks",
+                               "status": DONE_STATUS})
+    # 后台刷新今日摘要，让「今天」立刻反映
+    subprocess.Popen([TAPD_PY, MAKE_DIGEST],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return f"✅ 已完成：{task['name']}"
+
+
+def cmd_complete(keyword):
+    kw = keyword.strip().lower()
+    if not kw:
+        return "格式：完成 关键词（子任务名里的几个字就行）"
+    try:
+        tasks = open_tasks()
+    except Exception as e:
+        return f"查 TAPD 失败了 😵 {e}"
+    matches = [t for t in tasks if kw in t["name"].lower()]
+    if not matches:
+        return f"没找到含「{keyword}」的未完成子任务 🤔 换个关键词，或发「今天」对一下清单"
+    if len(matches) == 1:
+        try:
+            return do_complete(matches[0])
+        except Exception as e:
+            return f"更新失败 😵 {e}"
+    cands = matches[:8]
+    _pending.clear()
+    _pending.update({"ts": time.time(), "candidates": cands})
+    lines = [f"找到 {len(matches)} 个含「{keyword}」的子任务，回编号完成："]
+    for i, t in enumerate(cands, 1):
+        lines.append(f"{i}. {t['name']}")
+    if len(matches) > 8:
+        lines.append("（只列前 8 个，关键词再写具体点更准）")
+    lines.append("5 分钟内有效，回其他内容取消")
+    return "\n".join(lines)
+
+
+def handle_command(text, state):
+    t = text.strip()
+    # 「推进」确认:T/编号且管家待确认列表有效(先于「完成」分支)
+    if (t in ("T", "t") or t.isdigit()) and _pending_adv.get("items"):
+        if time.time() - _pending_adv.get("ts", 0) > ADVANCE_TTL:
+            _pending_adv.clear()
+            return "超时了,重新发「推进 关键词」吧"
+        items = _pending_adv["items"]
+        if t in ("T", "t"):
+            item = items[0]
+        else:
+            idx = int(t)
+            if not (1 <= idx <= len(items)):
+                return f"编号 1-{len(items)} 之间,或回 T 推第一个,回其他取消"
+            item = items[idx - 1]
+        _pending_adv.clear()
+        return do_advance(item)
+    if _pending_adv.get("items"):
+        _pending_adv.clear()  # 回其他内容视为取消推进确认
+    # 「完成」多选确认：纯数字且有待确认列表
+    if t.isdigit() and _pending.get("candidates"):
+        if time.time() - _pending.get("ts", 0) > PENDING_TTL:
+            _pending.clear()
+            return "超时了，重新发「完成 关键词」吧"
+        cands = _pending["candidates"]
+        idx = int(t)
+        if not (1 <= idx <= len(cands)):
+            return f"编号 1-{len(cands)} 之间哦，或回其他内容取消"
+        task = cands[idx - 1]
+        _pending.clear()
+        try:
+            return do_complete(task)
+        except Exception as e:
+            return f"更新失败 😵 {e}"
+    if _pending.get("candidates"):
+        _pending.clear()  # 回其他内容视为取消多选
+    if t in ("今天", "今日", "今日焦点"):
+        return cmd_today()
+    if t in ("帮助", "指令", "/help", "help", "Help"):
+        return HELP_TEXT
+    if t in ("状态", "status", "Status"):
+        return cmd_status(state)
+    if t.startswith("完成"):
+        return cmd_complete(t[2:].lstrip(" ：:"))
+    if t in ("进度", "态势", "story", "Story"):
+        return cmd_progress()
+    if t.startswith("推进"):
+        return cmd_advance(t[2:].lstrip(" ：:"))
+    if t in ("晨报", "保策晨报"):
+        return cmd_brief()
+    if t.startswith("客户"):
+        name = t[2:].lstrip(" ：:").strip()
+        if not name:
+            return "格式：客户 名字（如 客户 袁婷婷）"
+        return cmd_customer(name)
+    if t.lower().startswith("cookie"):
+        rest = t[6:].lstrip(" ：:").strip()
+        if not rest:
+            return "格式：cookie IA_APP=xxx（复制完整 cookie，含 IA_APP 字段）"
+        return cmd_cookie(rest)
+    if t in ("话术", "草稿"):
+        return cmd_drafts()
+    if t.startswith("已发"):
+        return cmd_draft_sent(t[2:].strip())
+    for prefix, kind in (("打卡", "checkin"), ("记一下", "note")):
+        if t.startswith(prefix):
+            content = t[len(prefix):].lstrip(" ：:").strip()
+            if not content:
+                return f"内容空了哦，格式：{prefix}：具体内容"
+            cmd_record(kind, content)
+            return f"已记录 ✅ {prefix}｜{content}（{now().strftime('%H:%M')}）"
+    return "没看懂 🤔 发「帮助」看指令"
+
+
+# ---------------- 状态文件（供台式机 pull 检查） ----------------
+_last_status_push = [0.0]
+
+
+def write_status_file(state):
+    try:
+        STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "ts": now().isoformat(timespec="seconds"),
+            "need_scan": bool(state.get("need_scan")),
+            "token_age_h": round((time.time() - state.get("login_time", 0)) / 3600, 1),
+            "owner_bound": bool(state.get("owner_id")),
+        }
+        STATUS_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
+                               encoding="utf-8")
+        # 每小时或 need_scan 时推一次，避免 commit 刷屏
+        if state.get("need_scan") or time.time() - _last_status_push[0] > 3600:
+            _last_status_push[0] = time.time()
+            git(["add", "status/"])
+            git(["commit", "-m", f"status {now().strftime('%Y-%m-%d %H:%M')}"])
+            repo_push()
+    except Exception as e:
+        log(f"状态文件写入失败: {e}")
+
+
+# ---------------- 主循环 ----------------
+async def main():
+    WORK.mkdir(exist_ok=True)
+    state = load_state()
+
+    async with aiohttp.ClientSession() as session:
+        if not state.get("bot_token"):
+            result = await login(session, state)
+            if result.get("bot_token"):
+                state["bot_token"] = result["bot_token"]
+                state["baseurl"] = result.get("baseurl") or state.get("baseurl")
+                state["login_time"] = time.time()
+                state["need_scan"] = False
+                save_state(state)
+                log("扫码登录成功")
+            elif state.get("bot_token"):
+                log("未取得新 token，沿用本地旧 token 尝试")
+            else:
+                log("登录未完成，退出（服务会自动重启重试）")
+                return
+
+        log("开始监听消息...")
+        write_status_file(state)
+
+        while True:
+            # 到期前免扫码续期
+            age = time.time() - state.get("login_time", 0)
+            if age > REFRESH_AFTER and not state.get("need_scan"):
+                log("到达续期时间，尝试免扫码续期...")
+                try:
+                    result = await login(session, state, silent_only=True)
+                except Exception as e:
+                    result = {}
+                    log(f"续期异常: {e}")
+                if result.get("bot_token"):
+                    state["bot_token"] = result["bot_token"]
+                    state["login_time"] = time.time()
+                    log("续期成功（新 token）")
+                elif result.get("already_connected"):
+                    state["login_time"] = time.time()
+                    log("续期成功（沿用连接）")
+                else:
+                    state["need_scan"] = True
+                    write_qr_png(result.get("qr_content", ""))
+                    log("免扫码续期失败，需要重新扫码！")
+                save_state(state)
+                write_status_file(state)
+
+            try:
+                result = await api_post(
+                    session, "ilink/bot/getupdates",
+                    {"get_updates_buf": state.get("get_updates_buf", ""),
+                     "base_info": base_info()},
+                    state.get("bot_token"), state.get("baseurl") or None, timeout=60)
+            except Exception as e:
+                log(f"getupdates 异常: {type(e).__name__} {e}; 3秒后重试")
+                await asyncio.sleep(3)
+                continue
+
+            if not result:
+                await asyncio.sleep(2)
+                continue
+            if result.get("ret") not in (0, None):
+                log(f"getupdates 返回异常: {str(result)[:200]}")
+                await asyncio.sleep(5)
+                continue
+
+            new_buf = result.get("get_updates_buf")
+            if new_buf:
+                state["get_updates_buf"] = new_buf
+
+            msgs = result.get("msgs") or []
+            for msg in msgs:
+                if msg.get("message_type") != 1:
+                    continue
+                from_id = msg.get("from_user_id", "")
+                ctx = msg.get("context_token", "")
+                if ctx:
+                    state["last_ctx"] = ctx
+                    state["last_ctx_ts"] = time.time()
+                owner = state.get("owner_id")
+                if owner and from_id != owner:
+                    log(f"忽略非主人消息: {from_id}")
+                    continue
+                if not owner:
+                    state["owner_id"] = from_id
+                    save_state(state)
+                    log(f"主人已绑定: {from_id}")
+
+                text = extract_text(msg)
+                if text is None:
+                    reply = "初版只收文字哦 🙈"
+                else:
+                    log(f"收到: {text[:60]}")
+                    try:
+                        reply = handle_command(text, state)
+                    except Exception as e:
+                        log(f"指令处理异常: {e}")
+                        reply = "内部出错了 😵 这条可能没存上，重发一次试试"
+                try:
+                    await send_text(session, state, from_id, ctx, reply)
+                except Exception as e:
+                    log(f"回复失败: {e}")
+
+            if msgs:
+                save_state(state)
+                write_status_file(state)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
