@@ -203,6 +203,18 @@ from .sessions import (
 # ---- decisions ----
 from .decisions import log_decision, get_decisions, count_decisions
 
+# ---- outbox（管家系统 WP1：notification_outbox，DESIGN-story-butler §3.1） ----
+from .outbox import (
+    enqueue_notification,
+    get_notification,
+    list_pending_notifications,
+    list_notifications,
+    mark_notification_sent,
+    mark_notification_skipped,
+    mark_notification_attempt,
+    mark_notification_failed,
+)
+
 # ---- story_docs ----
 from .story_docs import (
     upsert_story_doc,

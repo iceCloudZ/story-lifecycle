@@ -4,8 +4,8 @@
 按 supervision 模式分流:
 
 - **默认(人工盯,``auto_confirm=False``)**:不调 LLM、不写 PTY。仅落 ``awaiting_confirm``
-  事件(审计可见)+ 桌面通知(复用 ``notify.send``)。人工在终端自己看到确认提示、自己答。
-  零 token 消耗,绝不往 PTY 塞噪声输入。
+  事件(审计可见)+ 事件出口发声(WP1:emit 写 outbox,桌面/微信打断归投递线程)。
+  人工在终端自己看到确认提示、自己答。零 token 消耗,绝不往 PTY 塞噪声输入。
 - **全自动(``auto_confirm=True``,仅 benchmark/CI 显式配置)**:``decide_response`` 用注入的
   LLM 决策返回 {choice, reason},Handler 回写 PTY。
 
@@ -109,17 +109,22 @@ def log_decision(
 
 
 def _notify_awaiting(story_key, stage: str, adapter: str, question: str) -> None:
-    """人工模式下命中 code-agent 提问时弹桌面通知(复用 ``notify.send``)。
+    """人工模式下命中 code-agent 提问 → 事件出口发声(WP1 管家改造)。
 
-    ``notify.send`` 是软依赖(plyer 不可用时静默跳过),故包 try/except 不抛 ——
-    通知失败绝不能影响 supervisor 主循环。question 截断到 120 字防通知溢出。
+    原:直接调 plyer 桌面弹窗。现:emit ``awaiting_question`` 事件写 outbox 一行
+    (同步、快),桌面弹窗/微信打断由投递线程按路由表异步执行 —— 监督循环绝不
+    因通知阻塞。emit 内部全吞异常(通知 best-effort,绝不炸 supervisor)。
+    question 截断到 120 字防通知溢出。
     """
     try:
-        from .notify import send as notify
+        from ...infra.notification.emitter import emit_event
 
-        notify(
-            f"[{story_key}] {adapter} 需要确认",
-            f"({stage}) {question[:120]}",
+        emit_event(
+            "awaiting_question",
+            story_key=str(story_key or ""),
+            stage=stage,
+            title=f"[{story_key}] {adapter} 需要确认",
+            message=f"({stage}) {question[:120]}",
         )
     except Exception:  # noqa: BLE001 — 通知是 best-effort,绝不炸 supervisor
         log.debug("awaiting notify skipped for %s", story_key)
@@ -482,15 +487,17 @@ def escalate_stuck(
     log_event_fn: Callable,
     notify_fn: Callable[[str, str], None] | None = None,
 ) -> None:
-    """Handler:规则检测到卡住 → 落 awaiting_confirm 事件 + 桌面通知(零 LLM)。
+    """Handler:规则检测到卡住 → 落 awaiting_confirm 事件 + 发声(零 LLM)。
 
     复用 awaiting_confirm 事件类型(前端 / 人已知这个语义"需人介入"),payload 含
-    stuck_reason / rule / duration。notify_fn 注入(默认调本包 notify.send)。
+    stuck_reason / rule / duration。
+
+    WP1 管家改造:默认发声路径(原 ``notify_fn is None`` 时直连 plyer)改为
+    emit ``stuck_detected`` 事件写 outbox(桌面/微信打断归投递线程按路由投);
+    ``notify_fn`` 仍可注入(存量测试兼容)—— 注入时在事件出口之外补发直连通知。
 
     STEP 1 不调 LLM —— 纯规则检测 + 人升级。LLM 卡因诊断是 STEP 2(调度点②)。
     """
-    if notify_fn is None:
-        from .notify import send as notify_fn
     payload = {
         "adapter": adapter,
         "stuck": True,
@@ -504,13 +511,29 @@ def escalate_stuck(
         event_type="awaiting_confirm",
         payload=payload,
     )
+    # 默认发声 = 事件出口(只写 outbox 一行,绝不抛)
     try:
-        notify_fn(
-            f"[{story_key}] {adapter} 卡住需介入",
-            f"({stage}) {detection.get('reason', '')[:120]}",
+        from ...infra.notification.emitter import emit_event
+
+        emit_event(
+            "stuck_detected",
+            story_key=str(story_key or ""),
+            stage=stage,
+            title=f"[{story_key}] {adapter} 卡住需介入",
+            message=f"({stage}) {detection.get('reason', '')[:120]}",
+            payload={"rule": payload["rule"], "adapter": adapter},
         )
     except Exception:  # noqa: BLE001 — 通知 best-effort
-        log.debug("stuck notify failed (non-fatal)", exc_info=True)
+        log.debug("stuck emit failed (non-fatal)", exc_info=True)
+    # 注入的直连通知仍生效(测试/特殊部署兼容)
+    if notify_fn is not None:
+        try:
+            notify_fn(
+                f"[{story_key}] {adapter} 卡住需介入",
+                f"({stage}) {detection.get('reason', '')[:120]}",
+            )
+        except Exception:  # noqa: BLE001 — 通知 best-effort
+            log.debug("stuck notify failed (non-fatal)", exc_info=True)
     log.warning(
         "[%s/%s] stuck detected (%s): %s — escalated to human",
         story_key,

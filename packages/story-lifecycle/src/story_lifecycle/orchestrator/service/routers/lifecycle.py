@@ -26,6 +26,13 @@ router = APIRouter(tags=["lifecycle"])
 
 class AdvanceRequest(BaseModel):
     description: str = ""
+    # 管家账本(DESIGN-story-butler §3.1/§4):这次推进经什么通道确认
+    # (desktop|wechat|ui|api)。MCP/令牌代理传 desktop/wechat;UI 按钮默认 ui。
+    confirmed_via: str = "ui"
+
+
+# confirmed_via 合法值(超出 → 400,防脏账本)
+_VALID_CONFIRMED_VIA = ("desktop", "wechat", "ui", "api")
 
 
 class SetReleaseTrainRequest(BaseModel):
@@ -61,6 +68,23 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
     if not s:
         raise HTTPException(404, "Story not found")
 
+    # 管家账本:confirmed_via 校验 + 落该次推进的 log_event payload(§4,不改表结构)
+    confirmed_via = (req.confirmed_via if req else "") or "ui"
+    if confirmed_via not in _VALID_CONFIRMED_VIA:
+        raise HTTPException(400, f"Invalid confirmed_via: {confirmed_via}")
+
+    def _log_advance(action: str):
+        db.log_event(
+            story_key,
+            s.get("current_stage") or "",
+            "manual_advance",
+            {
+                "action": action,
+                "confirmed_via": confirmed_via,
+                "from_status": s.get("status"),
+            },
+        )
+
     # Resume from paused
     if s["status"] == "paused":
         # 确认闸推进:清掉 _stage_gate(进入执行即失效),让 planner 从下一未完成
@@ -78,6 +102,7 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
             )
         sm_activate(story_key)
         start_story_async(story_key)
+        _log_advance("resumed")
         return {"ok": True, "status": "resumed"}
 
     # Start an active-but-never-started story (single-pass 等 profile 创建即 active,
@@ -96,6 +121,7 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
         _ctx.pop("_active_execution", None)
         sm_activate(story_key, ctx_updates=_ctx)
         start_story_async(story_key)
+        _log_advance("retried")
         return {"ok": True, "status": "retried"}
 
     if s["status"] == "active":
@@ -117,6 +143,7 @@ def advance_story(story_key: str, req: AdvanceRequest = None):
             _ctx = _json.loads(db.get_story(story_key).get("context_json") or "{}")
         if not _ctx.get("_active_execution"):
             start_story_async(story_key)
+            _log_advance("started")
             return {"ok": True, "status": "started"}
 
     return {"ok": True}

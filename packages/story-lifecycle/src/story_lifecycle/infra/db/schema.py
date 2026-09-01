@@ -24,6 +24,7 @@ def init_db():
         _create_delivery_tables(conn)
         _create_trace_tables(conn)
         _create_decision_tables(conn)
+        _create_notification_tables(conn)
         _create_feedback_tables(conn)
         _create_patrol_tables(conn)
 
@@ -78,6 +79,38 @@ def _create_patrol_tables(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pi_story ON patrol_item(story_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pr_story ON patrol_run(story_key, id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pri_run ON patrol_run_item(run_id)")
+
+
+def _create_notification_tables(conn):
+    """notification 族:notification_outbox(管家系统 WP1,DESIGN-story-butler §3.1)。
+
+    事件出口的账本:emit 同步写一行(pending),投递线程 drain 后改状态
+    pending → sent(全部通道送达)/ skipped(通道不可用跳过)/ failed(attempts≥5,
+    行保留可审计)。至少一次语义:失败退避重试(1m/5m/30m);已送达通道记在
+    payload_json.delivered,重试不重复发。重试时刻(_last_attempt_ts)/deferred
+    等元数据也进 payload_json —— DDL 按设计文档定死,不加列。
+    """
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS notification_outbox (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type    TEXT NOT NULL,
+            story_key     TEXT NOT NULL DEFAULT '',
+            project       TEXT NOT NULL DEFAULT '',
+            tier          TEXT NOT NULL DEFAULT 'batch',
+            title         TEXT NOT NULL DEFAULT '',
+            message       TEXT NOT NULL DEFAULT '',
+            payload_json  TEXT NOT NULL DEFAULT '{}',
+            status        TEXT NOT NULL DEFAULT 'pending'
+                          CHECK (status IN ('pending', 'sent', 'skipped', 'failed')),
+            attempts      INTEGER NOT NULL DEFAULT 0,
+            last_error    TEXT,
+            created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            sent_at       TIMESTAMP
+        );
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_no_status ON notification_outbox(status, id)"
+    )
 
 
 def _create_feedback_tables(conn):

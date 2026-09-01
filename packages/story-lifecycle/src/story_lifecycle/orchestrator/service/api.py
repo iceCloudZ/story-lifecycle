@@ -85,15 +85,23 @@ async def lifespan(app: FastAPI):
     # consume_orphan_artifacts（GET /story 副作用）—— 一个线程管所有 story 的 PTY。
     from ..scheduler import get_orchestrator, stop_orchestrator
     from ...infra.logging.thread_excepthook import install as _install_thread_excepthook
+    # 管家 WP1(DESIGN-story-butler §3.1):通知投递线程与编排线程同生命周期 ——
+    # serve 起、停时止;emit 只写 outbox,drain(ssh/plyer)全归本线程。
+    from ...infra.notification.delivery import (
+        get_notification_thread,
+        stop_notification_thread,
+    )
 
     # 让逃逸到线程顶层的未处理异常可见(serve worker 线程死亡诊断兜底;详见
     # infra/logging/thread_excepthook.py)。在编排线程起之前装好。
     _install_thread_excepthook()
 
     get_orchestrator()
+    get_notification_thread()
     try:
         yield
     finally:
+        stop_notification_thread()
         stop_orchestrator()
         # Clean PTY teardown on shutdown: ask each agent to `/exit` first so
         # claude flushes its transcript (a complete transcript is what makes

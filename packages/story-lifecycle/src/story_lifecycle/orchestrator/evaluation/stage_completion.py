@@ -256,6 +256,10 @@ def judge_stage_completion(req: JudgeRequest) -> dict:
             "[%s/%s] log_decision failed (non-fatal): %s", story_key, stage, exc
         )
         rid = 0
+    # WP1 管家:judge 决策 → 事件出口(按 quality 分流三种事件,见 _emit_judge_event)
+    _emit_judge_event(
+        story_key, stage, quality, summary=summary, reason=reason, target=target
+    )
 
     log.info(
         "[%s/%s] stage completion: quality=%s target=%s — %s",
@@ -535,6 +539,42 @@ def _normalize_judge_decision(
 # ---- Fallback(LLM 不可用)----
 
 
+def _emit_judge_event(
+    story_key: str,
+    stage: str,
+    quality: str,
+    *,
+    summary: str = "",
+    reason: str = "",
+    target=None,
+) -> None:
+    """judge 决策 → 事件出口(WP1 管家)。按 quality 分流三种事件类型。
+
+    approve → stage_completed(攒批)/ reject → judge_rejected(打断)/
+    escalate → judge_escalated(打断)。与 log_decision 同级的观察性审计写入:
+    emit 内部全吞异常,绝不影响判定主流程,更绝不碰 story 状态。
+    """
+    event_type = {
+        "approve": "stage_completed",
+        "reject": "judge_rejected",
+        "escalate": "judge_escalated",
+    }.get(quality)
+    if not event_type:
+        return
+    try:
+        from ...infra.notification.emitter import emit_event
+
+        emit_event(
+            event_type,
+            story_key=story_key,
+            stage=stage,
+            message=(reason or summary)[:200],
+            payload={"summary": summary[:200], "lifecycle_target": target},
+        )
+    except Exception:  # noqa: BLE001 — 观察性事件,绝不影响判定
+        log.debug("judge emit %s failed (non-fatal)", event_type, exc_info=True)
+
+
 def _fallback_decision(
     story_key: str, stage: str, cref: str, db_module, *, reason: str
 ) -> dict:
@@ -556,6 +596,10 @@ def _fallback_decision(
         )
     except Exception:  # noqa: BLE001
         rid = 0
+    # WP1:降级 escalate 同样走事件出口(LLM 挂了人要知道)
+    _emit_judge_event(
+        story_key, stage, "escalate", reason=f"[FALLBACK] {reason}"
+    )
     return {
         "quality": "escalate",
         "lifecycle_target": None,
@@ -599,6 +643,13 @@ def _build_p6_path_escalate(
         )
     except Exception:  # noqa: BLE001
         rid = 0
+    # WP1:路径守卫 escalate 同样走事件出口(产物落点问题人要知道)
+    _emit_judge_event(
+        story_key,
+        stage,
+        "escalate",
+        reason=f"[PATH-MISS] 产物 {artifacts} 未解析到内容: workspace={workspace}",
+    )
     return {
         "quality": "escalate",
         "lifecycle_target": None,
@@ -953,6 +1004,20 @@ def advance_lifecycle_to_target(
                 )
             except Exception:  # noqa: BLE001
                 pass
+            # WP1 管家:停门即事件出口发声(gate_waiting,默认打断档)。只写 outbox
+            # 一行(观察),story 状态推进仍只归编排线程/本函数 —— 事件出口绝不碰状态。
+            try:
+                from ...infra.notification.emitter import emit_event
+
+                emit_event(
+                    "gate_waiting",
+                    story_key=story_key,
+                    title=f"[{story_key}] 等待确认:{from_state}→{to_state}",
+                    message=str(confirm.get("label", f"进入{to_state}")),
+                    payload={"from": from_state, "to": to_state, "final_target": target},
+                )
+            except Exception:  # noqa: BLE001 — 观察性事件,绝不影响推进
+                log.debug("gate_waiting emit failed (non-fatal)", exc_info=True)
             log.info(
                 "[%s] story state gate: LLM target=%s, paused at %s→%s awaiting confirm",
                 story_key,

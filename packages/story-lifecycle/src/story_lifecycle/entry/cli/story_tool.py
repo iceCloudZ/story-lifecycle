@@ -202,7 +202,6 @@ def context():
 
     sk = os.environ.get("STORY_KEY", "")
     st = os.environ.get("STORY_STAGE", "")
-    ws = os.environ.get("STORY_WORKSPACE", "") or str(os.getcwd())
     if not sk or not st:
         console.print("[yellow]⚠ 不在 story 上下文里(STORY_KEY/STORY_STAGE 未设)。[/]")
         raise SystemExit(1)
