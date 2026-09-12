@@ -471,3 +471,160 @@ class TestSetBranchWorktreePath:
         )
         assert r.status_code == 200
         assert db.get_story_project("A", proj["id"])["worktree_path"] == "D:/hc-all/hc-user"
+
+
+class TestSetBranchBaseCommit:
+    """WP-B 洞①回归:base_commit 此前在 SetBranchRequest 收下即丢(story-loop
+    被逼 venv python 直写 DB 回填)。列/DAO 早已支持,这里锁 API 透传语义。"""
+
+    def test_base_commit_persisted_on_bind(self, client, isolated_story_home):
+        """PUT 带 base_commit(新建绑定路径)→ DB 行有值。"""
+        proj = db.create_project("p", str(isolated_story_home / "p"), "main")
+        db.create_story("BC-1", "BC-1", str(isolated_story_home))
+
+        r = client.put(
+            "/api/story/BC-1/context/branch",
+            json={
+                "project_id": proj["id"],
+                "branch": "feat/bc-1",
+                "base_commit": "abc1234",
+            },
+        )
+        assert r.status_code == 200
+        row = db.get_story_project("BC-1", proj["id"])
+        assert row["base_commit"] == "abc1234"
+
+    def test_base_commit_persisted_on_update(self, client, isolated_story_home):
+        """PUT 带 base_commit(更新已有绑定路径)→ DB 行更新。"""
+        proj = db.create_project("p", str(isolated_story_home / "p"), "main")
+        db.create_story("BC-2", "BC-2", str(isolated_story_home))
+        db.bind_story_project("BC-2", proj["id"], branch="feat/x")
+
+        r = client.put(
+            "/api/story/BC-2/context/branch",
+            json={
+                "project_id": proj["id"],
+                "branch": "feat/x",
+                "base_commit": "def5678",
+            },
+        )
+        assert r.status_code == 200
+        assert db.get_story_project("BC-2", proj["id"])["base_commit"] == "def5678"
+
+    def test_omitted_base_commit_is_noop(self, client, isolated_story_home):
+        """不带 base_commit → 行为不变(既有值不被清掉)。"""
+        proj = db.create_project("p", str(isolated_story_home / "p"), "main")
+        db.create_story("BC-3", "BC-3", str(isolated_story_home))
+
+        r1 = client.put(
+            "/api/story/BC-3/context/branch",
+            json={
+                "project_id": proj["id"],
+                "branch": "feat/y",
+                "base_commit": "aaa000",
+            },
+        )
+        assert r1.status_code == 200
+
+        # 省略 base_commit → 不清空
+        r2 = client.put(
+            "/api/story/BC-3/context/branch",
+            json={"project_id": proj["id"], "branch": "feat/y"},
+        )
+        assert r2.status_code == 200
+        assert db.get_story_project("BC-3", proj["id"])["base_commit"] == "aaa000"
+
+
+class TestPutContextPersistsWhitelist:
+    """WP-B 洞④回归:PUT /context 此前只做 revision CAS+bump,
+    projects/documents/change_items 收下即丢。现在白名单键持久化进
+    context_json,CAS 语义不变。"""
+
+    def test_projects_persisted_and_read_back(self, client, isolated_story_home):
+        key = "PC-1"
+        db.create_story(key, "t", str(isolated_story_home))
+        rev = db.get_context_revision(key)
+        projects = [{"name": "hc-order", "path": "D:/x/hc-order"}]
+
+        r = client.put(
+            f"/api/story/{key}/context",
+            json={"revision": rev, "projects": projects},
+        )
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        assert r.json()["persisted"] == ["projects"]
+
+        # GET /context 读回(bundle.story.context_json)
+        import json as _json
+
+        ctx = _json.loads(
+            client.get(f"/api/story/{key}/context").json()["story"]["context_json"]
+        )
+        assert ctx["projects"] == projects
+
+    def test_change_items_and_documents_persisted(self, client, isolated_story_home):
+        key = "PC-2"
+        db.create_story(key, "t", str(isolated_story_home))
+        rev = db.get_context_revision(key)
+        docs = [{"kind": "prd", "ref": "story/PRD.md"}]
+        cis = [{"title": "改 提现校验"}]
+
+        r = client.put(
+            f"/api/story/{key}/context",
+            json={"revision": rev, "documents": docs, "change_items": cis},
+        )
+        assert r.status_code == 200
+
+        import json as _json
+
+        ctx = _json.loads(
+            client.get(f"/api/story/{key}/context").json()["story"]["context_json"]
+        )
+        assert ctx["documents"] == docs
+        assert ctx["change_items"] == cis
+
+    def test_omitted_keys_keep_old_values(self, client, isolated_story_home):
+        """omitted(None)键不动旧值;revision 每次 PUT 照常 bump。"""
+        key = "PC-3"
+        db.create_story(key, "t", str(isolated_story_home))
+        rev0 = db.get_context_revision(key)
+        client.put(
+            f"/api/story/{key}/context",
+            json={"revision": rev0, "projects": [{"name": "a"}]},
+        )
+
+        rev1 = db.get_context_revision(key)
+        r = client.put(
+            f"/api/story/{key}/context",
+            json={"revision": rev1, "change_items": [{"title": "x"}]},
+        )
+        assert r.status_code == 200
+
+        import json as _json
+
+        ctx = _json.loads(db.get_story(key)["context_json"])
+        assert ctx["projects"] == [{"name": "a"}]  # 旧值保留
+        assert ctx["change_items"] == [{"title": "x"}]
+
+    def test_revision_conflict_still_409(self, client, isolated_story_home):
+        """CAS 语义不变:过期 revision → 409,且不落任何键。"""
+        key = "PC-4"
+        db.create_story(key, "t", str(isolated_story_home))
+        rev = db.get_context_revision(key)
+        client.put(
+            f"/api/story/{key}/context",
+            json={"revision": rev, "projects": [{"name": "first"}]},
+        )
+
+        # 用旧 revision 再写 → 409
+        r = client.put(
+            f"/api/story/{key}/context",
+            json={"revision": rev, "projects": [{"name": "stale"}]},
+        )
+        assert r.status_code == 409
+        assert r.json()["reasonCode"] == "context_revision_conflict"
+
+        import json as _json
+
+        ctx = _json.loads(db.get_story(key)["context_json"])
+        assert ctx["projects"] == [{"name": "first"}]  # 脏写未落地

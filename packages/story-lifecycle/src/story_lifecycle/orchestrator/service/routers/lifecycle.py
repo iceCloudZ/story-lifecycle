@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from ....infra.db import models as db
 from ....infra.terminal.pty import kill_pty
@@ -65,6 +65,22 @@ class CreateSubStoryRequest(BaseModel):
 
 class AbortRequest(BaseModel):
     reason: str = "User abort"
+
+
+class StageEvidence(BaseModel):
+    """手动标记 stage 完成的证据(全可选,原样进 stage_completed_manual 事件)。
+
+    extra="allow":外部 agent 可能带自定义字段(1069609 事故的调用方是外部
+    agent),不静默丢弃。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    note: str = ""
+    commits: list[str] = Field(default_factory=list)
+
+
+class StageCompleteRequest(BaseModel):
+    evidence: StageEvidence | None = None
 
 
 class ResumeParentRequest(BaseModel):
@@ -240,6 +256,25 @@ def _raise_upgrade_pending(
         "requested_at": int(_time.time()),
     }
     _save_ctx(story_key, ctx)
+    # WP-B 洞③:428 挂起也是「停在确认门」——管家事件出口发声(outbox 一行,
+    # 观察)。advance 与 set 两个来源都经此函数,统一在此挂钩。
+    try:
+        from ....infra.notification.emitter import emit_event
+
+        emit_event(
+            "gate_waiting",
+            story_key=story_key,
+            title=f"[{story_key}] 等待确认:{cur}→{target}",
+            message=f"{cur}→{target} 为关键跃迁,等待 UI 确认(CLI/agent 到此断路)",
+            payload={
+                "from": cur,
+                "to": target,
+                "origin": origin,
+                "reason": "upgrade_pending",
+            },
+        )
+    except Exception:  # noqa: BLE001 — 观察性事件,绝不影响推进
+        log.debug("gate_waiting emit failed (non-fatal)", exc_info=True)
     raise HTTPException(
         428,
         {
@@ -309,7 +344,32 @@ def advance_lifecycle_state(
 
     管家账本:可选 body {confirmed_via}(desktop|wechat|ui|api)进这次确认推进的
     story_state_transition 事件 payload(§4,不改表结构);无 body → 默认 ui。
+
+    WP-B 洞③:预期失败(HTTPException)原样透传;意外异常 → 记日志(带 story_key
+    context)+ 结构化 500(不裸炸,CLI/skill 能拿到 reasonCode 而非空文本)。
     """
+    try:
+        return _advance_lifecycle_state_impl(story_key, req)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — 意外异常兜底,不吞:记日志+结构化返回
+        log.exception("[%s] lifecycle/advance 意外异常", story_key)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "reasonCode": "advance_internal_error",
+                "story_key": story_key,
+                "message": f"推进 Story 失败: {exc}",
+            },
+        )
+
+
+def _advance_lifecycle_state_impl(
+    story_key: str, req: LifecycleAdvanceRequest = None
+):
+    """advance 原函数体(WP-B 洞③拆出)——预期失败抛 HTTPException(4xx 中文),
+    意外异常由外层 advance_lifecycle_state 兜成结构化 500。"""
     import json as _json
 
     from ....sourcing.deliverables import gate_for_current_state, gate_satisfied
@@ -400,6 +460,27 @@ def advance_lifecycle_state(
     next_state = gate_info["to"]
     satisfied, missing = gate_satisfied(story_key, cur_state, next_state)
     if not satisfied:
+        # WP-B 洞③:停门即管家事件出口发声(outbox 一行,观察)——与
+        # stage_completion 停 _story_state_gate 时的挂钩同款;emit 自吞异常,
+        # 绝不影响 409 反馈本体(事件出口绝不碰 story 状态)。
+        try:
+            from ....infra.notification.emitter import emit_event
+
+            emit_event(
+                "gate_waiting",
+                story_key=story_key,
+                stage=s.get("current_stage") or "",
+                title=f"[{story_key}] 推进受阻:{cur_state}→{next_state}",
+                message=f"成果物 gate 未满足,还差: {'、'.join(missing)}",
+                payload={
+                    "from": cur_state,
+                    "to": next_state,
+                    "missing": missing,
+                    "reason": "gate_unsatisfied",
+                },
+            )
+        except Exception:  # noqa: BLE001 — 观察性事件,绝不影响推进
+            log.debug("gate_waiting emit failed (non-fatal)", exc_info=True)
         raise HTTPException(
             409,
             f"成果物 gate 未满足,还差: {'、'.join(missing)}",
@@ -436,6 +517,100 @@ def advance_lifecycle_state(
 
     start_story_async(story_key)
     return {"ok": True, "lifecycle_state": next_state, "status": "active"}
+
+
+@router.post("/api/story/{story_key}/stages/{stage}/complete")
+def complete_stage_manual(
+    story_key: str, stage: str, req: StageCompleteRequest = None
+):
+    """人工标记某 stage 完成(DESIGN-v1-work-agent WP-B 洞②)。
+
+    写 context_json._completed_stages(与编排器 judge approve 分支
+    handlers.py 同键)——外部 agent/CLI 之前没有任何 API 能写这个键,被逼
+    直写 DB(2026-09 tapd-1069609 事故)。deliverables 的 code gate 存在性
+    就看这个键,写完 GET /deliverables 的 code.exists 即为 true。
+
+    决策表(设计 §4.2):
+      story 不存在            → 404
+      已到终态                → 409「已到终态」
+      stage ∉ profile stages  → 400(响应列出合法 stages)
+      已在 _completed_stages  → 200 幂等(不重复 append、不重复事件)
+      合法且未完成            → append + log_event("stage_completed_manual")
+                                + 200 返回 gate 摘要
+
+    明确不做:不自动 advance(确认门纪律)、不释放 PTY、不触发 judge、
+    不 auto-commit。推进仍走 POST /lifecycle/advance。
+    """
+    import json as _json
+
+    from ....sourcing.deliverables import gate_for_current_state
+
+    s = db.get_story(story_key)
+    if not s:
+        raise HTTPException(404, "Story not found")
+
+    # 终态拒绝:lifecycle 已无下一态,或引擎已 completed/aborted。
+    # 与 advance 的终态判据同源(gate_for_current_state → None)。
+    if s.get("status") in ("completed", "aborted") or (
+        gate_for_current_state(story_key) is None
+    ):
+        raise HTTPException(
+            409,
+            f"Story 已到终态(status={s.get('status')}, "
+            f"lifecycle_state={s.get('lifecycle_state')})，无法手动标记 stage 完成",
+        )
+
+    # stage 合法性:必须是该 story profile 里定义的 stage(400 附合法清单)
+    from ...engine.profile_loader import resolve_profile
+
+    profile_name = s.get("profile") or "minimal"
+    try:
+        legal_stages = sorted(resolve_profile(profile_name).stages.keys())
+    except Exception as exc:  # noqa: BLE001 — profile 坏了是可反馈的配置问题
+        raise HTTPException(400, f"profile({profile_name}) 无法解析: {exc}")
+    if stage not in legal_stages:
+        raise HTTPException(
+            400,
+            f"未知 stage: {stage}。profile({profile_name})合法 stages: "
+            f"{', '.join(legal_stages)}",
+        )
+
+    try:
+        ctx = _json.loads(s.get("context_json") or "{}")
+    except (ValueError, TypeError):
+        ctx = {}
+    completed = list(ctx.get("_completed_stages") or [])
+
+    if stage in completed:
+        # 幂等:不重复 append、不重复事件,只回当前 gate 状态
+        return {
+            "ok": True,
+            "story_key": story_key,
+            "stage": stage,
+            "already_completed": True,
+            "completed_stages": completed,
+            "gate": gate_for_current_state(story_key),
+        }
+
+    completed.append(stage)
+    ctx["_completed_stages"] = completed
+    db.update_story(story_key, context_json=_json.dumps(ctx, ensure_ascii=False))
+    evidence = req.evidence.model_dump() if (req and req.evidence) else {}
+    db.log_event(
+        story_key,
+        stage,
+        "stage_completed_manual",
+        {"stage": stage, "evidence": evidence, "source": "api"},
+    )
+    # 重算 gate:append 后摘要要反映最新状态(如 build 完成 → code 满足)
+    return {
+        "ok": True,
+        "story_key": story_key,
+        "stage": stage,
+        "already_completed": False,
+        "completed_stages": completed,
+        "gate": gate_for_current_state(story_key),
+    }
 
 
 @router.get("/api/story/{story_key}/lifecycle/pending")

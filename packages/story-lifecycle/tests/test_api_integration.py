@@ -931,13 +931,30 @@ class TestSoftDeleteAndMove:
         assert payload["to"] == "测试"
 
     def test_move_lifecycle_all_five_states(self, api_client, isolated_story_home):
+        """五态遍历:普通态 PUT 直落;上线/结项是关键跃迁(Q2 UI 门)——PUT 返回
+        428 挂起(状态未变),经 POST /lifecycle/ui-upgrade confirm 重放才落位。"""
         db.upsert_story(
             "MV-3", title="五态遍历", workspace="/tmp", profile="minimal"
         )
         db.update_story("MV-3", intake_state="ready")
         for state in ("待启动", "开发", "测试", "上线", "结项"):
             resp = api_client.put("/api/story/MV-3/lifecycle", json={"state": state})
-            assert resp.status_code == 200, f"{state} 应合法"
+            if state in ("上线", "结项"):
+                # 428 断路:状态不得直接落位,需 UI confirm 重放
+                assert resp.status_code == 428, f"{state} 应挂起等 UI 确认"
+                detail = resp.json()["detail"]
+                assert detail["action"] == "ui_confirm"
+                assert detail["gate"]["target"] == state
+                assert (
+                    db.get_story("MV-3")["lifecycle_state"] != state
+                ), "关键跃迁不得由 API 直接完成"
+                confirm = api_client.post(
+                    "/api/story/MV-3/lifecycle/ui-upgrade",
+                    json={"action": "confirm"},
+                )
+                assert confirm.status_code == 200, f"{state} confirm 重放应落位"
+            else:
+                assert resp.status_code == 200, f"{state} 应合法"
             assert db.get_story("MV-3")["lifecycle_state"] == state
 
     def test_move_lifecycle_invalid_state_400(self, api_client, isolated_story_home):

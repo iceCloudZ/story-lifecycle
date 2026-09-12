@@ -37,6 +37,9 @@ class SetBranchRequest(BaseModel):
     branch: str
     worktree_path: str | None = None
     base_branch: str | None = None
+    # WP-B 洞①:基线 commit 透传(story_project.base_commit 列/DAO 早已支持,
+    # 此前请求收下即丢 → worktree 处理器拿不到基线,agent 只能直写 DB)。
+    base_commit: str | None = None
     worktree_state: str | None = None
 
 
@@ -67,7 +70,13 @@ def api_get_context(story_key: str):
 
 @router.put("/api/story/{story_key}/context")
 def api_put_context(story_key: str, req: PutContextRequest):
-    """Update story context. Fails on revision conflict (409)."""
+    """Update story context. Fails on revision conflict (409).
+
+    WP-B 洞④:projects/documents/change_items 此前收下即丢(只做 revision CAS +
+    bump)——现在白名单键持久化进 context_json(与其它 context_json 写者同型:
+    读-改-写 db.update_story)。只更新请求里显式给出的键(omitted=None → 不动
+    旧值);revision CAS 语义不变。
+    """
     current_rev = db.get_context_revision(story_key)
     if req.revision != current_rev:
         return JSONResponse(
@@ -78,9 +87,26 @@ def api_put_context(story_key: str, req: PutContextRequest):
                 "current_revision": current_rev,
             },
         )
+    # 白名单键持久化(显式给出才写,omitted → 保留旧值)
+    import json as _json
+
+    try:
+        ctx = _json.loads((db.get_story(story_key) or {}).get("context_json") or "{}")
+    except (ValueError, TypeError):
+        ctx = {}
+    persisted: list[str] = []
+    for key in ("projects", "documents", "change_items"):
+        value = getattr(req, key)
+        if value is not None:
+            ctx[key] = value
+            persisted.append(key)
+    if persisted:
+        db.update_story(
+            story_key, context_json=_json.dumps(ctx, ensure_ascii=False)
+        )
     # Apply updates
     new_rev = db.bump_context_revision(story_key)
-    return {"ok": True, "revision": new_rev}
+    return {"ok": True, "revision": new_rev, "persisted": persisted}
 
 
 @router.post("/api/story/{story_key}/context/refresh")
@@ -304,6 +330,8 @@ def api_set_branch(story_key: str, req: SetBranchRequest):
             fields["worktree_path"] = req.worktree_path
         if req.base_branch is not None:
             fields["base_branch"] = req.base_branch
+        if req.base_commit is not None:
+            fields["base_commit"] = req.base_commit
         if req.worktree_state:
             fields["worktree_state"] = req.worktree_state
         if existing:
