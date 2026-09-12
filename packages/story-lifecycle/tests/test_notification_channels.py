@@ -137,6 +137,58 @@ class TestDesktopPlyerChannel:
         monkeypatch.setitem(sys.modules, "plyer.notification", fake_notification)
         assert DesktopPlyerChannel().send("T", "M") is False
 
+    # ------------------------------------------------------------------
+    # v1.0.0 收口补漏:Windows NOTIFYICONDATAW 上限(标题 64/正文 256 字符),
+    # 超长 plyer 抛 ValueError: string too long(投递线程里 "sent" 状态是假的)。
+    # 截断是通道侧关注点 —— 只在 desktop 通道做,outbox 仍存全量。
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _fake_plyer(monkeypatch, notified):
+        fake_plyer = types.ModuleType("plyer")
+        fake_notification = types.ModuleType("plyer.notification")
+        fake_notification.notify = lambda **kw: notified.append(kw)
+        fake_plyer.notification = fake_notification
+        monkeypatch.setitem(sys.modules, "plyer", fake_plyer)
+        monkeypatch.setitem(sys.modules, "plyer.notification", fake_notification)
+
+    def test_long_message_truncated_no_exception(self, monkeypatch):
+        """2000 字长文(真实事故:1981 字 digest)不再炸,送进 plyer 的串≤上限。"""
+        notified = []
+        self._fake_plyer(monkeypatch, notified)
+        ch = DesktopPlyerChannel()
+        assert ch.send("T" * 100, "x" * 2000) is True
+        assert len(notified) == 1
+        title, message = notified[0]["title"], notified[0]["message"]
+        assert len(title) <= 60
+        assert len(message) <= 240
+        assert message.endswith("…(详见看板)")
+        assert title.endswith("…(详见看板)")
+
+    def test_short_message_passthrough(self, monkeypatch):
+        """未超长的标题/正文原样透传,不加省略标记。"""
+        notified = []
+        self._fake_plyer(monkeypatch, notified)
+        assert DesktopPlyerChannel().send("标题", "短内容") is True
+        assert notified[0]["title"] == "标题"
+        assert notified[0]["message"] == "短内容"
+
+    def test_truncate_helper_boundaries(self):
+        """_truncate_for_windows 边界:恰好等于上限透传,超 1 字即剪。"""
+        from story_lifecycle.infra.notification.desktop_plyer import (
+            _truncate_for_windows,
+        )
+
+        t60 = "t" * 60
+        m240 = "m" * 240
+        assert _truncate_for_windows(t60, m240) == (t60, m240)
+
+        t, m = _truncate_for_windows(t60 + "X", m240 + "Y")
+        assert len(t) <= 60 and t.endswith("…(详见看板)")
+        assert len(m) <= 240 and m.endswith("…(详见看板)")
+        # 剪尾保留前缀内容
+        assert t.startswith("t" * 10) and m.startswith("m" * 10)
+
 
 class TestEngineNotifyCompat:
     """engine/notify.send 兼容 re-export:存量 import 零破坏,行为不变。"""

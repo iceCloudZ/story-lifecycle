@@ -504,6 +504,22 @@ class TestDiagnosticsAPI:
         data = resp.json()
         assert "story" in data or "recentEvents" in data
 
+    def test_health_reports_package_version(self, api_client, isolated_story_home):
+        """v1.0.0 收口补漏回归:/api/session/health 不得再硬编码 "0.1.0" 字面量,
+        必须复用 api.py 的包元数据机制(importlib.metadata,卸装态兜底 1.0.0)。"""
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as pkg_version
+
+        resp = api_client.get("/api/session/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        try:
+            expected = pkg_version("story-lifecycle")
+        except PackageNotFoundError:  # 与 api.py 同一兜底
+            expected = "1.0.0"
+        assert data["version"] == expected
+
 
 class TestSyncAPI:
     def test_sync_status_unconfigured(self, api_client, isolated_story_home):

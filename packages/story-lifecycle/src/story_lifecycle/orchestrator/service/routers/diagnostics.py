@@ -11,7 +11,12 @@ router = APIRouter(tags=["diagnostics"])
 
 @router.get("/api/session/health")
 def health():
-    return {"status": "ok", "version": "0.1.0"}
+    # v1.0.0 收口补漏:版本号不再硬编码(WP-G 只收了 api.py 的 FastAPI(version=...),
+    # 这里漏了第二处 "0.1.0" 字面量),复用 api.py 的包元数据机制。
+    # 函数内 import 避免 api ↔ routers 循环依赖(同 debug_story 的懒加载模式)。
+    from ..api import _APP_VERSION
+
+    return {"status": "ok", "version": _APP_VERSION}
 
 
 @router.get("/api/story/{story_key}/loop-trace")

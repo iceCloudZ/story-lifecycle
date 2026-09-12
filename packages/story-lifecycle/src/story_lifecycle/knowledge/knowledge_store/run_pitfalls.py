@@ -12,7 +12,9 @@ failure-knowledge.json``(knowledge 包既有 failure 持久化约定:
   文件名 stem 兜底(保证 id 仍稳定)。
 - **小节标题**:任何含「新坑」的标题(实测变体:「本轮新坑(候选回写)」/
   「本轮新坑」/「新坑与经验(已回写 skill RUNS.md)」/「新坑(本轮实证,未在
-  速查表)」/「新坑 → 速查」)。
+  速查表)」/「新坑 → 速查」);另认加粗列表行变体(「- **新坑入库**：」,
+  RUN-tapd-1069471 实测——坑表缩进跟在列表项下,无 # 标题;仅当坑表表头
+  真的紧随其后才认,防「见上文」类无表加粗行误开小节)。
 - **表**:表头首列含「坑」的两列表(``| 坑 | 规则 |`` 与 ``| 坑/经验 | 处理 |``
   两种实测列形);另兼容「新坑 → 速查」的编号列表行(首个冒号切 坑/规则)。
 - **容错**:缺列/空单元格/无冒号的行 skip + ``logging.warning``,绝不让整批
@@ -48,6 +50,9 @@ _FAILURES_REL = os.path.join("failures", "failure-knowledge.json")
 _RUN_TITLE_RE = re.compile(r"^#\s+RUN\s*[—·\-–]?\s*(.+?)\s*$", re.MULTILINE)
 # 编号列表行:「新坑 → 速查」变体,如 `1. **yorkie 钩子必炸**:原因...`
 _NUM_LIST_RE = re.compile(r"^(\d+)[.、)]\s+(.+)$")
+# 加粗列表行小节变体:`- **新坑入库**：`(无 # 标题,坑表缩进跟在列表项下)。
+# 单独出现不算小节开头——还要坑表表头紧随其后(见 _pitfall_table_header_nearby)。
+_BOLD_BULLET_XINKENG_RE = re.compile(r"^\s*-\s*\*\*[^*]*新坑[^*]*\*\*")
 # 表分隔行:|---|---| / | :--- | ---: |
 _SEPARATOR_CELL_RE = re.compile(r":?-{3,}:?")
 
@@ -87,14 +92,39 @@ def _is_separator_row(cells: list[str]) -> bool:
     ) and any(c for c in cells)
 
 
+def _pitfall_table_header_nearby(lines: list[str], start: int, window: int = 3) -> bool:
+    """lines[start] 起 window 行内是否出现坑表表头(首列含「坑」且 ≥2 列)。
+
+    加粗列表行小节的误触发防线:只有坑表真的紧随其后才认小节开头
+    (「- **新坑复盘**：见上文」这类无表行不开小节)。判据与
+    parse_run_pitfall_rows 的 header_ok 完全一致;空行占 window 名额,
+    实测形态(表头在加粗行的下一行)远在窗口内。
+    """
+    for line in lines[start : start + window]:
+        s = line.strip()
+        if not s.startswith("|"):
+            continue
+        cells = _split_table_row(s)
+        if len(cells) >= 2 and "坑" in cells[0]:
+            return True
+    return False
+
+
 def _pitfall_sections(md_text: str) -> list[tuple[int, list[str]]]:
     """按行扫出所有含「新坑」的小节 → [(标题级别, 小节行), ...]。
 
-    小节在下一个同级或更高级标题处结束(更深的子标题仍算本节)。
+    两种小节开头:含「新坑」的标题行(#..######,原行为);或含「新坑」的
+    加粗列表行(如 ``- **新坑入库**：``,RUN-tapd-1069471 实测变体)——后者
+    仅当坑表表头紧随其后(_pitfall_table_header_nearby)才认。
+
+    小节在下一个同级或更高级标题处结束(更深的子标题仍算本节)。加粗列表行
+    小节级别取 7(深于一切标题)→ 后续任意标题都终结它;已在小节内时加粗行
+    不重复开节(表照常被外层小节采集,行不重不漏)。
     """
     sections: list[tuple[int, list[str]]] = []
     current: tuple[int, list[str]] | None = None
-    for line in (md_text or "").splitlines():
+    lines = (md_text or "").splitlines()
+    for i, line in enumerate(lines):
         m = re.match(r"^(#{1,6})\s+", line)
         if m:
             level = len(m.group(1))
@@ -104,6 +134,9 @@ def _pitfall_sections(md_text: str) -> list[tuple[int, list[str]]]:
             if current is None and "新坑" in line:
                 current = (level, [])
                 continue
+        elif current is None and _BOLD_BULLET_XINKENG_RE.match(line) and _pitfall_table_header_nearby(lines, i + 1):
+            current = (7, [])
+            continue
         if current is not None:
             current[1].append(line)
     if current is not None:

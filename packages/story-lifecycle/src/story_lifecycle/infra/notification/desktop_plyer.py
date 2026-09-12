@@ -13,6 +13,25 @@ from .base import NotificationChannel, TIER_BATCH
 
 log = logging.getLogger("story-lifecycle.notification.desktop")
 
+# Windows 气泡通知硬上限(NOTIFYICONDATAW):szTitle 64 / szInfo 256 字符,超长
+# plyer 直接 ValueError: string too long(v1.0.0 收口补漏:投递线程里非致命异常,
+# 但 "sent" 状态是假的)。截断留安全余量,超长加省略标记。截断是通道侧关注点
+# —— outbox 仍存全量 payload,微信通道不受影响。
+_WIN_TITLE_LIMIT = 60
+_WIN_MESSAGE_LIMIT = 240
+_ELLIPSIS_MARK = "…(详见看板)"
+
+
+def _truncate_for_windows(title: str, message: str) -> tuple[str, str]:
+    """截断到 Windows 气泡上限以内;未超长原文透传,超长剪尾加省略标记。"""
+
+    def _clip(text: str, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        return text[: limit - len(_ELLIPSIS_MARK)] + _ELLIPSIS_MARK
+
+    return _clip(title, _WIN_TITLE_LIMIT), _clip(message, _WIN_MESSAGE_LIMIT)
+
 
 class DesktopPlyerChannel(NotificationChannel):
     """plyer 桌面通知(Windows/macOS/Linux 气泡)。"""
@@ -31,6 +50,7 @@ class DesktopPlyerChannel(NotificationChannel):
         try:
             from plyer import notification
 
+            title, message = _truncate_for_windows(title, message)
             notification.notify(title=title, message=message, timeout=5)
             return True
         except Exception:  # noqa: BLE001 — 桌面通知 best-effort
