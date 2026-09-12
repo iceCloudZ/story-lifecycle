@@ -428,6 +428,14 @@ from .routers import patrol  # noqa: E402
 for _mod in (patrol,):
     app.include_router(_mod.router)
 
+
+# -------- domain routers C3e（知识检索面,DESIGN-v1-work-agent WP-F §8.2） --------
+
+from .routers import knowledge  # noqa: E402
+
+for _mod in (knowledge,):
+    app.include_router(_mod.router)
+
 # -------- static frontend (must be last) --------
 
 _WEB_DIR = Path(__file__).parent.parent.parent / "entry" / "web"

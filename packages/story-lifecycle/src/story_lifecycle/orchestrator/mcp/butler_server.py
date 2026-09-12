@@ -13,7 +13,7 @@
   serve 必须在跑;连不上时工具返回友好中文错误(「管家后端未启动,请先 story
   serve」),绝不抛异常炸宿主会话(§5 降级矩阵)。
 
-**工具目录 v1(六个,method 名下划线风格)**:
+**工具目录 v1(七个,method 名下划线风格)**:
 
 | method | 参数 | 语义 |
 |---|---|---|
@@ -23,6 +23,7 @@
 | ``story_advance`` | key, confirm_token, confirmed_via="desktop" | **服务端执法**后推进确认门 |
 | ``plan_confirm`` | key, confirm_token | **同款执法**后确认规划(POST /plan/confirm) |
 | ``session_register`` | key, stage, adapter, session_id | sessions 簿记(zcode 会话登记,断点续跑有据可查) |
+| ``knowledge_search`` | q, story_key?, top_k? | 知识库检索(场景/打法/踩坑/RUN 新坑;只读,GET /api/knowledge/search) |
 
 **confirm_token 执法规则**(§3.2,服务端裁决,LLM 拼 token = 读过详情的凭据):
 1. ``confirm_token`` 必须**精确等于** ``f"{story_key}:{target_state}"`` ——
@@ -760,6 +761,73 @@ def tool_session_register(
     }
 
 
+def tool_knowledge_search(
+    fetch: FetchFn,
+    q: str,
+    story_key: str = "",
+    stage: str = "",
+    top_k: int = 5,
+) -> dict:
+    """``knowledge_search(q, story_key?, top_k?)`` — 知识库检索(只读,第 7 工具)。
+
+    薄包 serve 的 ``GET /api/knowledge/search``(WP-F §8.2;serve 侧降级不 500,
+    连接层失败由 dispatch 统一转「后端未启动」友好文案)。结果带 source_refs
+    (知识出处),给 LLM 复用结论时溯源。
+    """
+    q = str(q or "").strip()
+    if not q:
+        return {
+            "ok": False,
+            "summary": "缺少检索词 q —— 例如 knowledge_search(q=\"联系人 落表\")。",
+        }
+    try:
+        top_k = max(1, min(int(top_k or 5), 50))
+    except (TypeError, ValueError):
+        top_k = 5
+    params = {"q": q, "top_k": str(top_k)}
+    if str(story_key or "").strip():
+        params["story_key"] = str(story_key).strip()
+    if str(stage or "").strip():
+        params["stage"] = str(stage).strip()
+    payload = fetch(f"/api/knowledge/search?{urllib.parse.urlencode(params)}")
+    if not isinstance(payload, dict):
+        payload = {}
+    results = [r for r in (payload.get("results") or []) if isinstance(r, dict)]
+    rows = [
+        {
+            "title": r.get("title") or "",
+            "type": r.get("type") or "",
+            "category": r.get("category") or "",
+            "detail": (r.get("detail") or r.get("summary") or "")[:300],
+            "tags": r.get("tags") or [],
+            "source_refs": r.get("source_refs") or [],
+        }
+        for r in results
+    ]
+    lines = []
+    for r in rows:
+        src = r["source_refs"][0] if r["source_refs"] else ""
+        lines.append(
+            f"- {r['title']}({r['category'] or r['type']}) {r['detail']}"
+            + (f" 来源:{src}" if src else "")
+        )
+    warning = str(payload.get("warning") or "")
+    summary_lines = [f"知识检索「{q}」命中 {len(rows)} 条。"] if rows else [f"知识检索「{q}」无命中。"]
+    if warning:
+        summary_lines.append(f"(降级提示:{warning})")
+    summary_lines.extend(lines)
+    out = {
+        "ok": True,
+        "summary": "\n".join(summary_lines),
+        "query": q,
+        "count": len(rows),
+        "results": rows,
+    }
+    if warning:
+        out["warning"] = warning
+    return out
+
+
 # ---- 工具 schema(tools/list 暴露;inputSchema 照 clarify 的手写 JSON Schema) ----
 
 
@@ -845,6 +913,17 @@ BUTLER_TOOLS = [
         },
         ["key", "session_id"],
     ),
+    _tool(
+        "knowledge_search",
+        "检索团队知识库(场景/打法/踩坑/RUN 跑测新坑/wiki)。只读。排查问题前先查,"
+        "命中可直接复用结论;条目带 source_refs 指向原始出处。",
+        {
+            "q": {"type": "string", "description": "检索关键词,如 联系人 落表 / occupationType。"},
+            "story_key": {"type": "string", "description": "可选,按 story key 召回相关条目。"},
+            "top_k": {"type": "integer", "description": "返回条数,默认 5。"},
+        },
+        ["q"],
+    ),
 ]
 
 _TOOL_NAMES = [t["name"] for t in BUTLER_TOOLS]
@@ -888,6 +967,14 @@ def dispatch_tool(name: str, args: dict) -> dict:
                 stage=str(args.get("stage", "") or ""),
                 adapter=str(args.get("adapter", "") or ""),
                 session_id=str(args.get("session_id", "") or ""),
+            )
+        if name == "knowledge_search":
+            return tool_knowledge_search(
+                make_fetch(),
+                q=str(args.get("q", "") or ""),
+                story_key=str(args.get("story_key", "") or ""),
+                stage=str(args.get("stage", "") or ""),
+                top_k=args.get("top_k", 5),
             )
         return {
             "ok": False,

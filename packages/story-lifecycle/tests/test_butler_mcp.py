@@ -25,6 +25,7 @@ from story_lifecycle.orchestrator.mcp.butler_server import (
     dispatch_tool,
     make_fetch,
     make_send,
+    tool_knowledge_search,
     tool_patrol_summary,
     tool_plan_confirm,
     tool_session_register,
@@ -92,8 +93,8 @@ def test_build_confirm_token_format():
 
 
 class TestToolSchemas:
-    def test_six_tools_with_expected_names(self):
-        """tools/list 暴露六个下划线风格 method。"""
+    def test_seven_tools_with_expected_names(self):
+        """tools/list 暴露七个下划线风格 method(WP-F §8.2 加 knowledge_search)。"""
         assert [t["name"] for t in BUTLER_TOOLS] == [
             "story_list",
             "story_detail",
@@ -101,6 +102,7 @@ class TestToolSchemas:
             "story_advance",
             "plan_confirm",
             "session_register",
+            "knowledge_search",
         ]
 
     def test_schemas_have_required_args(self):
@@ -453,6 +455,83 @@ class TestPatrolSummary:
         res = tool_patrol_summary(_FakeApi(gets).fetch, detail_limit=3)
         assert len(res["perStory"]) == 3
         assert "只逐个巡了前 3 个" in res["summary"]
+
+
+# ---- knowledge_search(WP-F §8.2 第 7 工具,只读走 REST) ----
+
+
+class TestKnowledgeSearch:
+    def test_schema_requires_q_only(self):
+        by_name = {t["name"]: t for t in BUTLER_TOOLS}
+        assert by_name["knowledge_search"]["inputSchema"]["required"] == ["q"]
+        props = by_name["knowledge_search"]["inputSchema"]["properties"]
+        assert set(props) == {"q", "story_key", "top_k"}
+
+    def test_hit_renders_results_with_source_refs(self):
+        import urllib.parse
+
+        path = "/api/knowledge/search?" + urllib.parse.urlencode({"q": "联系人落表", "top_k": "5"})
+        api = _FakeApi({
+            path: {
+                "count": 1,
+                "results": [{
+                    "title": "联系人落表坑",
+                    "type": "failure",
+                    "category": "run-pitfall",
+                    "detail": "三方返回要落表,别只落日志",
+                    "tags": ["tapd-1069389", "run-pitfall"],
+                    "source_refs": ["D:/proj/docs/test-runs/RUN-tapd-1069389-20260908.md"],
+                }],
+            }
+        })
+        res = tool_knowledge_search(api.fetch, q="联系人落表")
+        assert res["ok"] is True
+        assert res["count"] == 1
+        row = res["results"][0]
+        assert row["source_refs"] == ["D:/proj/docs/test-runs/RUN-tapd-1069389-20260908.md"]
+        assert "联系人落表坑" in res["summary"]
+        assert "RUN-tapd-1069389" in res["summary"]
+
+    def test_story_key_and_top_k_forwarded_as_query(self):
+        api = _FakeApi({
+            "/api/knowledge/search?q=x&top_k=2&story_key=tapd-1": {"results": []}
+        })
+        res = tool_knowledge_search(api.fetch, q="x", story_key="tapd-1", top_k=2)
+        assert res["ok"] is True
+        assert res["count"] == 0
+        assert "无命中" in res["summary"]
+
+    def test_missing_q_refused_without_http(self):
+        api = _FakeApi()
+        res = tool_knowledge_search(api.fetch, q="  ")
+        assert res["ok"] is False
+        assert "缺少检索词" in res["summary"]
+
+    def test_serve_warning_surfaced(self):
+        """serve 端降级(warning 字段)→ 工具结果里透传,不装作正常命中。"""
+        api = _FakeApi({
+            "/api/knowledge/search?q=x&top_k=5": {
+                "results": [], "warning": "知识检索不可用:root 坏了"
+            }
+        })
+        res = tool_knowledge_search(api.fetch, q="x")
+        assert res["ok"] is True
+        assert res["warning"] == "知识检索不可用:root 坏了"
+        assert "降级提示" in res["summary"]
+
+    def test_dispatch_degrades_friendly_when_serve_down(self, monkeypatch):
+        """serve 连不上 → 友好中文提示,不炸宿主会话(§5 降级矩阵)。"""
+        monkeypatch.setattr(
+            bs.urllib.request, "urlopen",
+            lambda req, timeout=None: (_ for _ in ()).throw(urllib.error.URLError("refused")),
+        )
+        res = dispatch_tool("knowledge_search", {"q": "联系人"})
+        assert res["ok"] is False
+        assert "管家后端未启动" in res["summary"]
+
+    def test_dispatch_unknown_tool_still_lists_knowledge_search(self):
+        res = dispatch_tool("nope", {})
+        assert "knowledge_search" in res["summary"]
 
 
 # ---- serve 未启动的友好错误路径(monkeypatch HTTP 层,绝不真连) ----

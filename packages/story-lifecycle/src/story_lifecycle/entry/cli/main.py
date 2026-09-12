@@ -148,6 +148,7 @@ def cli(ctx, serve, host, port, fix_deps):
             "daily",
             "tool",
             "butler-proxy",
+            "pitfall",
         ):
             # STORY_SKIP_FIRST_RUN: 测试 / CI 用 —— 跳过 setup wizard 拦截。
             # consult 等命令在 fake 模式(STORY_CONSULT_FAKE)下不需要真 LLM,
@@ -692,6 +693,52 @@ cli.add_command(story_tool_group, name="tool")
 from .migrate_done_to_artifact import migrate_done_cmd  # noqa: E402
 
 cli.add_command(migrate_done_cmd)
+
+
+@cli.group()
+def pitfall():
+    """RUN 跑测新坑入库(知识库写侧,DESIGN-v1-work-agent WP-F §8.1)。"""
+
+
+@pitfall.command("import")
+@click.argument("target", type=click.Path(exists=True))
+@click.option(
+    "--root",
+    default=None,
+    help="知识库根目录(缺省走 resolve_knowledge_root:config/env 全局默认)",
+)
+def pitfall_import(target, root):
+    """把 RUN-*.md 的「本轮新坑」表导入知识库(幂等,重复导入原地更新)。
+
+    TARGET 是单个 RUN md 文件或目录(目录递归扫 *.md)。每行「坑|规则」转一条
+    failure 知识(category=run-pitfall,tags 带 story key),写后刷新 INDEX.json。
+
+    \b
+    Examples:
+      story pitfall import docs/test-runs/RUN-tapd-1069389-20260908.md
+      story pitfall import docs/test-runs/ --root D:/hc-all/.story/knowledge
+    """
+    from ...knowledge.knowledge_store.run_pitfalls import import_run_pitfalls
+
+    try:
+        summary = import_run_pitfalls(target, root=root)
+    except (FileNotFoundError, ImportError, OSError) as exc:
+        console.print(f"[red]✗ pitfall import 失败:[/] {exc}")
+        raise SystemExit(1)
+
+    for row in summary["files"]:
+        if row.get("error"):
+            console.print(f"  [yellow]⚠ {row['file']}:[/] 读不了,已跳过({row['error']})")
+            continue
+        console.print(
+            f"  {row['file']}: 新增 {row['imported']} 条,更新 {row['updated']} 条,"
+            f"跳过 {row['skipped']} 条"
+        )
+    console.print(
+        f"[green]✓ 导入完成:[/] 新增 {summary['imported']} / 更新 {summary['updated']} / "
+        f"跳过 {summary['skipped']};INDEX 已刷新 → [cyan]{summary['index_path']}[/]"
+    )
+
 
 if __name__ == "__main__":
     cli()

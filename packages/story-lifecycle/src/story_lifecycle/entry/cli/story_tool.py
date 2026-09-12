@@ -16,6 +16,7 @@ context 从环境读(STORY_KEY/STORY_STAGE/STORY_WORKSPACE,planner spawn 时注�
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 
@@ -23,6 +24,8 @@ import click
 from rich.console import Console
 
 console = Console()
+
+logger = logging.getLogger(__name__)
 
 
 @click.group()
@@ -304,7 +307,48 @@ def _build_context_brief(story: dict, stage: str) -> str:
         "提示:本 stage 要 declare 哪些成果物 → `story tool todo`;"
         "落成果物 → `story tool declare <doc_type> <path>`。"
     )
+
+    # 相关知识(WP-F §8.2 CLI 读侧):末尾追加,best-effort —— 检索失败/空结果
+    # 都整节约省略,绝不影响简报主体。
+    lines.extend(_related_knowledge_lines(story, stage))
     return "\n".join(lines)
+
+
+def _related_knowledge_lines(story: dict, stage: str) -> list[str]:
+    """「### 相关知识」节的行列表(WP-F §8.2 第三入口)。
+
+    ``KnowledgeIndex.retrieve(query=标题+当前阶段, top 3)``,每条一行(标题 +
+    detail 前 120 字 + 来源提示)。根解析走 ``resolve_knowledge_root(workspace)``
+    (写读同根)。任何异常 → log warning + 返回 [](**整节约省略,不崩简报**)。
+    """
+    try:
+        from ...knowledge.knowledge_store.paths import resolve_knowledge_root
+
+        from knowledge import KnowledgeIndex
+
+        title = (story.get("title") or "").strip()
+        query = " ".join(x for x in (title, stage) if x)
+        if not query:
+            return []
+        root = resolve_knowledge_root(story.get("workspace") or None)
+        entries = KnowledgeIndex(str(root)).retrieve(query=query, top_k=3)
+        if not entries:
+            return []
+        lines = ["", "### 相关知识"]
+        for e in entries:
+            detail = (getattr(e, "detail", "") or getattr(e, "summary", "") or "").strip()
+            if len(detail) > 120:
+                detail = detail[:120] + "…"
+            refs = list(getattr(e, "source_refs", None) or [])
+            hint = refs[0] if refs else (e.path or "")
+            line = f"- {e.title} — {detail}" if detail else f"- {e.title}"
+            if hint:
+                line += f"(来源: {hint})"
+            lines.append(line)
+        return lines
+    except Exception as exc:  # noqa: BLE001 — 知识节是锦上添花,绝不动摇简报主体
+        logger.warning("story tool context 相关知识节降级(省略): %s", exc)
+        return []
 
 
 def main():

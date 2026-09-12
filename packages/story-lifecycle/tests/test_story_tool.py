@@ -342,3 +342,81 @@ def test_context_brief_bad_context_json_degrades(tmp_path):
     out = _build_context_brief(story, "design")
     assert "任务简报" in out
     assert "本阶段无结构化任务清单" in out
+
+
+# ---- 相关知识节(WP-F §8.2 CLI 读侧) ----
+
+
+@pytest.fixture
+def _isolated_kcfg(tmp_path, monkeypatch):
+    """config 置空(防真机 config.yaml 的 knowledge_root 抢先)+ 返回 tmp 根。"""
+    import story_lifecycle.infra.config as _cfg_mod
+
+    monkeypatch.setattr(_cfg_mod, "get_config", lambda: {})
+    return tmp_path
+
+
+def _kroot(tmp_path):
+    return tmp_path / ".story" / "knowledge"
+
+
+def test_context_brief_appends_related_knowledge_section(
+    _isolated_kcfg, tmp_path, monkeypatch
+):
+    """workspace 本地知识库有命中 → 简报末尾出「### 相关知识」节(标题+detail+来源)。"""
+    from story_lifecycle.knowledge.knowledge_store.run_pitfalls import (
+        import_run_pitfalls,
+    )
+
+    md = tmp_path / "RUN-tapd-1000-20260912.md"
+    md.write_text(
+        "# RUN — tapd-1000 (2026-09-12)\n\n"
+        "## 本轮新坑（候选回写）\n\n"
+        "| 坑 | 规则 |\n|---|---|\n"
+        "| 联系人落表坑 | 三方返回要落表,别只落日志 |\n",
+        encoding="utf-8",
+    )
+    summary = import_run_pitfalls(md, root=_kroot(tmp_path))
+    assert summary["imported"] == 1
+
+    story = _story_row(tmp_path, title="联系人落表")
+    out = _build_context_brief(story, "design")
+    assert "### 相关知识" in out
+    assert "联系人落表坑" in out
+    assert "三方返回要落表" in out
+    assert "RUN-tapd-1000-20260912.md" in out  # 来源提示
+    # 相关知识节在简报最末(设计:末尾追加)
+    assert out.rstrip().index("### 相关知识") > out.rstrip().index("story tool declare")
+
+
+def test_context_brief_omits_related_knowledge_when_root_empty(
+    _isolated_kcfg, tmp_path, monkeypatch
+):
+    """知识根为空 → 无「### 相关知识」节,简报主体照常、不崩(exit 0 语义)。"""
+    monkeypatch.setenv("STORY_KNOWLEDGE_ROOT", str(tmp_path / "empty-kroot"))
+    (tmp_path / "empty-kroot").mkdir()
+
+    out = _build_context_brief(_story_row(tmp_path), "design")
+    assert "### 相关知识" not in out
+    assert "任务简报" in out
+
+
+def test_context_brief_omits_related_knowledge_on_index_crash(
+    _isolated_kcfg, tmp_path, monkeypatch, caplog
+):
+    """检索炸(如索引构造失败)→ 打 WARN、整节约省略,绝不影响简报。"""
+    import logging
+
+    import knowledge as knowledge_pkg
+
+    monkeypatch.setenv("STORY_KNOWLEDGE_ROOT", str(tmp_path / "kroot-x"))
+
+    def _boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(knowledge_pkg, "KnowledgeIndex", _boom)
+    with caplog.at_level(logging.WARNING):
+        out = _build_context_brief(_story_row(tmp_path), "design")
+    assert "### 相关知识" not in out
+    assert "任务简报" in out
+    assert any("相关知识节降级" in r.message for r in caplog.records)
