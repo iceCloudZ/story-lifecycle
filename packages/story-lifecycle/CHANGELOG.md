@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0] - 2026-09-12
+
+**定位迁移：工作特化 agent 的常驻大脑 — 账本 + 节律 + 知识库；自动编排链冻结为档案**（设计：[`docs/DESIGN-v1-work-agent.md`](docs/DESIGN-v1-work-agent.md)）。agent 的手脚是 agent 会话里的 skill，公司资产接口是 aiops-mcp；本包提供别的层都没有的东西：常驻状态与账本、节律（提醒/告警）、知识库。按七个 WP 实施：
+
+### Added
+- **WP-A 冻结宣告** — 自动编排链（`OrchestratorThread._tick` spawn/监督/判定链、PTY spawn 家族、full-auto profile、`continue_orchestrator_agent` 同步 shim）冻结于 v1.0（修 bug 可以，不加新能力）；`ARCHITECTURE.md` 新增冻结范围节，`scheduler.py`/`executors.py`/`supervisor.py`/`claude_stream.py` 4 模块加冻结标注。
+- **WP-B 账本 API 直跑化四洞** — `PUT /api/story/{key}/context/branch` 支持 `base_commit` 透传；新端点 `POST /api/story/{key}/stages/{stage}/complete`（决策表 + 幂等，skill 可直报阶段完成）；`PUT /api/story/{key}/advance` 结构化 500 + 新事件 `gate_waiting`；`PUT /api/story/{key}/context` 白名单字段持久化（不再整体丢弃）。删掉 skill 侧 venv python 直写 DB 绕行的理由。+18 回归。
+- **WP-C TAPD 工单环** — bug 时间字段（created/modified/resolved）捕获落库（CLI/API 双路）；`sourcing/aging.py` 超龄纯函数；同步时即时 emit 超龄升级事件 `bug_aging`/`story_overdue`（interrupt 档，当日去重）；日清端点 `POST /api/digest/daily`（`story daily --push` 复用同一计算，`daily_digest` digest 档扩微信路由）。+25 回归。
+- **WP-D 巡检 FAIL 告警闭环** — `POST /api/patrol/run` 按 rollup 结论 emit `patrol_failed` 事件（interrupt 档，payload 含失败项证据），路由表登记走既有 outbox→微信。+4 回归。
+- **WP-E 发版窗口评估** — `GET /api/trains/{train}/release-review` 纯读聚合（gates/分支基线/MR/DDL 证据/巡检五面）+ 回滚风险三级（证据存在性判定，内容研判归 agent 会话 pre-release-review skill）+ rollup。+10 回归。
+- **WP-F 知识进出** — `story pitfall import <RUN md>` RUN 新坑表摄入 CLI（幂等 + `source_refs` 证据链）；知识检索三入口：REST `GET /api/knowledge/search`、MCP 管家第 7 工具 `knowledge_search`、`story tool context` 末尾新增「相关知识」节（top-3，best-effort）。+28 回归。
+- **WP-G 版本收口** — 本条目；`service/api.py` 的 FastAPI app version 从硬编码 `"0.1.0"` 改为 import 时读包元数据（`importlib.metadata.version("story-lifecycle")`，缺元数据兜底 `"1.0.0"`）；README 定位段改写。
+
+### Changed
+- `pyproject.toml` version `0.11.6` → `1.0.0`（v1.0 定位见设计文档 §0）。
+
 ## [0.12.0] - 2026-06-27
 
 ### Added

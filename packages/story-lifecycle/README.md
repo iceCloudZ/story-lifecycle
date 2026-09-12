@@ -1,8 +1,39 @@
 # Story Lifecycle Manager
 
-**Story 级 AI 编排器** — 把一个需求交给 AI，让它走完设计→实现→测试→审查的完整生命周期。
+**工作特化 agent 的常驻大脑（v1.0）** — 账本 + 节律 + 知识库：TAPD 工单日清/挂龄、发版窗口评估、巡检 FAIL 告警、排查知识的沉淀与秒回。原「需求编排器」的自动编排链（design → implement → test）已冻结为档案：修 bug 可以，不再加新能力（见 [`docs/DESIGN-v1-work-agent.md`](docs/DESIGN-v1-work-agent.md) 与 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 冻结范围节）。
 
-> 本包是 [`dev-flywheel`](https://github.com/iceCloudZ/story-lifecycle) monorepo 的一部分，与 [`packages/story-miner`](../story-miner) 共用统一知识飞轮。当前版本：**v0.12.0**。
+> 本包是 [`dev-flywheel`](https://github.com/iceCloudZ/story-lifecycle) monorepo 的一部分，与 [`packages/story-miner`](../story-miner) 共用统一知识飞轮。当前版本：**v1.0.0**。
+
+## 三层架构
+
+```
+┌ agent 会话层（手脚，已有）──────────────────────────────┐
+│ ZCode 主会话 + skills：story-loop / bug-track /        │
+│ prod-patrol / pre-release-review / sql-query / …       │
+└───────────────┬───────────────────────────────────────┘
+                │ MCP 工具面（butler 七工具）/ REST
+┌───────────────▼───────────────────────────────────────┐
+│ story-lifecycle（大脑，本包，常驻 serve :8180）          │
+│ 账本：story/bug 状态 + lifecycle + gates + 审计         │
+│ 节律：日清 digest / 超龄升级 / 巡检 FAIL 告警（→微信）    │
+│ 知识：.story/knowledge 进（pitfall import）出（search）  │
+└───────────────┬───────────────────────────────────────┘
+                │ 只读事实查询（ES/TAPD/ODPS/日志…）
+┌───────────────▼───────────────────────────────────────┐
+│ aiops-mcp（资产接口，只读消费不改）                       │
+└───────────────────────────────────────────────────────┘
+```
+
+## 六项能力 → 落点
+
+| 能力 | 落点（v1.0） |
+|---|---|
+| ① TAPD 工单/bug 日清 + 挂龄达标 | `POST /api/digest/daily`（`story daily --push` 复用）+ 超龄事件 `bug_aging`/`story_overdue`（WP-C） |
+| ② 发版窗口批量评估 + 回滚 | `GET /api/trains/{train}/release-review` 聚合 bundle，回滚研判归 skill（WP-E） |
+| ③ 定时巡检 + 预警 | 执行在 skill 侧；`patrol_failed` FAIL 告警事件 → 微信（WP-D） |
+| ④ 日常排查/业务链路 | 手脚在 skill 侧（call-api/sql-query…）；沉淀回路见 ⑤ |
+| ⑤ 知识库越问越厚 | `story pitfall import` 摄入 + `knowledge_search` 三入口（REST/`story tool context`/MCP 管家第 7 工具）（WP-F） |
+| ⑥ story-loop 直跑 | 账本 API 补四洞：`base_commit` 透传、`POST /stages/{stage}/complete`、advance 结构化 500 + `gate_waiting`、`PUT /context` 持久化（WP-B） |
 
 ## 安装 & 快速开始
 

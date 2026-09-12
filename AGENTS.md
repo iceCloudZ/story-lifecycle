@@ -8,7 +8,7 @@ This file provides guidance to AI coding assistants (Claude Code / Codex / Kimi 
 
 | Package | Path | Role |
 |---|---|---|
-| `story-lifecycle` | `packages/story-lifecycle` | Core orchestrator: drives AI coding agents through story workflows (design → implement → test), FC-based, Python. |
+| `story-lifecycle` | `packages/story-lifecycle` | 工作特化 agent 的常驻大脑（v1.0）：TAPD 工单环/发版评估/巡检告警的账本+节律+知识库；自动编排链已冻结为档案（DESIGN-v1-work-agent.md）。 |
 | `story-miner` | `packages/story-miner` | Producer: normalizes coding-agent transcripts into SQLite, mines behavior/failure/cost knowledge. Uses flat `miner/` layout (not src/). |
 | `story-knowledge` | `packages/knowledge` | Contract: unified knowledge schema (scenario/playbook/failure) consumed by both packages above. |
 | `testing` | `packages/testing` | Real-AI E2E test harness + asserters + scenarios shared across packages. |
@@ -74,7 +74,7 @@ pytest -m real_e2e tests/e2e
 
 跑真实 story 测全流程时,**进度跟踪进** `packages/story-lifecycle/docs/test-runs/`(总表 `README.md` + 每次一份 `RUN-<key>-<date>.md` 详情)。完整操作流程(怎么盯 PTY、卡住判据、怎么记)见 `.claude/skills/run-real-story-test/SKILL.md`——触发词"跑真实story/测全流程/盯一下/看进度"。serve 启停见 `run-story-serve` skill。
 
-**这套机制不是单元测试**(那走 pytest),是**人工端到端走查**:跑一个真实需求 story 穿过编排器,盯 PTY 秒级行为,把发现的 bug(BUGLOG 级)+ 沉淀的 skill 候选记下来。详情模板在 `test-runs/_TEMPLATE.md`。
+**这套机制不是单元测试**(那走 pytest),是**人工端到端走查**:跑一个真实需求 story 穿过编排器,盯 PTY 秒级行为,把发现的 bug(BUGLOG 级)+ 沉淀的 skill 候选记下来。详情模板在 `test-runs/_TEMPLATE.md`。主动能力(日清/巡检告警/发版评估/知识检索)的设计见 `packages/story-lifecycle/docs/DESIGN-v1-work-agent.md`。
 
 ## Where things live
 

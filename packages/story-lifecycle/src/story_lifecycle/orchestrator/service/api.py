@@ -4,6 +4,8 @@ import asyncio
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 from fastapi import (
     FastAPI,
@@ -26,6 +28,11 @@ from ..engine.graph import (
 
 
 log = logging.getLogger("story-lifecycle.api")
+
+try:  # 包元数据随 pip/editable 安装注入;直接以源码树启动时兜底常量
+    _APP_VERSION = _pkg_version("story-lifecycle")
+except PackageNotFoundError:  # pragma: no cover
+    _APP_VERSION = "1.0.0"
 
 from .routers.sessions import (  # noqa: E402,F401  (设计15 C3b: 测试直接 import 路由函数)
     _story_headless,
@@ -122,7 +129,7 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="Story Lifecycle Manager", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Story Lifecycle Manager", version=_APP_VERSION, lifespan=lifespan)
 
 
 # -------- WebSocket endpoints --------
