@@ -133,8 +133,8 @@
 
     <g>
       <rect x="392" y="478" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
-      <text x="408" y="500" font-size="13" font-weight="700">▲ PRD 落档（PUT /docs/prd）</text>
-      <text x="408" y="518" font-size="11" fill="#64748b">版本化 · 无 PRD 不进开发（checker 硬拦）</text>
+      <text x="408" y="500" font-size="13" font-weight="700">▲ 需求意图分析 + PRD 落档</text>
+      <text x="408" y="518" font-size="11" fill="#64748b">TAPD详情+附件用例解析→意图/疑点 · PUT /docs/prd</text>
     </g>
     <line x1="566" y1="450" x2="566" y2="478" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
 
@@ -163,8 +163,8 @@
 
     <g>
       <rect x="392" y="758" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
-      <text x="408" y="780" font-size="13" font-weight="700">▲ 覆盖检查（journey 映射）</text>
-      <text x="408" y="798" font-size="11" fill="#64748b">skip:true 不算 · 有缺口 → 中断补双基线</text>
+      <text x="408" y="780" font-size="13" font-weight="700">▲ 覆盖检查（journeys + 附件用例）</text>
+      <text x="408" y="798" font-size="11" fill="#64748b">附件用例=验收真源（SOP 评审完成产物）· 缺口→补双基线</text>
     </g>
     <line x1="566" y1="730" x2="566" y2="758" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
 
@@ -230,7 +230,7 @@
     <g>
       <rect x="392" y="1298" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
       <text x="408" y="1320" font-size="13" font-weight="700">▲ test-report.md 落档 + 版本化上传</text>
-      <text x="408" y="1338" font-size="11" fill="#64748b">PUT /docs/test_report → confirm（人工）</text>
+      <text x="408" y="1338" font-size="11" fill="#64748b">公司五段模板(serve已注入) · 冒烟门≥80% · PUT /docs/test_report</text>
     </g>
     <line x1="1192" y1="1325" x2="740" y2="1325" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
 
@@ -275,7 +275,7 @@
     <g>
       <rect x="1192" y="1736" width="300" height="54" rx="8" fill="#fff" stroke="#fcd34d"/>
       <text x="1208" y="1758" font-size="13" font-weight="700" fill="#b45309">◆ MR → master + 生产部署</text>
-      <text x="1208" y="1776" font-size="11" fill="#64748b">先 DDL 后发包 · 运维审批 · pod 代际验证</text>
+      <text x="1208" y="1776" font-size="11" fill="#64748b">先 DDL 后发包 · 运维审批 · 窗口=周二/周四下午</text>
     </g>
     <line x1="566" y1="1634" x2="566" y2="1736" stroke="#475569" stroke-width="1.5"/>
     <path d="M 566 1736 Q 900 1740 1192 1758" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
@@ -383,6 +383,7 @@
     四个红色虚线圈是流程定义的重复点（判定标准：改一处要不要同步改另一处）——① skill 第7步调用序列 ≈ 服务器门契约（<b>注：编排本身合法住 skill，重复的只是「当前缺什么」这类服务器已知信息的复述</b>）；② 开发核对表 ≈ checker 规则（环境类坑除外，归坑库）；③「完成的定义」≈ 各 owner 判据；④ 踩坑速查表 ≈ 知识库（pitfall import 单写口）。
     <b>单一事实源分层（与 kimi 会话交叉验证收敛）：</b>状态机/门/审计住 <b>story-lifecycle 服务器</b>（fail-closed 权威层）；工程约定住 <b>hc-all checker</b>（服务器经 precheck 钩子引用，skill 只引用不抄写）；<b>编排</b>（调用顺序/失败排查链/停点/双基线时机）住 <b>story-loop skill</b>——服务器是被动 API，编排天然在调用方，删不得；坑住 <b>知识库</b>（单写口 pitfall import，单读口 knowledge_search）。
     <b>去重路径（v1.1）：</b>先把 409/428 错误响应自描述化（missing 明细 + 补救端点 hint），skill 第 7 步改为「循环 GET /deliverables → 补缺口 → advance」；GET /next 端点是增量糖，后置。
+    <br><b>SOP V1.7 嵌入（2026-09-12）：</b>需求进入段新增「需求意图分析」（TAPD 详情+附件用例解析 → 意图/疑点，喂探讨停点）；覆盖检查以<b>附件测试用例为验收真源</b>（SOP「评审完成：测试上传用例到TAPD」的产物）；test-report 按公司《系统测试报告》五段模板（serve verify prompt 已注入，skill 只引用不抄写）；冒烟门 ≥80%；研发设计评审（复杂/高风险）spec 按公司骨架；发布窗口周二/周四下午。实例锚点：tapd-1069669（附件 47 条功能用例）。
   </div>
 </div>
 </body>
