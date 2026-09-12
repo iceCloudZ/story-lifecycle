@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工作特化 Agent — 真实流程全景图（v1.0.0）</title>
+<style>
+  :root{
+    --ink:#1e293b; --muted:#64748b; --line:#cbd5e1;
+    --skill:#2563eb; --server:#0f766e; --convention:#b45309; --kb:#16a34a; --notify:#dc2626;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;background:#f8fafc;color:var(--ink);padding:32px 24px}
+  .wrap{max-width:1560px;margin:0 auto}
+  h1{font-size:22px;font-weight:700}
+  .sub{color:var(--muted);font-size:13px;margin-top:6px}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:18px 0 10px;font-size:13px;align-items:center}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#fff;border:1px solid var(--line)}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .dup{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#fff;border:1.5px dashed var(--notify);color:var(--notify);font-weight:600}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px;box-shadow:0 1px 3px rgba(15,23,42,.06)}
+  svg{display:block;width:100%;height:auto}
+  .foot{margin-top:14px;font-size:12.5px;color:var(--muted);line-height:1.7;border-top:1px solid var(--line);padding-top:10px}
+  .foot b{color:var(--ink)}
+  text{font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>工作特化 Agent — 真实流程全景图</h1>
+  <div class="sub">story-lifecycle v1.0.0 · 2026-09-12 · 单一事实源分层：规则住服务器/checker · 走法住 skill · 坑住知识库</div>
+
+  <div class="legend">
+    <span class="chip"><span class="dot" style="background:var(--skill)"></span>▲ 走法（story-loop skill 维护）</span>
+    <span class="chip"><span class="dot" style="background:var(--server)"></span>● 规则（story-lifecycle 服务器维护）</span>
+    <span class="chip"><span class="dot" style="background:var(--convention)"></span>◆ 约定（hc-all checker 维护）</span>
+    <span class="chip"><span class="dot" style="background:var(--kb)"></span>○ 知识（.story/knowledge 维护）</span>
+    <span class="chip"><span class="dot" style="background:var(--notify)"></span>✚ 通知（微信/桌面，outbox）</span>
+    <span class="dup">虚线红圈 = 流程定义重复点（共 4 处）</span>
+  </div>
+
+  <div class="card">
+  <svg viewBox="0 0 1540 2410" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+      </marker>
+      <marker id="arrBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+      </marker>
+      <marker id="arrRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#dc2626"/>
+      </marker>
+    </defs>
+
+    <!-- ================= 泳道背景 ================= -->
+    <!-- L1 节律层 -->
+    <rect x="20"  y="70" width="330" height="2310" rx="10" fill="#f5f0fa"/>
+    <!-- L2 agent 会话 -->
+    <rect x="366" y="70" width="400" height="2310" rx="10" fill="#eef5ff"/>
+    <!-- L3 服务器 -->
+    <rect x="786" y="70" width="360" height="2310" rx="10" fill="#eef2f6"/>
+    <!-- L4 hc-all 工程 -->
+    <rect x="1166" y="70" width="352" height="2310" rx="10" fill="#fdf4e8"/>
+
+    <!-- 泳道分隔线 -->
+    <line x1="361"  y1="70" x2="361"  y2="2380" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="3 5"/>
+    <line x1="781"  y1="70" x2="781"  y2="2380" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="3 5"/>
+    <line x1="1161" y1="70" x2="1161" y2="2380" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="3 5"/>
+
+    <text x="185" y="100" text-anchor="middle" font-size="15" font-weight="700" fill="#6d28d9">⏱ 节律层（定时器 + 管家）</text>
+    <text x="566" y="100" text-anchor="middle" font-size="15" font-weight="700" fill="#1d4ed8">🧑‍💻 Agent 会话（story-loop SOP）</text>
+    <text x="966" y="100" text-anchor="middle" font-size="15" font-weight="700" fill="#0f766e">🏛 story-lifecycle 服务器（账本 + 门）</text>
+    <text x="1342" y="100" text-anchor="middle" font-size="15" font-weight="700" fill="#b45309">🏗 hc-all 工程（约定 + 测试 + 部署）</text>
+
+    <!-- 阶段分隔条 -->
+    <g font-size="12.5" font-weight="700">
+      <rect x="20" y="128" width="1498" height="26" rx="6" fill="#ede9fe"/><text x="34" y="146" fill="#6d28d9">PHASE 0 · 日常节律（常驻，与单个需求无关）</text>
+      <rect x="20" y="360" width="1498" height="26" rx="6" fill="#dbeafe"/><text x="34" y="378" fill="#1d4ed8">PHASE 1 · 需求进入</text>
+      <rect x="20" y="640" width="1498" height="26" rx="6" fill="#dbeafe"/><text x="34" y="658" fill="#1d4ed8">PHASE 2 · 探讨与测试准备</text>
+      <rect x="20" y="920" width="1498" height="26" rx="6" fill="#dbeafe"/><text x="34" y="938" fill="#1d4ed8">PHASE 3 · 开发</text>
+      <rect x="20" y="1180" width="1498" height="26" rx="6" fill="#dbeafe"/><text x="34" y="1198" fill="#1d4ed8">PHASE 4 · 部署 test 与验收</text>
+      <rect x="20" y="1430" width="1498" height="26" rx="6" fill="#dbeafe"/><text x="34" y="1448" fill="#1d4ed8">PHASE 5 · 收口（dev 闭环 → 测试态）</text>
+      <rect x="20" y="1700" width="1498" height="26" rx="6" fill="#dbeafe"/><text x="34" y="1718" fill="#1d4ed8">PHASE 6 · 上线与结项</text>
+      <rect x="20" y="1990" width="1498" height="26" rx="6" fill="#dcfce7"/><text x="34" y="2008" fill="#15803d">PHASE 7 · 沉淀（知识回路闭环）</text>
+    </g>
+
+    <!-- ================= PHASE 0 日常节律 ================= -->
+    <!-- L1 定时器 -->
+    <g>
+      <rect x="46" y="176" width="278" height="54" rx="8" fill="#fff" stroke="#c4b5fd"/>
+      <text x="62" y="198" font-size="13" font-weight="700">⏰ 09:07 LifeOS 定时器</text>
+      <text x="62" y="216" font-size="11" fill="#64748b">story-daily-sync（sync + daily --push）</text>
+    </g>
+    <g>
+      <rect x="46" y="258" width="278" height="54" rx="8" fill="#fff" stroke="#c4b5fd"/>
+      <text x="62" y="280" font-size="13" font-weight="700">prod-patrol 巡检 skill</text>
+      <text x="62" y="298" font-size="11" fill="#64748b">周期触发 · ES/SQL/探活执行</text>
+    </g>
+    <line x1="185" y1="230" x2="185" y2="258" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- L3 服务器侧 -->
+    <g>
+      <rect x="812" y="176" width="308" height="54" rx="8" fill="#fff" stroke="#99f6e4"/>
+      <text x="828" y="198" font-size="13" font-weight="700" fill="#0f766e">● sync：bug 时间字段落库</text>
+      <text x="828" y="216" font-size="11" fill="#64748b">超龄判定（≥3 天可配）· 当日去重</text>
+    </g>
+    <g>
+      <rect x="812" y="258" width="308" height="54" rx="8" fill="#fff" stroke="#99f6e4"/>
+      <text x="828" y="280" font-size="13" font-weight="700" fill="#0f766e">● patrol run 落账（三表）</text>
+      <text x="828" y="298" font-size="11" fill="#64748b">rollup 结论 FAIL → patrol_failed</text>
+    </g>
+    <line x1="324" y1="203" x2="812" y2="203" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="324" y1="285" x2="812" y2="285" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- 微信通知 -->
+    <g>
+      <rect x="440" y="258" width="252" height="54" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="456" y="280" font-size="13" font-weight="700" fill="#dc2626">✚ 微信 / 桌面推送</text>
+      <text x="456" y="298" font-size="11" fill="#64748b">晨报 digest · bug_aging · patrol_failed</text>
+    </g>
+    <line x1="812" y1="285" x2="692" y2="285" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arrRed)"/>
+
+    <!-- ================= PHASE 1 需求进入 ================= -->
+    <g>
+      <rect x="392" y="396" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
+      <text x="408" y="418" font-size="13" font-weight="700">▲ 建 story + task_type 打标</text>
+      <text x="408" y="436" font-size="11" fill="#64748b">story sync --id &lt;TAPD id&gt;（CLI/API 双路）</text>
+    </g>
+    <line x1="185" y1="312" x2="185" y2="380" stroke="#475569" stroke-width="1.5"/>
+    <path d="M 185 380 Q 300 396 392 420" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+    <text x="230" y="380" font-size="11" fill="#64748b">候选 story</text>
+
+    <g>
+      <rect x="392" y="478" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
+      <text x="408" y="500" font-size="13" font-weight="700">▲ PRD 落档（PUT /docs/prd）</text>
+      <text x="408" y="518" font-size="11" fill="#64748b">版本化 · 无 PRD 不进开发（checker 硬拦）</text>
+    </g>
+    <line x1="566" y1="450" x2="566" y2="478" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="392" y="560" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
+      <text x="408" y="582" font-size="13" font-weight="700">▲ 规划 + 确认（plan/confirm）</text>
+      <text x="408" y="600" font-size="11" fill="#64748b">探明决策点后收口 PRD「澄清决策」表</text>
+    </g>
+    <line x1="566" y1="532" x2="566" y2="560" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- 服务器门 -->
+    <g>
+      <rect x="812" y="478" width="308" height="54" rx="8" fill="#ecfdf5" stroke="#99f6e4"/>
+      <text x="828" y="500" font-size="13" font-weight="700" fill="#0f766e">● 门：待启动→开发 需 prd + spec</text>
+      <text x="828" y="518" font-size="11" fill="#64748b">gate_waiting 事件 → 微信</text>
+    </g>
+    <line x1="740" y1="505" x2="812" y2="505" stroke="#0f766e" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+
+    <!-- ================= PHASE 2 探讨与测试准备 ================= -->
+    <g>
+      <rect x="392" y="676" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
+      <text x="408" y="698" font-size="13" font-weight="700">▲ 探讨停点（纯 skill，无服务端对应）</text>
+      <text x="408" y="716" font-size="11" fill="#64748b">决策点清单 + 代码现状依据，一轮收齐</text>
+    </g>
+    <line x1="566" y1="614" x2="566" y2="676" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="392" y="758" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
+      <text x="408" y="780" font-size="13" font-weight="700">▲ 覆盖检查（journey 映射）</text>
+      <text x="408" y="798" font-size="11" fill="#64748b">skip:true 不算 · 有缺口 → 中断补双基线</text>
+    </g>
+    <line x1="566" y1="730" x2="566" y2="758" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="392" y="840" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
+      <text x="408" y="862" font-size="13" font-weight="700">▲ 双基线（无覆盖时必做）</text>
+      <text x="408" y="880" font-size="11" fill="#64748b">绿锁现状 + 红锚点待实现 → test-plan.md</text>
+    </g>
+    <line x1="566" y1="812" x2="566" y2="840" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="1192" y="758" width="300" height="54" rx="8" fill="#fff" stroke="#fcd34d"/>
+      <text x="1208" y="780" font-size="13" font-weight="700" fill="#b45309">◆ hc-pytest journeys</text>
+      <text x="1208" y="798" font-size="11" fill="#64748b">用例资产 · 远程 test 环境驱动</text>
+    </g>
+    <line x1="740" y1="785" x2="1192" y2="785" stroke="#475569" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+
+    <!-- ================= PHASE 3 开发 ================= -->
+    <g>
+      <rect x="392" y="956" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
+      <text x="408" y="978" font-size="13" font-weight="700">▲ worktree + 分支 + DDL 落 story 目录</text>
+      <text x="408" y="996" font-size="11" fill="#64748b">feature/ice/tapd-&lt;id&gt;_&lt;desc&gt;_&lt;MMDD&gt; · 命名铁律</text>
+    </g>
+    <line x1="566" y1="894" x2="566" y2="956" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="392" y="1080" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
+      <text x="408" y="1102" font-size="13" font-weight="700">▲ 登记分支 + base_commit</text>
+      <text x="408" y="1120" font-size="11" fill="#64748b">PUT /context/branch（v1.0 已透传 base_commit）</text>
+    </g>
+    <line x1="566" y1="1010" x2="566" y2="1080" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- checker（收口判定，动工前可预检） -->
+    <g>
+      <rect x="1192" y="956" width="300" height="76" rx="8" fill="#fff" stroke="#fcd34d"/>
+      <text x="1208" y="980" font-size="13" font-weight="700" fill="#b45309">◆ check_story_conventions.py</text>
+      <text x="1208" y="998" font-size="11" fill="#64748b">分支登记真实性 / 命名 / worktree</text>
+      <text x="1208" y="1014" font-size="11" fill="#64748b">/ spec / ddl —— 唯一可执行约定源</text>
+    </g>
+    <line x1="740" y1="983" x2="1192" y2="983" stroke="#b45309" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+    <text x="880" y="975" font-size="11" fill="#b45309">动工前预检</text>
+
+    <!-- 重复② -->
+    <rect x="386" y="944" width="360" height="70" rx="10" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <rect x="400" y="924" width="196" height="20" rx="10" fill="#dc2626"/>
+    <text x="498" y="938" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">重复② skill 核对表 ≈ checker</text>
+
+    <!-- ================= PHASE 4 部署与验收 ================= -->
+    <g>
+      <rect x="1192" y="1216" width="300" height="54" rx="8" fill="#fff" stroke="#fcd34d"/>
+      <text x="1208" y="1238" font-size="13" font-weight="700" fill="#b45309">◆ 部署 test（skyladder）</text>
+      <text x="1208" y="1256" font-size="11" fill="#64748b">改后锚点 = test 部署完成（铁律）</text>
+    </g>
+    <path d="M 566 1134 L 566 1170 L 1342 1170 L 1342 1216" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="1192" y="1298" width="300" height="54" rx="8" fill="#fff" stroke="#fcd34d"/>
+      <text x="1208" y="1320" font-size="13" font-weight="700" fill="#b45309">◆ 验收三条件</text>
+      <text x="1208" y="1338" font-size="11" fill="#64748b">红转绿 + 绿保持 + 回归净（journey 实测）</text>
+    </g>
+    <line x1="1342" y1="1270" x2="1342" y2="1298" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="392" y="1298" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
+      <text x="408" y="1320" font-size="13" font-weight="700">▲ test-report.md 落档 + 版本化上传</text>
+      <text x="408" y="1338" font-size="11" fill="#64748b">PUT /docs/test_report → confirm（人工）</text>
+    </g>
+    <line x1="1192" y1="1325" x2="740" y2="1325" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- ================= PHASE 5 收口 ================= -->
+    <g>
+      <rect x="392" y="1466" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
+      <text x="408" y="1488" font-size="13" font-weight="700">▲ stages/complete + deliverables confirm</text>
+      <text x="408" y="1506" font-size="11" fill="#64748b">v1.0 一等 API：外部完成直报（幂等 + 事件）</text>
+    </g>
+    <line x1="566" y1="1352" x2="566" y2="1466" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="812" y="1466" width="308" height="54" rx="8" fill="#ecfdf5" stroke="#99f6e4"/>
+      <text x="828" y="1488" font-size="13" font-weight="700" fill="#0f766e">● 门：开发→测试 需 code（存在+确认）</text>
+      <text x="828" y="1506" font-size="11" fill="#64748b">409 缺口即反馈 · gate_waiting → 微信</text>
+    </g>
+    <line x1="740" y1="1493" x2="812" y2="1493" stroke="#0f766e" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="812" y="1580" width="308" height="54" rx="8" fill="#ecfdf5" stroke="#99f6e4"/>
+      <text x="828" y="1602" font-size="13" font-weight="700" fill="#0f766e">● advance_precheck（fail-closed）</text>
+      <text x="828" y="1620" font-size="11" fill="#64748b">服务器强制调 checker，非零退出码 409 拒推</text>
+    </g>
+    <path d="M 1192 994 L 1156 994 L 1156 1162" fill="none" stroke="#b45309" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <path d="M 1156 1178 L 1156 1607 L 1120 1607" fill="none" stroke="#b45309" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+    <text x="1145" y="1300" font-size="11" fill="#b45309" transform="rotate(-90 1145 1300)">收口时服务器强制执行</text>
+
+    <g>
+      <rect x="392" y="1580" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
+      <text x="408" y="1602" font-size="13" font-weight="700">▲ advance：开发 → 测试</text>
+      <text x="408" y="1620" font-size="11" fill="#64748b">dev 闭环终点 = 测试态（语义修正后）</text>
+    </g>
+    <line x1="566" y1="1520" x2="566" y2="1580" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="812" y1="1607" x2="740" y2="1607" stroke="#0f766e" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+
+    <!-- 重复① -->
+    <rect x="386" y="1454" width="360" height="186" rx="10" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <rect x="400" y="1434" width="330" height="20" rx="10" fill="#dc2626"/>
+    <text x="565" y="1448" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">重复① skill 第7步调用序列 ≈ 服务器门契约</text>
+
+    <!-- ================= PHASE 6 上线与结项 ================= -->
+    <g>
+      <rect x="1192" y="1736" width="300" height="54" rx="8" fill="#fff" stroke="#fcd34d"/>
+      <text x="1208" y="1758" font-size="13" font-weight="700" fill="#b45309">◆ MR → master + 生产部署</text>
+      <text x="1208" y="1776" font-size="11" fill="#64748b">先 DDL 后发包 · 运维审批 · pod 代际验证</text>
+    </g>
+    <line x1="566" y1="1634" x2="566" y2="1736" stroke="#475569" stroke-width="1.5"/>
+    <path d="M 566 1736 Q 900 1740 1192 1758" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="812" y="1736" width="308" height="54" rx="8" fill="#ecfdf5" stroke="#99f6e4"/>
+      <text x="828" y="1758" font-size="13" font-weight="700" fill="#0f766e">● 428 UI 门（关键跃迁断路）</text>
+      <text x="828" y="1776" font-size="11" fill="#64748b">测试→上线 / 上线→结项 · ui-upgrade 重放</text>
+    </g>
+    <line x1="1192" y1="1763" x2="1120" y2="1763" stroke="#0f766e" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="1192" y="1818" width="300" height="54" rx="8" fill="#fff" stroke="#fcd34d"/>
+      <text x="1208" y="1840" font-size="13" font-weight="700" fill="#b45309">◆ prod_patrol 巡检 PASS</text>
+      <text x="1208" y="1858" font-size="11" fill="#64748b">DB/ES 一致性抽查 · 回写 patrol 账本</text>
+    </g>
+    <line x1="1342" y1="1790" x2="1342" y2="1818" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="812" y="1818" width="308" height="54" rx="8" fill="#ecfdf5" stroke="#99f6e4"/>
+      <text x="828" y="1840" font-size="13" font-weight="700" fill="#0f766e">● 结项门：生产证据硬检查</text>
+      <text x="828" y="1858" font-size="11" fill="#64748b">分支须进 origin/master 或有交付证据</text>
+    </g>
+    <line x1="1192" y1="1845" x2="1120" y2="1845" stroke="#0f766e" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="392" y="1818" width="348" height="54" rx="8" fill="#fff" stroke="#93c5fd"/>
+      <text x="408" y="1840" font-size="13" font-weight="700">▲ 发版窗口：PUT /release-train</text>
+      <text x="408" y="1858" font-size="11" fill="#64748b">收口时挂班车 → 发版日批量评估</text>
+    </g>
+
+    <g>
+      <rect x="812" y="1900" width="308" height="54" rx="8" fill="#ecfdf5" stroke="#99f6e4"/>
+      <text x="828" y="1922" font-size="13" font-weight="700" fill="#0f766e">● GET /trains/{t}/release-review</text>
+      <text x="828" y="1940" font-size="11" fill="#64748b">gates/MR/DDL/巡检聚合 + 回滚风险三级</text>
+    </g>
+    <line x1="740" y1="1845" x2="812" y2="1900" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="966" y1="1900" x2="966" y2="1940" stroke="none"/>
+
+    <!-- ================= PHASE 7 沉淀 ================= -->
+    <g>
+      <rect x="392" y="2026" width="348" height="54" rx="8" fill="#fff" stroke="#86efac"/>
+      <text x="408" y="2048" font-size="13" font-weight="700" fill="#16a34a">○ RUN 文档（新坑表）+ RUNS.md</text>
+      <text x="408" y="2066" font-size="11" fill="#64748b">跑测实录 · 证据链源头</text>
+    </g>
+    <line x1="566" y1="1872" x2="566" y2="2026" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+    <text x="578" y="1960" font-size="11" fill="#64748b">结项后回写</text>
+
+    <g>
+      <rect x="392" y="2128" width="348" height="54" rx="8" fill="#f0fdf4" stroke="#86efac"/>
+      <text x="408" y="2150" font-size="13" font-weight="700" fill="#16a34a">○ story pitfall import（幂等）</text>
+      <text x="408" y="2168" font-size="11" fill="#64748b">新坑表 → FailureEntry · source_refs 挂证据</text>
+    </g>
+    <line x1="566" y1="2080" x2="566" y2="2128" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="812" y="2128" width="308" height="54" rx="8" fill="#f0fdf4" stroke="#86efac"/>
+      <text x="828" y="2150" font-size="13" font-weight="700" fill="#16a34a">○ .story/knowledge（34+ 条）</text>
+      <text x="828" y="2168" font-size="11" fill="#64748b">scenario / playbook / failure / wiki + 保鲜</text>
+    </g>
+    <line x1="740" y1="2155" x2="812" y2="2155" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <g>
+      <rect x="812" y="2230" width="308" height="54" rx="8" fill="#f0fdf4" stroke="#86efac"/>
+      <text x="828" y="2252" font-size="13" font-weight="700" fill="#16a34a">○ knowledge_search（API/MCP/tool）</text>
+      <text x="828" y="2270" font-size="11" fill="#64748b">REST · 管家第7工具 · story tool context 节</text>
+    </g>
+    <line x1="966" y1="2182" x2="966" y2="2230" stroke="#16a34a" stroke-width="1.5" marker-end="url(#arr)"/>
+
+    <!-- 知识回路：回到开发/排查 -->
+    <path d="M 812 2257 L 340 2257 L 340 983 L 386 983" fill="none" stroke="#16a34a" stroke-width="2" stroke-dasharray="8 5" marker-end="url(#arr)"/>
+    <rect x="120" y="2150" width="200" height="40" rx="8" fill="#f0fdf4" stroke="#86efac"/>
+    <text x="220" y="2175" text-anchor="middle" font-size="12" font-weight="700" fill="#16a34a">知识回路：越问越厚</text>
+    <line x1="320" y1="2170" x2="340" y2="2170" stroke="#16a34a" stroke-width="2"/>
+
+    <!-- 重复③ -->
+    <rect x="386" y="2014" width="360" height="70" rx="10" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <rect x="400" y="1994" width="260" height="20" rx="10" fill="#dc2626"/>
+    <text x="530" y="2008" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">重复③「完成的定义」≈ 各 owner 判据</text>
+
+    <!-- 重复④：速查表 ≈ 知识库 -->
+    <rect x="386" y="2122" width="360" height="66" rx="10" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <rect x="400" y="2102" width="300" height="20" rx="10" fill="#dc2626"/>
+    <text x="550" y="2116" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">重复④ skill 踩坑速查表 ≈ 知识库</text>
+    <text x="404" y="2162" font-size="10.5" fill="#dc2626">单写口= pitfall import · 单读口= knowledge_search（速查表退化为指针）</text>
+
+    <!-- v1.1 建议注记（kimi 会话收敛版：先自描述错误，/next 后置） -->
+    <g>
+      <rect x="46" y="1466" width="278" height="182" rx="10" fill="#fffbeb" stroke="#f59e0b"/>
+      <text x="62" y="1490" font-size="12.5" font-weight="700" fill="#b45309">去重路径（v1.1，按性价比排序）</text>
+      <text x="62" y="1512" font-size="11" fill="#64748b">① 409/428 响应自描述化：带 missing</text>
+      <text x="62" y="1528" font-size="11" fill="#64748b">  明细 + 补救端点 hint（最小改动，</text>
+      <text x="62" y="1544" font-size="11" fill="#64748b">  服务器本就有 gate_for_current_state）</text>
+      <text x="62" y="1566" font-size="11" fill="#64748b">② skill 第7步改为「循环 GET</text>
+      <text x="62" y="1582" font-size="11" fill="#64748b">  /deliverables → 补缺口 → advance」</text>
+      <text x="62" y="1598" font-size="11" fill="#64748b">③ /next 端点 = 增量糖，后置</text>
+      <text x="62" y="1620" font-size="11" font-weight="700" fill="#b45309">skill 保留编排，服务器吸收「缺什么」</text>
+      <line x1="324" y1="1556" x2="386" y2="1556" stroke="#f59e0b" stroke-width="2" marker-end="url(#arr)"/>
+    </g>
+  </svg>
+  </div>
+
+  <div class="foot">
+    <b>读图要点：</b>实线灰箭头 = 主流程（需求从上到下走完）；虚线彩色箭头 = 归属层之间的调用/强制关系。
+    四个红色虚线圈是流程定义的重复点（判定标准：改一处要不要同步改另一处）——① skill 第7步调用序列 ≈ 服务器门契约（<b>注：编排本身合法住 skill，重复的只是「当前缺什么」这类服务器已知信息的复述</b>）；② 开发核对表 ≈ checker 规则（环境类坑除外，归坑库）；③「完成的定义」≈ 各 owner 判据；④ 踩坑速查表 ≈ 知识库（pitfall import 单写口）。
+    <b>单一事实源分层（与 kimi 会话交叉验证收敛）：</b>状态机/门/审计住 <b>story-lifecycle 服务器</b>（fail-closed 权威层）；工程约定住 <b>hc-all checker</b>（服务器经 precheck 钩子引用，skill 只引用不抄写）；<b>编排</b>（调用顺序/失败排查链/停点/双基线时机）住 <b>story-loop skill</b>——服务器是被动 API，编排天然在调用方，删不得；坑住 <b>知识库</b>（单写口 pitfall import，单读口 knowledge_search）。
+    <b>去重路径（v1.1）：</b>先把 409/428 错误响应自描述化（missing 明细 + 补救端点 hint），skill 第 7 步改为「循环 GET /deliverables → 补缺口 → advance」；GET /next 端点是增量糖，后置。
+  </div>
+</div>
+</body>
+</html>
