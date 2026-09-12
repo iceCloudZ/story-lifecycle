@@ -8,10 +8,14 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ....infra.db import models as db
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["patrol"])
 
@@ -186,6 +190,49 @@ def post_patrol_run(story_key: str, req: CreatePatrolRunRequest):
             "summary": run["summary"][:200],
         },
     )
+    # WP-D:巡检 FAIL → 管家事件出口发声(interrupt 档,outbox 一行,观察)。
+    # 判定键 = 服务端 rollup 结论 run["result"](任一项 FAIL 即 FAIL,与 train
+    # overview / patrolSummary 徽标同源;summary 是调用方自由文本,不作信号)。
+    # create_patrol_run 恒新建(请求体无 run_id,无幂等重放路径)——每次成功
+    # POST 都是首次创建,天然满足「仅新建 run 告警」。emit 自吞异常,绝不影响
+    # API 响应本体。
+    if run.get("result") == "FAIL":
+        try:
+            failed_items = [
+                {
+                    "name": it.get("name"),
+                    "result": it.get("result"),
+                    "evidence_ref": it.get("evidence_ref") or "",
+                }
+                for it in run.get("items") or []
+                if it.get("result") == "FAIL"
+            ]
+            scope = (run.get("run_scope") or "").strip()
+            if scope.lower().startswith("train:"):
+                train = scope[len("train:"):].strip()
+            else:
+                train = (s.get("release_train") or "")
+            fail_names = (
+                "、".join(str(f["name"]) for f in failed_items if f.get("name"))
+                or "明细见控制台"
+            )
+            from ....infra.notification.emitter import emit_event
+
+            emit_event(
+                "patrol_failed",
+                story_key=story_key,
+                title=f"[{story_key}] 巡检 FAIL:{train or '未挂包'}",
+                message=f"巡检结论 FAIL,失败 {len(failed_items)} 项:{fail_names}",
+                payload={
+                    "train": train,
+                    "story_key": story_key,
+                    "run_id": run["id"],
+                    "run_scope": run.get("run_scope") or "",
+                    "failed_items": failed_items,
+                },
+            )
+        except Exception:  # noqa: BLE001 — 观察性事件,绝不影响 API 响应
+            log.debug("patrol_failed emit failed (non-fatal)", exc_info=True)
     return {"ok": True, "runId": run["id"], "result": run["result"], "run": _serialize_run(run)}
 
 

@@ -32,6 +32,7 @@ DEFAULT_ROUTES: dict[str, str] = {
     "gate_waiting": TIER_INTERRUPT,
     "judge_rejected": TIER_INTERRUPT,
     "judge_escalated": TIER_INTERRUPT,
+    "patrol_failed": TIER_INTERRUPT,
     "stage_completed": TIER_BATCH,
 }
 
