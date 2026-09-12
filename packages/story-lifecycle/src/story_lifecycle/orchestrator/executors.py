@@ -6,6 +6,10 @@
 spawn 逻辑自 api.py ``_spawn_story_agent_pty``（交互式 SessionSpec 路径）与
 planner.py driver 的 launch 分支（headless + PTY 全量路径）收敛而来 —— 设计 13
 「一条 spawn 契约」：executor.spawn 是编排线程与 /sessions/spawn 共用的唯一入口。
+
+冻结于 v1.0（2026-09，DESIGN-v1-work-agent.md）：本模块所属的自动编排链（stage 执行器
+的自动 spawn/poll/judge 链）停止投入，仅作档案保留；测试继续作为回归守卫运行；修 bug
+可以，不加新能力。
 """
 
 from __future__ import annotations

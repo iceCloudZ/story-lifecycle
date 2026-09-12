@@ -1,8 +1,29 @@
 # Architecture
 
 > story-lifecycle 当前架构（codemap + 不变量），随架构治理同步更新。
-> **最后更新**：2026-07-02（ISS-012 物理分层完成：5 层从逻辑分组升级为物理目录 entry/sourcing/orchestrator/knowledge/infra）
+> **最后更新**：2026-09-12（v1.0 定位改写 + 冻结宣告，WP-A）
+> **v1.0 定位**：story-lifecycle 是「工作特化 agent 的常驻大脑」（账本+节律+知识库）——agent 手脚在 agent 会话 skill 层，公司资产接口在 aiops-mcp，详见 [`DESIGN-v1-work-agent.md`](DESIGN-v1-work-agent.md)。
 > 历史设计决策见 [`archive/`](archive/)（ADR，正文冻结）。
+
+---
+
+## 冻结范围（v1.0）
+
+> 权威依据：[`DESIGN-v1-work-agent.md`](DESIGN-v1-work-agent.md)。冻结 = 停止投入 + 宣告，**不删代码、不删测试**。
+
+以下能力自 v1.0 起冻结，仅作档案保留：
+
+- **`OrchestratorThread._tick` 自动推进链**（`orchestrator/scheduler.py`）——`maybe_spawn` / judge pipeline / stuck diagnosis / dead-PTY recovery 全链
+- **PTY spawn 家族**——`service/routers/sessions.py:_spawn_story_agent_pty` + `infra/terminal/sid_capture.py:arm_sid_capture`
+- **full-auto profile**（`entry/profiles/swebench.yaml`，`auto_confirm: true`）
+- **`continue_orchestrator_agent` 同步 shim**（`engine/planner.py`）
+
+**maintained 边界**（冻结不外溢，以下仍在用）：
+
+- `engine/planner.py` **不整体冻结**——`_read_prd_snippet` 等 shared helper 仍被 `story tool context` 使用
+- `knowledge/adapters/` **不冻结**——知识 bootstrap 的 headless AI 调用在用
+
+**测试策略**：冻结模块的测试留作档案回归守卫继续跑；不加新特性测试；v1.x 再评估归档。
 
 ---
 

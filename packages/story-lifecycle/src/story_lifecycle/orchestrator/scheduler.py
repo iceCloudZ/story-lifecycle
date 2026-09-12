@@ -15,6 +15,10 @@ serve 启动时起、serve 停时止的一个 daemon 线程，负责**所有 sto
 judge 放 ThreadPoolExecutor 子线程（调 LLM ~10-30s），结果写回内存
 ``_judge_results``，主循环下一轮读。编排线程是**单写者**：DB 读写不需要锁；
 HTTP 请求线程只改标记（ctx/status），编排线程读标记执行。
+
+冻结于 v1.0（2026-09，DESIGN-v1-work-agent.md）：本模块所属的自动编排链（编排线程
+tick 的 maybe_spawn / judge pipeline / stuck diagnosis / dead-PTY recovery）停止投入，
+仅作档案保留；测试继续作为回归守卫运行；修 bug 可以，不加新能力。
 """
 
 from __future__ import annotations

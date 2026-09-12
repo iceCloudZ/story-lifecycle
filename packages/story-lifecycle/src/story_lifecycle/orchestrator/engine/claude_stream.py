@@ -13,6 +13,10 @@ Claude **不走 PTY**(§2.3)——走 ``claude -p --output-format stream-json`` 
 3. **elicitation / idle_prompt**:Claude 提的选择/澄清问题(options 非空)。
 
 非上述信号(system/init、thinking、正常 tool_use、result 等)→ ``None``(短路,不调 LLM)。
+
+冻结于 v1.0（2026-09，DESIGN-v1-work-agent.md）：本模块所属的自动编排链（claude 轨
+stream-json 解析与许可决策）停止投入，仅作档案保留；测试继续作为回归守卫运行；修 bug
+可以，不加新能力。
 """
 
 from __future__ import annotations

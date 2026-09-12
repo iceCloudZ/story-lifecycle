@@ -15,6 +15,9 @@
 - **零副作用**:所有 I/O(写 PTY、log_event、notify)归 Handler(``handle_pty_output``)。
 - **决策上下文喂结构化 facts**(LangGraph 范式),不喂原始 PTY/stream 文本。
 - 模式由 ``story_facts["auto_confirm"]`` 门控,planner 从 profile 的 ``auto_confirm`` 注入。
+
+冻结于 v1.0（2026-09，DESIGN-v1-work-agent.md）：本模块所属的自动编排链（监督/卡住诊断
+决策链）停止投入，仅作档案保留；测试继续作为回归守卫运行；修 bug 可以，不加新能力。
 """
 
 from __future__ import annotations
