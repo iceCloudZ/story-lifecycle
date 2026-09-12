@@ -81,6 +81,30 @@ def _isolated_db(tmp_path, monkeypatch):
     db.init_db()
 
 
+@pytest.fixture(autouse=True)
+def _isolated_config(tmp_path, monkeypatch):
+    """Auto-redirect config.yaml to a per-test tmp file; yields the redirected path.
+
+    infra/config.py computes CONFIG_DIR/CONFIG_FILE at import time from
+    STORY_HOME/Path.home — the STORY_HOME env isolation (_isolated_db) does NOT
+    affect those constants. Without this fixture every config reader
+    (get_config / is_configured / advance_precheck_cmd …) touches the REAL
+    ~/.story-lifecycle/config.yaml (2026-09-12 incident: one test overwrote+
+    deleted it; /lifecycle endpoints ran the real advance_precheck_cmd against
+    fake story keys → rolling 409 flakes). Patch BOTH the infra module (what
+    get_config reads) and cli.setup's by-value re-export (what is_configured
+    reads) — same pairing as test_setup_doctor._tmp_config.
+    """
+    cfg_dir = tmp_path / "config-home"  # distinct from _isolated_db's story-home
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    cfg_file = cfg_dir / "config.yaml"
+    monkeypatch.setattr("story_lifecycle.infra.config.CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr("story_lifecycle.infra.config.CONFIG_FILE", cfg_file)
+    monkeypatch.setattr("story_lifecycle.entry.cli.setup.CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr("story_lifecycle.entry.cli.setup.CONFIG_FILE", cfg_file)
+    return cfg_file
+
+
 @pytest.fixture
 def isolated_story_home(_isolated_db, monkeypatch):
     """Isolated home (DB already redirected by _isolated_db autouse) +

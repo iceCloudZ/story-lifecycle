@@ -352,19 +352,20 @@ def test_get_sub_types_default():
     """get_sub_types should return built-in defaults when config has none."""
     from story_lifecycle.entry.cli.setup import get_sub_types
 
+    # conftest._isolated_config redirects CONFIG_FILE to an absent tmp file
+    # → get_config() == {} → pure built-in defaults.
     types = get_sub_types()
     assert "bug-fix" in types
     assert types["bug-fix"]["default_start_stage"] == "implement"
     assert types["refinement"]["default_start_stage"] == "design"
 
 
-def test_get_sub_types_from_config(tmp_path):
+def test_get_sub_types_from_config(_isolated_config):
     """get_sub_types should merge config.yaml sub_story_types."""
     import yaml
-    from story_lifecycle.entry.cli.setup import CONFIG_FILE, get_sub_types
+    from story_lifecycle.entry.cli.setup import get_sub_types
 
-    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(
+    _isolated_config.write_text(
         yaml.dump(
             {
                 "api_key": "test",
@@ -387,4 +388,4 @@ def test_get_sub_types_from_config(tmp_path):
         # Built-in types still present
         assert "bug-fix" in types
     finally:
-        CONFIG_FILE.unlink(missing_ok=True)
+        _isolated_config.unlink(missing_ok=True)
