@@ -444,6 +444,14 @@ from .routers import digest  # noqa: E402
 for _mod in (digest,):
     app.include_router(_mod.router)
 
+
+# -------- domain routers C3g（发版窗口评估,DESIGN-v1-work-agent WP-E §7） --------
+
+from .routers import release_review  # noqa: E402
+
+for _mod in (release_review,):
+    app.include_router(_mod.router)
+
 # -------- static frontend (must be last) --------
 
 _WEB_DIR = Path(__file__).parent.parent.parent / "entry" / "web"
