@@ -436,6 +436,14 @@ from .routers import knowledge  # noqa: E402
 for _mod in (knowledge,):
     app.include_router(_mod.router)
 
+
+# -------- domain routers C3f（日清 digest,DESIGN-v1-work-agent WP-C §5.3） --------
+
+from .routers import digest  # noqa: E402
+
+for _mod in (digest,):
+    app.include_router(_mod.router)
+
 # -------- static frontend (must be last) --------
 
 _WEB_DIR = Path(__file__).parent.parent.parent / "entry" / "web"

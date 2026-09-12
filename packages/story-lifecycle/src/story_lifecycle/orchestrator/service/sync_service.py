@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from ...infra.db import models as db
 
@@ -40,6 +41,133 @@ def _derive_tapd_type(item) -> str:
     return "story"
 
 
+# ---------------- WP-C: bug 时间字段落库 + 超龄升级事件 ----------------
+# 这两个动作是「一次成功同步」的一部分(API 路由与 CLI `story sync` 都经
+# sync_tapd,故必须住在 service 层,不能只挂在 router 上 —— 否则 CLI 主路径
+# (story-loop step 1)同步完既不落时间字段也不发超龄告警)。
+
+
+def persist_bug_time_fields(story_key: str, fields: dict) -> None:
+    """WP-C:把 TAPD Bug 自有时间字段落 story.context_json(现有 extra 落库路径
+    的核实结论:url 走 tapd_url 列,severity/related_story_id 不落库;时间字段
+    按 update_context 约定进 context_json,键 bug_created/bug_modified/
+    bug_resolved/bug_expected_fix_time,与 sourcing/aging.bug_time_fields 同源)。
+    只写非空值(存量行不回填,下次同步自然带上)。失败吞掉不阻断同步。
+    """
+    from ...sourcing.aging import BUG_TIME_CONTEXT_KEYS
+
+    pairs = (
+        ("bug_created", "created"),
+        ("bug_modified", "modified"),
+        ("bug_resolved", "resolved"),
+        ("bug_expected_fix_time", "expected_fix_time"),
+    )
+    try:
+        for ctx_key, raw_key in pairs:
+            value = str((fields or {}).get(raw_key, "") or "")
+            if value and ctx_key in BUG_TIME_CONTEXT_KEYS:
+                db.update_context(story_key, ctx_key, value)
+    except Exception:  # noqa: BLE001 — 展示/判定辅助字段,绝不阻断同步主链
+        log.debug("bug time fields persist failed for %s", story_key, exc_info=True)
+
+
+def _emitted_today(event_type: str, story_key: str, today: str) -> bool:
+    """当日去重查询:notification_outbox 是否已有同 event_type + story_key 且
+    created_at(UTC)落在 today 的行。outbox 无内建去重,emit 前查这里。"""
+    with db._db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM notification_outbox "
+            "WHERE event_type = ? AND story_key = ? AND created_at >= ? "
+            "AND created_at < date(?, '+1 day') LIMIT 1",
+            (event_type, story_key, f"{today} 00:00:00", today),
+        ).fetchone()
+    return row is not None
+
+
+def escalate_aging_events(items, tapd_config: dict) -> None:
+    """WP-C:同步落库后的超龄升级事件(观察,同一天同 key 只提醒一次)。
+
+    - bug:owner 匹配配置 owner(未配置 owner → 不过滤)且挂龄 ≥ 阈值
+      (config tapd.bug_aging_warn_days,缺省 3)→ ``bug_aging``(interrupt)
+    - story:deadline 已逾期 → ``story_overdue``(interrupt)
+
+    全程 try/except 吞掉 + debug 日志 —— 升级提醒是观察性事件,绝不影响同步
+    结果本体。判定只用 sourcing/aging 纯函数,不在此处复算时间差。
+
+    ``tapd_config``:调用方已加载的 TAPD 配置段(routers/sync.py 传入);sync_tapd
+    未显式传入时自取(_load_tapd_config,CLI 路径)。
+    """
+    try:
+        from ...infra.notification.emitter import emit_event
+        from ...sourcing.aging import (
+            bug_active_days,
+            bug_aging_warn_days,
+            story_overdue_days,
+        )
+
+        # 判定基准与账本同轴:挂龄/逾期用 UTC 日期(与 sourcing.aging._today、
+        # daily_cmd 简报一致);去重日必须用 UTC —— outbox.created_at 是 UTC。
+        today = datetime.now(timezone.utc).date()
+        today_str = today.isoformat()
+        threshold = bug_aging_warn_days()
+        configured_owner = str((tapd_config or {}).get("owner", "") or "").rstrip(";")
+
+        for item in items:
+            story = db.find_by_source_id(item.source, item.id)
+            story_key = story["story_key"] if story else f"tapd-{item.id}"
+            if item.item_type == "bug":
+                age = bug_active_days(
+                    {
+                        "created": item.extra.get("created", ""),
+                        "modified": item.extra.get("modified", ""),
+                        "status": item.status,
+                    },
+                    today=today,
+                )
+                if age is None or age < threshold:
+                    continue
+                # owner 匹配:配置了 owner 才过滤;TAPD current_owner 可能多人
+                # 分号分隔,子串匹配(与 TapdSource 的 owner 过滤同型)。
+                if configured_owner and configured_owner not in (item.owner or ""):
+                    continue
+                if _emitted_today("bug_aging", story_key, today_str):
+                    continue
+                url = item.extra.get("url", "")
+                emit_event(
+                    "bug_aging",
+                    story_key=story_key,
+                    title=f"[{story_key}] bug 挂龄 {age} 天(≥{threshold}):{item.title[:40]}",
+                    message=f"bug「{item.title}」已挂 {age} 天(阈值 {threshold} 天),状态 {item.status or '未知'},请跟进。",
+                    payload={
+                        "key": story_key,
+                        "title": item.title,
+                        "age_days": age,
+                        "url": url,
+                    },
+                )
+            elif item.item_type in ("requirement", "story"):
+                overdue = story_overdue_days({"deadline": item.deadline}, today=today)
+                if overdue is None:
+                    continue
+                if _emitted_today("story_overdue", story_key, today_str):
+                    continue
+                url = item.extra.get("url", "")
+                emit_event(
+                    "story_overdue",
+                    story_key=story_key,
+                    title=f"[{story_key}] 需求逾期 {overdue} 天:{item.title[:40]}",
+                    message=f"需求「{item.title}」截止 {item.deadline} 已逾期 {overdue} 天,请跟进。",
+                    payload={
+                        "key": story_key,
+                        "title": item.title,
+                        "age_days": overdue,
+                        "url": url,
+                    },
+                )
+    except Exception:  # noqa: BLE001 — 观察性事件,绝不影响同步响应
+        log.debug("aging escalation emit failed (non-fatal)", exc_info=True)
+
+
 def sync_tapd(
     items: list,
     workspace: str = "",
@@ -47,6 +175,7 @@ def sync_tapd(
     dry_run: bool = False,
     status_only: bool = False,
     status_names: dict[str, str] | None = None,
+    tapd_config: dict | None = None,
 ) -> dict:
     """Sync TAPD SourceItems into local stories.
 
@@ -59,6 +188,12 @@ def sync_tapd(
 
     status_names: status → 中文状态名(自定义工作流的 status_N 不透明,展示需要译名)。
     调用方一次 sync 取一份传进来(routers/sync.py、cli/sync_cmd.py),best-effort。
+
+    tapd_config: TAPD 配置段(WP-C:owner 过滤/挂龄阈值等升级事件输入)。API 路由
+    传入其已加载的配置;缺省(CLI `story sync` 路径)自取 ``_load_tapd_config()``
+    (story_home/config.yaml 的 tapd 段)。非 dry-run 同步结束时:
+    bug 时间字段落 context_json(persist_bug_time_fields)+ 超龄升级事件
+    (escalate_aging_events,当日同 key 去重)。
     """  # noqa: D301
     # 状态治理:加载 tapd source profile 的 state_map + story_states(用于 _is_forward
     # 防回退)+ pause_states(已暂缓 → 本地 pause)。try/except 让无配置的环境(如测试)
@@ -137,6 +272,9 @@ def sync_tapd(
                     updates["lifecycle_state"] = mapped_state
             if updates:
                 db.update_story(existing["story_key"], **updates)
+            # WP-C:bug 时间字段落 context_json(更新分支同样刷新,幂等)
+            if item.item_type == "bug":
+                persist_bug_time_fields(existing["story_key"], item.extra)
             # 已暂缓旁路(SOP 全局旁路):TAPD 暂缓 → 本地 pause;离开暂缓态 →
             # 只 resume 由 TAPD 暂缓的(reason=tapd_suspended),手动 pause 不动。
             if is_paused_external and existing.get("status") == "active":
@@ -175,6 +313,9 @@ def sync_tapd(
                 status="active",
                 parent_key=parent_key,
             )
+            # WP-C:新建 bug 时间字段随建随落 context_json
+            if item.item_type == "bug":
+                persist_bug_time_fields(story["story_key"], item.extra)
             # 状态治理:新建 story 按映射写初始 lifecycle_state(无防回退问题,从无到有)。
             # upsert_story_from_source 不带 lifecycle_state 参数(跟 release_train 同范式),
             # 故新建后二次 update_story。
@@ -196,6 +337,16 @@ def sync_tapd(
             )
             result["created"] += 1
             log.info(f"Created story {story['story_key']} for {item.source}:{item.id}")
+
+    # WP-C:同步落库完成 → 超龄升级事件(bug_aging / story_overdue,interrupt 档,
+    # 当日同 key 去重)。观察性,吞异常,绝不影响同步结果本体。dry_run 不发
+    # (没落库,无 story_key 可归属,与「同步成功」前提一致)。
+    if not dry_run:
+        if tapd_config is None:
+            from ._shared import _load_tapd_config
+
+            tapd_config = _load_tapd_config()
+        escalate_aging_events(items, tapd_config)
 
     return result
 

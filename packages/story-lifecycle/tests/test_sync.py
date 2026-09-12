@@ -356,6 +356,47 @@ class TestSopPauseStates:
         assert "tapd_suspended" in (s["context_json"] or "")
 
 
+class TestTapdSourceBugTimeFields:
+    """WP-C:_parse_bug 捕获 TAPD Bug 自有时间字段(cli_tapd.py 原样透传 item
+    dict,这里防御式 .get);挂龄计算(sourcing/aging)与日清 digest 依赖。"""
+
+    def test_parse_bug_captures_time_fields(self):
+        from story_lifecycle.sourcing.sources.tapd_source import TapdSource
+
+        source = TapdSource({"workspace_id": "12345"})
+        item = source._parse_bug(
+            {
+                "id": "8001",
+                "title": "白屏",
+                "current_owner": "zhangsan",
+                "status": "new",
+                "severity": "严重",
+                "story_id": "12310009001",
+                "created": "2026-09-01 10:00:00",
+                "modified": "2026-09-05 11:30:00",
+                "resolved": "",
+                "expected_fix_time": "2026-09-10 00:00:00",
+            }
+        )
+        assert item.extra["created"] == "2026-09-01 10:00:00"
+        assert item.extra["modified"] == "2026-09-05 11:30:00"
+        assert item.extra["resolved"] == ""
+        assert item.extra["expected_fix_time"] == "2026-09-10 00:00:00"
+        # 现有 extra 键不受影响
+        assert item.extra["severity"] == "严重"
+        assert item.extra["related_story_id"] == "12310009001"
+
+    def test_parse_bug_missing_time_keys_is_defensive(self):
+        from story_lifecycle.sourcing.sources.tapd_source import TapdSource
+
+        source = TapdSource({"workspace_id": "12345"})
+        item = source._parse_bug({"id": "8002", "title": "缺时间字段"})
+        assert item.extra["created"] == ""
+        assert item.extra["modified"] == ""
+        assert item.extra["resolved"] == ""
+        assert item.extra["expected_fix_time"] == ""
+
+
 class TestTapdSourceFetchAll:
     def test_fetch_all_overrides_status_filter(self):
         from unittest.mock import patch

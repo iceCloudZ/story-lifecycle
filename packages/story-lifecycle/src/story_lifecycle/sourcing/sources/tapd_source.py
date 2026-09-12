@@ -227,6 +227,9 @@ class TapdSource(StorySource):
         )
 
     def _parse_bug(self, raw: dict) -> SourceItem:
+        # WP-C:补齐 TAPD Bug API 自有时间字段(cli_tapd.py 客户端原样透传 item
+        # dict,这里防御式 .get 读取)。挂龄计算(sourcing/aging.py)与日清 digest
+        # 依赖 created/modified;resolved/expected_fix_time 随 extra 一并带上备用。
         return SourceItem(
             id=f"bug_{raw.get('id', '')}",
             source="tapd",
@@ -242,6 +245,10 @@ class TapdSource(StorySource):
                 "severity": raw.get("severity", ""),
                 "url": f"https://www.tapd.cn/{self._api.workspace_id}/bugtrace/bugs/view?bug_id={raw.get('id', '')}",
                 "related_story_id": raw.get("story_id", ""),
+                "created": raw.get("created", "") or "",
+                "modified": raw.get("modified", "") or "",
+                "resolved": raw.get("resolved", "") or "",
+                "expected_fix_time": raw.get("expected_fix_time", "") or "",
             },
             fetched_at=time.time(),
         )

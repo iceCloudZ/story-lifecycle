@@ -85,7 +85,8 @@ class TestConfigOverride:
         cfg = {"notification": {"routes": {"awaiting_question": "digest"}}}
         actions = route("awaiting_question", config=cfg, now=_NOON)
         assert actions[0].tier == "digest"
-        assert _channels(actions) == ["desktop"]
+        # WP-C:digest 档通道 desktop-only → (wechat, desktop)(日清简报推微信)
+        assert _channels(actions) == ["wechat", "desktop"]
 
     def test_invalid_tier_value_falls_back_to_batch(self):
         """routes 值打错字(非合法档位)→ 回 batch,不炸。"""
@@ -103,7 +104,8 @@ class TestConfigOverride:
         assert resolve_tier("whatever", load_notification_section()) == "batch"
 
     def test_default_table_constant_shape(self):
-        """默认表契约:5+1 种事件,interrupt×5 + stage_completed=batch。"""
+        """默认表契约:v1 五事件 + WP-D patrol_failed / WP-C bug_aging、
+        story_overdue = interrupt;daily_digest = digest;stage_completed = batch。"""
         assert DEFAULT_ROUTES["stage_completed"] == "batch"
         assert all(
             DEFAULT_ROUTES[e] == "interrupt"
@@ -113,8 +115,12 @@ class TestConfigOverride:
                 "gate_waiting",
                 "judge_rejected",
                 "judge_escalated",
+                "patrol_failed",
+                "bug_aging",
+                "story_overdue",
             )
         )
+        assert DEFAULT_ROUTES["daily_digest"] == "digest"
         assert ChannelAction("wechat", "interrupt") == ChannelAction(
             "wechat", "interrupt"
         )

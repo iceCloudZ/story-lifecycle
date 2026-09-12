@@ -1,9 +1,11 @@
 """story daily — 每日简报:聚合今日该关注的 story(过期/到期/新落/受阻/进行中)。
 
-纯读聚合,无副作用:只 SELECT,不写库、不拉远端。两种输出:
-- 默认 Markdown(人读,分节 + 每条一行带 tapd_url)
-- ``--json`` 结构化 JSON(脚本消费 — 定时任务系统的 story-daily-sync wrapper,
-  见 PLAN-proactive-cadence.md Part A)
+两种形态:
+- 默认(纯读聚合,无副作用):只 SELECT,不写库、不拉远端。输出 Markdown
+  (人读,分节 + 每条一行带 tapd_url)或 ``--json``(结构化,脚本消费 ——
+  定时任务系统的 story-daily-sync wrapper,见 PLAN-proactive-cadence.md Part A)
+- ``--push``(WP-C):构建日清 digest(四节,与 POST /api/digest/daily 共用
+  同一聚合函数)并经 emit_event 落通知 outbox(digest 档)
 """
 
 from __future__ import annotations
@@ -23,7 +25,15 @@ BLOCKED_STATUSES = frozenset({"paused", "failed"})
 @click.option("--md", "as_md", is_flag=True, help="输出 Markdown(默认行为,显式传无害)")
 @click.option("--json", "as_json", is_flag=True, help="输出结构化 JSON(脚本消费)")
 @click.option("--days", default=2, show_default=True, help="前瞻天数(含今日,2=今日+明日)")
-def daily_cmd(as_md, as_json, days):
+@click.option(
+    "--push",
+    "as_push",
+    is_flag=True,
+    help="构建日清 digest 并经通知出口推送(outbox 一行,digest 档)。"
+    "聚合与 /api/digest/daily 同一函数;直连 emit 不走 serve HTTP —— 零网络"
+    "依赖,定时任务在 serve 不在线时也能落账,投递由通知线程 drain。",
+)
+def daily_cmd(as_md, as_json, days, as_push):
     """每日简报 — 聚合过期/到期/新落/受阻/进行中的 story。纯读,无副作用。"""
     # GBK 控制台下 emoji/中文不炸(errors=replace);被管道消费时由调用方设
     # PYTHONIOENCODING=utf-8 拿到完整 utf-8(见 story-daily-sync wrapper)。
@@ -35,6 +45,11 @@ def daily_cmd(as_md, as_json, days):
     from ...infra.db import models as db
 
     db.init_db()
+
+    if as_push:
+        _push_daily_digest()
+        return
+
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
     horizon = (now + timedelta(days=days - 1)).strftime("%Y-%m-%d")
@@ -57,6 +72,33 @@ def daily_cmd(as_md, as_json, days):
         )
     else:
         print(_render_md(today, days, sections))
+
+
+def _push_daily_digest() -> None:
+    """``--push``:日清 digest(WP-C)—— 复用 digest 路由的聚合函数构建
+    markdown(不复制 builder),经 emit_event 落 outbox(digest 档,微信+桌面)。
+    打印同款 markdown 供控制台留档;emit 失败只提示,退出码保持 0(推送是
+    best-effort,不该让定时任务系统误判整轮失败)。
+    """
+    from ...infra.notification.emitter import emit_event
+    from ...orchestrator.service.routers.digest import build_daily_digest
+
+    built = build_daily_digest()
+    print(built["markdown"])
+    nid = emit_event(
+        "daily_digest",
+        title=f"每日清结简报 · {built['date']}",
+        message=built["markdown"],
+        payload={
+            "date": built["date"],
+            "counts": {k: len(v) for k, v in built["sections"].items()},
+            "sections": built["sections"],
+        },
+    )
+    if nid is None:
+        print("(推送未落账:通知路由关闭或 emit 失败,详见 debug 日志)")
+    else:
+        print(f"(已推送 outbox #{nid},投递由通知线程异步完成)")
 
 
 def _brief_item(s: dict) -> dict:

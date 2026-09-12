@@ -1,4 +1,9 @@
-"""routers/sync — sync domain API（设计15 阶段C 拆自 api.py）。"""
+"""routers/sync — sync domain API（设计15 阶段C 拆自 api.py）。
+
+WP-C:bug 时间字段落库与超龄升级事件住在 sync_service.sync_tapd(API 与 CLI
+`story sync` 两条路径共用,检查点返修收敛);本 router 只透传已加载的
+tapd_config,不再持有一份本地副本。
+"""
 
 from __future__ import annotations
 
@@ -68,10 +73,14 @@ def _sync_related_bugs_from_stories(source, item_type_filter: str = "") -> dict:
             )
             # 批量路径关键词打标即可(use_llm=False,不为每 item 阻塞几秒)
             from ..story_service import ensure_task_type
+            from ..sync_service import persist_bug_time_fields
 
             ensure_task_type(
                 bug_story["story_key"], title=flat.get("title", ""), use_llm=False
             )
+            # WP-C:关联 bug 的时间字段同样落 context_json(flat 即 TAPD 原始 dict;
+            # 与主循环共用 sync_service 的同一实现)
+            persist_bug_time_fields(bug_story["story_key"], flat)
             result["synced"] += 1
         except Exception:
             result["failed"] += 1
@@ -128,6 +137,9 @@ def api_sync_tapd(req: SyncRequest):
         dry_run=req.dry_run,
         status_only=req.status_only,
         status_names=status_names,
+        # WP-C:bug 时间字段落库 + 超龄升级事件在 sync_tapd 内收口(API/CLI
+        # 同一实现);这里只把已加载的配置传进去(owner 过滤/挂龄阈值)。
+        tapd_config=config,
     )
 
     # Also pull bugs linked to stories via TAPD get_related_bugs, which catches

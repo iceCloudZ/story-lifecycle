@@ -16,11 +16,13 @@ from datetime import datetime
 
 from .base import TIER_BATCH, TIER_DIGEST, TIER_INTERRUPT
 
-# 档位 → 通道展开(interrupt 立即走微信+桌面;batch/digest 只落桌面)。
+# 档位 → 通道展开(interrupt 立即走微信+桌面;batch 只落桌面;digest 走微信+
+# 桌面 —— WP-C 起 digest 档由 daily_digest 日清简报使用,晨报类内容推微信留底
+# 同时落桌面,日频一条不构成打扰)。
 TIER_CHANNELS: dict[str, tuple[str, ...]] = {
     TIER_INTERRUPT: ("wechat", "desktop"),
     TIER_BATCH: ("desktop",),
-    TIER_DIGEST: ("desktop",),
+    TIER_DIGEST: ("wechat", "desktop"),
 }
 VALID_TIERS = tuple(TIER_CHANNELS)
 
@@ -33,6 +35,10 @@ DEFAULT_ROUTES: dict[str, str] = {
     "judge_rejected": TIER_INTERRUPT,
     "judge_escalated": TIER_INTERRUPT,
     "patrol_failed": TIER_INTERRUPT,
+    # WP-C(TAPD 工单环):同步时超龄升级 + 日清简报。
+    "bug_aging": TIER_INTERRUPT,
+    "story_overdue": TIER_INTERRUPT,
+    "daily_digest": TIER_DIGEST,
     "stage_completed": TIER_BATCH,
 }
 
@@ -126,7 +132,7 @@ def route(
         now: 注入当前时间(免打扰判定;测试可控时);None 取本地时间。
 
     Returns:
-        按档位展开的通道动作(interrupt → wechat+desktop;batch/digest → desktop)。
+        按档位展开的通道动作(interrupt/digest → wechat+desktop;batch → desktop)。
         免打扰时段内 interrupt 降级为 batch(降级不丢,emitter 标 deferred)。
     """
     del project  # 预留:per-project 路由覆盖尚未启用
