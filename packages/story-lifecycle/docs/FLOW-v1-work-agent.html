@@ -36,7 +36,8 @@
     <span class="chip"><span class="dot" style="background:var(--convention)"></span>◆ 约定（hc-all checker 维护）</span>
     <span class="chip"><span class="dot" style="background:var(--kb)"></span>○ 知识（.story/knowledge 维护）</span>
     <span class="chip"><span class="dot" style="background:var(--notify)"></span>✚ 通知（微信/桌面，outbox）</span>
-    <span class="dup">虚线红圈 = 流程定义重复点（共 4 处）</span>
+    <span class="chip"><span class="dot" style="background:#16a34a"></span>绿虚线圈 = 重复已消/缓解（2026-09-13）</span>
+    <span class="dup">红虚线圈 = 流程定义重复点（仅存档）</span>
   </div>
 
   <div class="card">
@@ -207,10 +208,10 @@
     <line x1="740" y1="983" x2="1192" y2="983" stroke="#b45309" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
     <text x="880" y="975" font-size="11" fill="#b45309">动工前预检</text>
 
-    <!-- 重复② -->
-    <rect x="386" y="944" width="360" height="70" rx="10" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="7 4"/>
-    <rect x="400" y="924" width="196" height="20" rx="10" fill="#dc2626"/>
-    <text x="498" y="938" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">重复② skill 核对表 ≈ checker</text>
+    <!-- 重复②（已消：核对表瘦身，规则住 checker） -->
+    <rect x="386" y="944" width="360" height="70" rx="10" fill="none" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <rect x="400" y="924" width="220" height="20" rx="10" fill="#16a34a"/>
+    <text x="510" y="938" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">已消② 核对表瘦身——规则住 checker</text>
 
     <!-- ================= PHASE 4 部署与验收 ================= -->
     <g>
@@ -245,7 +246,7 @@
     <g>
       <rect x="812" y="1466" width="308" height="54" rx="8" fill="#ecfdf5" stroke="#99f6e4"/>
       <text x="828" y="1488" font-size="13" font-weight="700" fill="#0f766e">● 门：开发→测试 需 code（存在+确认）</text>
-      <text x="828" y="1506" font-size="11" fill="#64748b">409 缺口即反馈 · gate_waiting → 微信</text>
+      <text x="828" y="1506" font-size="11" fill="#64748b">409 自描述(missing+remediation) · gate_waiting→微信</text>
     </g>
     <line x1="740" y1="1493" x2="812" y2="1493" stroke="#0f766e" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
 
@@ -266,10 +267,10 @@
     <line x1="566" y1="1520" x2="566" y2="1580" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
     <line x1="812" y1="1607" x2="740" y2="1607" stroke="#0f766e" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)"/>
 
-    <!-- 重复① -->
-    <rect x="386" y="1454" width="360" height="186" rx="10" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="7 4"/>
-    <rect x="400" y="1434" width="330" height="20" rx="10" fill="#dc2626"/>
-    <text x="565" y="1448" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">重复① skill 第7步调用序列 ≈ 服务器门契约</text>
+    <!-- 重复①（已消：409/428 自描述 + skill 收口循环化） -->
+    <rect x="386" y="1454" width="360" height="186" rx="10" fill="none" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <rect x="400" y="1434" width="330" height="20" rx="10" fill="#16a34a"/>
+    <text x="565" y="1448" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">已消① 收口循环化——skill 不再背调用序列</text>
 
     <!-- ================= PHASE 6 上线与结项 ================= -->
     <g>
@@ -351,29 +352,29 @@
     <text x="220" y="2175" text-anchor="middle" font-size="12" font-weight="700" fill="#16a34a">知识回路：越问越厚</text>
     <line x1="320" y1="2170" x2="340" y2="2170" stroke="#16a34a" stroke-width="2"/>
 
-    <!-- 重复③ -->
-    <rect x="386" y="2014" width="360" height="70" rx="10" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="7 4"/>
-    <rect x="400" y="1994" width="260" height="20" rx="10" fill="#dc2626"/>
-    <text x="530" y="2008" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">重复③「完成的定义」≈ 各 owner 判据</text>
+    <!-- 重复③（已缓：判据表=索引声明） -->
+    <rect x="386" y="2014" width="360" height="70" rx="10" fill="none" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <rect x="400" y="1994" width="280" height="20" rx="10" fill="#16a34a"/>
+    <text x="540" y="2008" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">已缓③「完成的定义」=索引页声明</text>
 
-    <!-- 重复④：速查表 ≈ 知识库 -->
-    <rect x="386" y="2122" width="360" height="66" rx="10" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="7 4"/>
-    <rect x="400" y="2102" width="300" height="20" rx="10" fill="#dc2626"/>
-    <text x="550" y="2116" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">重复④ skill 踩坑速查表 ≈ 知识库</text>
-    <text x="404" y="2162" font-size="10.5" fill="#dc2626">单写口= pitfall import · 单读口= knowledge_search（速查表退化为指针）</text>
+    <!-- 重复④（已缓：速查表冻结，新坑只进知识库） -->
+    <rect x="386" y="2122" width="360" height="66" rx="10" fill="none" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <rect x="400" y="2102" width="300" height="20" rx="10" fill="#16a34a"/>
+    <text x="550" y="2116" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">已缓④ 速查表冻结——新坑只进知识库</text>
+    <text x="404" y="2162" font-size="10.5" fill="#16a34a">单写口= pitfall import · 单读口= knowledge_search（本表不再扩行）</text>
 
-    <!-- v1.1 建议注记（kimi 会话收敛版：先自描述错误，/next 后置） -->
+    <!-- 去重落地注记（2026-09-13 v1.1 第一步已落地） -->
     <g>
-      <rect x="46" y="1466" width="278" height="182" rx="10" fill="#fffbeb" stroke="#f59e0b"/>
-      <text x="62" y="1490" font-size="12.5" font-weight="700" fill="#b45309">去重路径（v1.1，按性价比排序）</text>
-      <text x="62" y="1512" font-size="11" fill="#64748b">① 409/428 响应自描述化：带 missing</text>
-      <text x="62" y="1528" font-size="11" fill="#64748b">  明细 + 补救端点 hint（最小改动，</text>
-      <text x="62" y="1544" font-size="11" fill="#64748b">  服务器本就有 gate_for_current_state）</text>
-      <text x="62" y="1566" font-size="11" fill="#64748b">② skill 第7步改为「循环 GET</text>
-      <text x="62" y="1582" font-size="11" fill="#64748b">  /deliverables → 补缺口 → advance」</text>
-      <text x="62" y="1598" font-size="11" fill="#64748b">③ /next 端点 = 增量糖，后置</text>
-      <text x="62" y="1620" font-size="11" font-weight="700" fill="#b45309">skill 保留编排，服务器吸收「缺什么」</text>
-      <line x1="324" y1="1556" x2="386" y2="1556" stroke="#f59e0b" stroke-width="2" marker-end="url(#arr)"/>
+      <rect x="46" y="1466" width="278" height="182" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+      <text x="62" y="1490" font-size="12.5" font-weight="700" fill="#15803d">去重已落地（2026-09-13）</text>
+      <text x="62" y="1512" font-size="11" fill="#64748b">① 409/428 响应自描述：message +</text>
+      <text x="62" y="1528" font-size="11" fill="#64748b">  missing[] + remediation[]（每缺口给</text>
+      <text x="62" y="1544" font-size="11" fill="#64748b">  endpoint/method/hint + skip 备选）</text>
+      <text x="62" y="1566" font-size="11" fill="#64748b">② skill 收口循环化：GET /deliverables</text>
+      <text x="62" y="1582" font-size="11" fill="#64748b">  → advance → 照 remediation 补 → 全绿</text>
+      <text x="62" y="1598" font-size="11" fill="#64748b">③ GET /next 端点 = 增量糖，仍后置</text>
+      <text x="62" y="1620" font-size="11" font-weight="700" fill="#15803d">服务器怎么改，skill 都不用动</text>
+      <line x1="324" y1="1556" x2="386" y2="1556" stroke="#16a34a" stroke-width="2" marker-end="url(#arr)"/>
     </g>
   </svg>
   </div>
@@ -382,7 +383,7 @@
     <b>读图要点：</b>实线灰箭头 = 主流程（需求从上到下走完）；虚线彩色箭头 = 归属层之间的调用/强制关系。
     四个红色虚线圈是流程定义的重复点（判定标准：改一处要不要同步改另一处）——① skill 第7步调用序列 ≈ 服务器门契约（<b>注：编排本身合法住 skill，重复的只是「当前缺什么」这类服务器已知信息的复述</b>）；② 开发核对表 ≈ checker 规则（环境类坑除外，归坑库）；③「完成的定义」≈ 各 owner 判据；④ 踩坑速查表 ≈ 知识库（pitfall import 单写口）。
     <b>单一事实源分层（与 kimi 会话交叉验证收敛）：</b>状态机/门/审计住 <b>story-lifecycle 服务器</b>（fail-closed 权威层）；工程约定住 <b>hc-all checker</b>（服务器经 precheck 钩子引用，skill 只引用不抄写）；<b>编排</b>（调用顺序/失败排查链/停点/双基线时机）住 <b>story-loop skill</b>——服务器是被动 API，编排天然在调用方，删不得；坑住 <b>知识库</b>（单写口 pitfall import，单读口 knowledge_search）。
-    <b>去重路径（v1.1）：</b>先把 409/428 错误响应自描述化（missing 明细 + 补救端点 hint），skill 第 7 步改为「循环 GET /deliverables → 补缺口 → advance」；GET /next 端点是增量糖，后置。
+    <b>去重落地（2026-09-13，v1.1 第一步）：</b>409/428 错误响应已自描述化（message + missing[] + remediation[]，每缺口给出 endpoint/method/hint 及 skip 备选，前端/管家 MCP 已适配）；skill 收口改为「GET /deliverables → advance → 照 remediation 补缺口 → 全绿」，不再维护调用序列副本；核对表瘦身（规则住 checker）；「完成的定义」标注索引属性；踩坑速查表冻结（新坑只进知识库）。GET /next 端点作为增量糖仍后置。四个重复圈由红转绿（①②已消，③④已缓）。
     <br><b>SOP V1.7 嵌入 + grill-me + TAPD 落位（2026-09-12，经 kimi 双轮评审修补）：</b>需求进入段「需求意图分析」（TAPD 详情+附件用例解析→意图/验收口径/疑点）；「探索轮+Grill 轮」——三方对账表（PRD×用例×代码，带 文件:行号 证据）先行，带证据一轮收齐（挂起出口回贴 TAPD 评论 / 跳过行记 ASSUMED），产出 PRD.md「用例处置」表（唯一载体，机器可校验）；覆盖检查复用处置表仅补判漏标；test-report 双落位确认门——PUT+confirm 授权合一，report_to_docx.py 生成公司模板 docx，用户点头后 agent 调 upload-attachment-web 经网页内部端点传 TAPD 附件卡（会话由 token_manager「tapd-web」服务自动续期：专用 Edge 档案收割+账密自愈登录）；收口后 TAPD 状态按 SOP 节点回写核对；冒烟门 ≥80%；发布窗口周二/周四下午。实例锚点：tapd-1069669（附件 47 条功能用例）。
   </div>
 </div>
