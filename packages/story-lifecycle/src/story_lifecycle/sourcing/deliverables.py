@@ -93,6 +93,110 @@ LIFECYCLE_ORDER = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# 缺口补救端点映射(409 自描述,DESIGN-v1-work-agent 去重路径 v1.1 第一步)
+# ---------------------------------------------------------------------------
+# skill 此前手抄服务器的 gate 契约为调用序列;改为服务器把「还差什么 + 怎么补」
+# 直接放进 409 响应体,skill 只循环「GET /deliverables → 按 remediation 补缺口 →
+# advance」。端点路径中 {key}=story_key、{stage}=stage 占位。
+# 单一事实源:gate 定义在上面的 LIFECYCLE_GATES,补救路径按成果物语义对齐
+# (doc 类 → PUT /docs + /docs/confirm;code → stages/complete 直报 +
+# deliverables/confirm;delivery → delivery-artifacts 登记 + confirm)。
+
+GAP_REMEDIATION: dict[str, list[dict]] = {
+    "prd": [
+        {
+            "endpoint": "/api/story/{key}/docs/prd",
+            "method": "PUT",
+            "hint": "PRD 全文上传版本化(body: content+change_reason)",
+        },
+    ],
+    "spec": [
+        {
+            "endpoint": "/api/story/{key}/docs/spec",
+            "method": "PUT",
+            "hint": "设计文档全文上传版本化(body: content+change_reason)",
+        },
+        {
+            "endpoint": "/api/story/{key}/docs/spec/confirm",
+            "method": "PUT",
+            "hint": "人工确认 spec(AI 不能自我确认)",
+        },
+    ],
+    "code": [
+        {
+            "endpoint": "/api/story/{key}/stages/{stage}/complete",
+            "method": "POST",
+            "hint": "外部完成直报,stage∈design/build/verify(幂等)",
+        },
+        {
+            "endpoint": "/api/story/{key}/deliverables/code/confirm",
+            "method": "POST",
+            "hint": "确认 code 成果物",
+        },
+    ],
+    "test_report": [
+        {
+            "endpoint": "/api/story/{key}/docs/test_report",
+            "method": "PUT",
+            "hint": "测试报告全文上传版本化(body: content+change_reason)",
+        },
+        {
+            "endpoint": "/api/story/{key}/docs/test_report/confirm",
+            "method": "PUT",
+            "hint": "人工确认测试报告",
+        },
+    ],
+    "delivery": [
+        {
+            "endpoint": "/api/story/{key}/delivery-artifacts",
+            "method": "POST",
+            "hint": "登记交付 MR/产物(delivery_state∈merged/abandoned 才算落地)",
+        },
+        {
+            "endpoint": "/api/story/{key}/deliverables/delivery/confirm",
+            "method": "POST",
+            "hint": "确认 delivery 成果物",
+        },
+    ],
+}
+
+# 所有 gap 都有合法跳过出口(POST /deliverables/{key}/skip → 视为满足)。
+GAP_SKIP_HINT = "合法不需要时,跳过该成果物(视为满足)"
+
+
+def remediation_for_gaps(gap_keys: list[str]) -> list[dict]:
+    """缺失成果物 key 列表 → 机器可执行的补救步骤(409 detail.remediation)。
+
+    每个 gap:``steps`` = 主补救路径(按成果物语义);``alternative`` = skip
+    出口(「合法不需要时」)。未映射的 gap(自定义 gate key)兜底指向
+    GET /deliverables 自查。
+    """
+    out: list[dict] = []
+    for k in gap_keys:
+        steps = [dict(s) for s in GAP_REMEDIATION.get(k, [])]
+        if not steps:
+            steps = [
+                {
+                    "endpoint": "/api/story/{key}/deliverables",
+                    "method": "GET",
+                    "hint": "查看成果物清单与当前 gate 状态(该缺口无预设补救序列)",
+                }
+            ]
+        out.append(
+            {
+                "gap": k,
+                "steps": steps,
+                "alternative": {
+                    "endpoint": f"/api/story/{{key}}/deliverables/{k}/skip",
+                    "method": "POST",
+                    "hint": GAP_SKIP_HINT,
+                },
+            }
+        )
+    return out
+
+
 def next_state(cur_state: str) -> str | None:
     """当前状态的下一个状态;已经是终态则 None。"""
     try:
@@ -226,33 +330,48 @@ def check_deliverables(
     return result
 
 
-def gate_satisfied(
+def gate_missing(
     story_key: str, from_state: str, to_state: str
-) -> tuple[bool, list[str]]:
-    """检查 from→to 转换的成果物 gate 是否全部满足。
+) -> tuple[bool, list[str], list[str]]:
+    """检查 from→to 转换的成果物 gate,返回缺失项的 key+label 双视图。
 
     planner gate 路径用 —— 关闭 git diff 检测(include_diff_check=False),
     避免 driver 每次 stage done 跑 ~2s git diff。code 成果物只用
     _completed_stages 判断(快);展示路径(/deliverables 端点)才开 git diff。
 
     Returns:
-        (satisfied, missing_labels) — satisfied=True 可推进;
-        missing_labels 是缺失的成果物中文名(前端显示「还差:测试报告」)。
+        (satisfied, missing_keys, missing_labels) — satisfied=True 可推进;
+        missing_keys 是机器可读的成果物 key(remediation 查表用);
+        missing_labels 是中文名(前端/报错显示「还差:测试报告」)。
     """
     required = LIFECYCLE_GATES.get((from_state, to_state), [])
     if not required:
-        return True, []  # 没有定义 gate 的转换直接放行
+        return True, [], []  # 没有定义 gate 的转换直接放行
 
     items = {
         d["key"]: d for d in check_deliverables(story_key, include_diff_check=False)
     }
     label_map = {d["key"]: d["label"] for d in DELIVERABLE_DEFS}
-    missing = [
-        label_map.get(k, k)
-        for k in required
-        if not items.get(k, {}).get("satisfied", False)
+    missing_keys = [
+        k for k in required if not items.get(k, {}).get("satisfied", False)
     ]
-    return len(missing) == 0, missing
+    missing_labels = [label_map.get(k, k) for k in missing_keys]
+    return len(missing_keys) == 0, missing_keys, missing_labels
+
+
+def gate_satisfied(
+    story_key: str, from_state: str, to_state: str
+) -> tuple[bool, list[str]]:
+    """检查 from→to 转换的成果物 gate 是否全部满足(gate_missing 的标签视图)。
+
+    Returns:
+        (satisfied, missing_labels) — satisfied=True 可推进;
+        missing_labels 是缺失的成果物中文名(前端显示「还差:测试报告」)。
+    """
+    satisfied, _missing_keys, missing_labels = gate_missing(
+        story_key, from_state, to_state
+    )
+    return satisfied, missing_labels
 
 
 def gate_for_current_state(story_key: str) -> dict | None:

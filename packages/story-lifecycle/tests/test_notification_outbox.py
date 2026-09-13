@@ -48,8 +48,12 @@ class FakeChannel:
 
 @pytest.fixture
 def quiet_config(monkeypatch):
-    """无 notification: 段的干净配置(不发弹窗,不受真实 config.yaml 影响)。"""
-    monkeypatch.setattr("story_lifecycle.infra.config.get_config", lambda: {})
+    """无弹窗且显式关闭免打扰的干净配置(不受真实 config.yaml 与墙钟影响——
+    默认 22:00-07:30 静音窗会让本文件一半时段红,2026-09-13 00:45 实测)。"""
+    monkeypatch.setattr(
+        "story_lifecycle.infra.config.get_config",
+        lambda: {"notification": {"quiet_hours": None}},
+    )
 
 
 def _mk_thread(**channels):
@@ -81,10 +85,15 @@ class TestEmitEvent:
         emit_event("stage_completed", story_key="S-1", message="ok")
         assert ch.calls == []
 
-    def test_emit_quiet_hours_marks_deferred(self, quiet_config):
+    def test_emit_quiet_hours_marks_deferred(self, quiet_config, monkeypatch):
         """免打扰时段 emit:interrupt 降级 batch + payload 标 deferred,不丢。"""
         from datetime import datetime
 
+        # 自带显式静音窗(覆盖下方 now),不依赖默认窗口与墙钟
+        monkeypatch.setattr(
+            "story_lifecycle.infra.config.get_config",
+            lambda: {"notification": {"quiet_hours": {"start": "23:00", "end": "23:59"}}},
+        )
         nid = emit_event(
             "awaiting_question", story_key="S-1", message="?",
             now=datetime(2026, 9, 1, 23, 30),

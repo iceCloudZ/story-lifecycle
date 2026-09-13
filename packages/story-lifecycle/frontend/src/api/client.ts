@@ -491,10 +491,19 @@ export async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T>
     // FastAPI HTTPException 的 body 是 {"detail": "..."}。丢掉它的话，
     // "PRD 生成失败: <原因>" 这类关键信息永远到不了 UI（真实事故
     // 2026-08-20：读取需求 502 只显示 "API 502"，定位全靠翻 serve 控制台）。
+    // detail 也可能是自描述 dict（409 gate / 428 升级门）：message/detail
+    // 字段是人读主信息（v1.1 去重路径），同样要露出来。
     let detail = ''
     try {
       const body = await r.json()
       if (body && typeof body.detail === 'string') detail = body.detail
+      else if (body && body.detail && typeof body.detail === 'object') {
+        const d = body.detail as { message?: string; detail?: string }
+        detail =
+          d.message ||
+          d.detail ||
+          JSON.stringify(body.detail)
+      }
     } catch {
       /* 非 JSON body（如代理层 502 的 HTML）保持仅状态码 */
     }

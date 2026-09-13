@@ -282,6 +282,16 @@ def _raise_upgrade_pending(
             "detail": f"{cur}→{target} 为关键跃迁,请在 Story 详情页(UI)点击确认;"
                       f"CLI/agent 无法完成该步。",
             "gate": ctx["_upgrade_gate"],
+            # v1.1 去重路径:断路口也自描述 —— 确认重放的唯一出口给机器
+            # (confirm 落位;reject 清挂起。UI 点头仍是规范通道)。
+            "remediation": [
+                {
+                    "endpoint": "/api/story/{key}/lifecycle/ui-upgrade",
+                    "method": "POST",
+                    "body": {"action": "confirm"},
+                    "hint": "确认后重放该终态跃迁;action=reject 清除挂起",
+                },
+            ],
         },
     )
 
@@ -335,7 +345,9 @@ def advance_lifecycle_state(
     """推进 Story 业务状态到下一态(待启动→开发→测试→上线→结项)。
 
     成果物 gate 驱动:推进前检查该转换的成果物是否全部满足(exists+confirmed
-    或 skipped)。不满足则 409 返回缺失列表(前端显示「还差:测试报告」)。
+    或 skipped)。不满足则 409,响应体自描述(v1.1 去重路径):detail 为
+    {message(中文), missing(机器 key), remediation(补救端点序列)} —— skill
+    据此循环「补缺口 → advance」,不手抄 gate 契约。
     gate 满足 → 推进 lifecycle_state → 若下一状态有 stages 则 start_story_async,
     无(终态)则标 completed。
 
@@ -372,7 +384,11 @@ def _advance_lifecycle_state_impl(
     意外异常由外层 advance_lifecycle_state 兜成结构化 500。"""
     import json as _json
 
-    from ....sourcing.deliverables import gate_for_current_state, gate_satisfied
+    from ....sourcing.deliverables import (
+        gate_for_current_state,
+        gate_missing,
+        remediation_for_gaps,
+    )
 
     # 管家账本:confirmed_via 校验(与 PUT /advance 同一合法值集合,防脏账本)
     confirmed_via = (req.confirmed_via if req else "") or "ui"
@@ -458,8 +474,15 @@ def _advance_lifecycle_state_impl(
     if not gate_info:
         raise HTTPException(409, "已到终态,无法推进")
     next_state = gate_info["to"]
-    satisfied, missing = gate_satisfied(story_key, cur_state, next_state)
+    satisfied, missing_keys, missing_labels = gate_missing(
+        story_key, cur_state, next_state
+    )
     if not satisfied:
+        # 自描述 409(DESIGN-v1-work-agent 去重路径 v1.1 第一步):message 人读,
+        # missing+remediation 机器可执行 —— skill 据此循环「补缺口 → advance」,
+        # 不再手抄服务器 gate 契约。gate_waiting payload 带同一份(superset)。
+        message = f"成果物 gate 未满足,还差: {'、'.join(missing_labels)}"
+        remediation = remediation_for_gaps(missing_keys)
         # WP-B 洞③:停门即管家事件出口发声(outbox 一行,观察)——与
         # stage_completion 停 _story_state_gate 时的挂钩同款;emit 自吞异常,
         # 绝不影响 409 反馈本体(事件出口绝不碰 story 状态)。
@@ -471,11 +494,13 @@ def _advance_lifecycle_state_impl(
                 story_key=story_key,
                 stage=s.get("current_stage") or "",
                 title=f"[{story_key}] 推进受阻:{cur_state}→{next_state}",
-                message=f"成果物 gate 未满足,还差: {'、'.join(missing)}",
+                message=message,
                 payload={
                     "from": cur_state,
                     "to": next_state,
-                    "missing": missing,
+                    "missing": missing_keys,
+                    "missing_labels": missing_labels,
+                    "remediation": remediation,
                     "reason": "gate_unsatisfied",
                 },
             )
@@ -483,7 +508,11 @@ def _advance_lifecycle_state_impl(
             log.debug("gate_waiting emit failed (non-fatal)", exc_info=True)
         raise HTTPException(
             409,
-            f"成果物 gate 未满足,还差: {'、'.join(missing)}",
+            {
+                "message": message,
+                "missing": missing_keys,
+                "remediation": remediation,
+            },
         )
 
     # gate 满足 → 推进。清旧的 _story_state_gate(向后兼容老数据)。

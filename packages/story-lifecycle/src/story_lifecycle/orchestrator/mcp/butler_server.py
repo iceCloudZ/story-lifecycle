@@ -187,9 +187,20 @@ def make_send(base_url: str | None = None) -> SendFn:
 
 
 def _detail_of(parsed: object) -> str:
-    """从 serve 的 JSON 错误体里抠 detail(FastAPI 的 HTTPException 形状)。"""
+    """从 serve 的 JSON 错误体里抠 detail(FastAPI 的 HTTPException 形状)。
+
+    detail 可能是自描述 dict(409 gate/428 升级门,message/detail 字段是人读
+    主信息)—— 抽人读字符串,别把整个 dict 的 Python repr 甩给用户。
+    """
     if isinstance(parsed, dict):
-        return str(parsed.get("detail", ""))
+        d = parsed.get("detail", "")
+        if isinstance(d, dict):
+            return str(
+                d.get("message")
+                or d.get("detail")
+                or json.dumps(d, ensure_ascii=False)
+            )
+        return str(d)
     if isinstance(parsed, str):
         return parsed
     return ""

@@ -244,8 +244,16 @@ export default function StoryDetailPage() {
       qc.invalidateQueries({ queryKey: ['sessions', storyKey] })
       scrollToTerminal()
     } else {
+      // detail 可为 string(普通 4xx)或自描述 dict:409 gate 带 message/missing/
+      // remediation,428 升级门带 detail/action(v1.1 去重路径)。人读主信息优先。
       const d = (await r.json()).detail
-      alert(`推进失败: ${typeof d === 'object' ? d?.detail || '需 UI 确认' : d || '未知错误'}`)
+      const msg =
+        typeof d === 'object' && d !== null
+          ? (d as { message?: string }).message ||
+            (d as { detail?: string }).detail ||
+            '未知错误'
+          : d || '未知错误'
+      alert(`推进失败: ${msg}`)
     }
   }
 
