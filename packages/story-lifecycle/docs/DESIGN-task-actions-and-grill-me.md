@@ -1,6 +1,6 @@
 # 动作清单 + grill-me — 设计文档
 
-> 状态:待评审。创建:2026-07-15。
+> 状态:grill-me 已在 skill 层落地(2026-09-12,story-loop §1.8 探索轮+Grill 轮);动作清单部分随 v2.0 自动执行退役冻结归档。创建:2026-07-15。
 > 范围:`packages/story-lifecycle`(尤其 `orchestrator/engine/planner.py` 的 prompt 组装)。
 > 评审目标:验证"LLM 从动作库选任务"的方案正确性 + grill-me 中断/resume 路径的可行性。
 > 本文自包含:背景、代码现状、方案、grill-me 方向全部内联。

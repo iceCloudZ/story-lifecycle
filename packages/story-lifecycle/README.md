@@ -1,8 +1,8 @@
 # Story Lifecycle Manager
 
-**工作特化 agent 的常驻大脑（v1.0）** — 账本 + 节律 + 知识库：TAPD 工单日清/挂龄、发版窗口评估、巡检 FAIL 告警、排查知识的沉淀与秒回。原「需求编排器」的自动编排链（design → implement → test）已冻结为档案：修 bug 可以，不再加新能力（见 [`docs/DESIGN-v1-work-agent.md`](docs/DESIGN-v1-work-agent.md) 与 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 冻结范围节）。
+**工作特化 agent 的常驻大脑（v2.0）** — 账本 + 节律 + 知识库：TAPD 工单日清/挂龄、发版窗口评估、巡检 FAIL 告警、排查知识的沉淀与秒回。原「需求编排器」的自动编排链（design → implement → test）已正式退役为档案（v1.0 宣告冻结，v2.0 语义收口）：修 bug 可以，不再加新能力（见 [`docs/DESIGN-v1-work-agent.md`](docs/DESIGN-v1-work-agent.md) 与 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 冻结范围节）。
 
-> 本包是 [`dev-flywheel`](https://github.com/iceCloudZ/story-lifecycle) monorepo 的一部分，与 [`packages/story-miner`](../story-miner) 共用统一知识飞轮。当前版本：**v1.0.0**。
+> 本包是 [`dev-flywheel`](https://github.com/iceCloudZ/story-lifecycle) monorepo 的一部分，与 [`packages/story-miner`](../story-miner) 共用统一知识飞轮。当前版本：**v2.0.0**。
 
 ## 三层架构
 
@@ -33,7 +33,7 @@
 | ③ 定时巡检 + 预警 | 执行在 skill 侧；`patrol_failed` FAIL 告警事件 → 微信（WP-D） |
 | ④ 日常排查/业务链路 | 手脚在 skill 侧（call-api/sql-query…）；沉淀回路见 ⑤ |
 | ⑤ 知识库越问越厚 | `story pitfall import` 摄入 + `knowledge_search` 三入口（REST/`story tool context`/MCP 管家第 7 工具）（WP-F） |
-| ⑥ story-loop 直跑 | 账本 API 补四洞：`base_commit` 透传、`POST /stages/{stage}/complete`、advance 结构化 500 + `gate_waiting`、`PUT /context` 持久化（WP-B） |
+| ⑥ story-loop 直跑 | 账本 API 补四洞：`base_commit` 透传、`POST /stages/{stage}/complete`、advance 结构化 500 + `gate_waiting`、`PUT /context` 持久化（WP-B）+ 自描述门：409/428 缺口带 remediation（endpoint/method/hint + skip 备选，v2.0） |
 
 ## 安装 & 快速开始
 

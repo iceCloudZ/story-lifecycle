@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.0.0] - 2026-09-13
+
+**自动执行能力正式退役。** v1.0.0 宣告定位迁移（常驻账本 + 节律 + 知识库）时，编排器驱动的自动执行链（spawn/监督/判定）只是宣告冻结、仍留在线上；本版把它正式退役为冻结档案：skill 不再被编排器驱动，只以「`GET` deliverables → 照 remediation 补缺口 → `advance`」的循环消费服务器（外部契约：story-loop §7，hc-all 侧）。砍主线能力，按 semver 升 major。v1.1 设想的「去重第一步」随本版落地：服务器缺口自描述（409/428 带 remediation），agent 会话与服务器之间的四处重复劳动①②消解、③④缓解（见 [`FLOW-v1-work-agent.html`](docs/FLOW-v1-work-agent.html)）。
+
+### Added
+- **409/428 自描述门** — 成果物 gate 的缺口响应从裸 message 升级为 `{message, missing[], remediation}` 结构：按缺口给 endpoint/method/hint（含 skip 备选）；`gate_waiting` 事件 payload 携带同一份缺口明细（superset）。单一事实源 `GAP_REMEDIATION` 在 `sourcing/deliverables.py`（与 `LIFECYCLE_GATES` 同处）。三个消费端适配 dict detail：前端 client/StoryDetail、管家 MCP（`1dff0b05`，+5 回归）。
+
+### Changed
+- **skill 收口循环化** — story-loop 收口段改写为纯循环消费者（`GET` deliverables → 照 remediation 补 → advance）。外部契约在 story-loop §7（hc-all 侧执行，本仓库只立契约，见 [`DESIGN-v1-work-agent.md`](docs/DESIGN-v1-work-agent.md) §13.1）。
+- **流程去重** — 四处重复点：①②消解（409/428 自描述 + 收口循环化/核对表瘦身）、③④缓解（判据索引声明/速查表冻结），全景图红圈转绿（`8ffb6f6b`，见 [`FLOW-v1-work-agent.html`](docs/FLOW-v1-work-agent.html)）。注：knowledge 检索三入口已在 1.0.0（WP-F）落地，本版无新增。
+
+### Fixed
+- **部署验证三修**（`43bab93c`，+7 回归）— health 端点第二处版本字面量改读包元数据；桌面通道 Windows 256 字符上限截断（outbox 改存全量）；pitfall 解析器支持粗体列表项新坑表（RUN-tapd-1069471 六条入库验证）。
+- **测试套件两处滚动 flaky 根治** — config 隔离 autouse（`647a21f5`，autouse 重定向 `CONFIG_FILE`，阻断真实 config.yaml 被覆写删除与 advance_precheck 真实执行）；outbox 墙钟静音窗依赖显式化（`1dff0b05`）。
+
+关联 commits：`1dff0b05`、`43bab93c`、`647a21f5`、`8ffb6f6b`；`1c338952`/`d8f95c5b`/`8c975577`/`8ebd4e8b` 为 hc-all 契约文档演进（全景图/SOP V1.7 嵌入/探索轮+Grill 轮），见 §13.2-13.3。
+
 ## [1.0.0] - 2026-09-12
 
 **定位迁移：工作特化 agent 的常驻大脑 — 账本 + 节律 + 知识库；自动编排链冻结为档案**（设计：[`docs/DESIGN-v1-work-agent.md`](docs/DESIGN-v1-work-agent.md)）。agent 的手脚是 agent 会话里的 skill，公司资产接口是 aiops-mcp；本包提供别的层都没有的东西：常驻状态与账本、节律（提醒/告警）、知识库。按七个 WP 实施：

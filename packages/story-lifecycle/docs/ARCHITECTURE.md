@@ -1,13 +1,13 @@
 # Architecture
 
 > story-lifecycle 当前架构（codemap + 不变量），随架构治理同步更新。
-> **最后更新**：2026-09-12（v1.0 定位改写 + 冻结宣告，WP-A）
-> **v1.0 定位**：story-lifecycle 是「工作特化 agent 的常驻大脑」（账本+节律+知识库）——agent 手脚在 agent 会话 skill 层，公司资产接口在 aiops-mcp，详见 [`DESIGN-v1-work-agent.md`](DESIGN-v1-work-agent.md)。
+> **最后更新**：2026-09-13（v2.0.0 自动执行退役 + API 自描述收口）
+> **v1.0 定位**：story-lifecycle 是「工作特化 agent 的常驻大脑」（账本+节律+知识库）——agent 手脚在 agent 会话 skill 层，公司资产接口在 aiops-mcp，详见 [`DESIGN-v1-work-agent.md`](DESIGN-v1-work-agent.md)。v2.0.0 起收口 API 自描述（409/428 带 remediation），agent 会话以「`GET` deliverables → 照 remediation 补缺口 → `advance`」循环方式消费服务器，不再有编排器驱动的自动执行。
 > 历史设计决策见 [`archive/`](archive/)（ADR，正文冻结）。
 
 ---
 
-## 冻结范围（v1.0）
+## 冻结范围（v1.0 宣告，v2.0 语义收口）
 
 > 权威依据：[`DESIGN-v1-work-agent.md`](DESIGN-v1-work-agent.md)。冻结 = 停止投入 + 宣告，**不删代码、不删测试**。
 
